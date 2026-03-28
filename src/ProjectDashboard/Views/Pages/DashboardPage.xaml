@@ -1,0 +1,204 @@
+<Page
+    x:Class="ProjectDashboard.Views.Pages.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
+    xmlns:models="clr-namespace:ProjectDashboard.Models">
+
+    <Page.Resources>
+        <helpers:RelativeTimeConverter x:Key="RelativeTimeConverter" />
+    </Page.Resources>
+
+    <Grid Margin="24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Summary bar -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Total: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{Binding TotalCount}" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Dirty: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{Binding DirtyCount}" FontWeight="SemiBold"
+                               Foreground="#E8A317" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Issues: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{Binding IssueCount}" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                </StackPanel>
+            </Border>
+
+            <ui:Button Content="Refresh"
+                       Icon="{ui:SymbolIcon ArrowSync24}"
+                       Command="{Binding LoadProjectsCommand}"
+                       Margin="8,0,0,0" />
+        </StackPanel>
+
+        <!-- Filter bar -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,16">
+            <ComboBox ItemsSource="{Binding Categories}"
+                      SelectedItem="{Binding SelectedCategory}"
+                      Width="180" Margin="0,0,12,0" />
+
+            <ui:TextBox PlaceholderText="Search projects..."
+                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                        Width="280" />
+        </StackPanel>
+
+        <!-- Loading indicator -->
+        <TextBlock Grid.Row="2"
+                   Text="Loading projects..."
+                   FontSize="16"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Visibility="{Binding LoadProjectsCommand.IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+        <!-- Card grid -->
+        <ScrollViewer Grid.Row="2"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding FilteredProjects}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type models:ProjectInfo}">
+                        <Border Width="280" Height="160" Margin="8"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="14"
+                                Cursor="Hand">
+                            <Border.InputBindings>
+                                <MouseBinding MouseAction="LeftClick"
+                                              Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                              CommandParameter="{Binding}" />
+                            </Border.InputBindings>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Display Name -->
+                                <TextBlock Grid.Row="0"
+                                           Text="{Binding DisplayName}"
+                                           FontWeight="Bold" FontSize="14"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+
+                                <!-- Version -->
+                                <TextBlock Grid.Row="1" Margin="0,2,0,0" FontSize="12">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding LatestVersion}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding LatestVersion}" Value="">
+                                                    <Setter Property="Text" Value="no version" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Git status + Category in the middle area -->
+                                <StackPanel Grid.Row="2" VerticalAlignment="Center">
+                                    <!-- Git status -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <Ellipse Width="8" Height="8" Margin="0,0,6,0"
+                                                 VerticalAlignment="Center">
+                                            <Ellipse.Style>
+                                                <Style TargetType="Ellipse">
+                                                    <Setter Property="Fill" Value="#4CAF50" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Fill" Value="#E8A317" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Ellipse.Style>
+                                        </Ellipse>
+                                        <TextBlock FontSize="12"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Clean" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Text"
+                                                                    Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} modified'}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <!-- Category badge -->
+                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="4" Padding="8,2"
+                                            HorizontalAlignment="Left">
+                                        <TextBlock Text="{Binding Manifest.Category}"
+                                                   FontSize="11"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Bottom row: last commit + issues -->
+                                <DockPanel Grid.Row="3">
+                                    <TextBlock DockPanel.Dock="Left" FontSize="11"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               Text="{Binding GitStatus.LastCommitDate, Converter={StaticResource RelativeTimeConverter}}" />
+
+                                    <TextBlock DockPanel.Dock="Right" FontSize="11"
+                                               HorizontalAlignment="Right"
+                                               Foreground="#E8A317">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding OpenIssueCount}" Value="0">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="{Binding OpenIssueCount, Mode=OneWay}" />
+                                        <Run Text=" issues" />
+                                    </TextBlock>
+                                </DockPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</Page>
