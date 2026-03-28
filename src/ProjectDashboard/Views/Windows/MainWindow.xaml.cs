@@ -63,13 +63,6 @@ public partial class MainWindow : INavigationWindow
 
     private void FluentWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        // If screen is 1080p or smaller, maximize
-        if (SystemParameters.PrimaryScreenHeight <= 1080)
-        {
-            WindowState = WindowState.Maximized;
-        }
-
-        // Populate sidebar after DashboardViewModel finishes loading (delayed check)
         _ = PopulateSidebarWhenReady();
     }
 

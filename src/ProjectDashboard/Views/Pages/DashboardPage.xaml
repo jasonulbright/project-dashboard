@@ -17,10 +17,14 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Summary bar -->
+        <!-- Summary bar (clickable filters) -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0">
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show all projects">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding FilterAllCommand}" />
+                </Border.InputBindings>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="Total: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     <TextBlock Text="{Binding TotalCount}" FontWeight="SemiBold"
@@ -29,7 +33,11 @@
             </Border>
 
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0">
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show only dirty projects">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding FilterDirtyCommand}" />
+                </Border.InputBindings>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="Dirty: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     <TextBlock Text="{Binding DirtyCount}" FontWeight="SemiBold"
@@ -38,7 +46,24 @@
             </Border>
 
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0">
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show projects with pending TODOs">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding FilterTodosCommand}" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="TODO: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{Binding TodoCount}" FontWeight="SemiBold"
+                               Foreground="#5B9BD5" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show projects with open issues">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding FilterIssuesCommand}" />
+                </Border.InputBindings>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="Issues: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     <TextBlock Text="{Binding IssueCount}" FontWeight="SemiBold"

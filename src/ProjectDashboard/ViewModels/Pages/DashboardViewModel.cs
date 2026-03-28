@@ -24,6 +24,7 @@ public partial class DashboardViewModel : ObservableObject
 
     public int TotalCount => Projects.Count;
     public int DirtyCount => Projects.Count(p => p.GitStatus.IsDirty);
+    public int TodoCount => Projects.Count(p => p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase));
     public int IssueCount => Projects.Sum(p => p.OpenIssueCount);
 
     public IAsyncRelayCommand LoadProjectsCommand { get; }
@@ -64,8 +65,46 @@ public partial class DashboardViewModel : ObservableObject
         _refreshTimer.Start();
     }
 
+    [ObservableProperty] private string _activeFilter = "all"; // "all", "dirty", "issues"
+
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
+
+    [RelayCommand]
+    private void FilterAll()
+    {
+        ActiveFilter = "all";
+        SelectedCategory = "All";
+        SearchText = "";
+        ApplyFilters();
+    }
+
+    [RelayCommand]
+    private void FilterDirty()
+    {
+        ActiveFilter = "dirty";
+        SelectedCategory = "All";
+        SearchText = "";
+        ApplyFilters();
+    }
+
+    [RelayCommand]
+    private void FilterTodos()
+    {
+        ActiveFilter = "todos";
+        SelectedCategory = "All";
+        SearchText = "";
+        ApplyFilters();
+    }
+
+    [RelayCommand]
+    private void FilterIssues()
+    {
+        ActiveFilter = "issues";
+        SelectedCategory = "All";
+        SearchText = "";
+        ApplyFilters();
+    }
 
     [RelayCommand]
     private void OpenProject(ProjectInfo? project)
@@ -133,12 +172,21 @@ public partial class DashboardViewModel : ObservableObject
         ApplyFilters();
         OnPropertyChanged(nameof(TotalCount));
         OnPropertyChanged(nameof(DirtyCount));
+        OnPropertyChanged(nameof(TodoCount));
         OnPropertyChanged(nameof(IssueCount));
     }
 
     private void ApplyFilters()
     {
         var filtered = Projects.AsEnumerable();
+
+        // Summary bar filter
+        if (ActiveFilter == "dirty")
+            filtered = filtered.Where(p => p.GitStatus.IsDirty);
+        else if (ActiveFilter == "todos")
+            filtered = filtered.Where(p => p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase));
+        else if (ActiveFilter == "issues")
+            filtered = filtered.Where(p => p.OpenIssueCount >= 1);
 
         if (!string.IsNullOrEmpty(SelectedCategory) && SelectedCategory != "All")
         {
