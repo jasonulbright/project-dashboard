@@ -59,30 +59,30 @@ public partial class ProjectDetailViewModel : ObservableObject
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
-    public void SetProject(ProjectInfo project)
+    public async void SetProject(ProjectInfo project)
     {
         Project = project;
 
-        // Populate from project data
-        ReadmeText = project.ReadmeContent;
-        ChangelogText = project.ChangelogContent;
-        Commits = new ObservableCollection<GitCommit>(project.RecentCommits);
-        Issues = new ObservableCollection<GitHubIssue>(project.Issues);
+        // Always refresh from disk to get full data (cache may have sparse objects)
+        var refreshed = await _discoveryService.RefreshProjectAsync(project);
+        Project = refreshed;
 
-        // Manifest editor fields
-        SelectedProjectType = project.Manifest.ProjectType;
-        SelectedStatus = project.Manifest.Status;
-        SelectedCategory = project.Manifest.Category;
-        ValidationSchedule = project.Manifest.ValidationSchedule;
-        Notes = project.Manifest.Notes;
+        ReadmeText = refreshed.ReadmeContent;
+        ChangelogText = refreshed.ChangelogContent;
+        Commits = new ObservableCollection<GitCommit>(refreshed.RecentCommits);
+        Issues = new ObservableCollection<GitHubIssue>(refreshed.Issues);
+
+        SelectedProjectType = refreshed.Manifest.ProjectType;
+        SelectedStatus = refreshed.Manifest.Status;
+        SelectedCategory = refreshed.Manifest.Category;
+        ValidationSchedule = refreshed.Manifest.ValidationSchedule;
+        Notes = refreshed.Manifest.Notes;
     }
 
     private async Task LoadDetailsAsync()
     {
         if (Project is null) return;
-
-        var refreshed = await _discoveryService.RefreshProjectAsync(Project);
-        SetProject(refreshed);
+        SetProject(Project);
     }
 
     private async Task SaveManifestAsync()
