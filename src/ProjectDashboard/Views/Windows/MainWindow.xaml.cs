@@ -1,3 +1,4 @@
+using System.Windows.Input;
 using ProjectDashboard.ViewModels.Windows;
 using Wpf.Ui.Abstractions;
 
@@ -19,6 +20,16 @@ public partial class MainWindow : INavigationWindow
         navigationService.SetNavigationControl(RootNavigation);
         snackbarService.SetSnackbarPresenter(SnackbarPresenter);
         RootNavigation.SetServiceProvider(serviceProvider);
+
+        // Mouse back button (XButton1) navigates back
+        MouseDown += (_, e) =>
+        {
+            if (e.ChangedButton == MouseButton.XButton1)
+            {
+                RootNavigation.GoBack();
+                e.Handled = true;
+            }
+        };
     }
 
     public INavigationView GetNavigation() => RootNavigation;

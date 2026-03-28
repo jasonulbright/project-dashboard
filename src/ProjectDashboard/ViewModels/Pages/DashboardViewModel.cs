@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Windows.Threading;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using ProjectDashboard.Views.Pages;
@@ -8,6 +10,8 @@ public partial class DashboardViewModel : ObservableObject
 {
     private readonly ProjectDiscoveryService _discoveryService;
     private readonly INavigationService _navigationService;
+    private readonly SettingsService _settingsService;
+    private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
     [ObservableProperty] private ObservableCollection<ProjectInfo> _filteredProjects = [];
@@ -24,15 +28,38 @@ public partial class DashboardViewModel : ObservableObject
 
     public IAsyncRelayCommand LoadProjectsCommand { get; }
 
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
+        _settingsService = settingsService;
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
 
         // Fire and forget load on construction
         _ = LoadProjectsCommand.ExecuteAsync(null);
+
+        // Auto-refresh timer
+        StartRefreshTimer();
+    }
+
+    private void StartRefreshTimer()
+    {
+        var settings = _settingsService.Load();
+        var interval = Math.Max(30, settings.RefreshIntervalSeconds);
+
+        _refreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(interval)
+        };
+        _refreshTimer.Tick += async (_, _) =>
+        {
+            if (!LoadProjectsCommand.IsRunning)
+            {
+                await LoadProjectsCommand.ExecuteAsync(null);
+            }
+        };
+        _refreshTimer.Start();
     }
 
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
@@ -44,6 +71,36 @@ public partial class DashboardViewModel : ObservableObject
         if (project is null) return;
         SelectedProject = project;
         _navigationService.Navigate(typeof(ProjectDetailPage));
+    }
+
+    [RelayCommand]
+    private async Task RefreshSingle(ProjectInfo? project)
+    {
+        if (project is null) return;
+        var refreshed = await _discoveryService.RefreshProjectAsync(project);
+        var idx = Projects.IndexOf(project);
+        if (idx >= 0)
+        {
+            Projects[idx] = refreshed;
+            ApplyFilters();
+            OnPropertyChanged(nameof(TotalCount));
+            OnPropertyChanged(nameof(DirtyCount));
+            OnPropertyChanged(nameof(IssueCount));
+        }
+    }
+
+    [RelayCommand]
+    private void OpenGitHub(ProjectInfo? project)
+    {
+        if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
+        Process.Start(new ProcessStartInfo($"https://github.com/{project.GitHubSlug}") { UseShellExecute = true });
+    }
+
+    [RelayCommand]
+    private void OpenFolder(ProjectInfo? project)
+    {
+        if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
+        Process.Start(new ProcessStartInfo("explorer.exe", project.FullPath));
     }
 
     private async Task LoadProjectsAsync()
