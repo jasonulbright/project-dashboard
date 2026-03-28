@@ -12,9 +12,57 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly string CachePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ProjectDashboard", "discovery-cache.json");
+
+    /// <summary>
+    /// Loads from cache if fresh, otherwise runs full discovery and updates cache.
+    /// </summary>
     public async Task<List<ProjectInfo>> DiscoverAllAsync(CancellationToken ct = default)
     {
         var settings = settingsService.Load();
+
+        // Try cache first
+        var cached = LoadCache(settings.RefreshIntervalSeconds);
+        if (cached is not null)
+            return cached;
+
+        // Full discovery
+        var results = await DiscoverFromDiskAsync(settings, ct);
+
+        // Save cache
+        SaveCache(results);
+
+        return results;
+    }
+
+    /// <summary>
+    /// Forces a full re-scan, ignoring cache.
+    /// </summary>
+    public async Task<List<ProjectInfo>> ForceRefreshAllAsync(CancellationToken ct = default)
+    {
+        var settings = settingsService.Load();
+        var results = await DiscoverFromDiskAsync(settings, ct);
+        SaveCache(results);
+        return results;
+    }
+
+    public async Task<ProjectInfo> RefreshProjectAsync(ProjectInfo project, CancellationToken ct = default)
+    {
+        var ghAvailable = await gitHubService.IsAvailableAsync(ct);
+        return await BuildProjectInfoAsync(project.FullPath, ghAvailable, ct);
+    }
+
+    public async Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
+    {
+        var path = Path.Combine(repoPath, "project-manifest.json");
+        var json = JsonSerializer.Serialize(manifest, JsonOptions);
+        await File.WriteAllTextAsync(path, json, ct);
+    }
+
+    private async Task<List<ProjectInfo>> DiscoverFromDiskAsync(AppSettings settings, CancellationToken ct)
+    {
         var rootPath = settings.ProjectsRootPath;
         var excluded = new HashSet<string>(settings.ExcludedDirectories, StringComparer.OrdinalIgnoreCase);
 
@@ -50,19 +98,6 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         return results
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
-    }
-
-    public async Task<ProjectInfo> RefreshProjectAsync(ProjectInfo project, CancellationToken ct = default)
-    {
-        var ghAvailable = await gitHubService.IsAvailableAsync(ct);
-        return await BuildProjectInfoAsync(project.FullPath, ghAvailable, ct);
-    }
-
-    public async Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
-    {
-        var path = Path.Combine(repoPath, "project-manifest.json");
-        var json = JsonSerializer.Serialize(manifest, JsonOptions);
-        await File.WriteAllTextAsync(path, json, ct);
     }
 
     private async Task<ProjectInfo> BuildProjectInfoAsync(string dirPath, bool ghAvailable, CancellationToken ct)
@@ -127,5 +162,57 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         }
 
         return project;
+    }
+
+    // ── Cache ──────────────────────────────────────────────────────
+
+    private sealed class DiscoveryCache
+    {
+        public DateTimeOffset CachedAt { get; set; }
+        public List<ProjectInfo> Projects { get; set; } = [];
+    }
+
+    private static List<ProjectInfo>? LoadCache(int maxAgeSeconds)
+    {
+        try
+        {
+            if (!File.Exists(CachePath)) return null;
+
+            var json = File.ReadAllText(CachePath);
+            var cache = JsonSerializer.Deserialize<DiscoveryCache>(json, JsonOptions);
+            if (cache is null) return null;
+
+            var age = DateTimeOffset.Now - cache.CachedAt;
+            if (age.TotalSeconds > maxAgeSeconds) return null;
+
+            return cache.Projects.Count > 0 ? cache.Projects : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void SaveCache(List<ProjectInfo> projects)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(CachePath);
+            if (dir is not null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            var cache = new DiscoveryCache
+            {
+                CachedAt = DateTimeOffset.Now,
+                Projects = projects
+            };
+
+            var json = JsonSerializer.Serialize(cache, JsonOptions);
+            File.WriteAllText(CachePath, json);
+        }
+        catch
+        {
+            // Cache write failure is non-fatal
+        }
     }
 }

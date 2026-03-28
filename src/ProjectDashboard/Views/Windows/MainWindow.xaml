@@ -5,9 +5,10 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:pages="clr-namespace:ProjectDashboard.Views.Pages"
     Title="Project Dashboard"
-    Width="1200"
-    Height="800"
+    Width="1920"
+    Height="1080"
     WindowStartupLocation="CenterScreen"
+    Loaded="FluentWindow_Loaded"
     ExtendsContentIntoTitleBar="True"
     WindowBackdropType="Mica">
 
@@ -28,13 +29,18 @@
             PaneDisplayMode="Left"
             IsPaneOpen="True"
             IsBackButtonVisible="Visible"
-            OpenPaneLength="200">
+            OpenPaneLength="220">
 
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem
                     Content="Dashboard"
                     Icon="{ui:SymbolIcon Home24}"
                     TargetPageType="{x:Type pages:DashboardPage}" />
+                <ui:NavigationViewItem Content="Projects" Icon="{ui:SymbolIcon Folder24}">
+                    <ui:NavigationViewItem.MenuItems>
+                        <!-- Populated dynamically in code-behind -->
+                    </ui:NavigationViewItem.MenuItems>
+                </ui:NavigationViewItem>
             </ui:NavigationView.MenuItems>
 
             <ui:NavigationView.FooterMenuItems>

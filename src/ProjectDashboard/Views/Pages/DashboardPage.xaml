@@ -48,7 +48,7 @@
 
             <ui:Button Content="Refresh"
                        Icon="{ui:SymbolIcon ArrowSync24}"
-                       Command="{Binding LoadProjectsCommand}"
+                       Command="{Binding ForceRefreshCommand}"
                        Margin="8,0,0,0" />
         </StackPanel>
 
