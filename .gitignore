@@ -6,3 +6,4 @@ obj/
 *.DotSettings
 *.DotSettings.user
 publish/
+project-manifest.json

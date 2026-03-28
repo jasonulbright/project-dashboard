@@ -1,7 +1,0 @@
-{
-  "ProjectType": "dashboard",
-  "Status": "active",
-  "Category": "Utilities",
-  "ValidationSchedule": "none",
-  "Notes": "Project management dashboard. First Fluent UI (WPF-UI) app. Template for all future C# conversions. Pending: proper markdown rendering with inline images, surface Claude memory/plan files in dashboard."
-}
