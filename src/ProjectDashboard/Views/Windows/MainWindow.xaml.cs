@@ -104,17 +104,22 @@ public partial class MainWindow : INavigationWindow
             {
                 Content = project.DisplayName,
                 Icon = new SymbolIcon(project.GitStatus.IsDirty ? SymbolRegular.CircleHalfFill24 : SymbolRegular.CheckmarkCircle24),
-                Tag = project
-            };
-
-            item.Click += (_, _) =>
-            {
-                DashboardViewModel.SelectedProject = project;
-                _navigationService.Navigate(typeof(ProjectDetailPage));
+                Tag = project,
+                TargetPageType = typeof(ProjectDetailPage)
             };
 
             projectsParent.MenuItems.Add(item);
         }
+
+        // Handle sidebar project clicks via SelectionChanged
+        RootNavigation.SelectionChanged += (_, _) =>
+        {
+            if (RootNavigation.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
+            {
+                DashboardViewModel.SelectedProject = proj;
+                _navigationService.Navigate(typeof(ProjectDetailPage));
+            }
+        };
     }
 
     public INavigationView GetNavigation() => RootNavigation;
