@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
@@ -22,13 +23,15 @@ public partial class ProjectDetailViewModel : ObservableObject
     [ObservableProperty] private string _validationSchedule = "none";
     [ObservableProperty] private string _notes = "";
 
-    public static List<string> ProjectTypes { get; } = ["powershell", "csharp", "wpf", "web", "tool", "library", "game", "unknown"];
+    public static List<string> ProjectTypes { get; } = ["mecm-tool", "powershell-script", "web-app", "game", "framework", "library", "dashboard", "unknown"];
     public static List<string> Statuses { get; } = ["active", "maintenance", "archived", "experimental"];
-    public static List<string> CategoriesList { get; } = ["Uncategorized", "Automation", "Desktop App", "DevOps", "Game", "Infrastructure", "Library", "Tool", "Web"];
+    public static List<string> CategoriesList { get; } = ["MECM", "Web", "Games", "Infrastructure", "Utilities", "Uncategorized"];
     public static List<string> Schedules { get; } = ["none", "daily", "weekly", "monthly"];
 
     public IAsyncRelayCommand SaveManifestCommand { get; }
     public IAsyncRelayCommand LoadDetailsCommand { get; }
+    public IRelayCommand<GitCommit> OpenCommitCommand { get; }
+    public IRelayCommand<GitHubIssue> OpenIssueCommand { get; }
 
     public ProjectDetailViewModel(ProjectDiscoveryService discoveryService, GitService gitService, GitHubService gitHubService)
     {
@@ -38,6 +41,22 @@ public partial class ProjectDetailViewModel : ObservableObject
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);
+        OpenCommitCommand = new RelayCommand<GitCommit>(OpenCommit);
+        OpenIssueCommand = new RelayCommand<GitHubIssue>(OpenIssue);
+    }
+
+    private void OpenCommit(GitCommit? commit)
+    {
+        if (commit is null || Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
+        var url = $"https://github.com/{Project.GitHubSlug}/commit/{commit.ShortHash}";
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    private void OpenIssue(GitHubIssue? issue)
+    {
+        if (issue is null || Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
+        var url = $"https://github.com/{Project.GitHubSlug}/issues/{issue.Number}";
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
     public void SetProject(ProjectInfo project)

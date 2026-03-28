@@ -75,7 +75,8 @@
         <!-- Card grid -->
         <ScrollViewer Grid.Row="2"
                       VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
+                      HorizontalScrollBarVisibility="Disabled"
+                      PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
             <ItemsControl ItemsSource="{Binding FilteredProjects}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -85,13 +86,30 @@
 
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type models:ProjectInfo}">
-                        <Border Width="280" Height="160" Margin="8"
+                        <Border Width="320" MinHeight="200" Margin="8"
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
                                 Padding="14"
                                 Cursor="Hand">
+                            <Border.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Open Details"
+                                              Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                              CommandParameter="{Binding}" />
+                                    <MenuItem Header="Refresh Status"
+                                              Command="{Binding DataContext.RefreshSingleCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                              CommandParameter="{Binding}" />
+                                    <Separator />
+                                    <MenuItem Header="Open on GitHub"
+                                              Command="{Binding DataContext.OpenGitHubCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                              CommandParameter="{Binding}" />
+                                    <MenuItem Header="Open Folder"
+                                              Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                              CommandParameter="{Binding}" />
+                                </ContextMenu>
+                            </Border.ContextMenu>
                             <Border.InputBindings>
                                 <MouseBinding MouseAction="LeftClick"
                                               Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
@@ -99,6 +117,8 @@
                             </Border.InputBindings>
                             <Grid>
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
@@ -112,67 +132,121 @@
                                            TextTrimming="CharacterEllipsis"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
 
-                                <!-- Version -->
-                                <TextBlock Grid.Row="1" Margin="0,2,0,0" FontSize="12">
+                                <!-- Version + Status -->
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock FontSize="12" Margin="0,0,10,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="{Binding LatestVersion}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LatestVersion}" Value="">
+                                                        <Setter Property="Text" Value="no version" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Border CornerRadius="4" Padding="6,1" Background="#2D7D46">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
+                                                        <Setter Property="Background" Value="#B8860B" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
+                                                        <Setter Property="Background" Value="#666" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
+                                                        <Setter Property="Background" Value="#7B68EE" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding Manifest.Status}" FontSize="10" Foreground="White" />
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Git status -->
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="#4CAF50" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                        <Setter Property="Fill" Value="#E8A317" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="Clean" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                        <Setter Property="Text"
+                                                                Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} modified'}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+
+                                <!-- Category + Type + Validation badges -->
+                                <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                        <TextBlock Text="{Binding Manifest.Category}" FontSize="10"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                        <TextBlock Text="{Binding Manifest.ProjectType}" FontSize="10"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                    <Border CornerRadius="4" Padding="6,2">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Background" Value="#1E5A8A" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="none">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
+                                                        <Setter Property="Background" Value="#C0392B" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding Manifest.ValidationSchedule}" FontSize="10" Foreground="White" />
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Notes (if present) -->
+                                <TextBlock Grid.Row="4" Margin="0,6,0,0" FontSize="11"
+                                           TextWrapping="Wrap" MaxHeight="36"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                           Text="{Binding Manifest.Notes}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
-                                            <Setter Property="Text" Value="{Binding LatestVersion}" />
-                                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding LatestVersion}" Value="">
-                                                    <Setter Property="Text" Value="no version" />
-                                                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                <DataTrigger Binding="{Binding Manifest.Notes}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
 
-                                <!-- Git status + Category in the middle area -->
-                                <StackPanel Grid.Row="2" VerticalAlignment="Center">
-                                    <!-- Git status -->
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                        <Ellipse Width="8" Height="8" Margin="0,0,6,0"
-                                                 VerticalAlignment="Center">
-                                            <Ellipse.Style>
-                                                <Style TargetType="Ellipse">
-                                                    <Setter Property="Fill" Value="#4CAF50" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
-                                                            <Setter Property="Fill" Value="#E8A317" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Ellipse.Style>
-                                        </Ellipse>
-                                        <TextBlock FontSize="12"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Text" Value="Clean" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
-                                                            <Setter Property="Text"
-                                                                    Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} modified'}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </StackPanel>
-
-                                    <!-- Category badge -->
-                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                            CornerRadius="4" Padding="8,2"
-                                            HorizontalAlignment="Left">
-                                        <TextBlock Text="{Binding Manifest.Category}"
-                                                   FontSize="11"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    </Border>
-                                </StackPanel>
-
                                 <!-- Bottom row: last commit + issues -->
-                                <DockPanel Grid.Row="3">
+                                <DockPanel Grid.Row="5" Margin="0,6,0,0">
                                     <TextBlock DockPanel.Dock="Left" FontSize="11"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                                Text="{Binding GitStatus.LastCommitDate, Converter={StaticResource RelativeTimeConverter}}" />

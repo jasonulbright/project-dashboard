@@ -25,18 +25,16 @@
         <ui:NavigationView
             x:Name="RootNavigation"
             Grid.Row="1"
-            PaneDisplayMode="LeftFluent"
-            IsBackButtonVisible="Visible">
+            PaneDisplayMode="Left"
+            IsPaneOpen="True"
+            IsBackButtonVisible="Visible"
+            OpenPaneLength="200">
 
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem
                     Content="Dashboard"
                     Icon="{ui:SymbolIcon Home24}"
                     TargetPageType="{x:Type pages:DashboardPage}" />
-                <ui:NavigationViewItem
-                    Content="Projects"
-                    Icon="{ui:SymbolIcon DocumentBulletList24}"
-                    TargetPageType="{x:Type pages:ProjectDetailPage}" />
             </ui:NavigationView.MenuItems>
 
             <ui:NavigationView.FooterMenuItems>
