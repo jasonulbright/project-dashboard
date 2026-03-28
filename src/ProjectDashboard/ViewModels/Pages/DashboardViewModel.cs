@@ -27,6 +27,7 @@ public partial class DashboardViewModel : ObservableObject
     public int IssueCount => Projects.Sum(p => p.OpenIssueCount);
 
     public IAsyncRelayCommand LoadProjectsCommand { get; }
+    public IAsyncRelayCommand ForceRefreshCommand { get; }
 
     public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService)
     {
@@ -35,6 +36,7 @@ public partial class DashboardViewModel : ObservableObject
         _settingsService = settingsService;
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
+        ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
 
         // Fire and forget load on construction
         _ = LoadProjectsCommand.ExecuteAsync(null);
@@ -106,10 +108,19 @@ public partial class DashboardViewModel : ObservableObject
     private async Task LoadProjectsAsync()
     {
         var results = await _discoveryService.DiscoverAllAsync();
+        UpdateProjectList(results);
+    }
 
+    private async Task ForceRefreshAsync()
+    {
+        var results = await _discoveryService.ForceRefreshAllAsync();
+        UpdateProjectList(results);
+    }
+
+    private void UpdateProjectList(List<ProjectInfo> results)
+    {
         Projects = new ObservableCollection<ProjectInfo>(results);
 
-        // Build categories
         var cats = results
             .Select(p => p.Manifest.Category)
             .Where(c => !string.IsNullOrWhiteSpace(c))
