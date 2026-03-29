@@ -195,31 +195,21 @@ public partial class DashboardViewModel : ObservableObject
         File.WriteAllText(Path.Combine(projectPath, "project-manifest.json"),
             JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
 
-        // git init
-        var gitInit = new ProcessStartInfo("git", "init")
+        // git init + commit on background thread
+        await Task.Run(() =>
         {
-            WorkingDirectory = projectPath,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        Process.Start(gitInit)?.WaitForExit();
+            var gitInit = Process.Start(new ProcessStartInfo("git", "init")
+                { WorkingDirectory = projectPath, UseShellExecute = false, CreateNoWindow = true });
+            gitInit?.WaitForExit();
 
-        // Initial commit
-        var gitAdd = new ProcessStartInfo("git", "add -A")
-        {
-            WorkingDirectory = projectPath,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        Process.Start(gitAdd)?.WaitForExit();
+            var gitAdd = Process.Start(new ProcessStartInfo("git", "add -A")
+                { WorkingDirectory = projectPath, UseShellExecute = false, CreateNoWindow = true });
+            gitAdd?.WaitForExit();
 
-        var gitCommit = new ProcessStartInfo("git", "commit -m \"Initial project scaffold\"")
-        {
-            WorkingDirectory = projectPath,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        Process.Start(gitCommit)?.WaitForExit();
+            var gitCommit = Process.Start(new ProcessStartInfo("git", "commit -m \"Initial project scaffold\"")
+                { WorkingDirectory = projectPath, UseShellExecute = false, CreateNoWindow = true });
+            gitCommit?.WaitForExit();
+        });
 
         // Refresh dashboard
         await ForceRefreshAsync();
