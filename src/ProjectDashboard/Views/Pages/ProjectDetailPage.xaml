@@ -41,6 +41,22 @@
                            Text="{Binding Project.FullPath}" />
             </StackPanel>
 
+            <!-- Description (from manifest) -->
+            <TextBlock Text="{Binding Project.Manifest.Description}"
+                       FontSize="12" Margin="0,2,0,0"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Project.Manifest.Description}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
             <!-- ═══ ROW 1: MANIFEST + NOTES (side by side, top priority) ═══ -->
             <Grid Margin="0,16,0,0">
                 <Grid.ColumnDefinitions>

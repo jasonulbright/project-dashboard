@@ -245,7 +245,7 @@
                                     </Border>
                                 </StackPanel>
 
-                                <!-- Git status -->
+                                <!-- Sync status -->
                                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                                     <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
                                         <Ellipse.Style>
@@ -255,6 +255,9 @@
                                                     <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
                                                         <Setter Property="Fill" Value="#E8A317" />
                                                     </DataTrigger>
+                                                    <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                        <Setter Property="Fill" Value="#C0392B" />
+                                                    </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </Ellipse.Style>
@@ -262,11 +265,14 @@
                                     <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="Clean" />
+                                                <Setter Property="Text" Value="Synced" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
                                                         <Setter Property="Text"
-                                                                Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} modified'}" />
+                                                                Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} unsynced'}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                        <Setter Property="Text" Value="No remote" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -304,13 +310,13 @@
                                         <TextBlock Text="{Binding Manifest.ValidationSchedule}" FontSize="10" Foreground="White" />
                                     </Border>
                                     <!-- Visibility badge -->
-                                    <Border CornerRadius="4" Padding="6,2">
+                                    <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
                                         <Border.Style>
                                             <Style TargetType="Border">
                                                 <Setter Property="Background" Value="#2D7D46" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
-                                                        <Setter Property="Background" Value="#8B4513" />
+                                                        <Setter Property="Background" Value="#7B68EE" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
                                                         <Setter Property="Background" Value="#555" />
@@ -320,18 +326,33 @@
                                         </Border.Style>
                                         <TextBlock Text="{Binding GitStatus.Visibility}" FontSize="10" Foreground="White" />
                                     </Border>
+                                    <!-- Tasks badge (only if tasks exist) -->
+                                    <Border CornerRadius="4" Padding="6,2">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#D4740A" />
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding TaskCount}" Value="0">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding TaskLabel}" FontSize="10" Foreground="White" />
+                                    </Border>
                                 </StackPanel>
 
-                                <!-- Notes (if present) -->
+                                <!-- Description (from manifest, replaces notes on card) -->
                                 <TextBlock Grid.Row="4" Margin="0,6,0,0" FontSize="11"
-                                           TextWrapping="Wrap" MaxHeight="36"
+                                           TextWrapping="Wrap" MaxHeight="32"
                                            TextTrimming="CharacterEllipsis"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                           Text="{Binding Manifest.Notes}">
+                                           Text="{Binding Manifest.Description}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Manifest.Notes}" Value="">
+                                                <DataTrigger Binding="{Binding Manifest.Description}" Value="">
                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                 </DataTrigger>
                                             </Style.Triggers>
