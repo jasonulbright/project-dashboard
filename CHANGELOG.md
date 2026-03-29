@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.9.0] - 2026-03-29
+
+### Added
+- App icon (blue rounded square with git branch + card grid)
+- Hidden projects now load full git/manifest data (version, sync status, visibility, notes)
+- Window state restore clamps to MinimumSize (prevents layout collapse from stale state files)
+
+### Changed
+- **Typography rationalized** -- reduced from 11 font sizes to 4 (12, 13, 14, 22). Two fonts: Segoe UI for chrome, Cascadia Code for data fields (hashes, paths, editor)
+- Sync status dot moved to its own row below title, aligned with path
+- Dashboard cards: "X unsynced" → "X uncommitted", counts modified + untracked files
+- Detail page title: 24 Bold → 22 SemiBold
+- Section headers: 15 → 14
+- Form labels (Type/Status/etc): 11 → 12
+- Body text: 12.5 → 13
+
 ## [1.8.0] - 2026-03-29
 
 ### Added

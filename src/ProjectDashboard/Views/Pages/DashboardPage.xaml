@@ -270,7 +270,7 @@
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
                                                             <Setter Property="Text"
-                                                                    Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} unsynced'}" />
+                                                                    Value="{Binding GitStatus.TotalChanges, StringFormat='{}{0} uncommitted'}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
                                                             <Setter Property="Text" Value="No remote" />
