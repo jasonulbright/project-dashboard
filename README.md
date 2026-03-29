@@ -4,6 +4,8 @@ A Fluent 2 WPF desktop application for managing and monitoring local git reposit
 
 Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dependencies, no telemetry. Works fully offline with graceful GitHub degradation.
 
+![Project Dashboard](screenshot.png)
+
 ## Features
 
 - **Dashboard view** -- card grid with description, version, sync status indicator, category, project type, validation schedule, visibility (public/private/local), and tasks badge
