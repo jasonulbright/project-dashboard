@@ -6,7 +6,8 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 
 ## Features
 
-- **Dashboard view** -- card grid with description, version, sync status (green/yellow/red), category, project type, validation schedule, visibility (public/private/local), and tasks badge
+- **Dashboard view** -- card grid with description, version, sync status indicator, category, project type, validation schedule, visibility (public/private/local), and tasks badge
+  - Sync indicator: green dot = committed and pushed, yellow dot = uncommitted changes, red dot = no remote configured
 - **Project detail view** -- manifest editor, notes, git commit history, GitHub issues, and collapsible README/CHANGELOG with markdown rendering (headers, bold, italic, code blocks, bullets, numbered lists, images, clickable links, tables)
 - **Sidebar navigation** -- expandable project list with direct click-to-detail, hidden projects folder
 - **New Project** -- creates folder with README, CHANGELOG, .gitignore, manifest, git init
