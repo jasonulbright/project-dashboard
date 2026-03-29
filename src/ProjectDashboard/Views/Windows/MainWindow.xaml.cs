@@ -56,7 +56,15 @@ public partial class MainWindow : INavigationWindow
                     e.Handled = true;
                     return;
                 }
-                element = System.Windows.Media.VisualTreeHelper.GetParent(element);
+                // VisualTreeHelper.GetParent throws on non-Visual elements (Run, Span, etc.)
+                // Use LogicalTreeHelper as fallback for document elements
+                try
+                {
+                    element = element is System.Windows.Media.Visual
+                        ? System.Windows.Media.VisualTreeHelper.GetParent(element)
+                        : LogicalTreeHelper.GetParent(element);
+                }
+                catch { break; }
             }
         };
     }
@@ -112,16 +120,6 @@ public partial class MainWindow : INavigationWindow
         {
             Dispatcher.Invoke(() => RefreshSidebarProjects(dashVm));
         };
-
-        // Handle sidebar project clicks via SelectionChanged
-        RootNavigation.SelectionChanged += (_, _) =>
-        {
-            if (RootNavigation.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
-            {
-                DashboardViewModel.SelectedProject = proj;
-                _navigationService.Navigate(typeof(ProjectDetailPage));
-            }
-        };
     }
 
     private void RefreshSidebarProjects(DashboardViewModel dashVm)
@@ -151,6 +149,17 @@ public partial class MainWindow : INavigationWindow
             };
 
             projectsParent.MenuItems.Add(navItem);
+        }
+    }
+
+    private void OnNavigationSelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Wpf.Ui.Controls.NavigationView navigationView)
+            return;
+
+        if (navigationView.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
+        {
+            DashboardViewModel.SelectedProject = proj;
         }
     }
 

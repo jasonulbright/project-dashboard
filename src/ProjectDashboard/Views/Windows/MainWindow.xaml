@@ -29,7 +29,8 @@
             PaneDisplayMode="Left"
             IsPaneOpen="True"
             IsBackButtonVisible="Visible"
-            OpenPaneLength="220">
+            OpenPaneLength="220"
+            SelectionChanged="OnNavigationSelectionChanged">
 
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem
