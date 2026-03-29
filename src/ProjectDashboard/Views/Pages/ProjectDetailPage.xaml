@@ -4,7 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
-    xmlns:local="clr-namespace:ProjectDashboard.ViewModels.Pages">
+    xmlns:local="clr-namespace:ProjectDashboard.ViewModels.Pages"
+    xmlns:models="clr-namespace:ProjectDashboard.Models">
 
     <Page.Resources>
         <helpers:RelativeTimeConverter x:Key="RelativeTimeConverter" />
@@ -109,7 +110,7 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Notes (takes remaining width, multi-line, rendered like markdown) -->
+                <!-- Notes (takes remaining width, icon-prefixed lines) -->
                 <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
                         CornerRadius="8" Padding="20,16">
                     <Grid>
@@ -117,8 +118,56 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="Notes" FontWeight="SemiBold" FontSize="15"
-                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,8" />
+                        <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                            <TextBlock DockPanel.Dock="Left" Text="Notes" FontWeight="SemiBold" FontSize="15"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                       Padding="6,2" FontSize="11"
+                                       Icon="{ui:SymbolIcon Edit24}"
+                                       Command="{Binding ToggleEditNotesCommand}">
+                                <ui:Button.Content>
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="Edit" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                                        <Setter Property="Text" Value="Done" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </ui:Button.Content>
+                            </ui:Button>
+                        </DockPanel>
+
+                        <!-- Rendered view (icons + text) -->
+                        <ItemsControl Grid.Row="1" ItemsSource="{Binding NoteLines}">
+                            <ItemsControl.Style>
+                                <Style TargetType="ItemsControl">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ItemsControl.Style>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:NoteLine}">
+                                    <DockPanel Margin="0,2">
+                                        <ui:SymbolIcon DockPanel.Dock="Left" Symbol="{Binding Icon}" FontSize="14"
+                                                       Foreground="{Binding IconBrush}" Margin="0,3,8,0"
+                                                       VerticalAlignment="Top" />
+                                        <TextBlock Text="{Binding Text}" FontSize="12.5"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Raw editor (toggle) -->
                         <TextBox Grid.Row="1"
                                  Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
                                  AcceptsReturn="True"
@@ -128,7 +177,20 @@
                                  FontFamily="Cascadia Code,Consolas,Courier New"
                                  FontSize="12.5"
                                  BorderThickness="0"
-                                 Background="Transparent" />
+                                 Background="Transparent"
+                                 Foreground="White"
+                                 CaretBrush="White">
+                            <TextBox.Style>
+                                <Style TargetType="TextBox">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBox.Style>
+                        </TextBox>
                     </Grid>
                 </Border>
             </Grid>

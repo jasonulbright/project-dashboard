@@ -28,9 +28,10 @@ public partial class DashboardViewModel : ObservableObject
 
     public int TotalCount => Projects.Count;
     public int DirtyCount => Projects.Count(p => p.GitStatus.IsDirty);
-    public int TodoCount => Projects.Count(p =>
-        p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase) ||
-        p.Manifest.Notes.Contains("TASK:", StringComparison.OrdinalIgnoreCase));
+    public int TodoCount => Projects.Count(p => p.TaskCount > 0 || p.BugCount > 0 || p.WaitCount > 0);
+    public int TotalBugCount => Projects.Sum(p => p.BugCount);
+    public int TotalWaitCount => Projects.Sum(p => p.WaitCount);
+    public int TotalTaskCount => Projects.Sum(p => p.TaskCount);
     public int IssueCount => Projects.Sum(p => p.OpenIssueCount);
     public int HiddenCount
     {
@@ -359,6 +360,9 @@ public partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(TotalCount));
         OnPropertyChanged(nameof(DirtyCount));
         OnPropertyChanged(nameof(TodoCount));
+        OnPropertyChanged(nameof(TotalTaskCount));
+        OnPropertyChanged(nameof(TotalBugCount));
+        OnPropertyChanged(nameof(TotalWaitCount));
         OnPropertyChanged(nameof(IssueCount));
         OnPropertyChanged(nameof(HiddenCount));
     }
@@ -371,9 +375,7 @@ public partial class DashboardViewModel : ObservableObject
         if (ActiveFilter == "dirty")
             filtered = filtered.Where(p => p.GitStatus.IsDirty);
         else if (ActiveFilter == "todos")
-            filtered = filtered.Where(p =>
-                p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase) ||
-                p.Manifest.Notes.Contains("TASK:", StringComparison.OrdinalIgnoreCase));
+            filtered = filtered.Where(p => p.TaskCount > 0 || p.BugCount > 0 || p.WaitCount > 0);
         else if (ActiveFilter == "issues")
             filtered = filtered.Where(p => p.OpenIssueCount >= 1);
 

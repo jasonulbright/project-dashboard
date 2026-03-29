@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.8.0] - 2026-03-29
+
+### Added
+- Note prefix icons on dashboard cards: TASK (checkbox, blue), BUG (bug, red), WAIT (clock, amber) with counts, right-justified on sync status row
+- Icon-prefixed notes rendering on detail page with Edit/Done toggle
+- NoteLine model: parses TASK, BUG, WAIT, PLAN, INFO prefixes with Fluent icons and colors
+- Sync Now button in Settings (force refresh, bypasses cache)
+
+### Changed
+- Dropped TODO prefix support (use TASK instead)
+- Local repo visibility badge: red warning (#C0392B) instead of gray
+- Notes editor: white text and caret for dark mode readability
+- Detail page icons: 3px top margin for baseline alignment with text
+- Tasks summary badge now counts projects with any actionable prefix (TASK/BUG/WAIT)
+
+### Removed
+- Orange "N tasks" text badge from card badge row (replaced by icon row)
+
 ## [1.7.0] - 2026-03-29
 
 ### Added

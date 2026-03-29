@@ -22,6 +22,8 @@ public partial class ProjectDetailViewModel : ObservableObject
     [ObservableProperty] private string _selectedCategory = "Uncategorized";
     [ObservableProperty] private string _validationSchedule = "none";
     [ObservableProperty] private string _notes = "";
+    [ObservableProperty] private bool _isEditingNotes;
+    [ObservableProperty] private ObservableCollection<NoteLine> _noteLines = [];
 
     public static List<string> ProjectTypes { get; } = ["mecm-tool", "powershell-script", "web-app", "game", "framework", "library", "dashboard", "unknown"];
     public static List<string> Statuses { get; } = ["active", "maintenance", "archived", "experimental"];
@@ -58,6 +60,20 @@ public partial class ProjectDetailViewModel : ObservableObject
         var url = $"https://github.com/{Project.GitHubSlug}/issues/{issue.Number}";
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
+
+    partial void OnNotesChanged(string value) => ParseNoteLines();
+
+    private void ParseNoteLines()
+    {
+        var lines = (Notes ?? "").Split('\n')
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .Select(NoteLine.Parse)
+            .ToList();
+        NoteLines = new ObservableCollection<NoteLine>(lines);
+    }
+
+    [RelayCommand]
+    private void ToggleEditNotes() => IsEditingNotes = !IsEditingNotes;
 
     public async Task SetProjectAsync(ProjectInfo project)
     {
