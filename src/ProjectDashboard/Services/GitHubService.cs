@@ -44,6 +44,21 @@ public class GitHubService
         }
     }
 
+    public async Task<string> GetRepoVisibilityAsync(string repoSlug, CancellationToken ct = default)
+    {
+        try
+        {
+            var output = await RunGhAsync(
+                $"repo view {repoSlug} --json visibility --jq .visibility", ct);
+            var vis = output?.Trim().ToLowerInvariant() ?? "";
+            return vis is "public" or "private" or "internal" ? vis : "local";
+        }
+        catch
+        {
+            return "local";
+        }
+    }
+
     public async Task<int> GetOpenIssueCountAsync(string repoSlug, CancellationToken ct = default)
     {
         try

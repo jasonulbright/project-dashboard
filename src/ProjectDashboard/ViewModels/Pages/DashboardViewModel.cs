@@ -30,6 +30,17 @@ public partial class DashboardViewModel : ObservableObject
     public int DirtyCount => Projects.Count(p => p.GitStatus.IsDirty);
     public int TodoCount => Projects.Count(p => p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase));
     public int IssueCount => Projects.Sum(p => p.OpenIssueCount);
+    public int HiddenCount
+    {
+        get
+        {
+            var s = _settingsService.Load();
+            var root = s.ProjectsRootPath;
+            return s.ExcludedDirectories.Count(d =>
+                Directory.Exists(Path.Combine(root, d)) &&
+                Directory.Exists(Path.Combine(root, d, ".git")));
+        }
+    }
 
     public IAsyncRelayCommand LoadProjectsCommand { get; }
     public IAsyncRelayCommand ForceRefreshCommand { get; }
@@ -69,7 +80,8 @@ public partial class DashboardViewModel : ObservableObject
         _refreshTimer.Start();
     }
 
-    [ObservableProperty] private string _activeFilter = "all"; // "all", "dirty", "issues"
+    [ObservableProperty] private string _activeFilter = "all"; // "all", "dirty", "todos", "issues", "hidden"
+    [ObservableProperty] private ObservableCollection<ProjectInfo> _hiddenProjects = [];
 
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
@@ -100,6 +112,12 @@ public partial class DashboardViewModel : ObservableObject
         SelectedCategory = "All";
         SearchText = "";
         ApplyFilters();
+    }
+
+    [RelayCommand]
+    private void FilterHidden()
+    {
+        ShowHiddenProjects();
     }
 
     [RelayCommand]
@@ -247,6 +265,63 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task HideProject(ProjectInfo? project)
+    {
+        if (project is null) return;
+
+        var settings = _settingsService.Load();
+        var excluded = new List<string>(settings.ExcludedDirectories) { project.DirectoryName };
+        settings.ExcludedDirectories = excluded.Distinct().ToArray();
+        _settingsService.Save(settings);
+
+        await ForceRefreshAsync();
+    }
+
+    [RelayCommand]
+    private async Task UnhideProject(ProjectInfo? project)
+    {
+        if (project is null) return;
+
+        var settings = _settingsService.Load();
+        var excluded = new List<string>(settings.ExcludedDirectories);
+        excluded.Remove(project.DirectoryName);
+        settings.ExcludedDirectories = excluded.ToArray();
+        _settingsService.Save(settings);
+
+        // Refresh hidden list and main list
+        ShowHiddenProjects();
+        await ForceRefreshAsync();
+    }
+
+    public async void ShowHiddenProjects()
+    {
+        ActiveFilter = "hidden";
+
+        var settings = _settingsService.Load();
+        var rootPath = settings.ProjectsRootPath;
+        var excluded = new HashSet<string>(settings.ExcludedDirectories, StringComparer.OrdinalIgnoreCase);
+
+        var hiddenDirs = Directory.GetDirectories(rootPath)
+            .Where(d => excluded.Contains(Path.GetFileName(d)) && Directory.Exists(Path.Combine(d, ".git")))
+            .ToList();
+
+        var hiddenList = new List<ProjectInfo>();
+        foreach (var dir in hiddenDirs)
+        {
+            var dirName = Path.GetFileName(dir);
+            hiddenList.Add(new ProjectInfo
+            {
+                DirectoryName = dirName,
+                FullPath = dir,
+                DisplayName = dirName,
+                Manifest = new ProjectManifest { Status = "hidden" }
+            });
+        }
+
+        FilteredProjects = new ObservableCollection<ProjectInfo>(hiddenList.OrderBy(p => p.DisplayName));
+    }
+
+    [RelayCommand]
     private void OpenFolder(ProjectInfo? project)
     {
         if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
@@ -283,6 +358,7 @@ public partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(DirtyCount));
         OnPropertyChanged(nameof(TodoCount));
         OnPropertyChanged(nameof(IssueCount));
+        OnPropertyChanged(nameof(HiddenCount));
     }
 
     private void ApplyFilters()
