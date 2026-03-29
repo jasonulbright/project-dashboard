@@ -63,20 +63,69 @@ public partial class MainWindow : INavigationWindow
 
     private void FluentWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        // Restore window state
+        var settingsService = _serviceProvider.GetRequiredService<SettingsService>();
+        var settings = settingsService.Load();
+        if (settings.WindowLeft >= 0 && settings.WindowTop >= 0)
+        {
+            Left = settings.WindowLeft;
+            Top = settings.WindowTop;
+        }
+        Width = settings.WindowWidth;
+        Height = settings.WindowHeight;
+        if (settings.WindowMaximized)
+            WindowState = WindowState.Maximized;
+
+        // Save on close
+        Closing += (_, _) =>
+        {
+            var s = settingsService.Load();
+            s.WindowMaximized = WindowState == WindowState.Maximized;
+            if (WindowState == WindowState.Normal)
+            {
+                s.WindowLeft = Left;
+                s.WindowTop = Top;
+                s.WindowWidth = Width;
+                s.WindowHeight = Height;
+            }
+            settingsService.Save(s);
+        };
+
         _ = PopulateSidebarWhenReady();
     }
 
     private async Task PopulateSidebarWhenReady()
     {
-        // Wait for DashboardViewModel to finish loading projects
         var dashVm = _serviceProvider.GetRequiredService<DashboardViewModel>();
-        for (int i = 0; i < 60; i++) // up to 30 seconds
+
+        // Wait for initial load
+        for (int i = 0; i < 60; i++)
         {
             if (dashVm.Projects.Count > 0) break;
             await Task.Delay(500);
         }
 
-        // Find the "Projects" parent NavigationViewItem
+        RefreshSidebarProjects(dashVm);
+
+        // Re-populate when projects collection changes (after refresh)
+        dashVm.Projects.CollectionChanged += (_, _) =>
+        {
+            Dispatcher.Invoke(() => RefreshSidebarProjects(dashVm));
+        };
+
+        // Handle sidebar project clicks via SelectionChanged
+        RootNavigation.SelectionChanged += (_, _) =>
+        {
+            if (RootNavigation.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
+            {
+                DashboardViewModel.SelectedProject = proj;
+                _navigationService.Navigate(typeof(ProjectDetailPage));
+            }
+        };
+    }
+
+    private void RefreshSidebarProjects(DashboardViewModel dashVm)
+    {
         NavigationViewItem? projectsParent = null;
         foreach (var item in RootNavigation.MenuItems)
         {
@@ -93,7 +142,7 @@ public partial class MainWindow : INavigationWindow
 
         foreach (var project in dashVm.Projects.OrderBy(p => p.DisplayName))
         {
-            var item = new NavigationViewItem
+            var navItem = new NavigationViewItem
             {
                 Content = project.DisplayName,
                 Icon = new SymbolIcon(project.GitStatus.IsDirty ? SymbolRegular.CircleHalfFill24 : SymbolRegular.CheckmarkCircle24),
@@ -101,18 +150,8 @@ public partial class MainWindow : INavigationWindow
                 TargetPageType = typeof(ProjectDetailPage)
             };
 
-            projectsParent.MenuItems.Add(item);
+            projectsParent.MenuItems.Add(navItem);
         }
-
-        // Handle sidebar project clicks via SelectionChanged
-        RootNavigation.SelectionChanged += (_, _) =>
-        {
-            if (RootNavigation.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
-            {
-                DashboardViewModel.SelectedProject = proj;
-                _navigationService.Navigate(typeof(ProjectDetailPage));
-            }
-        };
     }
 
     public INavigationView GetNavigation() => RootNavigation;

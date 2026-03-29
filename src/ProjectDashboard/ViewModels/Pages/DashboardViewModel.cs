@@ -18,6 +18,8 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private ObservableCollection<string> _categories = ["All"];
     [ObservableProperty] private string _selectedCategory = "All";
     [ObservableProperty] private string _searchText = "";
+    [ObservableProperty] private ObservableCollection<string> _sortOptions = ["Name", "Last Commit", "Status", "Dirty First", "Category"];
+    [ObservableProperty] private string _selectedSort = "Name";
 
     /// <summary>Used to pass the selected project to ProjectDetailPage.</summary>
     public static ProjectInfo? SelectedProject { get; set; }
@@ -69,6 +71,7 @@ public partial class DashboardViewModel : ObservableObject
 
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
+    partial void OnSelectedSortChanged(string value) => ApplyFilters();
 
     [RelayCommand]
     private void FilterAll()
@@ -202,6 +205,16 @@ public partial class DashboardViewModel : ObservableObject
                 p.Description.Contains(term, StringComparison.OrdinalIgnoreCase) ||
                 p.DirectoryName.Contains(term, StringComparison.OrdinalIgnoreCase));
         }
+
+        // Sort
+        filtered = SelectedSort switch
+        {
+            "Last Commit" => filtered.OrderByDescending(p => p.GitStatus.LastCommitDate),
+            "Status" => filtered.OrderBy(p => p.Manifest.Status).ThenBy(p => p.DisplayName),
+            "Dirty First" => filtered.OrderByDescending(p => p.GitStatus.IsDirty).ThenBy(p => p.DisplayName),
+            "Category" => filtered.OrderBy(p => p.Manifest.Category).ThenBy(p => p.DisplayName),
+            _ => filtered.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+        };
 
         FilteredProjects = new ObservableCollection<ProjectInfo>(filtered);
     }
