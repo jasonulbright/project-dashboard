@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.4.0] - 2026-03-29
+
+### Added
+- Fenced code blocks with monospace font and background highlight
+- Numbered lists (1. 2. 3.) with proper indentation
+- *italic* and ~~strikethrough~~ inline formatting
+- #### h4 header support
+- Clickable markdown links (open in browser)
+- Inline formatting inside headers
+- Image support: local files and remote URLs
+- Global error handler (shows dialog instead of crashing)
+- Read limit increased from 80 to 500 lines for README/CHANGELOG
+
+### Fixed
+- Detail page crash: SetProjectAsync returns Task (was async void race condition)
+- Image rendering crash: BitmapImage.Freeze() for cross-thread access
+- Markdown rendering wrapped in Dispatcher.Invoke with plain-text fallback
+
 ## [1.3.0] - 2026-03-28
 
 ### Added
