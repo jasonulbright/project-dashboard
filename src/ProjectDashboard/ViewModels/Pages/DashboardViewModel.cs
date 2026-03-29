@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
 using System.Windows.Threading;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
@@ -107,6 +109,120 @@ public partial class DashboardViewModel : ObservableObject
         SelectedCategory = "All";
         SearchText = "";
         ApplyFilters();
+    }
+
+    [RelayCommand]
+    private async Task NewProject()
+    {
+        var dialog = new Wpf.Ui.Controls.MessageBox
+        {
+            Title = "New Project",
+            Content = new System.Windows.Controls.StackPanel
+            {
+                Children =
+                {
+                    new System.Windows.Controls.TextBlock
+                    {
+                        Text = "Project name (folder name, lowercase, no spaces):",
+                        Margin = new System.Windows.Thickness(0, 0, 0, 8)
+                    },
+                    new Wpf.Ui.Controls.TextBox
+                    {
+                        Name = "ProjectNameBox",
+                        PlaceholderText = "my-new-project",
+                        MinWidth = 300
+                    }
+                }
+            },
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel"
+        };
+
+        var result = await dialog.ShowDialogAsync();
+        if (result != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+        // Extract the text from the TextBox inside the dialog
+        var stack = dialog.Content as System.Windows.Controls.StackPanel;
+        var textBox = stack?.Children[1] as Wpf.Ui.Controls.TextBox;
+        var projectName = textBox?.Text?.Trim() ?? "";
+
+        if (string.IsNullOrWhiteSpace(projectName)) return;
+
+        // Sanitize: lowercase, replace spaces with hyphens, alphanumeric + hyphens only
+        projectName = System.Text.RegularExpressions.Regex.Replace(
+            projectName.ToLowerInvariant().Replace(' ', '-'), @"[^a-z0-9\-]", "");
+
+        if (string.IsNullOrWhiteSpace(projectName)) return;
+
+        var settings = _settingsService.Load();
+        var projectPath = Path.Combine(settings.ProjectsRootPath, projectName);
+
+        if (Directory.Exists(projectPath))
+        {
+            await new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "Error",
+                Content = $"Folder already exists: {projectPath}",
+                CloseButtonText = "OK"
+            }.ShowDialogAsync();
+            return;
+        }
+
+        // Create folder structure
+        Directory.CreateDirectory(projectPath);
+
+        // README
+        File.WriteAllText(Path.Combine(projectPath, "README.md"),
+            $"# {projectName}\n\n");
+
+        // CHANGELOG
+        File.WriteAllText(Path.Combine(projectPath, "CHANGELOG.md"),
+            $"# Changelog\n\n## [0.1.0] - {DateTime.Now:yyyy-MM-dd}\n\n### Added\n- Initial project scaffold\n");
+
+        // .gitignore
+        File.WriteAllText(Path.Combine(projectPath, ".gitignore"),
+            "project-manifest.json\n");
+
+        // project-manifest.json
+        var manifest = new ProjectManifest
+        {
+            ProjectType = "unknown",
+            Status = "experimental",
+            Category = "Uncategorized",
+            ValidationSchedule = "none",
+            Notes = ""
+        };
+        File.WriteAllText(Path.Combine(projectPath, "project-manifest.json"),
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+
+        // git init
+        var gitInit = new ProcessStartInfo("git", "init")
+        {
+            WorkingDirectory = projectPath,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        Process.Start(gitInit)?.WaitForExit();
+
+        // Initial commit
+        var gitAdd = new ProcessStartInfo("git", "add -A")
+        {
+            WorkingDirectory = projectPath,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        Process.Start(gitAdd)?.WaitForExit();
+
+        var gitCommit = new ProcessStartInfo("git", "commit -m \"Initial project scaffold\"")
+        {
+            WorkingDirectory = projectPath,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        Process.Start(gitCommit)?.WaitForExit();
+
+        // Refresh dashboard
+        await ForceRefreshAsync();
     }
 
     [RelayCommand]

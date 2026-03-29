@@ -75,6 +75,11 @@
                        Icon="{ui:SymbolIcon ArrowSync24}"
                        Command="{Binding ForceRefreshCommand}"
                        Margin="8,0,0,0" />
+
+            <ui:Button Content="New Project"
+                       Icon="{ui:SymbolIcon Add24}"
+                       Command="{Binding NewProjectCommand}"
+                       Margin="8,0,0,0" />
         </StackPanel>
 
         <!-- Filter + Sort bar -->

@@ -51,7 +51,7 @@ public partial class App : Application
                 // Pages
                 services.AddSingleton<DashboardPage>();
                 services.AddSingleton<DashboardViewModel>();
-                services.AddSingleton<ProjectDetailPage>();
+                services.AddTransient<ProjectDetailPage>();
                 services.AddSingleton<ProjectDetailViewModel>();
                 services.AddSingleton<SettingsPage>();
                 services.AddSingleton<SettingsViewModel>();
