@@ -8,18 +8,19 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 
 ## Features
 
-- **Dashboard view** -- card grid with description, version, sync status indicator, category, project type, validation schedule, visibility (public/private/local), and tasks badge
+- **Dashboard view** -- card grid with description, version, sync status indicator, category, project type, validation schedule, visibility (public/private/local), and note prefix icons (TASK/BUG/WAIT with counts)
   - Sync indicator: green dot = committed and pushed, yellow dot = uncommitted changes, red dot = no remote configured
-- **Project detail view** -- manifest editor, notes, git commit history, GitHub issues, and collapsible README/CHANGELOG with markdown rendering (headers, bold, italic, code blocks, bullets, numbered lists, images, clickable links, tables)
+  - Visibility badge: green = public, purple = private, red = local (no remote)
+- **Project detail view** -- manifest editor, icon-prefixed notes with Edit/Done toggle, git commit history, GitHub issues, and collapsible README/CHANGELOG with markdown rendering (headers, bold, italic, code blocks, bullets, numbered lists, images, clickable links, tables)
 - **Sidebar navigation** -- expandable project list with direct click-to-detail, hidden projects folder
 - **New Project** -- creates folder with README, CHANGELOG, .gitignore, manifest, git init
 - **Hidden projects** -- right-click hide/unhide, filter badge, sidebar nav item
 - **Sorting** -- by name, last commit, status, dirty first, category
 - **Filtering** -- by category, search text, and clickable summary badges (Total, Dirty, Tasks, Issues, Hidden)
-- **Manifest system** -- per-project `project-manifest.json` with description, project type, status, category, validation schedule, and notes (TODO/TASK/INFO/BUG prefixes)
+- **Manifest system** -- per-project `project-manifest.json` with description, project type, status, category, validation schedule, and notes (TASK/BUG/WAIT/PLAN/INFO prefixes)
 - **GitHub integration** -- repo visibility, open issues, clickable commit hashes and issue numbers (open in browser), via `gh` CLI
 - **Window state** -- size, position, and pane collapse state persisted across restarts
-- **Discovery cache** -- instant relaunch from cached data, manual refresh bypasses cache
+- **Discovery cache** -- instant relaunch from cached data, manual refresh bypasses cache, Sync Now button in Settings
 - **Error resilience** -- global error handler shows dialog instead of crashing
 
 ## Requirements
@@ -55,7 +56,7 @@ Each repo can optionally contain a `project-manifest.json` at its root. The dash
   "Status": "active",
   "Category": "MECM",
   "ValidationSchedule": "weekly",
-  "Notes": "TODO: PSADT scaffolding\nINFO: 115 packagers, schema v2"
+  "Notes": "TASK: PSADT scaffolding\nINFO: 115 packagers, schema v2"
 }
 ```
 
@@ -66,7 +67,7 @@ Each repo can optionally contain a `project-manifest.json` at its root. The dash
 | Status | active, maintenance, archived, experimental |
 | Category | MECM, Web, Games, Infrastructure, Utilities, Uncategorized |
 | ValidationSchedule | daily, weekly, monthly, none |
-| Notes | Newline-separated entries with prefixes: TODO:, TASK:, BUG:, INFO: |
+| Notes | Newline-separated entries with prefixes: TASK:, BUG:, WAIT:, PLAN:, INFO: |
 
 Edit manifests directly in the Project Detail view.
 
@@ -75,7 +76,7 @@ Edit manifests directly in the Project Detail view.
 ```
 src/ProjectDashboard/
     App.xaml(.cs)              # DI host, theme resources
-    Models/                    # ProjectInfo, GitStatus, ProjectManifest, AppSettings
+    Models/                    # ProjectInfo, GitStatus, ProjectManifest, NoteLine, AppSettings
     Services/                  # GitService, GitHubService, ProjectDiscoveryService, MarkdownService
     ViewModels/                # MVVM ViewModels (CommunityToolkit.Mvvm)
     Views/Windows/             # FluentWindow with NavigationView

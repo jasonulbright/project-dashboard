@@ -19,11 +19,14 @@ public partial class ProjectInfo : ObservableObject
     [ObservableProperty] private List<GitCommit> _recentCommits = [];
     [ObservableProperty] private List<GitHubIssue> _issues = [];
 
-    public int TaskCount => string.IsNullOrEmpty(Manifest.Notes) ? 0 :
-        Manifest.Notes.Split('\n').Count(l => l.TrimStart().StartsWith("TODO:", StringComparison.OrdinalIgnoreCase) ||
-                                               l.TrimStart().StartsWith("TASK:", StringComparison.OrdinalIgnoreCase));
+    public int TaskCount => CountNotePrefix("TASK:");
+    public int BugCount => CountNotePrefix("BUG:");
+    public int WaitCount => CountNotePrefix("WAIT:");
+    public int PlanCount => CountNotePrefix("PLAN:");
 
-    public string TaskLabel => TaskCount == 1 ? "1 task" : $"{TaskCount} tasks";
+    private int CountNotePrefix(string prefix) =>
+        string.IsNullOrEmpty(Manifest.Notes) ? 0 :
+        Manifest.Notes.Split('\n').Count(l => l.TrimStart().StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
     public string GitHubSlug
     {

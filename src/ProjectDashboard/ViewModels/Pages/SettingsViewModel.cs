@@ -7,17 +7,20 @@ public partial class SettingsViewModel : ObservableObject
 {
     private readonly SettingsService _settingsService;
     private readonly GitHubService _gitHubService;
+    private readonly ProjectDiscoveryService _discoveryService;
 
     [ObservableProperty] private ApplicationTheme _currentTheme = ApplicationTheme.Dark;
     [ObservableProperty] private string _projectsRootPath = "";
     [ObservableProperty] private int _refreshIntervalSeconds = 300;
     [ObservableProperty] private string _excludedDirectories = "";
     [ObservableProperty] private string _gitHubStatus = "Checking...";
+    [ObservableProperty] private string _syncStatus = "";
 
-    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService)
+    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, ProjectDiscoveryService discoveryService)
     {
         _settingsService = settingsService;
         _gitHubService = gitHubService;
+        _discoveryService = discoveryService;
 
         LoadSettings();
         _ = CheckGitHubStatusAsync();
@@ -70,6 +73,14 @@ public partial class SettingsViewModel : ObservableObject
         };
 
         _settingsService.Save(settings);
+    }
+
+    [RelayCommand]
+    private async Task ForceSync()
+    {
+        SyncStatus = "Syncing...";
+        await _discoveryService.ForceRefreshAllAsync();
+        SyncStatus = $"Synced at {DateTime.Now:HH:mm:ss}";
     }
 
     [RelayCommand]

@@ -245,40 +245,94 @@
                                     </Border>
                                 </StackPanel>
 
-                                <!-- Sync status -->
-                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
-                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
-                                        <Ellipse.Style>
-                                            <Style TargetType="Ellipse">
-                                                <Setter Property="Fill" Value="#4CAF50" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
-                                                        <Setter Property="Fill" Value="#E8A317" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
-                                                        <Setter Property="Fill" Value="#C0392B" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Ellipse.Style>
-                                    </Ellipse>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="Synced" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
-                                                        <Setter Property="Text"
-                                                                Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} unsynced'}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
-                                                        <Setter Property="Text" Value="No remote" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </StackPanel>
+                                <!-- Sync status + note prefix icons -->
+                                <DockPanel Grid.Row="2" Margin="0,6,0,0">
+                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                                            <Ellipse.Style>
+                                                <Style TargetType="Ellipse">
+                                                    <Setter Property="Fill" Value="#4CAF50" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Fill" Value="#E8A317" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                            <Setter Property="Fill" Value="#C0392B" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Ellipse.Style>
+                                        </Ellipse>
+                                        <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Synced" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Text"
+                                                                    Value="{Binding GitStatus.ModifiedCount, StringFormat='{}{0} unsynced'}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                            <Setter Property="Text" Value="No remote" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <!-- Note prefix icons (right-justified) -->
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <!-- TASK icon + count -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                    ToolTip="{Binding TaskCount, StringFormat='{}{0} task(s)'}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding TaskCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ui:SymbolIcon Symbol="CheckboxUnchecked24" FontSize="14" Foreground="#5B9BD5" />
+                                            <TextBlock Text="{Binding TaskCount}" FontSize="11" Foreground="#5B9BD5"
+                                                       Margin="2,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <!-- BUG icon + count -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                    ToolTip="{Binding BugCount, StringFormat='{}{0} bug(s)'}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding BugCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ui:SymbolIcon Symbol="Bug24" FontSize="14" Foreground="#E05252" />
+                                            <TextBlock Text="{Binding BugCount}" FontSize="11" Foreground="#E05252"
+                                                       Margin="2,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <!-- WAIT icon + count -->
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                                    ToolTip="{Binding WaitCount, StringFormat='{}{0} waiting'}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding WaitCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ui:SymbolIcon Symbol="Clock24" FontSize="14" Foreground="#E8A317" />
+                                            <TextBlock Text="{Binding WaitCount}" FontSize="11" Foreground="#E8A317"
+                                                       Margin="2,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DockPanel>
 
                                 <!-- Category + Type + Validation + Visibility badges -->
                                 <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
@@ -319,27 +373,12 @@
                                                         <Setter Property="Background" Value="#7B68EE" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
-                                                        <Setter Property="Background" Value="#555" />
+                                                        <Setter Property="Background" Value="#C0392B" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="{Binding GitStatus.Visibility}" FontSize="10" Foreground="White" />
-                                    </Border>
-                                    <!-- Tasks badge (only if tasks exist) -->
-                                    <Border CornerRadius="4" Padding="6,2">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="#D4740A" />
-                                                <Setter Property="Visibility" Value="Visible" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding TaskCount}" Value="0">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="{Binding TaskLabel}" FontSize="10" Foreground="White" />
                                     </Border>
                                 </StackPanel>
 
