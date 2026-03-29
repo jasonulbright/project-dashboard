@@ -65,7 +65,7 @@ public static class MarkdownService
         return "";
     }
 
-    public static string ReadFileHead(string filePath, int lines = 80)
+    public static string ReadFileHead(string filePath, int lines = 500)
     {
         if (!File.Exists(filePath)) return "";
 

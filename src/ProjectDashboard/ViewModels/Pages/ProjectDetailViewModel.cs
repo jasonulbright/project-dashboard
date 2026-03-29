@@ -59,7 +59,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
-    public async void SetProject(ProjectInfo project)
+    public async Task SetProjectAsync(ProjectInfo project)
     {
         Project = project;
 
@@ -67,10 +67,10 @@ public partial class ProjectDetailViewModel : ObservableObject
         var refreshed = await _discoveryService.RefreshProjectAsync(project);
         Project = refreshed;
 
-        ReadmeText = refreshed.ReadmeContent;
-        ChangelogText = refreshed.ChangelogContent;
-        Commits = new ObservableCollection<GitCommit>(refreshed.RecentCommits);
-        Issues = new ObservableCollection<GitHubIssue>(refreshed.Issues);
+        ReadmeText = refreshed.ReadmeContent ?? "";
+        ChangelogText = refreshed.ChangelogContent ?? "";
+        Commits = new ObservableCollection<GitCommit>(refreshed.RecentCommits ?? []);
+        Issues = new ObservableCollection<GitHubIssue>(refreshed.Issues ?? []);
 
         SelectedProjectType = refreshed.Manifest.ProjectType;
         SelectedStatus = refreshed.Manifest.Status;
@@ -82,7 +82,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     private async Task LoadDetailsAsync()
     {
         if (Project is null) return;
-        SetProject(Project);
+        await SetProjectAsync(Project);
     }
 
     private async Task SaveManifestAsync()
