@@ -312,13 +312,10 @@ public partial class DashboardViewModel : ObservableObject
         foreach (var dir in hiddenDirs)
         {
             var dirName = Path.GetFileName(dir);
-            hiddenList.Add(new ProjectInfo
-            {
-                DirectoryName = dirName,
-                FullPath = dir,
-                DisplayName = dirName,
-                Manifest = new ProjectManifest { Status = "hidden" }
-            });
+            var stub = new ProjectInfo { DirectoryName = dirName, FullPath = dir, DisplayName = dirName };
+            var full = await _discoveryService.RefreshProjectAsync(stub);
+            full.Manifest.Status = "hidden";
+            hiddenList.Add(full);
         }
 
         FilteredProjects = new ObservableCollection<ProjectInfo>(hiddenList.OrderBy(p => p.DisplayName));

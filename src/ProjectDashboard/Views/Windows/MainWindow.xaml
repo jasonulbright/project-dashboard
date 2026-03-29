@@ -5,6 +5,7 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:pages="clr-namespace:ProjectDashboard.Views.Pages"
     Title="Project Dashboard"
+    Icon="pack://application:,,,/app.ico"
     Width="1621"
     Height="823"
     WindowStartupLocation="CenterScreen"

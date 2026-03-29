@@ -6,6 +6,7 @@ public sealed class GitStatus
     public bool IsDirty { get; set; }
     public int ModifiedCount { get; set; }
     public int UntrackedCount { get; set; }
+    public int TotalChanges => ModifiedCount + UntrackedCount;
     public int AheadBy { get; set; }
     public string LatestTag { get; set; } = "";
     public DateTimeOffset? LastCommitDate { get; set; }
