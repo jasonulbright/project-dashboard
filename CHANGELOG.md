@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.6.0] - 2026-03-29
+
+### Added
+- Hidden projects: filter badge in summary bar, sidebar nav item, right-click Hide/Unhide
+- Repo visibility badges on cards: public (green), private (brown), local (gray)
+- New Project auto-refresh (git ops moved to background thread)
+
+### Fixed
+- Context menu commands (Border.Tag relay for popup visual tree binding)
+- Sidebar project navigation (Click event + Dispatcher.BeginInvoke)
+- Dashboard navigation after sidebar project view (Navigate state reset)
+- Hidden count excludes non-git directories
+
+### Changed
+- "TODO" renamed to "Tasks" in summary bar
+- All summary labels SemiBold with uniform 86px badge widths
+- "New Project" button shortened to "New"
+
 ## [1.5.0] - 2026-03-29
 
 ### Added
