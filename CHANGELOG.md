@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.7.0] - 2026-03-29
+
+### Added
+- Description field in project-manifest.json, shown on cards and detail header
+- Tasks badge on cards: orange `[N tasks]` tag, hidden when zero
+- Pane collapse state persisted across restarts
+
+### Changed
+- Cards show Description instead of Notes (cleaner, purpose-built)
+- Sync dot: green (synced), yellow (unsynced), red (no remote)
+- Sync label: "Synced" / "X unsynced" / "No remote"
+- Private visibility badge color: purple (#7B68EE)
+- Task filter recognizes both TODO: and TASK: prefixes
+- Description style matches "no version" (FontSize 12, TertiaryBrush)
+
 ## [1.6.0] - 2026-03-29
 
 ### Added

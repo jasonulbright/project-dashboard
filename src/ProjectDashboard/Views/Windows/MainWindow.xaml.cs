@@ -83,6 +83,7 @@ public partial class MainWindow : INavigationWindow
         Height = settings.WindowHeight;
         if (settings.WindowMaximized)
             WindowState = WindowState.Maximized;
+        RootNavigation.IsPaneOpen = settings.PaneOpen;
 
         // Save on close
         Closing += (_, _) =>
@@ -96,6 +97,7 @@ public partial class MainWindow : INavigationWindow
                 s.WindowWidth = Width;
                 s.WindowHeight = Height;
             }
+            s.PaneOpen = RootNavigation.IsPaneOpen;
             settingsService.Save(s);
         };
 

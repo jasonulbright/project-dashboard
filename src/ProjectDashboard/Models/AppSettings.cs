@@ -15,4 +15,5 @@ public sealed class AppSettings
     public double WindowWidth { get; set; } = 1621;
     public double WindowHeight { get; set; } = 823;
     public bool WindowMaximized { get; set; }
+    public bool PaneOpen { get; set; } = true;
 }

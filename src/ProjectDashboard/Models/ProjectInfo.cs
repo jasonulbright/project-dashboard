@@ -19,6 +19,12 @@ public partial class ProjectInfo : ObservableObject
     [ObservableProperty] private List<GitCommit> _recentCommits = [];
     [ObservableProperty] private List<GitHubIssue> _issues = [];
 
+    public int TaskCount => string.IsNullOrEmpty(Manifest.Notes) ? 0 :
+        Manifest.Notes.Split('\n').Count(l => l.TrimStart().StartsWith("TODO:", StringComparison.OrdinalIgnoreCase) ||
+                                               l.TrimStart().StartsWith("TASK:", StringComparison.OrdinalIgnoreCase));
+
+    public string TaskLabel => TaskCount == 1 ? "1 task" : $"{TaskCount} tasks";
+
     public string GitHubSlug
     {
         get

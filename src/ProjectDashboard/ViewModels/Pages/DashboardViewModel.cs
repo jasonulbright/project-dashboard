@@ -28,7 +28,9 @@ public partial class DashboardViewModel : ObservableObject
 
     public int TotalCount => Projects.Count;
     public int DirtyCount => Projects.Count(p => p.GitStatus.IsDirty);
-    public int TodoCount => Projects.Count(p => p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase));
+    public int TodoCount => Projects.Count(p =>
+        p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase) ||
+        p.Manifest.Notes.Contains("TASK:", StringComparison.OrdinalIgnoreCase));
     public int IssueCount => Projects.Sum(p => p.OpenIssueCount);
     public int HiddenCount
     {
@@ -369,7 +371,9 @@ public partial class DashboardViewModel : ObservableObject
         if (ActiveFilter == "dirty")
             filtered = filtered.Where(p => p.GitStatus.IsDirty);
         else if (ActiveFilter == "todos")
-            filtered = filtered.Where(p => p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase));
+            filtered = filtered.Where(p =>
+                p.Manifest.Notes.Contains("TODO:", StringComparison.OrdinalIgnoreCase) ||
+                p.Manifest.Notes.Contains("TASK:", StringComparison.OrdinalIgnoreCase));
         else if (ActiveFilter == "issues")
             filtered = filtered.Where(p => p.OpenIssueCount >= 1);
 
