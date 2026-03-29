@@ -6,11 +6,18 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 
 ## Features
 
-- **Dashboard view** -- card grid showing all projects with version, git status (clean/dirty), category, last commit time, and open GitHub issue count
-- **Project detail view** -- README and CHANGELOG display, git commit history, GitHub issues, and an inline manifest editor for project metadata
-- **Settings** -- configurable projects root path, refresh interval, excluded directories, dark/light theme toggle, GitHub CLI auth status
-- **Manifest system** -- per-project `project-manifest.json` stores human-authored metadata (project type, status, category, validation schedule, notes) that can't be derived from git
-- **GitHub integration** -- open issue counts on dashboard, full issue list in detail view, via `gh` CLI (no API keys needed)
+- **Dashboard view** -- card grid with description, version, sync status (green/yellow/red), category, project type, validation schedule, visibility (public/private/local), and tasks badge
+- **Project detail view** -- manifest editor, notes, git commit history, GitHub issues, and collapsible README/CHANGELOG with markdown rendering (headers, bold, italic, code blocks, bullets, numbered lists, images, clickable links, tables)
+- **Sidebar navigation** -- expandable project list with direct click-to-detail, hidden projects folder
+- **New Project** -- creates folder with README, CHANGELOG, .gitignore, manifest, git init
+- **Hidden projects** -- right-click hide/unhide, filter badge, sidebar nav item
+- **Sorting** -- by name, last commit, status, dirty first, category
+- **Filtering** -- by category, search text, and clickable summary badges (Total, Dirty, Tasks, Issues, Hidden)
+- **Manifest system** -- per-project `project-manifest.json` with description, project type, status, category, validation schedule, and notes (TODO/TASK/INFO/BUG prefixes)
+- **GitHub integration** -- repo visibility, open issues, clickable commit hashes and issue numbers (open in browser), via `gh` CLI
+- **Window state** -- size, position, and pane collapse state persisted across restarts
+- **Discovery cache** -- instant relaunch from cached data, manual refresh bypasses cache
+- **Error resilience** -- global error handler shows dialog instead of crashing
 
 ## Requirements
 
@@ -40,20 +47,23 @@ Each repo can optionally contain a `project-manifest.json` at its root. The dash
 
 ```json
 {
+  "Description": "MECM application packaging automation with WinForms GUI",
   "ProjectType": "mecm-tool",
   "Status": "active",
   "Category": "MECM",
   "ValidationSchedule": "weekly",
-  "Notes": "Browser packagers need daily validation"
+  "Notes": "TODO: PSADT scaffolding\nINFO: 115 packagers, schema v2"
 }
 ```
 
 | Field | Values |
 |---|---|
-| ProjectType | mecm-tool, powershell-script, web-app, game, framework, library, unknown |
+| Description | Short one-liner (under 80 chars), shown on cards and detail header |
+| ProjectType | mecm-tool, powershell-script, web-app, game, framework, library, dashboard, unknown |
 | Status | active, maintenance, archived, experimental |
 | Category | MECM, Web, Games, Infrastructure, Utilities, Uncategorized |
 | ValidationSchedule | daily, weekly, monthly, none |
+| Notes | Newline-separated entries with prefixes: TODO:, TASK:, BUG:, INFO: |
 
 Edit manifests directly in the Project Detail view.
 
