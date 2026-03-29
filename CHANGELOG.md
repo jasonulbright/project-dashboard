@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.0] - 2026-03-29
+
+### Added
+- New Project button: prompts for name, creates folder with README, CHANGELOG, .gitignore, project-manifest.json, git init + initial commit
+
+### Fixed
+- Sidebar project navigation: follows WPF-UI gallery pattern (TargetPageType + SelectionChanged)
+- ProjectDetailPage: Transient registration (was Singleton, showed stale data)
+- Scroll crash on RichTextBox content (VisualTreeHelper fallback to LogicalTreeHelper)
+
 ## [1.4.0] - 2026-03-29
 
 ### Added
