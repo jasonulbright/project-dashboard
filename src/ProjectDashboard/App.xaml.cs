@@ -18,6 +18,17 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Prevent unhandled exceptions from crashing the app
+        DispatcherUnhandledException += (_, args) =>
+        {
+            System.Windows.MessageBox.Show(
+                $"Error: {args.Exception.Message}\n\n{args.Exception.StackTrace?[..Math.Min(500, args.Exception.StackTrace?.Length ?? 0)]}",
+                "Project Dashboard Error",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+            args.Handled = true;
+        };
+
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
