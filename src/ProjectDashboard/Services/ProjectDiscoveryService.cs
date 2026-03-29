@@ -154,11 +154,12 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             }
         }
 
-        // GitHub issues
+        // GitHub data
         if (ghAvailable && !string.IsNullOrEmpty(project.GitHubSlug))
         {
             project.OpenIssueCount = await gitHubService.GetOpenIssueCountAsync(project.GitHubSlug, ct);
             project.Issues = await gitHubService.GetIssuesAsync(project.GitHubSlug, "open", ct);
+            project.GitStatus.Visibility = await gitHubService.GetRepoVisibilityAsync(project.GitHubSlug, ct);
         }
 
         return project;

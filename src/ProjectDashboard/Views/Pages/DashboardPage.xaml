@@ -17,73 +17,85 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Summary bar (clickable filters) -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+        <!-- Summary bar (clickable filters, aligned to filter bar below) -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+            <!-- Group 1: Total + Dirty = 180px (aligns with Category dropdown) -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
                     Cursor="Hand" ToolTip="Show all projects">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding FilterAllCommand}" />
                 </Border.InputBindings>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Total: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{Binding TotalCount}" FontWeight="SemiBold"
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Total: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding TotalCount}" FontWeight="SemiBold" FontSize="12"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                 </StackPanel>
             </Border>
-
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,12,0"
                     Cursor="Hand" ToolTip="Show only dirty projects">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding FilterDirtyCommand}" />
                 </Border.InputBindings>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Dirty: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{Binding DirtyCount}" FontWeight="SemiBold"
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Dirty: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding DirtyCount}" FontWeight="SemiBold" FontSize="12"
                                Foreground="#E8A317" />
                 </StackPanel>
             </Border>
 
+            <!-- Group 2: Tasks + Issues = 180px (aligns with Sort dropdown) -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
-                    Cursor="Hand" ToolTip="Show projects with pending TODOs">
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show projects with pending tasks">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding FilterTodosCommand}" />
                 </Border.InputBindings>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="TODO: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{Binding TodoCount}" FontWeight="SemiBold"
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Tasks: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding TodoCount}" FontWeight="SemiBold" FontSize="12"
                                Foreground="#5B9BD5" />
                 </StackPanel>
             </Border>
-
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16,10" Margin="0,0,12,0"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,12,0"
                     Cursor="Hand" ToolTip="Show projects with open issues">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding FilterIssuesCommand}" />
                 </Border.InputBindings>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Issues: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{Binding IssueCount}" FontWeight="SemiBold"
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Issues: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding IssueCount}" FontWeight="SemiBold" FontSize="12"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                 </StackPanel>
             </Border>
 
-            <ui:Button Content="Refresh"
+            <!-- Group 3: Hidden + Refresh + New = 280px (aligns with Search box) -->
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show hidden projects">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding FilterHiddenCommand}" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Hidden: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding HiddenCount}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+            </Border>
+            <ui:Button Content="Refresh" FontSize="12" Padding="8,6"
                        Icon="{ui:SymbolIcon ArrowSync24}"
                        Command="{Binding ForceRefreshCommand}"
-                       Margin="8,0,0,0" />
-
-            <ui:Button Content="New Project"
+                       Width="90" Margin="0,0,8,0" />
+            <ui:Button Content="New" FontSize="12" Padding="8,6"
                        Icon="{ui:SymbolIcon Add24}"
                        Command="{Binding NewProjectCommand}"
-                       Margin="8,0,0,0" />
+                       Width="80" />
         </StackPanel>
 
         <!-- Filter + Sort bar -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,16">
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
             <ComboBox ItemsSource="{Binding Categories}"
                       SelectedItem="{Binding SelectedCategory}"
                       Width="180" Margin="0,0,12,0" />
@@ -94,7 +106,7 @@
 
             <ui:TextBox PlaceholderText="Search projects..."
                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                        Width="280" />
+                        Width="272" />
         </StackPanel>
 
         <!-- Loading indicator -->
@@ -127,21 +139,52 @@
                                 CornerRadius="8"
                                 Padding="14"
                                 Cursor="Hand">
+                            <Border.Tag>
+                                <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Page}" />
+                            </Border.Tag>
                             <Border.ContextMenu>
-                                <ContextMenu>
+                                <ContextMenu DataContext="{Binding PlacementTarget, RelativeSource={RelativeSource Self}}">
                                     <MenuItem Header="Open Details"
-                                              Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                              CommandParameter="{Binding}" />
+                                              Command="{Binding Tag.OpenProjectCommand}"
+                                              CommandParameter="{Binding DataContext}" />
                                     <MenuItem Header="Refresh Status"
-                                              Command="{Binding DataContext.RefreshSingleCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                              CommandParameter="{Binding}" />
+                                              Command="{Binding Tag.RefreshSingleCommand}"
+                                              CommandParameter="{Binding DataContext}" />
                                     <Separator />
                                     <MenuItem Header="Open on GitHub"
-                                              Command="{Binding DataContext.OpenGitHubCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                              CommandParameter="{Binding}" />
+                                              Command="{Binding Tag.OpenGitHubCommand}"
+                                              CommandParameter="{Binding DataContext}" />
                                     <MenuItem Header="Open Folder"
-                                              Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                              CommandParameter="{Binding}" />
+                                              Command="{Binding Tag.OpenFolderCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <Separator />
+                                    <MenuItem Header="Hide Project"
+                                              Command="{Binding Tag.HideProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.Manifest.Status}" Value="hidden">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <MenuItem Header="Unhide Project"
+                                              Command="{Binding Tag.UnhideProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.Manifest.Status}" Value="hidden">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                 </ContextMenu>
                             </Border.ContextMenu>
                             <Border.InputBindings>
@@ -231,7 +274,7 @@
                                     </TextBlock>
                                 </StackPanel>
 
-                                <!-- Category + Type + Validation badges -->
+                                <!-- Category + Type + Validation + Visibility badges -->
                                 <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
                                     <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
                                             CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
@@ -243,7 +286,7 @@
                                         <TextBlock Text="{Binding Manifest.ProjectType}" FontSize="10"
                                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     </Border>
-                                    <Border CornerRadius="4" Padding="6,2">
+                                    <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
                                         <Border.Style>
                                             <Style TargetType="Border">
                                                 <Setter Property="Visibility" Value="Visible" />
@@ -259,6 +302,23 @@
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="{Binding Manifest.ValidationSchedule}" FontSize="10" Foreground="White" />
+                                    </Border>
+                                    <!-- Visibility badge -->
+                                    <Border CornerRadius="4" Padding="6,2">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#2D7D46" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
+                                                        <Setter Property="Background" Value="#8B4513" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
+                                                        <Setter Property="Background" Value="#555" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding GitStatus.Visibility}" FontSize="10" Foreground="White" />
                                     </Border>
                                 </StackPanel>
 

@@ -11,4 +11,5 @@ public sealed class GitStatus
     public DateTimeOffset? LastCommitDate { get; set; }
     public string LastCommitMessage { get; set; } = "";
     public string RemoteUrl { get; set; } = "";
+    public string Visibility { get; set; } = "local"; // "public", "private", "local"
 }

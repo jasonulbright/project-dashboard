@@ -140,15 +140,46 @@ public partial class MainWindow : INavigationWindow
 
         foreach (var project in dashVm.Projects.OrderBy(p => p.DisplayName))
         {
+            var proj = project;
             var navItem = new NavigationViewItem
             {
                 Content = project.DisplayName,
                 Icon = new SymbolIcon(project.GitStatus.IsDirty ? SymbolRegular.CircleHalfFill24 : SymbolRegular.CheckmarkCircle24),
-                Tag = project,
-                TargetPageType = typeof(ProjectDetailPage)
+                Tag = project
+            };
+
+            navItem.Click += (_, _) =>
+            {
+                DashboardViewModel.SelectedProject = proj;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    // Navigate to Settings then immediately to ProjectDetail.
+                    // This resets NavigationView's internal selected state so
+                    // Dashboard becomes clickable again afterward.
+                    RootNavigation.Navigate(typeof(SettingsPage));
+                    RootNavigation.ReplaceContent(typeof(ProjectDetailPage));
+                }), System.Windows.Threading.DispatcherPriority.Background);
             };
 
             projectsParent.MenuItems.Add(navItem);
+        }
+
+        // Wire Hidden nav item
+        foreach (var item in RootNavigation.MenuItems)
+        {
+            if (item is NavigationViewItem nvi && nvi.Tag?.ToString() == "HiddenProjects")
+            {
+                nvi.Click += (_, _) =>
+                {
+                    var vm = _serviceProvider.GetRequiredService<DashboardViewModel>();
+                    vm.ShowHiddenProjects();
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        RootNavigation.Navigate(typeof(DashboardPage));
+                    }), System.Windows.Threading.DispatcherPriority.Background);
+                };
+                break;
+            }
         }
     }
 
@@ -157,9 +188,28 @@ public partial class MainWindow : INavigationWindow
         if (sender is not Wpf.Ui.Controls.NavigationView navigationView)
             return;
 
-        if (navigationView.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
+        if (navigationView.SelectedItem is NavigationViewItem selected)
         {
-            DashboardViewModel.SelectedProject = proj;
+            if (selected.Tag is Models.ProjectInfo proj)
+            {
+                DashboardViewModel.SelectedProject = proj;
+                // Use Dispatcher.BeginInvoke to let the NavigationView finish
+                // its internal state update before we replace content
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    RootNavigation.ReplaceContent(typeof(ProjectDetailPage));
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            else if (selected.Tag?.ToString() == "HiddenProjects")
+            {
+                var dashVm = _serviceProvider.GetRequiredService<DashboardViewModel>();
+                dashVm.ShowHiddenProjects();
+                // Navigate to dashboard to show the filtered view
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    RootNavigation.Navigate(typeof(DashboardPage));
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
         }
     }
 

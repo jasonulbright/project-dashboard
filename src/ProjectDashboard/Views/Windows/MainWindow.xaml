@@ -42,6 +42,9 @@
                         <!-- Populated dynamically in code-behind -->
                     </ui:NavigationViewItem.MenuItems>
                 </ui:NavigationViewItem>
+                <ui:NavigationViewItem Content="Hidden" Icon="{ui:SymbolIcon EyeOff24}"
+                                       Tag="HiddenProjects"
+                                       TargetPageType="{x:Type pages:DashboardPage}" />
             </ui:NavigationView.MenuItems>
 
             <ui:NavigationView.FooterMenuItems>
