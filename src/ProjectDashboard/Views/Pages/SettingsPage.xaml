@@ -90,6 +90,27 @@
                            FontSize="14"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             </StackPanel>
+
+            <!-- About -->
+            <TextBlock Text="About" FontSize="16" Margin="0,24,0,8"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <StackPanel>
+                <TextBlock FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                    <Run Text="Project Dashboard" FontWeight="SemiBold" />
+                    <Run Text=" v1.10.0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                </TextBlock>
+                <TextBlock Text="Fluent 2 WPF dashboard for local git repository management"
+                           FontSize="12" Margin="0,4,0,0"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <TextBlock FontSize="12" Margin="0,4,0,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                    <Run Text="Built with WPF-UI, CommunityToolkit.Mvvm, .NET 10" />
+                </TextBlock>
+                <TextBlock FontSize="12" Margin="0,4,0,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                    <Run Text="Jason Ulbright" />
+                </TextBlock>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </Page>

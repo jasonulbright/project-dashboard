@@ -15,6 +15,7 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Sidebar navigation** -- expandable project list with direct click-to-detail, hidden projects folder
 - **New Project** -- creates folder with README, CHANGELOG, .gitignore, manifest, git init
 - **Hidden projects** -- right-click hide/unhide, filter badge, sidebar nav item
+- **Context menu** -- Open Details, Refresh Status, Open on GitHub, Open Folder, Open in Terminal, Hide/Unhide
 - **Sorting** -- by name, last commit, status, dirty first, category
 - **Filtering** -- by category, search text, and clickable summary badges (Total, Dirty, Tasks, Issues, Hidden)
 - **Manifest system** -- per-project `project-manifest.json` with description, project type, status, category, validation schedule, and notes (TASK/BUG/WAIT/PLAN/INFO prefixes)
