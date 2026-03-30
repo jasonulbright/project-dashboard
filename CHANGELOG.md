@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0] - 2026-03-29
+
+### Added
+- Open in Terminal context menu item (launches Windows Terminal in project directory)
+- About section on Settings page (version, description, tech stack, author)
+- Self-contained release build (win-x64, no .NET runtime required)
+
 ## [1.9.0] - 2026-03-29
 
 ### Added

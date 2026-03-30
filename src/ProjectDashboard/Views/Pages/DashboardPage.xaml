@@ -157,6 +157,9 @@
                                     <MenuItem Header="Open Folder"
                                               Command="{Binding Tag.OpenFolderCommand}"
                                               CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Open in Terminal"
+                                              Command="{Binding Tag.OpenTerminalCommand}"
+                                              CommandParameter="{Binding DataContext}" />
                                     <Separator />
                                     <MenuItem Header="Hide Project"
                                               Command="{Binding Tag.HideProjectCommand}"

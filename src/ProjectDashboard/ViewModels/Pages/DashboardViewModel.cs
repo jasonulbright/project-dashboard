@@ -328,6 +328,14 @@ public partial class DashboardViewModel : ObservableObject
         Process.Start(new ProcessStartInfo("explorer.exe", project.FullPath));
     }
 
+    [RelayCommand]
+    private void OpenTerminal(ProjectInfo? project)
+    {
+        if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
+        Process.Start(new ProcessStartInfo("wt.exe", $"-d \"{project.FullPath}\"")
+            { UseShellExecute = true });
+    }
+
     private async Task LoadProjectsAsync()
     {
         var results = await _discoveryService.DiscoverAllAsync();
