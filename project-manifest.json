@@ -1,0 +1,8 @@
+{
+  "ProjectType": "dashboard",
+  "Description": "Fluent 2 WPF dashboard for local git repository management",
+  "Status": "active",
+  "Category": "Utilities",
+  "ValidationSchedule": "none",
+  "Notes": "INFO: First Fluent UI (WPF-UI) app, template for all future C# conversions"
+}
