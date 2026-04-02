@@ -4,5 +4,5 @@
     "ValidationSchedule":  "none",
     "Category":  "Utilities",
     "Status":  "active",
-    "Notes":  "INFO: First Fluent UI (WPF-UI) app, template for all future C# conversions\nINFO: Manifests now committed to all repos (no longer gitignored)\nTASK: v1.1 GitHub remote discovery (gh API, cached in AppData, no hardcoded usernames)\nTASK: Cloud badge for remote-only repos with Clone action"
+    "Notes":  "INFO: Template for all future C# Fluent UI conversions\nINFO: See ROADMAP.md for v1.1+ plans\nTASK: v1.1 GitHub remote discovery"
 }
