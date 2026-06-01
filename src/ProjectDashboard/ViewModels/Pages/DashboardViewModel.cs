@@ -243,6 +243,55 @@ public partial class DashboardViewModel : ObservableObject
         Process.Start(new ProcessStartInfo($"https://github.com/{project.GitHubSlug}") { UseShellExecute = true });
     }
 
+    /// <summary>Opens the repo's open-issues list on GitHub (the same set the card count reflects).</summary>
+    [RelayCommand]
+    private void OpenIssues(ProjectInfo? project)
+    {
+        if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
+        Process.Start(new ProcessStartInfo(
+            $"https://github.com/{project.GitHubSlug}/issues?q=is:issue+is:open") { UseShellExecute = true });
+    }
+
+    /// <summary>Opens the repo's open pull-requests list on GitHub.</summary>
+    [RelayCommand]
+    private void OpenPullRequests(ProjectInfo? project)
+    {
+        if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
+        Process.Start(new ProcessStartInfo(
+            $"https://github.com/{project.GitHubSlug}/pulls") { UseShellExecute = true });
+    }
+
+    /// <summary>Opens a pre-filled, labeled GitHub "new issue" page for the project.</summary>
+    [RelayCommand]
+    private void ReportBug(ProjectInfo? project)
+        => OpenNewIssue(project, "bug", BugReportBody());
+
+    [RelayCommand]
+    private void RequestFeature(ProjectInfo? project)
+        => OpenNewIssue(project, "enhancement", "");
+
+    private static void OpenNewIssue(ProjectInfo? project, string label, string body)
+    {
+        if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
+        var url = $"https://github.com/{project.GitHubSlug}/issues/new"
+                + $"?labels={Uri.EscapeDataString(label)}"
+                + $"&body={Uri.EscapeDataString(body)}";
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    private static string BugReportBody()
+    {
+        var asm = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+        var os = System.Runtime.InteropServices.RuntimeInformation.OSDescription;
+        var net = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
+        return "**Describe the bug**\n\n\n"
+             + "**Steps to reproduce**\n\n\n"
+             + "**Environment**\n"
+             + $"- App: Project Dashboard {asm}\n"
+             + $"- OS: {os}\n"
+             + $"- .NET: {net}\n";
+    }
+
     [RelayCommand]
     private async Task HideProject(ProjectInfo? project)
     {

@@ -126,6 +126,26 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
+    public async Task<int> GetOpenPrCountAsync(string repoSlug, CancellationToken ct = default)
+    {
+        try
+        {
+            var output = await RunGhAsync(
+                $"pr list --repo {repoSlug} --state open --json number --limit 100", ct);
+
+            if (string.IsNullOrWhiteSpace(output))
+                return 0;
+
+            var items = JsonSerializer.Deserialize<List<JsonElement>>(output);
+            return items?.Count ?? 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"gh pr count failed for {repoSlug} (showing 0)", ex);
+            return 0;
+        }
+    }
+
     private async Task<string> RunGhAsync(string arguments, CancellationToken ct)
         => (await RunGhCoreAsync(arguments, ct)).StdOut;
 

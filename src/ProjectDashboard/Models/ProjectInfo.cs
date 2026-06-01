@@ -16,6 +16,7 @@ public partial class ProjectInfo : ObservableObject
     [ObservableProperty] private GitStatus _gitStatus = new();
     [ObservableProperty] private ProjectManifest _manifest = new();
     [ObservableProperty] private int _openIssueCount;
+    [ObservableProperty] private int _openPrCount;
     [ObservableProperty] private List<GitCommit> _recentCommits = [];
     [ObservableProperty] private List<GitHubIssue> _issues = [];
 

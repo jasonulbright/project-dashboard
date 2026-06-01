@@ -227,6 +227,13 @@
                                               Command="{Binding Tag.OpenTerminalCommand}"
                                               CommandParameter="{Binding DataContext}" />
                                     <Separator />
+                                    <MenuItem Header="Report a Bug"
+                                              Command="{Binding Tag.ReportBugCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Request a Feature"
+                                              Command="{Binding Tag.RequestFeatureCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <Separator />
                                     <MenuItem Header="Hide Project"
                                               Command="{Binding Tag.HideProjectCommand}"
                                               CommandParameter="{Binding DataContext}">
@@ -565,19 +572,57 @@
 
                                     <TextBlock DockPanel.Dock="Right" FontSize="11"
                                                HorizontalAlignment="Right"
-                                               Foreground="#E8A317">
+                                               Foreground="#E8A317"
+                                               Cursor="Hand"
+                                               ToolTip="View open issues on GitHub">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
-                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Setter Property="Visibility" Value="Visible" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding OpenIssueCount}" Value="0">
                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                     </DataTrigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="TextDecorations" Value="Underline" />
+                                                    </Trigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
+                                        <TextBlock.InputBindings>
+                                            <MouseBinding MouseAction="LeftClick"
+                                                          Command="{Binding Tag.OpenIssuesCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                          CommandParameter="{Binding}" />
+                                        </TextBlock.InputBindings>
                                         <Run Text="{Binding OpenIssueCount, Mode=OneWay}" />
                                         <Run Text=" issues" />
+                                    </TextBlock>
+
+                                    <TextBlock DockPanel.Dock="Right" FontSize="11"
+                                               HorizontalAlignment="Right"
+                                               Margin="0,0,10,0"
+                                               Foreground="{StaticResource StatusInfoFg}"
+                                               Cursor="Hand"
+                                               ToolTip="View open pull requests on GitHub">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding OpenPrCount}" Value="0">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="TextDecorations" Value="Underline" />
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <TextBlock.InputBindings>
+                                            <MouseBinding MouseAction="LeftClick"
+                                                          Command="{Binding Tag.OpenPullRequestsCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                          CommandParameter="{Binding}" />
+                                        </TextBlock.InputBindings>
+                                        <Run Text="{Binding OpenPrCount, Mode=OneWay}" />
+                                        <Run Text=" PRs" />
                                     </TextBlock>
                                 </DockPanel>
                             </Grid>
