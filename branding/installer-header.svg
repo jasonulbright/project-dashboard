@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="57" viewBox="0 0 150 57">
+  <!-- NSIS header: white field, branding to the right -->
+  <rect width="150" height="57" fill="#ffffff"/>
+  <rect x="0" y="0" width="150" height="57" fill="#ffffff"/>
+
+  <!-- small accent tile cluster, right side -->
+  <g>
+    <rect x="112" y="16" width="11" height="11" rx="2.5" fill="#3B82F6"/>
+    <rect x="126" y="16" width="11" height="11" rx="2.5" fill="#3B82F6"/>
+    <rect x="112" y="30" width="11" height="11" rx="2.5" fill="#23489E"/>
+    <rect x="126" y="30" width="11" height="11" rx="2.5" fill="#E8A317"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="105" y="25" text-anchor="end" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#1E3A8C">Project Dashboard</text>
+  <text x="105" y="39" text-anchor="end" font-family="Segoe UI, Arial, sans-serif" font-size="8" font-weight="400" fill="#6B7B9C">Repo portfolio viewer</text>
+</svg>

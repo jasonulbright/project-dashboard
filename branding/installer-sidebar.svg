@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="164" height="314" viewBox="0 0 164 314">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#23489E"/>
+      <stop offset="1" stop-color="#0E1E48"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="164" height="314" fill="url(#bg)"/>
+
+  <!-- decorative tile field (distinct from the app icon) -->
+  <g fill="#ffffff" opacity="0.07">
+    <rect x="22"  y="34" width="26" height="26" rx="6"/>
+    <rect x="56"  y="34" width="26" height="26" rx="6"/>
+    <rect x="90"  y="34" width="26" height="26" rx="6"/>
+    <rect x="124" y="34" width="26" height="26" rx="6"/>
+    <rect x="22"  y="68" width="26" height="26" rx="6"/>
+    <rect x="56"  y="68" width="26" height="26" rx="6"/>
+    <rect x="90"  y="68" width="26" height="26" rx="6"/>
+    <rect x="124" y="68" width="26" height="26" rx="6"/>
+    <rect x="22"  y="102" width="26" height="26" rx="6"/>
+    <rect x="56"  y="102" width="26" height="26" rx="6"/>
+  </g>
+  <!-- one lit tile, amber accent -->
+  <rect x="90" y="68" width="26" height="26" rx="6" fill="#E8A317" opacity="0.9"/>
+
+  <!-- wordmark -->
+  <text x="22" y="214" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700" fill="#ffffff" letter-spacing="-0.5">Project</text>
+  <rect x="24" y="226" width="46" height="4" rx="2" fill="#E8A317"/>
+  <text x="22" y="258" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700" fill="#CFE0FF" letter-spacing="-0.5">Dashboard</text>
+  <text x="23" y="284" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="400" fill="#8FA9DA">Your repos, at a glance</text>
+</svg>

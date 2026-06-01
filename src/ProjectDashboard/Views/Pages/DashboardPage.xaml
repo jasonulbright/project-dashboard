@@ -1,0 +1,591 @@
+<Page
+    x:Class="ProjectDashboard.Views.Pages.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
+    xmlns:models="clr-namespace:ProjectDashboard.Models">
+
+    <Page.Resources>
+        <helpers:RelativeTimeConverter x:Key="RelativeTimeConverter" />
+        <!-- FocusRing / FocusableChip live in App.xaml (shared with the detail page). -->
+    </Page.Resources>
+
+    <DockPanel Margin="24,16">
+
+        <!-- GitHub-not-ready banner: shows when gh is missing or not signed in -->
+        <Border DockPanel.Dock="Top"
+                Visibility="{Binding GhBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="#E8A317" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <ui:SymbolIcon Symbol="Warning24" Foreground="#E8A317" FontSize="16"
+                               Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding GhBannerText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13" />
+                <ui:Button Content="Sign in to GitHub" FontSize="12" Padding="10,4" Margin="14,0,0,0"
+                           Appearance="Primary"
+                           Command="{Binding GhSignInCommand}"
+                           Visibility="{Binding GhSignInVisible, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <ui:Button Content="Open Settings" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                           Command="{Binding OpenSettingsCommand}" />
+                <ui:Button Content="Dismiss" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                           Command="{Binding DismissGhBannerCommand}" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Summary bar (clickable filters, aligned to filter bar below) -->
+        <StackPanel x:Name="SummaryBar" Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8"
+                    KeyboardNavigation.TabNavigation="Once"
+                    PreviewKeyDown="SummaryBar_PreviewKeyDown">
+            <!-- All chip Borders become keyboard-focusable (Enter/Space handled in code-behind). -->
+            <StackPanel.Resources>
+                <Style TargetType="Border" BasedOn="{StaticResource FocusableChip}" />
+            </StackPanel.Resources>
+            <!-- Group 1: Total + Dirty = 180px (aligns with Category dropdown) -->
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show all projects">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="all" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Total: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding TotalCount}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                </StackPanel>
+            </Border>
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show only dirty projects">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="dirty" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Dirty: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding DirtyCount}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="#E8A317" />
+                </StackPanel>
+            </Border>
+
+            <!-- Group 2: Tasks + Issues = 180px (aligns with Sort dropdown) -->
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show projects with pending tasks">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="todos" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Tasks: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding TodoCount}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="{StaticResource StatusInfoFg}" />
+                </StackPanel>
+            </Border>
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show projects with open issues">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="issues" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Issues: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding IssueCount}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Data-quality badges: only shown when there's something to fix -->
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show projects whose git remote does not match their folder name"
+                    Visibility="{Binding HasMismatches, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="mismatch" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <ui:SymbolIcon Symbol="PlugDisconnected24" FontSize="14" Margin="0,0,6,0"
+                                   Foreground="#E8A317" VerticalAlignment="Center" />
+                    <TextBlock Text="Remote: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding MismatchCount}" FontWeight="SemiBold" FontSize="12" Foreground="#E8A317" />
+                </StackPanel>
+            </Border>
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Margin="0,0,12,0"
+                    Cursor="Hand" ToolTip="Show projects with no metadata or a blank description"
+                    Visibility="{Binding HasIncomplete, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="incomplete" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <ui:SymbolIcon Symbol="DocumentError24" FontSize="14" Margin="0,0,6,0"
+                                   Foreground="#E8A317" VerticalAlignment="Center" />
+                    <TextBlock Text="Needs meta: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding IncompleteCount}" FontWeight="SemiBold" FontSize="12" Foreground="#E8A317" />
+                </StackPanel>
+            </Border>
+
+            <!-- Group 3: Hidden + Refresh + New = 280px (aligns with Search box) -->
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show hidden projects">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding FilterHiddenCommand}" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Hidden: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding HiddenCount}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+            </Border>
+            <ui:Button Content="Refresh" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon ArrowSync24}"
+                       Command="{Binding ForceRefreshCommand}"
+                       Width="90" Margin="0,0,8,0" />
+            <ui:Button Content="New" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon Add24}"
+                       Command="{Binding NewProjectCommand}"
+                       Width="80" />
+        </StackPanel>
+
+        <!-- Filter + Sort bar -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
+            <ComboBox ItemsSource="{Binding Categories}"
+                      SelectedItem="{Binding SelectedCategory}"
+                      Width="180" Margin="0,0,12,0" />
+
+            <ComboBox ItemsSource="{Binding SortOptions}"
+                      SelectedItem="{Binding SelectedSort}"
+                      Width="180" Margin="0,0,12,0" />
+
+            <ui:TextBox PlaceholderText="Search projects..."
+                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                        Width="272" />
+        </StackPanel>
+
+        <!-- Loading indicator -->
+        <TextBlock Grid.Row="2"
+                   Text="Loading projects..."
+                   FontSize="16"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Visibility="{Binding LoadProjectsCommand.IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+        <!-- Card grid -->
+        <ScrollViewer Grid.Row="2"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+            <ItemsControl ItemsSource="{Binding FilteredProjects}"
+                          KeyboardNavigation.TabNavigation="Once"
+                          KeyboardNavigation.DirectionalNavigation="Cycle">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type models:ProjectInfo}">
+                        <Border Width="320" MinHeight="200" Margin="8"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="14"
+                                Cursor="Hand"
+                                Focusable="True"
+                                FocusVisualStyle="{StaticResource FocusRing}"
+                                AutomationProperties.Name="{Binding DisplayName}">
+                            <Border.Tag>
+                                <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Page}" />
+                            </Border.Tag>
+                            <Border.ContextMenu>
+                                <ContextMenu DataContext="{Binding PlacementTarget, RelativeSource={RelativeSource Self}}">
+                                    <MenuItem Header="Open Details"
+                                              Command="{Binding Tag.OpenProjectCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Refresh Status"
+                                              Command="{Binding Tag.RefreshSingleCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <Separator />
+                                    <MenuItem Header="Open on GitHub"
+                                              Command="{Binding Tag.OpenGitHubCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Open Folder"
+                                              Command="{Binding Tag.OpenFolderCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Open in Terminal"
+                                              Command="{Binding Tag.OpenTerminalCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <Separator />
+                                    <MenuItem Header="Hide Project"
+                                              Command="{Binding Tag.HideProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.Manifest.Status}" Value="hidden">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <MenuItem Header="Unhide Project"
+                                              Command="{Binding Tag.UnhideProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.Manifest.Status}" Value="hidden">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                </ContextMenu>
+                            </Border.ContextMenu>
+                            <Border.InputBindings>
+                                <MouseBinding MouseAction="LeftClick"
+                                              Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                              CommandParameter="{Binding}" />
+                                <KeyBinding Key="Enter"
+                                            Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                            CommandParameter="{Binding}" />
+                                <KeyBinding Key="Space"
+                                            Command="{Binding DataContext.OpenProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                            CommandParameter="{Binding}" />
+                            </Border.InputBindings>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Display Name -->
+                                <TextBlock Grid.Row="0"
+                                           Text="{Binding DisplayName}"
+                                           FontWeight="Bold" FontSize="14"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+
+                                <!-- Version + Status -->
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock FontSize="12" Margin="0,0,10,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="{Binding LatestVersion}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LatestVersion}" Value="">
+                                                        <Setter Property="Text" Value="no version" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Border CornerRadius="4" Padding="6,2">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
+                                                        <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
+                                                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
+                                                        <Setter Property="Background" Value="{StaticResource StatusPrivateBg}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding Manifest.Status}" FontSize="10">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusPrivateFg}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Sync status + note prefix icons -->
+                                <DockPanel Grid.Row="2" Margin="0,6,0,0">
+                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                        <ui:SymbolIcon FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center">
+                                            <ui:SymbolIcon.Style>
+                                                <Style TargetType="ui:SymbolIcon">
+                                                    <Setter Property="Symbol" Value="CheckmarkCircle24" />
+                                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Symbol" Value="Edit24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                            <Setter Property="Symbol" Value="CloudOff24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
+                                                            <Setter Property="Symbol" Value="QuestionCircle24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ui:SymbolIcon.Style>
+                                        </ui:SymbolIcon>
+                                        <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Synced" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Text"
+                                                                    Value="{Binding GitStatus.TotalChanges, StringFormat='{}{0} uncommitted'}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                            <Setter Property="Text" Value="No remote" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
+                                                            <Setter Property="Text" Value="status unavailable" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <!-- Note prefix icons (right-justified) -->
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <!-- TASK icon + count -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                    ToolTip="{Binding TaskCount, StringFormat='{}{0} task(s)'}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding TaskCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ui:SymbolIcon Symbol="CheckboxUnchecked24" FontSize="14" Foreground="{StaticResource StatusInfoFg}" />
+                                            <TextBlock Text="{Binding TaskCount}" FontSize="11" Foreground="{StaticResource StatusInfoFg}"
+                                                       Margin="2,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <!-- BUG icon + count -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                    ToolTip="{Binding BugCount, StringFormat='{}{0} bug(s)'}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding BugCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ui:SymbolIcon Symbol="Bug24" FontSize="14" Foreground="{StaticResource StatusBadFg}" />
+                                            <TextBlock Text="{Binding BugCount}" FontSize="11" Foreground="{StaticResource StatusBadFg}"
+                                                       Margin="2,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <!-- WAIT icon + count -->
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                                    ToolTip="{Binding WaitCount, StringFormat='{}{0} waiting'}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding WaitCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ui:SymbolIcon Symbol="Clock24" FontSize="14" Foreground="#E8A317" />
+                                            <TextBlock Text="{Binding WaitCount}" FontSize="11" Foreground="#E8A317"
+                                                       Margin="2,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DockPanel>
+
+                                <!-- Category + Type + Validation + Visibility badges -->
+                                <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                        <TextBlock Text="{Binding Manifest.Category}" FontSize="10"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                        <TextBlock Text="{Binding Manifest.ProjectType}" FontSize="10"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                    <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="none">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
+                                                        <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding Manifest.ValidationSchedule}" FontSize="10">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                    <!-- Visibility badge: GitHub-native glyph + tonal chip -->
+                                    <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
+                                                        <Setter Property="Background" Value="{StaticResource StatusPrivateBg}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
+                                                        <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
+                                                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:SymbolIcon FontSize="11" Margin="0,0,3,0" VerticalAlignment="Center">
+                                                <ui:SymbolIcon.Style>
+                                                    <Style TargetType="ui:SymbolIcon">
+                                                        <Setter Property="Symbol" Value="Globe24" />
+                                                        <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
+                                                                <Setter Property="Symbol" Value="LockClosed24" />
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusPrivateFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
+                                                                <Setter Property="Symbol" Value="Desktop24" />
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
+                                                                <Setter Property="Symbol" Value="QuestionCircle24" />
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:SymbolIcon.Style>
+                                            </ui:SymbolIcon>
+                                            <TextBlock Text="{Binding GitStatus.Visibility}" FontSize="10" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusPrivateFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Description (from manifest, replaces notes on card) -->
+                                <TextBlock Grid.Row="4" Margin="0,6,0,0" FontSize="11"
+                                           TextWrapping="Wrap" MaxHeight="32"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                           Text="{Binding Manifest.Description}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Manifest.Description}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Bottom row: last commit + issues -->
+                                <DockPanel Grid.Row="5" Margin="0,6,0,0">
+                                    <TextBlock DockPanel.Dock="Left" FontSize="11"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               Text="{Binding GitStatus.LastCommitDate, Converter={StaticResource RelativeTimeConverter}}" />
+
+                                    <TextBlock DockPanel.Dock="Right" FontSize="11"
+                                               HorizontalAlignment="Right"
+                                               Foreground="#E8A317">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding OpenIssueCount}" Value="0">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="{Binding OpenIssueCount, Mode=OneWay}" />
+                                        <Run Text=" issues" />
+                                    </TextBlock>
+                                </DockPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        </Grid>
+    </DockPanel>
+</Page>

@@ -1,0 +1,49 @@
+<Application
+    x:Class="ProjectDashboard.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ThemesDictionary Theme="Dark" />
+                <ui:ControlsDictionary />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Status palette: single source of truth for functional repo-status colors.
+                 Fg = legible glyph/text color; Bg = ~16% tint for soft (non-blinding) badges. -->
+            <SolidColorBrush x:Key="StatusGoodFg" Color="#3FB950" />
+            <SolidColorBrush x:Key="StatusWarnFg" Color="#E8A317" />
+            <SolidColorBrush x:Key="StatusBadFg" Color="#E05252" />
+            <SolidColorBrush x:Key="StatusPrivateFg" Color="#A78BFA" />
+            <SolidColorBrush x:Key="StatusInfoFg" Color="#6CA4D9" />
+            <SolidColorBrush x:Key="StatusNeutralFg" Color="#9AA0A6" />
+
+            <SolidColorBrush x:Key="StatusGoodBg" Color="#283FB950" />
+            <SolidColorBrush x:Key="StatusWarnBg" Color="#28E8A317" />
+            <SolidColorBrush x:Key="StatusBadBg" Color="#28E05252" />
+            <SolidColorBrush x:Key="StatusPrivateBg" Color="#28A78BFA" />
+            <SolidColorBrush x:Key="StatusInfoBg" Color="#286CA4D9" />
+            <SolidColorBrush x:Key="StatusNeutralBg" Color="#18FFFFFF" />
+
+            <!-- Accessibility: a visible keyboard-focus ring (adorner, doesn't disturb the element's
+                 own border) + a style that makes a clickable Border keyboard-focusable. -->
+            <Style x:Key="FocusRing">
+                <Setter Property="Control.Template">
+                    <Setter.Value>
+                        <ControlTemplate>
+                            <Rectangle Margin="1" RadiusX="8" RadiusY="8"
+                                       Stroke="#4CC2FF" StrokeThickness="2"
+                                       SnapsToDevicePixels="True" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="FocusableChip" TargetType="Border">
+                <Setter Property="Focusable" Value="True" />
+                <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}" />
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
