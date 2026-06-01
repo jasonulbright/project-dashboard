@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.1.2] - 2026-06-01
+
+### Added
+- **Clickable open-issues link** -- the open-issue count on each card now links straight to that repo's open issues on GitHub
+- **Open pull-request count** -- a per-card PR count chip, clickable through to the repo's pull-request list
+- **In-app issue filing** -- right-click a card to Report a Bug or Request a Feature; opens a pre-filled, labeled GitHub new-issue page (bug reports auto-fill app version, OS, and .NET runtime)
+
+### Fixed
+- The card open-issue count could never display (an always-collapsed style trigger); it now shows whenever a repo has open issues
+
 ## [1.1.1.1] - 2026-05-31
 
 ### Added

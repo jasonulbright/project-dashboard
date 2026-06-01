@@ -15,11 +15,11 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Sidebar navigation** -- Dashboard / Public / Private / Non-Local / Hidden filters, plus an expandable project list with direct click-to-detail
 - **New Project** -- creates folder with README, CHANGELOG, git init (metadata stored out-of-source)
 - **Hidden projects** -- right-click hide/unhide, sidebar nav item
-- **Context menu** -- Open Details, Refresh Status, Open on GitHub, Open Folder, Open in Terminal, Hide/Unhide
+- **Context menu** -- Open Details, Refresh Status, Open on GitHub, Open Folder, Open in Terminal, Report a Bug, Request a Feature, Hide/Unhide
 - **Sorting** -- by name, last commit, status, dirty first, category
 - **Filtering** -- by category, search text, and clickable summary chips (Total, Dirty, Tasks, Issues, plus Remote-mismatch and Needs-metadata when relevant)
 - **Project metadata** -- stored out-of-source in `%APPDATA%\ProjectDashboard\manifests.json`; description, project type, status, category, validation schedule, and notes (TASK/BUG/WAIT/PLAN/INFO prefixes), edited in the detail view
-- **GitHub integration** -- repo visibility, open issues, clickable commit/issue links, via the `gh` CLI. The app delegates auth to `gh` and never reads, stores, or transmits tokens. When gh is missing or not signed in, a banner offers an in-app sign-in
+- **GitHub integration** -- repo visibility, open-issue and open-PR counts (each card count clicks through to that repo's issues / pull requests), clickable commit/issue links, and in-app bug/feature filing (pre-filled, labeled new-issue page), via the `gh` CLI. The app delegates auth to `gh` and never reads, stores, or transmits tokens. When gh is missing or not signed in, a banner offers an in-app sign-in
 - **Keyboard accessible** -- full no-mouse operation: arrow-key pane navigation, Tab/arrows/Enter through the card grid, keyboard-activatable chips and commit/issue rows, visible focus rings
 - **Window state** -- size, position, and pane collapse state persisted across restarts
 - **Discovery cache** -- instant relaunch from cached data, manual refresh bypasses cache, Sync Now button in Settings
