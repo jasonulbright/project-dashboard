@@ -341,9 +341,26 @@ public class GitService
     public async Task<ProcessResult> PushAsync(string repoPath, CancellationToken ct = default)
     {
         var upstream = await RunAsync(repoPath, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], ct);
-        return upstream.Success
-            ? await RunAsync(repoPath, ["push"], ct, NetworkTimeout)
-            : await RunAsync(repoPath, ["push", "-u", "origin", "HEAD"], ct, NetworkTimeout);
+        if (upstream.Success)
+            return await RunAsync(repoPath, ["push"], ct, NetworkTimeout);
+
+        // No upstream yet: set one on the repo's actual remote — not a hardcoded "origin"
+        // (renamed/single-remote setups don't necessarily have one called origin).
+        var remote = await ResolveDefaultRemoteAsync(repoPath, ct);
+        if (remote is null)
+            return new ProcessResult(-1, "", "no remote configured to push to", TimedOut: false);
+        return await RunAsync(repoPath, ["push", "-u", remote, "HEAD"], ct, NetworkTimeout);
+    }
+
+    /// <summary>The remote to push a new branch to: origin if present, else the only/first remote.</summary>
+    private async Task<string?> ResolveDefaultRemoteAsync(string repoPath, CancellationToken ct)
+    {
+        var result = await RunAsync(repoPath, ["remote"], ct);
+        if (!result.Success) return null;
+        var remotes = result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(r => r.Trim()).Where(r => r.Length > 0).ToList();
+        if (remotes.Count == 0) return null;
+        return remotes.FirstOrDefault(r => r == "origin") ?? remotes[0];
     }
 
     // ── Stash ───────────────────────────────────────────────────────────────

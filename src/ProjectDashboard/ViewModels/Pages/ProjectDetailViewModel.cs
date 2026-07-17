@@ -109,10 +109,13 @@ public partial class ProjectDetailViewModel : ObservableObject
 
     private void ApplyProject(ProjectInfo p)
     {
+        // Invalidate any in-flight async op from the previous project before swapping.
+        BumpGeneration();
+
         Project = p;
         IsEditingNotes = false; // singleton VM: edit mode must not leak onto the next project
 
-        // Reset per-repo work-area state so nothing leaks between projects.
+        // Reset ALL per-repo work-area state so nothing leaks between projects.
         WorkingState = null;
         StagedFiles = [];
         UnstagedFiles = [];
@@ -121,18 +124,24 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedUnstagedFile = null;
         DiffLines = [];
         DiffTitle = "";
+        DiffIsBinary = false;
         CommitMessage = "";
         AmendMode = false;
+        IsBusy = false;
         SyncStatusText = "";
+        BranchLabel = "";
+        AheadBehindLabel = "";
         Branches = [];
         NewBranchName = "";
         Stashes = [];
+        StashesLoaded = false;
         SelectedCommit = null;
         CommitFiles = [];
         CommitDiffLines = [];
         PullRequests = [];
         PullRequestsLoaded = false;
         StateBannerVisible = false;
+        StateBannerText = "";
 
         _ = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";

@@ -112,17 +112,26 @@ public class GitHubService(SettingsService settingsService)
 
                 for (var i = 0; i < chunk.Count; i++)
                 {
-                    if (!data.TryGetProperty($"r{i}", out var repo)) continue;
-                    if (repo.ValueKind == JsonValueKind.Null)
+                    // Each alias is isolated: a malformed or null one must not drop the
+                    // 24 siblings in its chunk (they'd wrongly read as "fetch failed").
+                    try
                     {
-                        // Alias errored (repo missing / no access): known-not-found.
-                        results[chunk[i]] = new RepoRemoteData("unknown", null, null, Found: false);
-                        continue;
+                        if (!data.TryGetProperty($"r{i}", out var repo)) continue;
+                        if (repo.ValueKind == JsonValueKind.Null)
+                        {
+                            // Alias errored (repo missing / no access): known-not-found.
+                            results[chunk[i]] = new RepoRemoteData("unknown", null, null, Found: false);
+                            continue;
+                        }
+                        var vis = repo.TryGetProperty("visibility", out var v) ? v.GetString()?.ToLowerInvariant() ?? "unknown" : "unknown";
+                        int? issues = repo.TryGetProperty("issues", out var iss) && iss.TryGetProperty("totalCount", out var ic) && ic.ValueKind == JsonValueKind.Number ? ic.GetInt32() : null;
+                        int? prs = repo.TryGetProperty("pullRequests", out var pr) && pr.TryGetProperty("totalCount", out var pc) && pc.ValueKind == JsonValueKind.Number ? pc.GetInt32() : null;
+                        results[chunk[i]] = new RepoRemoteData(vis, issues, prs, Found: true);
                     }
-                    var vis = repo.TryGetProperty("visibility", out var v) ? v.GetString()?.ToLowerInvariant() ?? "unknown" : "unknown";
-                    int? issues = repo.TryGetProperty("issues", out var iss) && iss.TryGetProperty("totalCount", out var ic) ? ic.GetInt32() : null;
-                    int? prs = repo.TryGetProperty("pullRequests", out var pr) && pr.TryGetProperty("totalCount", out var pc) ? pc.GetInt32() : null;
-                    results[chunk[i]] = new RepoRemoteData(vis, issues, prs, Found: true);
+                    catch (Exception ex)
+                    {
+                        Log.Warn($"gh graphql alias r{i} unparseable ({chunk[i]})", ex);
+                    }
                 }
             }
             catch (Exception ex)

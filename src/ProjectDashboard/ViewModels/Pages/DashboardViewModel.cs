@@ -140,7 +140,8 @@ public partial class DashboardViewModel : ObservableObject
         };
         _refreshTimer.Tick += async (_, _) =>
         {
-            if (LoadProjectsCommand.IsRunning) return;
+            // Don't let the periodic reconcile collide with a bulk op or an in-flight load.
+            if (LoadProjectsCommand.IsRunning || _bulkOpRunning) return;
             try
             {
                 await LoadProjectsCommand.ExecuteAsync(null);
@@ -172,6 +173,9 @@ public partial class DashboardViewModel : ObservableObject
 
     // Transient operation feedback (clone / bulk sync progress and outcomes).
     [ObservableProperty] private string _opStatusText = "";
+
+    /// <summary>Serializes the dashboard-level bulk ops (clone, sync all) so their refreshes can't race.</summary>
+    private bool _bulkOpRunning;
 
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
@@ -292,6 +296,7 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task CloneRepo()
     {
+        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
         List<RemoteRepo> repos = [];
         try { repos = await _gitHubService.GetUserReposAsync(); }
         catch (Exception ex) { Log.Warn("repo list for clone unavailable", ex); }
@@ -310,12 +315,25 @@ public partial class DashboardViewModel : ObservableObject
         };
         System.Windows.Automation.AutomationProperties.SetName(list, "Your repositories");
         System.Windows.Automation.AutomationProperties.SetName(urlBox, "Repository URL or filter");
+        var syncing = false;
         urlBox.TextChanged += (_, _) =>
         {
+            if (syncing) return;
             var term = urlBox.Text.Trim();
             list.ItemsSource = term.Length == 0
                 ? repos
                 : repos.Where(r => r.NameWithOwner.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+        };
+        // Picking a repo writes its slug into the box, so editing the filter afterward
+        // can't silently discard the choice — the text itself is a valid clone target.
+        list.SelectionChanged += (_, _) =>
+        {
+            if (list.SelectedItem is RemoteRepo r)
+            {
+                syncing = true;
+                urlBox.Text = r.NameWithOwner;
+                syncing = false;
+            }
         };
 
         var dialog = new Wpf.Ui.Controls.MessageBox
@@ -327,17 +345,16 @@ public partial class DashboardViewModel : ObservableObject
         };
         if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
 
-        // Selection wins over typed filter text; a full URL or owner/repo both work.
-        string url;
-        if (list.SelectedItem is RemoteRepo picked)
-            url = $"https://github.com/{picked.NameWithOwner}.git";
-        else
+        // Selection writes its slug into the box, so the box text is authoritative; a full
+        // URL, owner/repo, or a picked repo all resolve here.
+        var typed = urlBox.Text.Trim();
+        if (typed.Length == 0)
         {
-            var typed = urlBox.Text.Trim();
-            if (typed.Length == 0) return;
-            url = typed.Contains("://") || typed.Contains('@') ? typed
-                : $"https://github.com/{typed.TrimEnd('/')}.git";
+            if (list.SelectedItem is not RemoteRepo picked) return;
+            typed = picked.NameWithOwner;
         }
+        var url = typed.Contains("://") || typed.Contains('@') ? typed
+            : $"https://github.com/{typed.TrimEnd('/')}.git";
 
         var repoName = GitRemote.RepoNameFromUrl(url);
         if (repoName.Length == 0)
@@ -354,11 +371,16 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        OpStatusText = $"Cloning {repoName}…";
-        var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
-        OpStatusText = error is null ? $"Cloned {repoName}." : $"Clone failed: {error}";
-        if (error is null)
-            await ForceRefreshAsync();
+        _bulkOpRunning = true;
+        try
+        {
+            OpStatusText = $"Cloning {repoName}…";
+            var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
+            OpStatusText = error is null ? $"Cloned {repoName}." : $"Clone failed: {error}";
+            if (error is null)
+                await ForceRefreshAsync();
+        }
+        finally { _bulkOpRunning = false; }
     }
 
     /// <summary>
@@ -369,6 +391,7 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task SyncAll()
     {
+        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
         var candidates = Projects.Where(p =>
                 !p.GitStatus.HasError &&
                 !p.GitStatus.IsDirty &&
@@ -383,10 +406,13 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
+        _bulkOpRunning = true;
         var outcomes = new System.Collections.Concurrent.ConcurrentBag<string>();
         var done = 0;
         var semaphore = new SemaphoreSlim(4);
 
+        try
+        {
         await Task.WhenAll(candidates.Select(async p =>
         {
             await semaphore.WaitAsync();
@@ -449,6 +475,8 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         await ForceRefreshAsync();
+        }
+        finally { _bulkOpRunning = false; }
     }
 
     [RelayCommand]

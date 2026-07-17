@@ -124,7 +124,7 @@ public partial class ProjectDetailPage
             case "Branches" when _viewModel.Branches.Count == 0:
                 _viewModel.LoadBranchesCommand.Execute(null);
                 break;
-            case "Stashes" when _viewModel.Stashes.Count == 0:
+            case "Stashes" when !_viewModel.StashesLoaded:
                 _viewModel.LoadStashesCommand.Execute(null);
                 break;
             case "Pull Requests" when !_viewModel.PullRequestsLoaded:

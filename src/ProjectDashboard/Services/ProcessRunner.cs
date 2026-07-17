@@ -65,7 +65,17 @@ public static class ProcessRunner
             foreach (var (key, value) in environment)
                 process.StartInfo.Environment[key] = value;
 
-        process.Start();
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            // Executable unresolvable / working dir gone. Return a failed result instead of
+            // throwing — one unlaunchable repo must not fault a whole parallel discovery.
+            Log.Warn($"could not start {fileName}", ex);
+            return new ProcessResult(-1, "", ex.Message, TimedOut: false);
+        }
 
         // Drain both pipes from the start — never let either fill.
         var stdOutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);

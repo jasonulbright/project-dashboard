@@ -19,6 +19,8 @@ public sealed class FileDiff
     public string Path { get; set; } = "";
     public string? OldPath { get; set; }
     public bool IsBinary { get; set; }
+    /// <summary>True for a merge/combined diff (git diff --cc) — rendered read-only, not column-parsed.</summary>
+    public bool IsCombined { get; set; }
     public List<DiffLine> Lines { get; } = [];
 
     /// <summary>
@@ -39,9 +41,50 @@ public sealed class FileDiff
             {
                 current = new FileDiff();
                 files.Add(current);
+                // Seed Path from the header so a mode-only change (no ---/+++ lines) still names the file.
+                current.Path = PathFromDiffGit(line);
+                oldNo = newNo = 0;
+                continue;
+            }
+            if (line.StartsWith("diff --cc ", StringComparison.Ordinal) ||
+                line.StartsWith("diff --combined ", StringComparison.Ordinal))
+            {
+                // Merge/combined diff: no a/ b/ prefixes, content lines carry 2 status columns.
+                current = new FileDiff { IsCombined = true };
+                files.Add(current);
+                var sp = line.IndexOf(' ', 8);
+                current.Path = sp > 0 ? line[(sp + 1)..].Trim() : line["diff --cc ".Length..].Trim();
+                oldNo = newNo = 0;
                 continue;
             }
             if (current is null) continue;
+
+            if (line.StartsWith("old mode ", StringComparison.Ordinal))
+            {
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                continue;
+            }
+            if (line.StartsWith("new mode ", StringComparison.Ordinal))
+            {
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                continue;
+            }
+
+            if (current.IsCombined)
+            {
+                // Combined-diff body: keep it readable rather than mis-counting columns.
+                if (line.StartsWith("@@@", StringComparison.Ordinal))
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                else if (line.StartsWith("+", StringComparison.Ordinal))
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line });
+                else if (line.StartsWith("-", StringComparison.Ordinal))
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = line });
+                else if (!line.StartsWith("index ", StringComparison.Ordinal) &&
+                         !line.StartsWith("--- ", StringComparison.Ordinal) &&
+                         !line.StartsWith("+++ ", StringComparison.Ordinal))
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line });
+                continue;
+            }
 
             if (line.StartsWith("--- ", StringComparison.Ordinal))
             {
@@ -103,6 +146,19 @@ public sealed class FileDiff
         }
 
         return files;
+    }
+
+    /// <summary>Path from a "diff --git a/foo b/foo" header (handles spaces via the a//b/ split).</summary>
+    private static string PathFromDiffGit(string line)
+    {
+        var rest = line["diff --git ".Length..];
+        var bSlash = rest.IndexOf(" b/", StringComparison.Ordinal);
+        if (bSlash > 0)
+        {
+            var b = rest[(bSlash + 3)..].Trim();
+            return b;
+        }
+        return "";
     }
 
     private static string StripPrefix(string path) =>

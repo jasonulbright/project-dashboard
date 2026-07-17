@@ -56,12 +56,27 @@ public partial class ProjectDetailViewModel
 
     private string RepoPath => Project?.FullPath ?? "";
 
+    /// <summary>
+    /// Bumped every time a different project is applied. Async continuations capture it
+    /// and bail if it changed while they awaited — a slow op on project A must never write
+    /// to (or mutate a file in) project B after the user switched. Guarding on RepoPath
+    /// alone is not enough: two repos can share a path, and stale file lists could stage
+    /// the wrong file.
+    /// </summary>
+    private int _generation;
+    internal void BumpGeneration() => _generation++;
+    private bool IsCurrent(int gen) => gen == _generation;
+
     /// <summary>Reload the working state and dependent UI (branch bar, banner, lists).</summary>
     public async Task RefreshWorkingStateAsync()
     {
-        if (RepoPath.Length == 0) return;
+        var gen = _generation;
+        var repo = RepoPath;
+        if (repo.Length == 0) return;
 
-        var state = await _gitService.GetWorkingStateAsync(RepoPath);
+        var state = await _gitService.GetWorkingStateAsync(repo);
+        if (!IsCurrent(gen)) return; // switched projects mid-await — drop this result
+
         WorkingState = state;
         if (state is null)
         {
@@ -74,9 +89,19 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        // Preserve the selected file across the rebuild (new instances every parse), so a
+        // refresh triggered by an unrelated op doesn't blank the diff pane and selection.
+        var keepStaged = SelectedStagedFile?.Path;
+        var keepUnstaged = SelectedUnstagedFile?.Path;
+
         StagedFiles = new ObservableCollection<WorkingFile>(state.Staged);
         UnstagedFiles = new ObservableCollection<WorkingFile>(state.Unstaged);
         ConflictedFiles = new ObservableCollection<WorkingFile>(state.Conflicted);
+
+        if (keepStaged is not null)
+            SelectedStagedFile = StagedFiles.FirstOrDefault(f => f.Path == keepStaged);
+        if (keepUnstaged is not null && SelectedStagedFile is null)
+            SelectedUnstagedFile = UnstagedFiles.FirstOrDefault(f => f.Path == keepUnstaged);
 
         BranchLabel = state.Detached ? "detached HEAD" : state.Branch;
         AheadBehindLabel = !state.HasUpstream ? "no upstream"
@@ -141,17 +166,21 @@ public partial class ProjectDetailViewModel
 
     private async Task ShowDiffAsync(WorkingFile file, bool staged)
     {
+        var gen = _generation;
+        var repo = RepoPath;
         try
         {
             DiffTitle = file.OrigPath is null ? file.Path : $"{file.OrigPath} → {file.Path}";
-            var diff = await _gitService.GetFileDiffAsync(RepoPath, file, staged);
+            var diff = await _gitService.GetFileDiffAsync(repo, file, staged);
+            if (!IsCurrent(gen) || !ReferenceEquals(staged ? SelectedStagedFile : SelectedUnstagedFile, file))
+                return; // selection or project changed mid-await
             DiffIsBinary = diff?.IsBinary ?? false;
             DiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
         }
         catch (Exception ex)
         {
             Log.Warn($"diff load failed for {file.Path}", ex);
-            DiffLines = [];
+            if (IsCurrent(gen)) DiffLines = [];
         }
     }
 
@@ -230,8 +259,9 @@ public partial class ProjectDetailViewModel
 
     private async Task PrefillAmendMessageAsync()
     {
+        var gen = _generation;
         var msg = await _gitService.GetLastCommitMessageAsync(RepoPath);
-        if (AmendMode && string.IsNullOrWhiteSpace(CommitMessage))
+        if (IsCurrent(gen) && AmendMode && string.IsNullOrWhiteSpace(CommitMessage))
             CommitMessage = msg;
     }
 
@@ -271,8 +301,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task LoadBranches()
     {
+        var gen = _generation;
         if (RepoPath.Length == 0) return;
-        Branches = new ObservableCollection<BranchInfo>(await _gitService.GetBranchesAsync(RepoPath));
+        var branches = await _gitService.GetBranchesAsync(RepoPath);
+        if (IsCurrent(gen))
+            Branches = new ObservableCollection<BranchInfo>(branches);
     }
 
     [RelayCommand]
@@ -320,11 +353,20 @@ public partial class ProjectDetailViewModel
 
     // ── Stashes ─────────────────────────────────────────────────────────────
 
+    /// <summary>Real "loaded" flag — Stashes.Count==0 is the common case, so it can't stand in.</summary>
+    [ObservableProperty] private bool _stashesLoaded;
+
     [RelayCommand]
     private async Task LoadStashes()
     {
+        var gen = _generation;
         if (RepoPath.Length == 0) return;
-        Stashes = new ObservableCollection<StashEntry>(await _gitService.GetStashesAsync(RepoPath));
+        var stashes = await _gitService.GetStashesAsync(RepoPath);
+        if (IsCurrent(gen))
+        {
+            Stashes = new ObservableCollection<StashEntry>(stashes);
+            StashesLoaded = true;
+        }
     }
 
     [RelayCommand]
@@ -368,10 +410,11 @@ public partial class ProjectDetailViewModel
 
     private async Task LoadCommitFilesAsync(GitCommit commit)
     {
+        var gen = _generation;
         try
         {
             var files = await _gitService.GetCommitFilesAsync(RepoPath, commit.ShortHash);
-            if (ReferenceEquals(SelectedCommit, commit))
+            if (IsCurrent(gen) && ReferenceEquals(SelectedCommit, commit))
                 CommitFiles = new ObservableCollection<CommitFile>(files);
         }
         catch (Exception ex)
