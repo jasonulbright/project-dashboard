@@ -43,6 +43,9 @@ public partial class ProjectDetailPage
         catch { }
 
         RenderDocuments();
+
+        // Project switched while a lazy tab was active: its data was reset, reload it.
+        LoadDataForActiveTab();
     }
 
     private void RenderDocuments()
@@ -82,6 +85,19 @@ public partial class ProjectDetailPage
     // row's existing left-click command (open on GitHub) without a mouse.
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Ctrl+1..7 jumps between work-area tabs.
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is >= Key.D1 and <= Key.D7)
+        {
+            var index = e.Key - Key.D1;
+            if (index < WorkTabs.Items.Count)
+            {
+                WorkTabs.SelectedIndex = index;
+                if (WorkTabs.SelectedItem is TabItem tab) tab.Focus();
+                e.Handled = true;
+            }
+            return;
+        }
+
         if (e.Key != Key.Enter && e.Key != Key.Space) return;
         if (Keyboard.FocusedElement is not Border border) return;
 
@@ -89,6 +105,61 @@ public partial class ProjectDetailPage
         if (mouseBinding?.Command?.CanExecute(mouseBinding.CommandParameter) == true)
         {
             mouseBinding.Command.Execute(mouseBinding.CommandParameter);
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Lazy-loads tab data the first time a surface is opened for the current project.</summary>
+    private void WorkTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, WorkTabs)) return;
+        LoadDataForActiveTab();
+    }
+
+    private void LoadDataForActiveTab()
+    {
+        if (WorkTabs.SelectedItem is not TabItem tab) return;
+        switch (tab.Header as string)
+        {
+            case "Branches" when _viewModel.Branches.Count == 0:
+                _viewModel.LoadBranchesCommand.Execute(null);
+                break;
+            case "Stashes" when _viewModel.Stashes.Count == 0:
+                _viewModel.LoadStashesCommand.Execute(null);
+                break;
+            case "Pull Requests" when !_viewModel.PullRequestsLoaded:
+                _viewModel.LoadPullRequestsCommand.Execute(null);
+                break;
+        }
+    }
+
+    // Issue / PR rows: double-click or Enter opens the row on GitHub.
+    private void IssueRow_Open(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem { DataContext: Models.GitHubIssue issue })
+            _viewModel.OpenIssueCommand.Execute(issue);
+    }
+
+    private void IssueRow_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is ListBoxItem { DataContext: Models.GitHubIssue issue })
+        {
+            _viewModel.OpenIssueCommand.Execute(issue);
+            e.Handled = true;
+        }
+    }
+
+    private void PrRow_Open(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem { DataContext: Models.GitHubPullRequest pr })
+            _viewModel.OpenPullRequestCommand.Execute(pr);
+    }
+
+    private void PrRow_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is ListBoxItem { DataContext: Models.GitHubPullRequest pr })
+        {
+            _viewModel.OpenPullRequestCommand.Execute(pr);
             e.Handled = true;
         }
     }

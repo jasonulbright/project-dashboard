@@ -11,14 +11,100 @@
 
     <Page.Resources>
         <helpers:RelativeTimeConverter x:Key="RelativeTimeConverter" />
+
+        <!-- Diff row: two number gutters + monospace text, background by kind -->
+        <DataTemplate x:Key="DiffLineTemplate" DataType="{x:Type models:DiffLine}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="42" />
+                    <ColumnDefinition Width="42" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding OldNumber}" FontFamily="Cascadia Code,Consolas" FontSize="11"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0" />
+                <TextBlock Grid.Column="1" Text="{Binding NewNumber}" FontFamily="Cascadia Code,Consolas" FontSize="11"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="2" Text="{Binding Text}" FontFamily="Cascadia Code,Consolas" FontSize="12"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" TextWrapping="NoWrap" />
+            </Grid>
+        </DataTemplate>
+
+        <Style x:Key="DiffListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <Setter Property="ItemTemplate" Value="{StaticResource DiffLineTemplate}" />
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="4,0" />
+                        <Setter Property="MinHeight" Value="18" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Added">
+                                            <Setter TargetName="Row" Property="Background" Value="#1E3FB950" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Removed">
+                                            <Setter TargetName="Row" Property="Background" Value="#1EE05252" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="HunkHeader">
+                                            <Setter TargetName="Row" Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                        </DataTrigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Working-file row -->
+        <DataTemplate x:Key="WorkingFileTemplate" DataType="{x:Type models:WorkingFile}">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Width="18" Text="{Binding UnstagedLabel}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="12"
+                           Foreground="{StaticResource StatusWarnFg}" />
+                <TextBlock Text="{Binding Path}" FontSize="12" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Path}"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            </DockPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="StagedFileTemplate" DataType="{x:Type models:WorkingFile}">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Width="18" Text="{Binding StagedLabel}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="12"
+                           Foreground="{StaticResource StatusGoodFg}" />
+                <TextBlock Text="{Binding Path}" FontSize="12" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Path}"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            </DockPanel>
+        </DataTemplate>
+
+        <Style x:Key="PaneHeader" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
     </Page.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  HorizontalScrollBarVisibility="Disabled"
-                  PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
-        <StackPanel Margin="32,20,32,32" MaxWidth="1200">
+    <Grid Margin="32,16,32,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-            <!-- ═══ HEADER ═══ -->
+        <!-- ═══ HEADER ═══ -->
+        <StackPanel Grid.Row="0">
             <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                 <TextBlock Text="{Binding Project.DisplayName}"
                            FontSize="22" FontWeight="SemiBold"
@@ -29,8 +115,6 @@
                            VerticalAlignment="Bottom" Padding="0,0,0,4"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             </StackPanel>
-
-            <!-- Path + sync dot (separate row for alignment) -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                 <ui:SymbolIcon FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center">
                     <ui:SymbolIcon.Style>
@@ -55,299 +139,842 @@
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            Text="{Binding Project.FullPath}" />
             </StackPanel>
+        </StackPanel>
 
-            <!-- Description -->
-            <TextBlock Text="{Binding Project.Manifest.Description}"
-                       FontSize="13" Margin="0,4,0,0"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}">
-                <TextBlock.Style>
-                    <Style TargetType="TextBlock">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding Project.Manifest.Description}" Value="">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </TextBlock.Style>
-            </TextBlock>
+        <!-- ═══ STATE BANNER ═══ -->
+        <Border Grid.Row="1"
+                Visibility="{Binding StateBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{StaticResource StatusWarnBg}"
+                BorderBrush="{StaticResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,8,0,0">
+            <DockPanel>
+                <ui:SymbolIcon DockPanel.Dock="Left" Symbol="Warning24" Foreground="{StaticResource StatusWarnFg}"
+                               FontSize="16" Margin="0,0,10,0" VerticalAlignment="Center" />
+                <ui:Button DockPanel.Dock="Right" Content="Open in Terminal" FontSize="12" Padding="10,4"
+                           Command="{Binding OpenRepoInTerminalCommand}" />
+                <TextBlock Text="{Binding StateBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13" />
+            </DockPanel>
+        </Border>
 
-            <!-- ═══ ROW 1: MANIFEST + NOTES ═══ -->
-            <Grid Margin="0,16,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+        <!-- ═══ BRANCH BAR ═══ -->
+        <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                CornerRadius="8" Padding="12,6" Margin="0,8,0,8">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <ui:SymbolIcon Symbol="BranchFork24" FontSize="15" Margin="0,0,6,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource StatusInfoFg}" />
+                    <TextBlock Text="{Binding BranchLabel}" FontFamily="Cascadia Code,Consolas" FontSize="13"
+                               VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                    <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4" Padding="6,2" Margin="10,0,0,0"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AheadBehindLabel}" FontSize="11"
+                                   Foreground="{StaticResource StatusInfoFg}" />
+                    </Border>
+                    <ui:ProgressRing IsIndeterminate="True" Width="16" Height="16" Margin="12,0,0,0"
+                                     VerticalAlignment="Center"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding SyncStatusText}" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ui:Button Content="Fetch" FontSize="12" Padding="10,4" Margin="0,0,6,0"
+                               Icon="{ui:SymbolIcon ArrowDownload24}"
+                               Command="{Binding FetchCommand}" />
+                    <ui:Button Content="Pull" FontSize="12" Padding="10,4" Margin="0,0,6,0"
+                               Icon="{ui:SymbolIcon ArrowDown24}"
+                               Command="{Binding PullCommand}" />
+                    <ui:Button Content="Push" FontSize="12" Padding="10,4"
+                               Icon="{ui:SymbolIcon ArrowUp24}"
+                               Command="{Binding PushCommand}" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
 
-                <!-- Manifest fields -->
-                <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        CornerRadius="8" Padding="20,16" Margin="0,0,12,0" MinWidth="380">
-                    <StackPanel>
-                        <TextBlock Text="Project Manifest" FontWeight="SemiBold" FontSize="14"
-                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,12" />
+        <!-- ═══ WORK AREA TABS ═══ -->
+        <TabControl Grid.Row="3" x:Name="WorkTabs" Background="Transparent" BorderThickness="0"
+                    SelectionChanged="WorkTabs_SelectionChanged">
 
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
+            <!-- ── OVERVIEW ── -->
+            <TabItem Header="Overview">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+                    <StackPanel Margin="0,12,0,12" MaxWidth="1200" HorizontalAlignment="Left">
 
-                            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,12">
-                                <TextBlock Text="Type" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
-                                <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.ProjectTypes}"
-                                          SelectedItem="{Binding SelectedProjectType}" FontSize="12"
-                                          AutomationProperties.Name="Project type" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
-                                <TextBlock Text="Status" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
-                                <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.Statuses}"
-                                          SelectedItem="{Binding SelectedStatus}" FontSize="12"
-                                          AutomationProperties.Name="Project status" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
-                                <TextBlock Text="Category" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
-                                <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.CategoriesList}"
-                                          SelectedItem="{Binding SelectedCategory}" FontSize="12"
-                                          AutomationProperties.Name="Project category" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="1" Grid.Column="1">
-                                <TextBlock Text="Validation" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
-                                <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.Schedules}"
-                                          SelectedItem="{Binding ValidationSchedule}" FontSize="12"
-                                          AutomationProperties.Name="Validation schedule" />
-                            </StackPanel>
-                        </Grid>
-
-                        <ui:Button Content="Save" Appearance="Primary" Margin="0,12,0,0"
-                                   HorizontalAlignment="Left"
-                                   Command="{Binding SaveManifestCommand}" />
-                    </StackPanel>
-                </Border>
-
-                <!-- Notes -->
-                <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        CornerRadius="8" Padding="20,16">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                            <TextBlock DockPanel.Dock="Left" Text="Notes" FontWeight="SemiBold" FontSize="14"
-                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                            <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
-                                       Padding="6,2" FontSize="12"
-                                       Icon="{ui:SymbolIcon Edit24}"
-                                       Command="{Binding ToggleEditNotesCommand}">
-                                <ui:Button.Content>
-                                    <TextBlock>
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="Edit" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
-                                                        <Setter Property="Text" Value="Done" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </ui:Button.Content>
-                            </ui:Button>
-                        </DockPanel>
-
-                        <!-- Rendered view -->
-                        <ItemsControl Grid.Row="1" ItemsSource="{Binding NoteLines}">
-                            <ItemsControl.Style>
-                                <Style TargetType="ItemsControl">
+                        <TextBlock Text="{Binding Project.Manifest.Description}"
+                                   FontSize="13" Margin="0,0,0,12"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                        <DataTrigger Binding="{Binding Project.Manifest.Description}" Value="">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </ItemsControl.Style>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type models:NoteLine}">
-                                    <DockPanel Margin="0,2">
-                                        <ui:SymbolIcon DockPanel.Dock="Left" Symbol="{Binding Icon}" FontSize="14"
-                                                       Foreground="{Binding IconBrush}" Margin="0,3,8,0"
-                                                       VerticalAlignment="Top" />
-                                        <TextBlock Text="{Binding Text}" FontSize="13"
-                                                   TextWrapping="Wrap"
-                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                    </DockPanel>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                            </TextBlock.Style>
+                        </TextBlock>
 
-                        <!-- Raw editor -->
-                        <TextBox Grid.Row="1"
-                                 Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 MinHeight="140"
-                                 VerticalScrollBarVisibility="Auto"
-                                 FontFamily="Cascadia Code,Consolas"
-                                 FontSize="13"
-                                 BorderThickness="0"
-                                 Background="Transparent"
-                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                 CaretBrush="{DynamicResource TextFillColorPrimaryBrush}">
-                            <TextBox.Style>
-                                <Style TargetType="TextBox">
-                                    <Setter Property="Visibility" Value="Collapsed" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    CornerRadius="8" Padding="20,16" Margin="0,0,12,0" MinWidth="380">
+                                <StackPanel>
+                                    <TextBlock Text="Project Manifest" FontWeight="SemiBold" FontSize="14"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,12" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,12">
+                                            <TextBlock Text="Type" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
+                                            <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.ProjectTypes}"
+                                                      SelectedItem="{Binding SelectedProjectType}" FontSize="12"
+                                                      AutomationProperties.Name="Project type" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
+                                            <TextBlock Text="Status" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
+                                            <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.Statuses}"
+                                                      SelectedItem="{Binding SelectedStatus}" FontSize="12"
+                                                      AutomationProperties.Name="Project status" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
+                                            <TextBlock Text="Category" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
+                                            <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.CategoriesList}"
+                                                      SelectedItem="{Binding SelectedCategory}" FontSize="12"
+                                                      AutomationProperties.Name="Project category" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1">
+                                            <TextBlock Text="Validation" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
+                                            <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.Schedules}"
+                                                      SelectedItem="{Binding ValidationSchedule}" FontSize="12"
+                                                      AutomationProperties.Name="Validation schedule" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <ui:Button Content="Save" Appearance="Primary" Margin="0,12,0,0"
+                                               HorizontalAlignment="Left"
+                                               Command="{Binding SaveManifestCommand}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    CornerRadius="8" Padding="20,16">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                                        <TextBlock DockPanel.Dock="Left" Text="Notes" FontWeight="SemiBold" FontSize="14"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                                   Padding="6,2" FontSize="12"
+                                                   Icon="{ui:SymbolIcon Edit24}"
+                                                   Command="{Binding ToggleEditNotesCommand}">
+                                            <ui:Button.Content>
+                                                <TextBlock>
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="Edit" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                                                    <Setter Property="Text" Value="Done" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </ui:Button.Content>
+                                        </ui:Button>
+                                    </DockPanel>
+                                    <ItemsControl Grid.Row="1" ItemsSource="{Binding NoteLines}">
+                                        <ItemsControl.Style>
+                                            <Style TargetType="ItemsControl">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ItemsControl.Style>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type models:NoteLine}">
+                                                <DockPanel Margin="0,2">
+                                                    <ui:SymbolIcon DockPanel.Dock="Left" Symbol="{Binding Icon}" FontSize="14"
+                                                                   Foreground="{Binding IconBrush}" Margin="0,3,8,0"
+                                                                   VerticalAlignment="Top" />
+                                                    <TextBlock Text="{Binding Text}" FontSize="13"
+                                                               TextWrapping="Wrap"
+                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBox Grid.Row="1"
+                                             Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             MinHeight="140"
+                                             VerticalScrollBarVisibility="Auto"
+                                             FontFamily="Cascadia Code,Consolas"
+                                             FontSize="13"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                             CaretBrush="{DynamicResource TextFillColorPrimaryBrush}">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <Expander IsExpanded="False" Margin="0,20,0,0">
+                            <Expander.Header>
+                                <TextBlock Text="README" FontWeight="SemiBold" FontSize="14"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </Expander.Header>
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    CornerRadius="0,0,8,8" Padding="20">
+                                <RichTextBox x:Name="ReadmeRichText"
+                                             IsReadOnly="True"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             FontFamily="Segoe UI"
+                                             FontSize="13" />
+                            </Border>
+                        </Expander>
+
+                        <Expander IsExpanded="False" Margin="0,12,0,12">
+                            <Expander.Header>
+                                <TextBlock Text="CHANGELOG" FontWeight="SemiBold" FontSize="14"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </Expander.Header>
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    CornerRadius="0,0,8,8" Padding="20">
+                                <RichTextBox x:Name="ChangelogRichText"
+                                             IsReadOnly="True"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             FontFamily="Segoe UI"
+                                             FontSize="13" />
+                            </Border>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ── CHANGES ── -->
+            <TabItem Header="Changes">
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="360" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0" Margin="0,0,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Conflicted (only when present) -->
+                        <Border Grid.Row="0" Background="{StaticResource StatusBadBg}" CornerRadius="8"
+                                Padding="10,8" Margin="0,0,0,8">
+                            <Border.Style>
+                                <Style TargetType="Border">
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible" />
+                                        <DataTrigger Binding="{Binding ConflictedFiles.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </TextBox.Style>
-                        </TextBox>
-                    </Grid>
-                </Border>
-            </Grid>
+                            </Border.Style>
+                            <StackPanel>
+                                <TextBlock Text="Conflicted" Style="{StaticResource PaneHeader}"
+                                           Foreground="{StaticResource StatusBadFg}" />
+                                <ItemsControl ItemsSource="{Binding ConflictedFiles}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:WorkingFile}">
+                                            <TextBlock Text="{Binding Path}" FontSize="12"
+                                                       Foreground="{StaticResource StatusBadFg}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
 
-            <!-- ═══ ROW 2: RECENT COMMITS ═══ -->
-            <TextBlock Text="Recent Commits" FontWeight="SemiBold" FontSize="14"
-                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                       Margin="0,24,0,8" />
-            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16">
-                <ItemsControl ItemsSource="{Binding Commits}"
-                              KeyboardNavigation.TabNavigation="Once"
-                              KeyboardNavigation.DirectionalNavigation="Cycle">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Padding="4,5" Cursor="Hand"
-                                    Style="{StaticResource FocusableChip}"
-                                    AutomationProperties.Name="{Binding Message}"
-                                    ToolTip="Open commit on GitHub">
-                                <Border.InputBindings>
-                                    <MouseBinding MouseAction="LeftClick"
-                                                  Command="{Binding DataContext.OpenCommitCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                  CommandParameter="{Binding}" />
-                                </Border.InputBindings>
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Left" Width="70"
-                                               Text="{Binding ShortHash}"
-                                               FontFamily="Cascadia Code,Consolas"
-                                               FontSize="12"
-                                               Foreground="#6CA4D9"
-                                               TextDecorations="Underline" />
-                                    <TextBlock DockPanel.Dock="Right" MinWidth="70"
-                                               Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
-                                               FontSize="12"
-                                               HorizontalAlignment="Right"
-                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                                    <TextBlock Text="{Binding Message}"
-                                               FontSize="13"
-                                               TextTrimming="CharacterEllipsis"
-                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                        <!-- Unstaged -->
+                        <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <DockPanel Grid.Row="0">
+                                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource PaneHeader}">
+                                        <Run Text="Unstaged" /><Run Text=" (" /><Run Text="{Binding UnstagedFiles.Count, Mode=OneWay}" /><Run Text=")" />
+                                    </TextBlock>
+                                    <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="Stage all"
+                                               FontSize="11" Padding="8,2"
+                                               Command="{Binding StageAllCommand}" />
                                 </DockPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </Border>
+                                <ListBox Grid.Row="1" ItemsSource="{Binding UnstagedFiles}"
+                                         SelectedItem="{Binding SelectedUnstagedFile}"
+                                         ItemTemplate="{StaticResource WorkingFileTemplate}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Unstaged files" />
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+                                    <ui:Button Content="Stage" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                               Command="{Binding StageFileCommand}"
+                                               CommandParameter="{Binding SelectedUnstagedFile}" />
+                                    <ui:Button Content="Discard" FontSize="11" Padding="8,2"
+                                               Command="{Binding DiscardFileCommand}"
+                                               CommandParameter="{Binding SelectedUnstagedFile}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
 
-            <!-- ═══ ROW 3: GITHUB ISSUES ═══ -->
-            <TextBlock Text="GitHub Issues" FontWeight="SemiBold" FontSize="14"
-                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                       Margin="0,24,0,8" />
-            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                    CornerRadius="8" Padding="16">
-                <StackPanel>
-                    <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                               Margin="4,4">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Issues.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                        <Setter Property="Text" Value="No open issues" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <ItemsControl ItemsSource="{Binding Issues}"
-                                  KeyboardNavigation.TabNavigation="Once"
-                                  KeyboardNavigation.DirectionalNavigation="Cycle">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Padding="4,5" Cursor="Hand"
-                                        Style="{StaticResource FocusableChip}"
-                                        AutomationProperties.Name="{Binding Title}"
-                                        ToolTip="Open issue on GitHub">
-                                    <Border.InputBindings>
-                                        <MouseBinding MouseAction="LeftClick"
-                                                      Command="{Binding DataContext.OpenIssueCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                      CommandParameter="{Binding}" />
-                                    </Border.InputBindings>
-                                    <DockPanel>
-                                        <TextBlock DockPanel.Dock="Left" Width="50"
-                                                   FontSize="13" FontFamily="Cascadia Code,Consolas"
-                                                   Foreground="#6CA4D9" TextDecorations="Underline">
-                                            <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
-                                        </TextBlock>
-                                        <Border DockPanel.Dock="Right"
-                                                Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                                CornerRadius="4" Padding="8,2" Margin="8,0,0,0">
-                                            <TextBlock Text="{Binding State}" FontSize="12"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                        </Border>
-                                        <TextBlock Text="{Binding Title}" FontSize="13"
-                                                   TextTrimming="CharacterEllipsis"
+                        <!-- Staged -->
+                        <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <DockPanel Grid.Row="0">
+                                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource PaneHeader}">
+                                        <Run Text="Staged" /><Run Text=" (" /><Run Text="{Binding StagedFiles.Count, Mode=OneWay}" /><Run Text=")" />
+                                    </TextBlock>
+                                    <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="Unstage all"
+                                               FontSize="11" Padding="8,2"
+                                               Command="{Binding UnstageAllCommand}" />
+                                </DockPanel>
+                                <ListBox Grid.Row="1" ItemsSource="{Binding StagedFiles}"
+                                         SelectedItem="{Binding SelectedStagedFile}"
+                                         ItemTemplate="{StaticResource StagedFileTemplate}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Staged files" />
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+                                    <ui:Button Content="Unstage" FontSize="11" Padding="8,2"
+                                               Command="{Binding UnstageFileCommand}"
+                                               CommandParameter="{Binding SelectedStagedFile}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Commit box -->
+                        <Border Grid.Row="3" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8">
+                            <StackPanel>
+                                <ui:TextBox Text="{Binding CommitMessage, UpdateSourceTrigger=PropertyChanged}"
+                                            PlaceholderText="Commit message (Ctrl+Enter to commit)"
+                                            AcceptsReturn="True" MinHeight="52" MaxHeight="96"
+                                            VerticalScrollBarVisibility="Auto"
+                                            AutomationProperties.Name="Commit message">
+                                    <ui:TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding CommitCommand}" />
+                                    </ui:TextBox.InputBindings>
+                                </ui:TextBox>
+                                <DockPanel Margin="0,8,0,0">
+                                    <CheckBox DockPanel.Dock="Left" Content="Amend last commit" FontSize="12"
+                                              IsChecked="{Binding AmendMode}" />
+                                    <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                               Content="Commit" Appearance="Primary" FontSize="12" Padding="14,4"
+                                               Command="{Binding CommitCommand}" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Diff pane -->
+                    <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="{Binding DiffTitle}" Style="{StaticResource PaneHeader}"
+                                       FontFamily="Cascadia Code,Consolas" />
+                            <TextBlock Grid.Row="1" Text="Binary file — no text diff." FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       Visibility="{Binding DiffIsBinary, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <!-- Binary diffs parse to zero lines, so the empty list simply
+                                 sits behind the binary note above. -->
+                            <ListBox Grid.Row="1" ItemsSource="{Binding DiffLines}"
+                                     Style="{StaticResource DiffListStyle}"
+                                     AutomationProperties.Name="File diff" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ── HISTORY ── -->
+            <TabItem Header="History">
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="380" />
+                        <ColumnDefinition Width="280" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="Commits" Style="{StaticResource PaneHeader}" />
+                            <ListBox Grid.Row="1" ItemsSource="{Binding Commits}"
+                                     SelectedItem="{Binding SelectedCommit}"
+                                     Background="Transparent" BorderThickness="0"
+                                     AutomationProperties.Name="Commit history">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:GitCommit}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Left" Width="64"
+                                                       Text="{Binding ShortHash}"
+                                                       FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                            <TextBlock DockPanel.Dock="Right" MinWidth="56"
+                                                       Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
+                                                       FontSize="11" HorizontalAlignment="Right"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock Text="{Binding Message}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="Changed files" Style="{StaticResource PaneHeader}" />
+                            <ListBox Grid.Row="1" ItemsSource="{Binding CommitFiles}"
+                                     SelectedItem="{Binding SelectedCommitFile}"
+                                     Background="Transparent" BorderThickness="0"
+                                     AutomationProperties.Name="Files changed in commit">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:CommitFile}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Left" Width="18" Text="{Binding Status}"
+                                                       FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                       Foreground="{StaticResource StatusWarnFg}" />
+                                            <TextBlock Text="{Binding Path}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <ui:Button Grid.Row="2" Content="View commit on GitHub" FontSize="11" Padding="8,3"
+                                       Margin="0,6,0,0" HorizontalAlignment="Left"
+                                       Command="{Binding OpenCommitCommand}"
+                                       CommandParameter="{Binding SelectedCommit}" />
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="{Binding SelectedCommitFile.Path, FallbackValue=Diff}"
+                                       Style="{StaticResource PaneHeader}" FontFamily="Cascadia Code,Consolas" />
+                            <ListBox Grid.Row="1" ItemsSource="{Binding CommitDiffLines}"
+                                     Style="{StaticResource DiffListStyle}"
+                                     AutomationProperties.Name="Commit diff" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ── BRANCHES ── -->
+            <TabItem Header="Branches">
+                <Grid Margin="0,12,0,0" MaxWidth="860" HorizontalAlignment="Left">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadBranchesCommand}" />
+                        <ui:Button DockPanel.Dock="Right" Content="Create branch" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                   Appearance="Primary"
+                                   Command="{Binding CreateBranchCommand}" />
+                        <ui:TextBox Text="{Binding NewBranchName, UpdateSourceTrigger=PropertyChanged}"
+                                    PlaceholderText="new-branch-name (creates from current HEAD and switches)"
+                                    AutomationProperties.Name="New branch name">
+                            <ui:TextBox.InputBindings>
+                                <KeyBinding Key="Enter" Command="{Binding CreateBranchCommand}" />
+                            </ui:TextBox.InputBindings>
+                        </ui:TextBox>
+                    </DockPanel>
+
+                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <ListBox ItemsSource="{Binding Branches}"
+                                 SelectedItem="{Binding SelectedBranch}"
+                                 Background="Transparent" BorderThickness="0"
+                                 AutomationProperties.Name="Local branches">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:BranchInfo}">
+                                    <DockPanel Margin="0,2">
+                                        <ui:SymbolIcon DockPanel.Dock="Left" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center">
+                                            <ui:SymbolIcon.Style>
+                                                <Style TargetType="ui:SymbolIcon">
+                                                    <Setter Property="Symbol" Value="BranchFork24" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                            <Setter Property="Symbol" Value="CheckmarkCircle24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ui:SymbolIcon.Style>
+                                        </ui:SymbolIcon>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <TextBlock Text="{Binding LastCommit, Converter={StaticResource RelativeTimeConverter}}"
+                                                       FontSize="11" Margin="0,0,12,0" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                            <ui:Button Content="Switch" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                                       Command="{Binding DataContext.SwitchBranchCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                       CommandParameter="{Binding}">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                            <ui:Button Content="Delete" FontSize="11" Padding="8,2"
+                                                       Command="{Binding DataContext.DeleteBranchCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                       CommandParameter="{Binding}">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontSize="13" FontFamily="Cascadia Code,Consolas"
+                                                   VerticalAlignment="Center"
                                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4" Padding="6,1"
+                                                Margin="10,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left">
+                                            <TextBlock Text="{Binding TrackLabel}" FontSize="10"
+                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                        </Border>
                                     </DockPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </Grid>
+            </TabItem>
 
-            <!-- ═══ ROW 4: README ═══ -->
-            <Expander IsExpanded="False" Margin="0,24,0,0">
-                <Expander.Header>
-                    <TextBlock Text="README" FontWeight="SemiBold" FontSize="14"
-                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                </Expander.Header>
-                <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        CornerRadius="0,0,8,8" Padding="20">
-                    <RichTextBox x:Name="ReadmeRichText"
-                                 IsReadOnly="True"
-                                 BorderThickness="0"
-                                 Background="Transparent"
-                                 FontFamily="Segoe UI"
-                                 FontSize="13" />
-                </Border>
-            </Expander>
+            <!-- ── ISSUES ── -->
+            <TabItem Header="Issues">
+                <Grid Margin="0,12,0,0" MaxWidth="1000" HorizontalAlignment="Left">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" FontSize="12" Margin="0,0,0,8"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               Text="Open issues — Enter or click opens on GitHub." />
+                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <Grid>
+                            <TextBlock Text="No open issues." FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Issues.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ListBox ItemsSource="{Binding Issues}"
+                                     Background="Transparent" BorderThickness="0"
+                                     AutomationProperties.Name="Open issues">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Padding" Value="4,4" />
+                                        <EventSetter Event="MouseDoubleClick" Handler="IssueRow_Open" />
+                                        <EventSetter Event="KeyDown" Handler="IssueRow_KeyDown" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:GitHubIssue}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
+                                                       FontFamily="Cascadia Code,Consolas"
+                                                       Foreground="{StaticResource StatusInfoFg}">
+                                                <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock DockPanel.Dock="Right" MinWidth="56" FontSize="11" HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding UpdatedAt, Converter={StaticResource RelativeTimeConverter}}"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,0"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding Author}"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <Border DockPanel.Dock="Right" Background="{StaticResource StatusInfoBg}"
+                                                    CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                    Visibility="{Binding HasLabels, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <TextBlock Text="{Binding Labels}" FontSize="10"
+                                                           Foreground="{StaticResource StatusInfoFg}" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Title}" FontSize="13"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
 
-            <!-- ═══ ROW 5: CHANGELOG ═══ -->
-            <Expander IsExpanded="False" Margin="0,12,0,24">
-                <Expander.Header>
-                    <TextBlock Text="CHANGELOG" FontWeight="SemiBold" FontSize="14"
-                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                </Expander.Header>
-                <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        CornerRadius="0,0,8,8" Padding="20">
-                    <RichTextBox x:Name="ChangelogRichText"
-                                 IsReadOnly="True"
-                                 BorderThickness="0"
-                                 Background="Transparent"
-                                 FontFamily="Segoe UI"
-                                 FontSize="13" />
-                </Border>
-            </Expander>
+            <!-- ── PULL REQUESTS ── -->
+            <TabItem Header="Pull Requests">
+                <Grid Margin="0,12,0,0" MaxWidth="1000" HorizontalAlignment="Left">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadPullRequestsCommand}" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   Text="Open pull requests — Enter or click opens on GitHub." />
+                    </DockPanel>
+                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <Grid>
+                            <TextBlock Text="No open pull requests." FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding PullRequests.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ListBox ItemsSource="{Binding PullRequests}"
+                                     Background="Transparent" BorderThickness="0"
+                                     AutomationProperties.Name="Open pull requests">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Padding" Value="4,4" />
+                                        <EventSetter Event="MouseDoubleClick" Handler="PrRow_Open" />
+                                        <EventSetter Event="KeyDown" Handler="PrRow_KeyDown" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:GitHubPullRequest}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
+                                                       FontFamily="Cascadia Code,Consolas"
+                                                       Foreground="{StaticResource StatusInfoFg}">
+                                                <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock DockPanel.Dock="Right" MinWidth="56" FontSize="11" HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding UpdatedAt, Converter={StaticResource RelativeTimeConverter}}"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,0"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding Author}"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <!-- checks chip -->
+                                            <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+                                                    VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ChecksState}" Value="">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding ChecksState}" Value="passing">
+                                                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding ChecksState}" Value="failing">
+                                                                <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding ChecksState}" Value="pending">
+                                                                <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding ChecksState}" FontSize="10">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="passing">
+                                                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="failing">
+                                                                    <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="pending">
+                                                                    <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+                                            <!-- draft chip -->
+                                            <Border DockPanel.Dock="Right" Background="{StaticResource StatusNeutralBg}"
+                                                    CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                    Visibility="{Binding IsDraft, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <TextBlock Text="draft" FontSize="10"
+                                                           Foreground="{StaticResource StatusNeutralFg}" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Title}" FontSize="13"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
 
-        </StackPanel>
-    </ScrollViewer>
+            <!-- ── STASHES ── -->
+            <TabItem Header="Stashes">
+                <Grid Margin="0,12,0,0" MaxWidth="860" HorizontalAlignment="Left">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadStashesCommand}" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   Text="Apply keeps the stash; Pop applies and removes it; Drop deletes it (confirmed)." />
+                    </DockPanel>
+                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <Grid>
+                            <TextBlock Text="No stashes." FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Stashes.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ListBox ItemsSource="{Binding Stashes}"
+                                     SelectedItem="{Binding SelectedStash}"
+                                     Background="Transparent" BorderThickness="0"
+                                     AutomationProperties.Name="Stashes">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:StashEntry}">
+                                        <DockPanel Margin="0,2">
+                                            <TextBlock DockPanel.Dock="Left" Width="92" Text="{Binding Ref}"
+                                                       FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <TextBlock Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
+                                                           FontSize="11" Margin="0,0,12,0" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                <ui:Button Content="Apply" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                                           Command="{Binding DataContext.StashApplyCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           CommandParameter="{Binding}" />
+                                                <ui:Button Content="Pop" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                                           Command="{Binding DataContext.StashPopCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           CommandParameter="{Binding}" />
+                                                <ui:Button Content="Drop" FontSize="11" Padding="8,2"
+                                                           Command="{Binding DataContext.StashDropCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           CommandParameter="{Binding}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Subject}" FontSize="12" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
 </Page>

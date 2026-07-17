@@ -85,6 +85,12 @@ public partial class ProjectDetailViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
+    private async Task SafeRefreshWorkingStateAsync()
+    {
+        try { await RefreshWorkingStateAsync(); }
+        catch (Exception ex) { Log.Warn("working-state refresh failed", ex); }
+    }
+
     private async Task LoadIssuesLazilyAsync(ProjectInfo project)
     {
         if (string.IsNullOrEmpty(project.GitHubSlug)) return;
@@ -105,6 +111,30 @@ public partial class ProjectDetailViewModel : ObservableObject
     {
         Project = p;
         IsEditingNotes = false; // singleton VM: edit mode must not leak onto the next project
+
+        // Reset per-repo work-area state so nothing leaks between projects.
+        WorkingState = null;
+        StagedFiles = [];
+        UnstagedFiles = [];
+        ConflictedFiles = [];
+        SelectedStagedFile = null;
+        SelectedUnstagedFile = null;
+        DiffLines = [];
+        DiffTitle = "";
+        CommitMessage = "";
+        AmendMode = false;
+        SyncStatusText = "";
+        Branches = [];
+        NewBranchName = "";
+        Stashes = [];
+        SelectedCommit = null;
+        CommitFiles = [];
+        CommitDiffLines = [];
+        PullRequests = [];
+        PullRequestsLoaded = false;
+        StateBannerVisible = false;
+
+        _ = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
         Commits = new ObservableCollection<GitCommit>(p.RecentCommits ?? []);
