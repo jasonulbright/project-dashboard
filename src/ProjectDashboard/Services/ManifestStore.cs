@@ -14,12 +14,10 @@ namespace ProjectDashboard.Services;
 /// </summary>
 public class ManifestStore
 {
-    private static readonly string StoreDir = Path.Combine(
-        // Roaming: durable user state (not cache). Cache stays in LocalApplicationData.
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ProjectDashboard");
+    // Roaming: durable user state (not cache). Cache stays in the local dir.
+    private static readonly string StoreDir = AppPaths.RoamingDir;
 
-    private static readonly string IndexPath = Path.Combine(StoreDir, "manifests.json");
+    private static readonly string IndexPath = AppPaths.ManifestIndexFile;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

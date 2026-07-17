@@ -8,9 +8,7 @@ namespace ProjectDashboard.Services;
 /// </summary>
 public static class Log
 {
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ProjectDashboard", "log.txt");
+    private static readonly string LogPath = AppPaths.LogFile;
 
     private static readonly object Gate = new();
 

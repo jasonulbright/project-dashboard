@@ -12,9 +12,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         PropertyNameCaseInsensitive = true
     };
 
-    private static readonly string CachePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ProjectDashboard", "discovery-cache.json");
+    private static readonly string CachePath = AppPaths.DiscoveryCacheFile;
 
     /// <summary>
     /// Loads from cache if fresh, otherwise runs full discovery and updates cache.

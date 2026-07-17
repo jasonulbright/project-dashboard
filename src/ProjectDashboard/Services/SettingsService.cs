@@ -6,11 +6,9 @@ namespace ProjectDashboard.Services;
 
 public class SettingsService
 {
-    private static readonly string SettingsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ProjectDashboard");
+    private static readonly string SettingsDir = AppPaths.LocalDir;
 
-    private static readonly string SettingsPath = Path.Combine(SettingsDir, "settings.json");
+    private static readonly string SettingsPath = AppPaths.SettingsFile;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
