@@ -129,6 +129,44 @@ public class GitService
         return commits;
     }
 
+    /// <summary>
+    /// Full working-tree state in one porcelain-v2 call (+ a git-dir probe for
+    /// merge/rebase state). Null when git can't read the repo at all.
+    /// </summary>
+    public async Task<WorkingState?> GetWorkingStateAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["status", "--porcelain=v2", "--branch"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git status v2 failed for {repoPath}: {result.FirstError}");
+            return null;
+        }
+        var state = WorkingState.Parse(result.StdOut);
+        state.Activity = await DetectActivityAsync(repoPath, ct);
+        return state;
+    }
+
+    private async Task<RepoActivity> DetectActivityAsync(string repoPath, CancellationToken ct)
+    {
+        // Resolve the real git dir — a linked worktree's .git is a file pointing elsewhere.
+        var result = await RunAsync(repoPath, ["rev-parse", "--git-dir"], ct);
+        if (!result.Success) return RepoActivity.None;
+
+        var gitDir = result.StdOut.Trim();
+        if (!Path.IsPathRooted(gitDir)) gitDir = Path.Combine(repoPath, gitDir);
+
+        // Rebase first: a rebase stopped on a conflict has no MERGE_HEAD but does
+        // have the rebase state dir, and "rebasing" is the more precise banner.
+        if (Directory.Exists(Path.Combine(gitDir, "rebase-merge")) ||
+            Directory.Exists(Path.Combine(gitDir, "rebase-apply")))
+            return RepoActivity.Rebasing;
+        if (File.Exists(Path.Combine(gitDir, "MERGE_HEAD"))) return RepoActivity.Merging;
+        if (File.Exists(Path.Combine(gitDir, "CHERRY_PICK_HEAD"))) return RepoActivity.CherryPicking;
+        if (File.Exists(Path.Combine(gitDir, "REVERT_HEAD"))) return RepoActivity.Reverting;
+        if (File.Exists(Path.Combine(gitDir, "BISECT_LOG"))) return RepoActivity.Bisecting;
+        return RepoActivity.None;
+    }
+
     /// <summary>Init + stage + first commit for New Project. Returns null on success, else a short error.</summary>
     public async Task<string?> InitWithFirstCommitAsync(string repoPath, string commitMessage, CancellationToken ct = default)
     {
