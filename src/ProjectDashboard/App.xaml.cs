@@ -30,6 +30,18 @@ public partial class App : Application
             args.Handled = true;
         };
 
+        // Background-task and non-dispatcher failures never reach the handler above —
+        // without these they vanish (or kill the process) with no log entry.
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            ProjectDashboard.Services.Log.Error("Unobserved task exception", args.Exception);
+            args.SetObserved();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            ProjectDashboard.Services.Log.Error(
+                $"Unhandled domain exception (terminating={args.IsTerminating})",
+                args.ExceptionObject as Exception);
+
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
@@ -63,10 +75,8 @@ public partial class App : Application
             })
             .Build();
 
+        // ApplicationHostService shows the window and navigates to the dashboard.
         await _host.StartAsync();
-
-        var mainWindow = _host.Services.GetRequiredService<MainWindow>();
-        mainWindow.Show();
     }
 
     protected override async void OnExit(ExitEventArgs e)
