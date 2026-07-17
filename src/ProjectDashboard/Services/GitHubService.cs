@@ -139,21 +139,127 @@ public class GitHubService(SettingsService settingsService)
         try
         {
             var output = await RunGhAsync(
-                ["issue", "list", "--repo", repoSlug, "--state", state, "--json", "number,title,state,createdAt", "--limit", "50"], ct);
+                ["issue", "list", "--repo", repoSlug, "--state", state,
+                 "--json", "number,title,state,createdAt,updatedAt,author,labels", "--limit", "100"], ct);
 
             if (string.IsNullOrWhiteSpace(output))
                 return [];
 
-            var issues = JsonSerializer.Deserialize<List<GitHubIssue>>(output, new JsonSerializerOptions
+            var issues = new List<GitHubIssue>();
+            using var doc = JsonDocument.Parse(output);
+            foreach (var el in doc.RootElement.EnumerateArray())
             {
-                PropertyNameCaseInsensitive = true
-            });
-
-            return issues ?? [];
+                issues.Add(new GitHubIssue
+                {
+                    Number = el.GetProperty("number").GetInt32(),
+                    Title = el.GetProperty("title").GetString() ?? "",
+                    State = el.TryGetProperty("state", out var st) ? st.GetString()?.ToLowerInvariant() ?? "" : "",
+                    CreatedAt = el.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default,
+                    UpdatedAt = el.TryGetProperty("updatedAt", out var ua) ? ua.GetDateTimeOffset() : default,
+                    Author = el.TryGetProperty("author", out var au) && au.ValueKind == JsonValueKind.Object &&
+                             au.TryGetProperty("login", out var lg) ? lg.GetString() ?? "" : "",
+                    Labels = el.TryGetProperty("labels", out var lb) && lb.ValueKind == JsonValueKind.Array
+                        ? string.Join(", ", lb.EnumerateArray().Select(l =>
+                            l.TryGetProperty("name", out var n) ? n.GetString() : null).Where(n => n is not null))
+                        : ""
+                });
+            }
+            return issues;
         }
         catch (Exception ex)
         {
             Log.Warn($"gh issue list failed for {repoSlug} (showing 0 issues)", ex);
+            return [];
+        }
+    }
+
+    public async Task<List<GitHubPullRequest>> GetPullRequestsAsync(string repoSlug, CancellationToken ct = default)
+    {
+        try
+        {
+            var output = await RunGhAsync(
+                ["pr", "list", "--repo", repoSlug, "--state", "open",
+                 "--json", "number,title,author,isDraft,updatedAt,statusCheckRollup", "--limit", "100"], ct);
+
+            if (string.IsNullOrWhiteSpace(output))
+                return [];
+
+            var prs = new List<GitHubPullRequest>();
+            using var doc = JsonDocument.Parse(output);
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                prs.Add(new GitHubPullRequest
+                {
+                    Number = el.GetProperty("number").GetInt32(),
+                    Title = el.GetProperty("title").GetString() ?? "",
+                    Author = el.TryGetProperty("author", out var au) && au.ValueKind == JsonValueKind.Object &&
+                             au.TryGetProperty("login", out var lg) ? lg.GetString() ?? "" : "",
+                    IsDraft = el.TryGetProperty("isDraft", out var dr) && dr.GetBoolean(),
+                    UpdatedAt = el.TryGetProperty("updatedAt", out var ua) ? ua.GetDateTimeOffset() : default,
+                    ChecksState = el.TryGetProperty("statusCheckRollup", out var checks)
+                        ? SummarizeChecks(checks) : ""
+                });
+            }
+            return prs;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"gh pr list failed for {repoSlug} (showing 0 PRs)", ex);
+            return [];
+        }
+    }
+
+    /// <summary>Aggregates a PR's statusCheckRollup into failing / pending / passing / "".</summary>
+    private static string SummarizeChecks(JsonElement rollup)
+    {
+        if (rollup.ValueKind != JsonValueKind.Array || rollup.GetArrayLength() == 0) return "";
+
+        bool anyPending = false;
+        foreach (var check in rollup.EnumerateArray())
+        {
+            // CheckRun: status (COMPLETED/IN_PROGRESS/...) + conclusion (SUCCESS/FAILURE/...)
+            // StatusContext: state (SUCCESS/FAILURE/PENDING/ERROR)
+            var state = check.TryGetProperty("conclusion", out var c) && c.ValueKind == JsonValueKind.String && c.GetString()!.Length > 0
+                ? c.GetString()!
+                : check.TryGetProperty("state", out var s) && s.ValueKind == JsonValueKind.String
+                    ? s.GetString()!
+                    : check.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String
+                        ? st.GetString()!
+                        : "";
+
+            switch (state.ToUpperInvariant())
+            {
+                case "FAILURE" or "ERROR" or "TIMED_OUT" or "CANCELLED" or "ACTION_REQUIRED" or "STARTUP_FAILURE":
+                    return "failing";
+                case "PENDING" or "IN_PROGRESS" or "QUEUED" or "WAITING" or "EXPECTED" or "REQUESTED":
+                    anyPending = true;
+                    break;
+            }
+        }
+        return anyPending ? "pending" : "passing";
+    }
+
+    /// <summary>The signed-in user's repositories, newest activity first (clone picker).</summary>
+    public async Task<List<RemoteRepo>> GetUserReposAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var output = await RunGhAsync(
+                ["repo", "list", "--json", "nameWithOwner,description,visibility,updatedAt", "--limit", "200"], ct);
+            if (string.IsNullOrWhiteSpace(output)) return [];
+
+            var repos = JsonSerializer.Deserialize<List<RemoteRepo>>(output, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? [];
+            return repos
+                .Select(r => { r.Visibility = r.Visibility.ToLowerInvariant(); return r; })
+                .OrderByDescending(r => r.UpdatedAt)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh repo list failed", ex);
             return [];
         }
     }

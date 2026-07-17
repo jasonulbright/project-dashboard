@@ -202,6 +202,231 @@ public class GitService
         return result.StdOut;
     }
 
+    // ── Working-tree operations (Changes view) ─────────────────────────────
+
+    /// <summary>Unified diff for one file (staged or unstaged side). Untracked files synthesize an all-added diff.</summary>
+    public async Task<FileDiff?> GetFileDiffAsync(string repoPath, WorkingFile file, bool staged, CancellationToken ct = default)
+    {
+        if (file.IsUntracked)
+            return SynthesizeUntrackedDiff(repoPath, file.Path);
+
+        var args = new List<string> { "diff", "--no-color" };
+        if (staged) args.Add("--cached");
+        args.Add("--");
+        args.Add(file.Path);
+        if (file.OrigPath is not null) args.Add(file.OrigPath);
+
+        var result = await RunAsync(repoPath, args, ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git diff failed for {file.Path}: {result.FirstError}");
+            return null;
+        }
+        return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+    }
+
+    private static FileDiff? SynthesizeUntrackedDiff(string repoPath, string relPath)
+    {
+        try
+        {
+            var full = Path.Combine(repoPath, relPath);
+            var info = new FileInfo(full);
+            if (!info.Exists) return null;
+
+            var diff = new FileDiff { Path = relPath };
+            if (info.Length > 512 * 1024)
+            {
+                diff.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = $"(new file, {info.Length / 1024} KB — too large to preview)" });
+                return diff;
+            }
+            var content = File.ReadAllText(full);
+            if (content.Contains('\0')) { diff.IsBinary = true; return diff; }
+
+            var lines = content.Split('\n');
+            diff.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = $"@@ new file: {lines.Length} lines @@" });
+            for (var i = 0; i < lines.Length; i++)
+                diff.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = lines[i].TrimEnd('\r'), NewNumber = (i + 1).ToString() });
+            return diff;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"untracked preview failed for {relPath}", ex);
+            return null;
+        }
+    }
+
+    public Task<ProcessResult> StageAsync(string repoPath, string path, CancellationToken ct = default)
+        => RunAsync(repoPath, ["add", "--", path], ct);
+
+    public Task<ProcessResult> UnstageAsync(string repoPath, string path, CancellationToken ct = default)
+        => RunAsync(repoPath, ["restore", "--staged", "--", path], ct);
+
+    public Task<ProcessResult> StageAllAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["add", "-A"], ct);
+
+    public Task<ProcessResult> UnstageAllAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["restore", "--staged", "."], ct);
+
+    /// <summary>Discards a file's unstaged state: untracked files are deleted, tracked files restored.</summary>
+    public Task<ProcessResult> DiscardAsync(string repoPath, WorkingFile file, CancellationToken ct = default)
+        => file.IsUntracked
+            ? RunAsync(repoPath, ["clean", "-f", "--", file.Path], ct)
+            : RunAsync(repoPath, ["restore", "--", file.Path], ct);
+
+    public Task<ProcessResult> CommitAsync(string repoPath, string message, bool amend, CancellationToken ct = default)
+    {
+        var args = new List<string> { "commit", "-m", message };
+        if (amend) args.Add("--amend");
+        return RunAsync(repoPath, args, ct, TimeSpan.FromSeconds(30));
+    }
+
+    public async Task<string> GetLastCommitMessageAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["log", "-1", "--format=%B"], ct);
+        return result.Success ? result.StdOut.TrimEnd() : "";
+    }
+
+    // ── Branches ────────────────────────────────────────────────────────────
+
+    public async Task<List<BranchInfo>> GetBranchesAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath,
+            ["for-each-ref", "refs/heads",
+             "--format=%(refname:short)|%(HEAD)|%(upstream:short)|%(upstream:track)|%(committerdate:iso8601-strict)"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git for-each-ref failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+
+        var branches = new List<BranchInfo>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = raw.TrimEnd('\r').Split('|');
+            if (parts.Length < 5) continue;
+
+            var track = parts[3];
+            int ahead = 0, behind = 0;
+            var gone = track.Contains("gone", StringComparison.OrdinalIgnoreCase);
+            foreach (var seg in track.Trim('[', ']').Split(','))
+            {
+                var s = seg.Trim();
+                if (s.StartsWith("ahead ", StringComparison.Ordinal) && int.TryParse(s[6..], out var a)) ahead = a;
+                else if (s.StartsWith("behind ", StringComparison.Ordinal) && int.TryParse(s[7..], out var b)) behind = b;
+            }
+
+            branches.Add(new BranchInfo
+            {
+                Name = parts[0],
+                IsCurrent = parts[1] == "*",
+                Upstream = parts[2],
+                UpstreamGone = gone,
+                Ahead = ahead,
+                Behind = behind,
+                LastCommit = DateTimeOffset.TryParse(parts[4], System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d) ? d : null
+            });
+        }
+        return branches;
+    }
+
+    public Task<ProcessResult> CreateBranchAsync(string repoPath, string name, CancellationToken ct = default)
+        => RunAsync(repoPath, ["switch", "-c", name], ct);
+
+    public Task<ProcessResult> SwitchBranchAsync(string repoPath, string name, CancellationToken ct = default)
+        => RunAsync(repoPath, ["switch", name], ct);
+
+    /// <summary>Safe delete (-d): refuses when unmerged; the error is surfaced, not forced.</summary>
+    public Task<ProcessResult> DeleteBranchAsync(string repoPath, string name, CancellationToken ct = default)
+        => RunAsync(repoPath, ["branch", "-d", name], ct);
+
+    // ── Remote sync (long timeouts; progress lands on the drained stderr) ──
+
+    private static readonly TimeSpan NetworkTimeout = TimeSpan.FromSeconds(120);
+
+    public Task<ProcessResult> FetchAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["fetch", "--prune"], ct, NetworkTimeout);
+
+    /// <summary>Fast-forward-only pull: a diverged branch fails loudly instead of creating a surprise merge.</summary>
+    public Task<ProcessResult> PullAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["pull", "--ff-only"], ct, NetworkTimeout);
+
+    /// <summary>Push; sets upstream automatically when the branch has none.</summary>
+    public async Task<ProcessResult> PushAsync(string repoPath, CancellationToken ct = default)
+    {
+        var upstream = await RunAsync(repoPath, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], ct);
+        return upstream.Success
+            ? await RunAsync(repoPath, ["push"], ct, NetworkTimeout)
+            : await RunAsync(repoPath, ["push", "-u", "origin", "HEAD"], ct, NetworkTimeout);
+    }
+
+    // ── Stash ───────────────────────────────────────────────────────────────
+
+    public async Task<List<StashEntry>> GetStashesAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["stash", "list", "--format=%gd|%ci|%gs"], ct);
+        if (!result.Success) return [];
+
+        var stashes = new List<StashEntry>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = raw.TrimEnd('\r').Split('|', 3);
+            if (parts.Length < 3) continue;
+            stashes.Add(new StashEntry
+            {
+                Ref = parts[0],
+                Date = DateTimeOffset.TryParse(parts[1], System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d) ? d : null,
+                Subject = parts[2]
+            });
+        }
+        return stashes;
+    }
+
+    public Task<ProcessResult> StashApplyAsync(string repoPath, string stashRef, CancellationToken ct = default)
+        => RunAsync(repoPath, ["stash", "apply", stashRef], ct, TimeSpan.FromSeconds(30));
+
+    public Task<ProcessResult> StashPopAsync(string repoPath, string stashRef, CancellationToken ct = default)
+        => RunAsync(repoPath, ["stash", "pop", stashRef], ct, TimeSpan.FromSeconds(30));
+
+    public Task<ProcessResult> StashDropAsync(string repoPath, string stashRef, CancellationToken ct = default)
+        => RunAsync(repoPath, ["stash", "drop", stashRef], ct);
+
+    // ── History detail ──────────────────────────────────────────────────────
+
+    public async Task<List<CommitFile>> GetCommitFilesAsync(string repoPath, string hash, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["show", "--name-status", "--format=", hash], ct);
+        if (!result.Success) return [];
+
+        var files = new List<CommitFile>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = raw.TrimEnd('\r').Split('\t');
+            if (parts.Length < 2) continue;
+            // Renames: "R100 <tab> old <tab> new" — show the new path.
+            files.Add(new CommitFile { Status = parts[0], Path = parts[^1] });
+        }
+        return files;
+    }
+
+    public async Task<FileDiff?> GetCommitFileDiffAsync(string repoPath, string hash, string filePath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["show", "--no-color", "--format=", hash, "--", filePath], ct);
+        if (!result.Success) return null;
+        return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+    }
+
+    // ── Clone ───────────────────────────────────────────────────────────────
+
+    /// <summary>Clones into targetParentDir/<name>. Returns null on success, else a short error.</summary>
+    public async Task<string?> CloneAsync(string url, string targetParentDir, CancellationToken ct = default)
+    {
+        var result = await ProcessRunner.RunAsync(ResolveGitExe(),
+            ["clone", "--", url], targetParentDir, TimeSpan.FromMinutes(15), GitEnvironment, ct);
+        return result.Success ? null : result.FirstError;
+    }
+
     /// <summary>Resolve git: known install dirs first (survives a stale Start-Menu PATH), then PATH.</summary>
     private static string ResolveGitExe()
     {
