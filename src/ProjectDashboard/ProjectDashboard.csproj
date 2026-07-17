@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.1.1.2</Version>
+    <Version>1.2.0</Version>
     <!-- .NET 10 is the floor; roll forward to a newer major if 10.x is absent -->
     <RollForward>Major</RollForward>
   </PropertyGroup>

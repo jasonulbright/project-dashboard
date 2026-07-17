@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.2.0] - 2026-07-17
+
+The GitHub Desktop release — the dashboard becomes a full local git client.
+
+### Added
+- **Per-repository work area** in the detail view, as tabs: Overview, Changes, History, Branches, Issues, Pull Requests, Stashes (Ctrl+1–7 to switch)
+- **Changes** -- staged / unstaged / conflicted file lists, per-file native diff viewer (parsed from `git diff`, no web view, with line-number gutters and merge/mode-change handling), stage/unstage per file or all, discard and untracked-delete (both confirmed), commit box with amend (prefills the last message), Ctrl+Enter to commit
+- **Branches** -- local branches with upstream tracking and ahead/behind, create, switch, and safe delete (refuses unmerged)
+- **History upgrade** -- per-commit changed-file list and per-file diff, plus the existing commit-to-GitHub link
+- **Issues** as a full list (number, title, author, labels, updated) and **Pull Requests** with draft state and an aggregated checks verdict (passing/failing/pending); Enter or double-click opens on GitHub
+- **Stashes** -- list, apply, pop, and drop (drop confirmed)
+- **Branch bar + sync** -- current branch, ahead/behind, Fetch / Pull (fast-forward only) / Push (auto-sets upstream on the repo's actual remote)
+- **State banner** -- surfaces merge / rebase / cherry-pick / revert / bisect / detached-HEAD / conflicts loudly, with Open in Terminal (no in-app merge tool)
+- **Clone** -- pick from your GitHub repositories (type-to-filter) or paste any URL (https/ssh/file/local); clones into the projects root
+- **Sync All** -- fetches every clean repo, fast-forwards the ones behind and pushes the ones ahead; dirty, diverged, detached, and conflicted repos are skipped and reported
+- **Command palette** (Ctrl+K) -- fuzzy-jump to any project or action
+- **Auto-refresh** -- a debounced file watcher updates a card within a couple of seconds of an on-disk edit, commit, or branch switch (toggle in Settings)
+- **Remote discovery** (ROADMAP v1.1) -- your GitHub repos with no local clone appear as one-click-cloneable "Cloud" cards (toggle in Settings)
+- Cards now show the current branch, ahead/behind, and a loud attention state for conflict / mid-operation / detached repos
+- `PD_DATA_DIR` environment variable relocates all app state under one directory (portable mode)
+
+### Changed
+- **Every subprocess goes through one hardened `ProcessRunner`** -- both pipes drained concurrently (no deadlocks on chatty git output), UTF-8 decoding (no mojibake on unicode paths/authors), `ArgumentList` quoting, timeout + cancellation, and a failed process launch returns a result instead of throwing
+- GitHub visibility and issue/PR counts are fetched in one batched `gh api graphql` call per ~25 repos (was three `gh` spawns per repo); counts are nullable so an unreachable repo reads as absent, never a false zero
+- Origin URLs are parsed properly -- SSH/scp forms, `.git` inside names (e.g. `user.github.io`), and non-GitHub hosts no longer produce wrong links or pointless `gh` calls
+- The About version reads from the assembly (was a hardcoded string that had drifted)
+
+### Fixed
+- Worktree checkouts (whose `.git` is a file) are now discovered
+- The Hidden view no longer overwrites a repo's real Status, and no longer gets clobbered by search/sort/refresh while it's shown
+- Manifest edits no longer appear reverted on relaunch within the cache window
+- The sidebar keeps updating after the first refresh; back-navigation no longer crashes on a project entry
+- A faulted discovery scan shows a banner instead of an empty dashboard; unobserved background-task failures are logged
+- Opening a project (card or palette) lands on the right repo (was navigating by page type and landing on the first)
+- Full keyboard back-navigation (Alt+Left / Backspace), theme-correct Notes editor and code blocks in Light theme, and screen-reader names on chips and combo boxes
+
 ## [1.1.1.2] - 2026-06-01
 
 ### Added
