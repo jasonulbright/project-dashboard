@@ -1,0 +1,21 @@
+# Build artifacts
+bin/
+obj/
+publish/
+*.pdb
+
+# Editor state
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Local working files (never shipped)
+*.local.*
+*.private.*
+
+# Installer build artifacts (sources are tracked: branding/*.svg, installer/*.nsi)
+installer/payload/
+installer/*.exe
+branding/*.png
