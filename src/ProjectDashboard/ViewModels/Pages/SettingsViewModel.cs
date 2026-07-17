@@ -5,6 +5,10 @@ namespace ProjectDashboard.ViewModels.Pages;
 
 public partial class SettingsViewModel : ObservableObject
 {
+    /// <summary>Assembly version — the single source; never hand-maintained in XAML.</summary>
+    public static string AppVersion { get; } =
+        $"v{System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown"}";
+
     private readonly SettingsService _settingsService;
     private readonly GitHubService _gitHubService;
     private readonly ProjectDiscoveryService _discoveryService;
