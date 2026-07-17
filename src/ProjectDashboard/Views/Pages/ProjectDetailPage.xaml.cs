@@ -50,7 +50,7 @@ public partial class ProjectDetailPage
         // Take keyboard focus so the tab hotkeys (Ctrl+1..7) and page key handling work
         // immediately — navigation from a card, the sidebar, or the palette leaves focus
         // on the nav item, outside this page's tunnel.
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () => Focus());
+        _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () => Focus());
     }
 
     private void RenderDocuments()
