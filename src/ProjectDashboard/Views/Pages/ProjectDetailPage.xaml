@@ -7,6 +7,7 @@
     xmlns:local="clr-namespace:ProjectDashboard.ViewModels.Pages"
     xmlns:models="clr-namespace:ProjectDashboard.Models"
     FontFamily="Segoe UI"
+    Focusable="True"
     PreviewKeyDown="Page_PreviewKeyDown">
 
     <Page.Resources>
