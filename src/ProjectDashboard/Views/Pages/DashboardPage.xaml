@@ -53,7 +53,8 @@
             <!-- Group 1: Total + Dirty = 180px (aligns with Category dropdown) -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
-                    Cursor="Hand" ToolTip="Show all projects">
+                    Cursor="Hand" ToolTip="Show all projects"
+                    AutomationProperties.Name="{Binding TotalCount, StringFormat='Show all projects, {0} total'}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="all" />
                 </Border.InputBindings>
@@ -65,7 +66,8 @@
             </Border>
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,12,0"
-                    Cursor="Hand" ToolTip="Show only dirty projects">
+                    Cursor="Hand" ToolTip="Show only dirty projects"
+                    AutomationProperties.Name="{Binding DirtyCount, StringFormat='Show dirty projects, {0} dirty'}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="dirty" />
                 </Border.InputBindings>
@@ -79,7 +81,8 @@
             <!-- Group 2: Tasks + Issues = 180px (aligns with Sort dropdown) -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
-                    Cursor="Hand" ToolTip="Show projects with pending tasks">
+                    Cursor="Hand" ToolTip="Show projects with pending tasks"
+                    AutomationProperties.Name="{Binding TodoCount, StringFormat='Show projects with tasks, {0} have tasks'}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="todos" />
                 </Border.InputBindings>
@@ -91,7 +94,8 @@
             </Border>
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,12,0"
-                    Cursor="Hand" ToolTip="Show projects with open issues">
+                    Cursor="Hand" ToolTip="Show projects with open issues"
+                    AutomationProperties.Name="{Binding IssueCount, StringFormat='Show projects with open issues, {0} open issues'}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="issues" />
                 </Border.InputBindings>
@@ -106,6 +110,7 @@
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Margin="0,0,8,0"
                     Cursor="Hand" ToolTip="Show projects whose git remote does not match their folder name"
+                    AutomationProperties.Name="{Binding MismatchCount, StringFormat='Show remote-mismatch projects, {0} mismatched'}"
                     Visibility="{Binding HasMismatches, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="mismatch" />
@@ -120,6 +125,7 @@
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Margin="0,0,12,0"
                     Cursor="Hand" ToolTip="Show projects with no metadata or a blank description"
+                    AutomationProperties.Name="{Binding IncompleteCount, StringFormat='Show projects needing metadata, {0} need it'}"
                     Visibility="{Binding HasIncomplete, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="incomplete" />
@@ -135,7 +141,8 @@
             <!-- Group 3: Hidden + Refresh + New = 280px (aligns with Search box) -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Width="86" Margin="0,0,8,0"
-                    Cursor="Hand" ToolTip="Show hidden projects">
+                    Cursor="Hand" ToolTip="Show hidden projects"
+                    AutomationProperties.Name="{Binding HiddenCount, StringFormat='Show hidden projects, {0} hidden'}">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding FilterHiddenCommand}" />
                 </Border.InputBindings>
@@ -159,10 +166,14 @@
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
             <ComboBox ItemsSource="{Binding Categories}"
                       SelectedItem="{Binding SelectedCategory}"
+                      AutomationProperties.Name="Category filter"
+                      ToolTip="Category filter"
                       Width="180" Margin="0,0,12,0" />
 
             <ComboBox ItemsSource="{Binding SortOptions}"
                       SelectedItem="{Binding SelectedSort}"
+                      AutomationProperties.Name="Sort order"
+                      ToolTip="Sort order"
                       Width="180" Margin="0,0,12,0" />
 
             <ui:TextBox PlaceholderText="Search projects..."
@@ -219,6 +230,12 @@
                                     <Separator />
                                     <MenuItem Header="Open on GitHub"
                                               Command="{Binding Tag.OpenGitHubCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Open Issues on GitHub"
+                                              Command="{Binding Tag.OpenIssuesCommand}"
+                                              CommandParameter="{Binding DataContext}" />
+                                    <MenuItem Header="Open Pull Requests on GitHub"
+                                              Command="{Binding Tag.OpenPullRequestsCommand}"
                                               CommandParameter="{Binding DataContext}" />
                                     <MenuItem Header="Open Folder"
                                               Command="{Binding Tag.OpenFolderCommand}"

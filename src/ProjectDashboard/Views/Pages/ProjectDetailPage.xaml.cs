@@ -120,10 +120,10 @@ public partial class ProjectDetailPage
                     {
                         FontFamily = new FontFamily("Cascadia Code,Consolas"),
                         FontSize = 12,
-                        Foreground = new SolidColorBrush(Color.FromRgb(200, 200, 200))
+                        Foreground = ThemeTextBrush()
                     })
                     {
-                        Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)),
+                        Background = CodeBlockBackground(),
                         Padding = new Thickness(12, 8, 12, 8),
                         Margin = new Thickness(0, 6, 0, 6)
                     };
@@ -318,10 +318,11 @@ public partial class ProjectDetailPage
             var p = new Paragraph(new Run(codeText)
             {
                 FontFamily = new FontFamily("Cascadia Code,Consolas"),
-                FontSize = 12
+                FontSize = 12,
+                Foreground = ThemeTextBrush()
             })
             {
-                Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)),
+                Background = CodeBlockBackground(),
                 Padding = new Thickness(12, 8, 12, 8),
                 Margin = new Thickness(0, 6, 0, 6)
             };
@@ -330,6 +331,17 @@ public partial class ProjectDetailPage
 
         rtb.Document = doc;
     }
+
+    /// <summary>Theme-correct text brush at render time (hardcoded light gray was invisible in Light theme).</summary>
+    private static Brush ThemeTextBrush() =>
+        System.Windows.Application.Current?.Resources["TextFillColorPrimaryBrush"] as Brush
+        ?? new SolidColorBrush(Color.FromRgb(200, 200, 200));
+
+    /// <summary>Soft code background tinted for the ACTIVE theme (translucent white vanishes on light).</summary>
+    private static SolidColorBrush CodeBlockBackground() =>
+        Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme() == Wpf.Ui.Appearance.ApplicationTheme.Light
+            ? new SolidColorBrush(Color.FromArgb(24, 0, 0, 0))
+            : new SolidColorBrush(Color.FromArgb(50, 255, 255, 255));
 
     /// <summary>
     /// Adds inline formatting: **bold**, *italic*, `code`, [links](url), ~~strikethrough~~
@@ -352,7 +364,7 @@ public partial class ProjectDetailPage
                 inlines.Add(new Run(match.Groups[6].Value)
                 {
                     FontFamily = new FontFamily("Cascadia Code,Consolas"),
-                    Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                    Background = CodeBlockBackground(),
                     FontSize = 12
                 });
             else if (match.Groups[8].Success) // [text](url)

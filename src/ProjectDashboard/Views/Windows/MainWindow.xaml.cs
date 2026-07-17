@@ -62,6 +62,23 @@ public partial class MainWindow : INavigationWindow
             }
         };
 
+        // Keyboard back navigation: Alt+Left, BrowserBack, or Backspace outside a
+        // text field. Without these, going back was mouse-only (XButton1 / on-screen
+        // back button) — a dead end for keyboard-only use.
+        PreviewKeyDown += (_, e) =>
+        {
+            var inTextBox = Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase
+                         or System.Windows.Controls.PasswordBox;
+            var altLeft = e.Key == Key.System && e.SystemKey == Key.Left
+                       && (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+            var back = e.Key == Key.BrowserBack || (e.Key == Key.Back && !inTextBox);
+            if (altLeft || back)
+            {
+                RootNavigation.GoBack();
+                e.Handled = true;
+            }
+        };
+
         // Global mouse wheel fix — WPF-UI NavigationView swallows scroll events.
         // Tunnel the event to the nearest ScrollViewer in the visual tree.
         PreviewMouseWheel += (_, e) =>

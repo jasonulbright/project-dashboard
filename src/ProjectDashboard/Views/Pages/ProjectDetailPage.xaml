@@ -99,22 +99,26 @@
                             <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,12">
                                 <TextBlock Text="Type" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
                                 <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.ProjectTypes}"
-                                          SelectedItem="{Binding SelectedProjectType}" FontSize="12" />
+                                          SelectedItem="{Binding SelectedProjectType}" FontSize="12"
+                                          AutomationProperties.Name="Project type" />
                             </StackPanel>
                             <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
                                 <TextBlock Text="Status" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
                                 <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.Statuses}"
-                                          SelectedItem="{Binding SelectedStatus}" FontSize="12" />
+                                          SelectedItem="{Binding SelectedStatus}" FontSize="12"
+                                          AutomationProperties.Name="Project status" />
                             </StackPanel>
                             <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
                                 <TextBlock Text="Category" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
                                 <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.CategoriesList}"
-                                          SelectedItem="{Binding SelectedCategory}" FontSize="12" />
+                                          SelectedItem="{Binding SelectedCategory}" FontSize="12"
+                                          AutomationProperties.Name="Project category" />
                             </StackPanel>
                             <StackPanel Grid.Row="1" Grid.Column="1">
                                 <TextBlock Text="Validation" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
                                 <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.Schedules}"
-                                          SelectedItem="{Binding ValidationSchedule}" FontSize="12" />
+                                          SelectedItem="{Binding ValidationSchedule}" FontSize="12"
+                                          AutomationProperties.Name="Validation schedule" />
                             </StackPanel>
                         </Grid>
 
@@ -192,8 +196,8 @@
                                  FontSize="13"
                                  BorderThickness="0"
                                  Background="Transparent"
-                                 Foreground="White"
-                                 CaretBrush="White">
+                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                 CaretBrush="{DynamicResource TextFillColorPrimaryBrush}">
                             <TextBox.Style>
                                 <Style TargetType="TextBox">
                                     <Setter Property="Visibility" Value="Collapsed" />
