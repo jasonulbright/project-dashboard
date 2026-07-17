@@ -199,6 +199,11 @@ public partial class MainWindow : INavigationWindow
 
             projectsParent.MenuItems.Add(navItem);
         }
+
+        // Register the new nested items with the navigation dictionaries — without
+        // this, GoBack() to a project entry throws KeyNotFoundException (the library
+        // only rebuilds its lookup when the ROOT collection changes).
+        RootNavigation.RegisterDynamicMenuItems();
         // Hidden / Private / Public / Dashboard are handled in OnNavigationSelectionChanged —
         // wiring them here would re-add a handler on every sidebar refresh (a leak).
     }
@@ -237,14 +242,11 @@ public partial class MainWindow : INavigationWindow
         }
     }
 
-    private void OnNavigationSelectionChanged(object sender, RoutedEventArgs e)
+    private void OnNavigationSelectionChanged(NavigationView sender, RoutedEventArgs e)
     {
-        if (sender is not Wpf.Ui.Controls.NavigationView navigationView)
-            return;
-
         // When a project item is selected, set which project the detail page reads. The item's
         // TargetPageType does the navigation + selection highlight (fresh page, cache Disabled).
-        if (navigationView.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
+        if (sender.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
             DashboardViewModel.SelectedProject = proj;
     }
 

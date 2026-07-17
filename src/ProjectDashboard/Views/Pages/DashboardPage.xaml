@@ -13,6 +13,25 @@
 
     <DockPanel Margin="24,16">
 
+        <!-- Discovery failure banner: a faulted scan must say so, not show nothing -->
+        <Border DockPanel.Dock="Top"
+                Visibility="{Binding DiscoveryErrorVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <ui:SymbolIcon Symbol="ErrorCircle24" Foreground="{StaticResource StatusBadFg}" FontSize="16"
+                               Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding DiscoveryErrorText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           MaxWidth="760"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13" />
+                <ui:Button Content="Retry" FontSize="12" Padding="10,4" Margin="14,0,0,0"
+                           Command="{Binding ForceRefreshCommand}" />
+                <ui:Button Content="Open Settings" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                           Command="{Binding OpenSettingsCommand}" />
+            </StackPanel>
+        </Border>
+
         <!-- GitHub-not-ready banner: shows when gh is missing or not signed in -->
         <Border DockPanel.Dock="Top"
                 Visibility="{Binding GhBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"

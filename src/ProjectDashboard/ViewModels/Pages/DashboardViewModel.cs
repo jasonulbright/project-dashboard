@@ -109,6 +109,10 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private string _ghBannerText = "";
     private bool _ghBannerDismissed;
 
+    // Discovery failure banner — a faulted scan must not just show an empty dashboard.
+    [ObservableProperty] private string _discoveryErrorText = "";
+    [ObservableProperty] private bool _discoveryErrorVisible;
+
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnSelectedSortChanged(string value) => ApplyFilters();
@@ -418,16 +422,43 @@ public partial class DashboardViewModel : ObservableObject
 
     private async Task LoadProjectsAsync()
     {
-        var results = await _discoveryService.DiscoverAllAsync();
-        UpdateProjectList(results);
+        try
+        {
+            var results = await _discoveryService.DiscoverAllAsync();
+            UpdateProjectList(results);
+            DiscoveryErrorVisible = false;
+        }
+        catch (Exception ex)
+        {
+            // The ctor kicks this off fire-and-forget: without this catch a faulted
+            // scan (unplugged drive, denied root) showed an empty dashboard forever
+            // with no explanation and the exception parked unobserved on the command.
+            ReportDiscoveryFailure(ex);
+        }
         await UpdateGhBannerAsync();
     }
 
     private async Task ForceRefreshAsync()
     {
-        var results = await _discoveryService.ForceRefreshAllAsync();
-        UpdateProjectList(results);
+        try
+        {
+            var results = await _discoveryService.ForceRefreshAllAsync();
+            UpdateProjectList(results);
+            DiscoveryErrorVisible = false;
+        }
+        catch (Exception ex)
+        {
+            ReportDiscoveryFailure(ex);
+        }
         await UpdateGhBannerAsync();
+    }
+
+    private void ReportDiscoveryFailure(Exception ex)
+    {
+        Log.Error("Project discovery failed", ex);
+        var root = _settingsService.Load().ProjectsRootPath;
+        DiscoveryErrorText = $"Couldn't scan {root} — {ex.Message}";
+        DiscoveryErrorVisible = true;
     }
 
     private async Task UpdateGhBannerAsync()

@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:pages="clr-namespace:ProjectDashboard.Views.Pages"
+    xmlns:local="clr-namespace:ProjectDashboard.Views.Windows"
     Title="Project Dashboard"
     Icon="pack://application:,,,/app.ico"
     Width="1621"
@@ -24,16 +25,17 @@
             Grid.Row="0"
             Title="Project Dashboard" />
 
-        <ui:NavigationView
+        <local:AppNavigationView
             x:Name="RootNavigation"
             Grid.Row="1"
+            Style="{StaticResource {x:Type ui:NavigationView}}"
             PaneDisplayMode="Left"
             IsPaneOpen="True"
             IsBackButtonVisible="Visible"
             OpenPaneLength="220"
             SelectionChanged="OnNavigationSelectionChanged">
 
-            <ui:NavigationView.MenuItems>
+            <local:AppNavigationView.MenuItems>
                 <ui:NavigationViewItem Content="Dashboard" Icon="{ui:SymbolIcon Home24}"
                                        Tag="FilterAll"
                                        TargetPageType="{x:Type pages:DashboardPage}" />
@@ -54,21 +56,21 @@
                         <!-- Populated dynamically in code-behind -->
                     </ui:NavigationViewItem.MenuItems>
                 </ui:NavigationViewItem>
-            </ui:NavigationView.MenuItems>
+            </local:AppNavigationView.MenuItems>
 
-            <ui:NavigationView.FooterMenuItems>
+            <local:AppNavigationView.FooterMenuItems>
                 <ui:NavigationViewItem
                     Content="Settings"
                     Icon="{ui:SymbolIcon Settings24}"
                     TargetPageType="{x:Type pages:SettingsPage}" />
-            </ui:NavigationView.FooterMenuItems>
+            </local:AppNavigationView.FooterMenuItems>
 
-            <ui:NavigationView.ContentOverlay>
+            <local:AppNavigationView.ContentOverlay>
                 <Grid>
                     <ui:SnackbarPresenter x:Name="SnackbarPresenter" />
                 </Grid>
-            </ui:NavigationView.ContentOverlay>
+            </local:AppNavigationView.ContentOverlay>
 
-        </ui:NavigationView>
+        </local:AppNavigationView>
     </Grid>
 </ui:FluentWindow>

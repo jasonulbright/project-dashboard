@@ -20,7 +20,16 @@ public partial class ProjectDetailPage
         DataContext = viewModel;
         InitializeComponent();
         Loaded += OnLoaded;
+
+        // Rendered FlowDocuments bake brushes at render time; re-render on theme
+        // flips so code blocks don't keep the old theme. Unloaded unsubscribes —
+        // this page is transient and must not be pinned by a static event.
+        Loaded += (_, _) => Wpf.Ui.Appearance.ApplicationThemeManager.Changed += OnThemeChanged;
+        Unloaded += (_, _) => Wpf.Ui.Appearance.ApplicationThemeManager.Changed -= OnThemeChanged;
     }
+
+    private void OnThemeChanged(Wpf.Ui.Appearance.ApplicationTheme theme, System.Windows.Media.Color accent)
+        => RenderDocuments();
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -33,26 +42,31 @@ public partial class ProjectDetailPage
         }
         catch { }
 
-        Dispatcher.Invoke(() =>
-        {
-            try
-            {
-                RenderMarkdown(ReadmeRichText, _viewModel.ReadmeText ?? "", project.FullPath);
-            }
-            catch
-            {
-                ReadmeRichText.Document = new FlowDocument(new Paragraph(new Run(_viewModel.ReadmeText ?? "(error rendering)") { FontSize = 12 }));
-            }
+        RenderDocuments();
+    }
 
-            try
-            {
-                RenderMarkdown(ChangelogRichText, _viewModel.ChangelogText ?? "", project.FullPath);
-            }
-            catch
-            {
-                ChangelogRichText.Document = new FlowDocument(new Paragraph(new Run(_viewModel.ChangelogText ?? "(error rendering)") { FontSize = 12 }));
-            }
-        });
+    private void RenderDocuments()
+    {
+        var project = _viewModel.Project;
+        if (project is null) return;
+
+        try
+        {
+            RenderMarkdown(ReadmeRichText, _viewModel.ReadmeText ?? "", project.FullPath);
+        }
+        catch
+        {
+            ReadmeRichText.Document = new FlowDocument(new Paragraph(new Run(_viewModel.ReadmeText ?? "(error rendering)") { FontSize = 12 }));
+        }
+
+        try
+        {
+            RenderMarkdown(ChangelogRichText, _viewModel.ChangelogText ?? "", project.FullPath);
+        }
+        catch
+        {
+            ChangelogRichText.Document = new FlowDocument(new Paragraph(new Run(_viewModel.ChangelogText ?? "(error rendering)") { FontSize = 12 }));
+        }
     }
 
     private void ScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
