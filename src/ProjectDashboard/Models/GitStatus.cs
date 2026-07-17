@@ -8,6 +8,7 @@ public sealed class GitStatus
     public int UntrackedCount { get; set; }
     public int TotalChanges => ModifiedCount + UntrackedCount;
     public int AheadBy { get; set; }
+    public int BehindBy { get; set; }
     public string LatestTag { get; set; } = "";
     public DateTimeOffset? LastCommitDate { get; set; }
     public string LastCommitMessage { get; set; } = "";

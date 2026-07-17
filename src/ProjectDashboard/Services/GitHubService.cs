@@ -14,7 +14,7 @@ public class GitHubService(SettingsService settingsService)
     {
         try
         {
-            var exitCode = await RunGhExitCodeAsync("auth status", ct);
+            var exitCode = await RunGhExitCodeAsync(["auth", "status"], ct);
             return exitCode == 0;
         }
         catch
@@ -51,7 +51,7 @@ public class GitHubService(SettingsService settingsService)
     {
         try
         {
-            var exit = await RunGhExitCodeAsync("auth status", ct);
+            var exit = await RunGhExitCodeAsync(["auth", "status"], ct);
             return exit == 0 ? "Signed in" : "Found, not signed in";
         }
         catch (Win32Exception)
@@ -69,7 +69,7 @@ public class GitHubService(SettingsService settingsService)
         try
         {
             var output = await RunGhAsync(
-                $"issue list --repo {repoSlug} --state {state} --json number,title,state,createdAt --limit 50", ct);
+                ["issue", "list", "--repo", repoSlug, "--state", state, "--json", "number,title,state,createdAt", "--limit", "50"], ct);
 
             if (string.IsNullOrWhiteSpace(output))
                 return [];
@@ -93,7 +93,7 @@ public class GitHubService(SettingsService settingsService)
         try
         {
             var output = await RunGhAsync(
-                $"repo view {repoSlug} --json visibility --jq .visibility", ct);
+                ["repo", "view", repoSlug, "--json", "visibility", "--jq", ".visibility"], ct);
             var vis = output?.Trim().ToLowerInvariant() ?? "";
             // "unknown" (not "local") when a remote exists but gh couldn't determine visibility —
             // don't conflate a gh failure with a genuinely remote-less repo.
@@ -111,7 +111,7 @@ public class GitHubService(SettingsService settingsService)
         try
         {
             var output = await RunGhAsync(
-                $"issue list --repo {repoSlug} --state open --json number --limit 100", ct);
+                ["issue", "list", "--repo", repoSlug, "--state", "open", "--json", "number", "--limit", "100"], ct);
 
             if (string.IsNullOrWhiteSpace(output))
                 return 0;
@@ -131,7 +131,7 @@ public class GitHubService(SettingsService settingsService)
         try
         {
             var output = await RunGhAsync(
-                $"pr list --repo {repoSlug} --state open --json number --limit 100", ct);
+                ["pr", "list", "--repo", repoSlug, "--state", "open", "--json", "number", "--limit", "100"], ct);
 
             if (string.IsNullOrWhiteSpace(output))
                 return 0;
@@ -146,38 +146,37 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
-    private async Task<string> RunGhAsync(string arguments, CancellationToken ct)
-        => (await RunGhCoreAsync(arguments, ct)).StdOut;
-
-    private async Task<int> RunGhExitCodeAsync(string arguments, CancellationToken ct)
-        => (await RunGhCoreAsync(arguments, ct)).ExitCode;
-
-    private async Task<(int ExitCode, string StdOut)> RunGhCoreAsync(string arguments, CancellationToken ct)
+    /// <summary>
+    /// Environment for every gh call: no ANSI color in parsed output, no update banner
+    /// on stderr, no interactive prompts from a windowless process.
+    /// </summary>
+    private static readonly Dictionary<string, string> GhEnvironment = new()
     {
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo
-        {
-            FileName = ResolveGhExe(),
-            Arguments = arguments,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+        ["NO_COLOR"] = "1",
+        ["GH_NO_UPDATE_NOTIFIER"] = "1",
+        ["GH_PROMPT_DISABLED"] = "1"
+    };
 
-        process.Start();
+    /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure).</summary>
+    public async Task<ProcessResult> RunAsync(IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        => await ProcessRunner.RunAsync(ResolveGhExe(), args, null, timeout ?? Timeout, GhEnvironment, ct);
 
-        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
-        var exitTask = process.WaitForExitAsync(ct);
-        var completed = await Task.WhenAny(exitTask, Task.Delay(Timeout, ct));
+    private async Task<string> RunGhAsync(IEnumerable<string> args, CancellationToken ct)
+    {
+        var result = await RunAsync(args, ct);
+        if (result.TimedOut)
+            throw new TimeoutException("gh timed out");
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"gh failed ({result.ExitCode}): {result.FirstError}");
+        return result.StdOut;
+    }
 
-        if (completed != exitTask)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"gh {arguments} timed out");
-        }
-
-        return (process.ExitCode, await outputTask);
+    private async Task<int> RunGhExitCodeAsync(IEnumerable<string> args, CancellationToken ct)
+    {
+        var result = await RunAsync(args, ct);
+        if (result.TimedOut)
+            throw new TimeoutException("gh timed out");
+        return result.ExitCode;
     }
 
     /// <summary>
