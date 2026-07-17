@@ -83,12 +83,24 @@ public static class ProcessRunner
         {
             timedOut = true;
             try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-            try { await process.WaitForExitAsync(CancellationToken.None); } catch { /* reaped */ }
+            try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* reaped or stuck */ }
         }
 
-        // Kill closes the pipes, so these complete promptly even on the timeout path.
-        var stdOut = await stdOutTask;
-        var stdErr = await stdErrTask;
+        // Kill closes the pipes, so these normally complete promptly — but a descendant that
+        // escaped the kill snapshot can keep the handles open. Bound the drain so a runaway
+        // grandchild can never wedge a discovery slot; whatever was read so far is returned.
+        string stdOut = "", stdErr = "";
+        try
+        {
+            await Task.WhenAll(stdOutTask, stdErrTask).WaitAsync(TimeSpan.FromSeconds(timedOut ? 5 : 30));
+            stdOut = stdOutTask.Result;
+            stdErr = stdErrTask.Result;
+        }
+        catch (TimeoutException)
+        {
+            timedOut = true;
+            Log.Warn($"Abandoned pipe drain for {fileName} — a descendant process is holding the output handles");
+        }
 
         // Distinguish caller cancellation from a genuine timeout.
         ct.ThrowIfCancellationRequested();

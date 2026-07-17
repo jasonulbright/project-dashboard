@@ -71,7 +71,8 @@ public class GitService
             if (!string.IsNullOrWhiteSpace(logLine))
             {
                 var parts = logLine.Trim().Split('|', 2);
-                if (parts.Length >= 1 && DateTimeOffset.TryParse(parts[0], out var date))
+                if (parts.Length >= 1 && DateTimeOffset.TryParse(parts[0], System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var date))
                     status.LastCommitDate = date;
                 if (parts.Length >= 2)
                     status.LastCommitMessage = parts[1];
@@ -114,7 +115,8 @@ public class GitService
                 {
                     ShortHash = parts[0],
                     Author = parts[1],
-                    Date = DateTimeOffset.TryParse(parts[2], out var d) ? d : default,
+                    Date = DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var d) ? d : default,
                     Message = parts[3]
                 });
             }

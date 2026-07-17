@@ -361,7 +361,9 @@ public partial class DashboardViewModel : ObservableObject
     private void OpenFolder(ProjectInfo? project)
     {
         if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
-        Process.Start(new ProcessStartInfo("explorer.exe", project.FullPath));
+        // Shell-execute the folder itself — passing it as an unquoted explorer.exe
+        // argument split paths containing spaces into multiple tokens.
+        Process.Start(new ProcessStartInfo(project.FullPath) { UseShellExecute = true });
     }
 
     [RelayCommand]
