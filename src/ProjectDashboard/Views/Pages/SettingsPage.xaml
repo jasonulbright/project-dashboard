@@ -118,6 +118,12 @@
                       IsChecked="{Binding EnableGitHubDiscovery}"
                       Margin="0,0,0,4" />
             <TextBlock Text="When on, signed-in GitHub repositories with no local clone appear as Cloud cards you can clone in one click. Requires gh signed in."
+                       FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <CheckBox Content="Auto-refresh a repo when its files change on disk"
+                      IsChecked="{Binding EnableAutoRefresh}"
+                      Margin="0,0,0,4" />
+            <TextBlock Text="Watches the projects root and updates a card within a couple of seconds of an edit, commit, or branch switch — no waiting for the refresh interval. Takes effect on the next refresh or restart."
                        FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
 

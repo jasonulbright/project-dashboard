@@ -15,6 +15,9 @@ public sealed class AppSettings
     /// <summary>Surface the user's GitHub repos that aren't cloned locally as "Cloud" cards (ROADMAP v1.1).</summary>
     public bool EnableGitHubDiscovery { get; set; } = true;
 
+    /// <summary>Refresh a repo's card automatically when its working tree changes on disk.</summary>
+    public bool EnableAutoRefresh { get; set; } = true;
+
     // Window state
     public double WindowLeft { get; set; } = -1;
     public double WindowTop { get; set; } = -1;

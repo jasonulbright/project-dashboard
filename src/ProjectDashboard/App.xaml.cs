@@ -57,6 +57,7 @@ public partial class App : Application
                 services.AddSingleton<GitService>();
                 services.AddSingleton<GitHubService>();
                 services.AddSingleton<ProjectDiscoveryService>();
+                services.AddSingleton<ProjectWatcherService>();
 
                 // Windows
                 services.AddSingleton<MainWindow>();

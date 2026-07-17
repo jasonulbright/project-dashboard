@@ -54,6 +54,13 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         return refreshed;
     }
 
+    /// <summary>
+    /// Cheap local-only refresh of one repo (git status + commits, no gh) — used by the
+    /// file watcher, which fires on every save and must not spawn network calls.
+    /// </summary>
+    public Task<ProjectInfo> RefreshProjectLocalAsync(string repoPath, CancellationToken ct = default)
+        => BuildProjectInfoAsync(repoPath, ct);
+
     public Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
     {
         // Manifests live out-of-source in %APPDATA%, not in the repo root.

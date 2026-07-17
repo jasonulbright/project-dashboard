@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Windows;
 using System.Windows.Threading;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
@@ -14,6 +15,7 @@ public partial class DashboardViewModel : ObservableObject
     private readonly SettingsService _settingsService;
     private readonly GitHubService _gitHubService;
     private readonly GitService _gitService;
+    private readonly ProjectWatcherService _watcher;
     private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
@@ -64,13 +66,14 @@ public partial class DashboardViewModel : ObservableObject
     public IAsyncRelayCommand LoadProjectsCommand { get; }
     public IAsyncRelayCommand ForceRefreshCommand { get; }
 
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
         _settingsService = settingsService;
         _gitHubService = gitHubService;
         _gitService = gitService;
+        _watcher = watcher;
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
         ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
@@ -78,8 +81,52 @@ public partial class DashboardViewModel : ObservableObject
         // Fire and forget load on construction
         _ = LoadProjectsCommand.ExecuteAsync(null);
 
-        // Auto-refresh timer
+        // Auto-refresh timer (periodic full reconcile) + file watcher (immediate, per-repo)
         StartRefreshTimer();
+        StartWatcher();
+    }
+
+    private void StartWatcher()
+    {
+        // Subscribe only; SyncWatcherToSettings (from the initial load) points it at the root.
+        _watcher.Changed += OnRepoDirsChanged;
+    }
+
+    /// <summary>Watcher fired: refresh just the affected repos (empty = full refresh). Marshals to UI.</summary>
+    private void OnRepoDirsChanged(IReadOnlyCollection<string> repoDirs)
+    {
+        _ = Application.Current?.Dispatcher.InvokeAsync(async () =>
+        {
+            try
+            {
+                if (repoDirs.Count == 0)
+                {
+                    if (!LoadProjectsCommand.IsRunning)
+                        await LoadProjectsCommand.ExecuteAsync(null);
+                    return;
+                }
+
+                var names = new HashSet<string>(repoDirs, StringComparer.OrdinalIgnoreCase);
+                var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)).ToList();
+                foreach (var project in affected)
+                {
+                    // Local-only refresh — the watcher fires on every save; no gh/network here.
+                    var refreshed = await _discoveryService.RefreshProjectLocalAsync(project.FullPath);
+                    var idx = Projects.IndexOf(project);
+                    if (idx >= 0) Projects[idx] = refreshed;
+                }
+                if (affected.Count > 0)
+                {
+                    OnPropertyChanged(nameof(Projects));
+                    ApplyFilters();
+                    NotifySummary();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("watcher-driven refresh failed", ex);
+            }
+        });
     }
 
     private void StartRefreshTimer()
@@ -630,8 +677,23 @@ public partial class DashboardViewModel : ObservableObject
             { UseShellExecute = true });
     }
 
+    private string _watchedRoot = "";
+
+    /// <summary>Re-point the watcher if the root path or the toggle changed since last time.</summary>
+    private void SyncWatcherToSettings()
+    {
+        var settings = _settingsService.Load();
+        var root = settings.EnableAutoRefresh ? settings.ProjectsRootPath : "";
+        if (string.Equals(root, _watchedRoot, StringComparison.OrdinalIgnoreCase)) return;
+
+        _watchedRoot = root;
+        if (root.Length == 0) _watcher.Stop();
+        else _watcher.Start(root);
+    }
+
     private async Task LoadProjectsAsync()
     {
+        SyncWatcherToSettings();
         try
         {
             var results = await _discoveryService.DiscoverAllAsync();
