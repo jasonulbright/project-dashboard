@@ -181,7 +181,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         public List<ProjectInfo> Projects { get; set; } = [];
     }
 
-    private static List<ProjectInfo>? LoadCache(int maxAgeSeconds)
+    private List<ProjectInfo>? LoadCache(int maxAgeSeconds)
     {
         try
         {
@@ -193,8 +193,20 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
             var age = DateTimeOffset.Now - cache.CachedAt;
             if (age.TotalSeconds > maxAgeSeconds) return null;
+            if (cache.Projects.Count == 0) return null;
 
-            return cache.Projects.Count > 0 ? cache.Projects : null;
+            // Manifests are the store's truth, never the cache's: a manifest saved
+            // after the cache was written must not appear reverted on relaunch.
+            foreach (var project in cache.Projects)
+            {
+                if (manifestStore.TryGet(project.FullPath, out var stored) && stored is not null)
+                {
+                    project.Manifest = stored;
+                    project.HasManifest = true;
+                }
+            }
+
+            return cache.Projects;
         }
         catch (Exception ex)
         {

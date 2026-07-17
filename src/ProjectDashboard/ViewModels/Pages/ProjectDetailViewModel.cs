@@ -87,6 +87,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     private void ApplyProject(ProjectInfo p)
     {
         Project = p;
+        IsEditingNotes = false; // singleton VM: edit mode must not leak onto the next project
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
         Commits = new ObservableCollection<GitCommit>(p.RecentCommits ?? []);

@@ -99,7 +99,9 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     [ObservableProperty] private string _activeFilter = "all"; // "all", "dirty", "todos", "issues", "hidden"
-    [ObservableProperty] private ObservableCollection<ProjectInfo> _hiddenProjects = [];
+
+    /// <summary>Backing list for the Hidden view; ApplyFilters sources from it while ActiveFilter == "hidden".</summary>
+    private List<ProjectInfo> _hiddenSnapshot = [];
 
     // GitHub-not-ready banner state
     [ObservableProperty] private bool _ghBannerVisible;
@@ -232,13 +234,25 @@ public partial class DashboardViewModel : ObservableObject
     {
         if (project is null) return;
         var refreshed = await _discoveryService.RefreshProjectAsync(project);
+
         var idx = Projects.IndexOf(project);
         if (idx >= 0)
         {
             Projects[idx] = refreshed;
-            ApplyFilters();
-            NotifySummary();
+            // Indexer writes don't raise PropertyChanged(Projects); poke the sidebar.
+            OnPropertyChanged(nameof(Projects));
         }
+        else
+        {
+            // Hidden-view cards live in the hidden snapshot, not Projects.
+            var hIdx = _hiddenSnapshot.IndexOf(project);
+            if (hIdx < 0) return;
+            refreshed.IsHidden = true;
+            _hiddenSnapshot[hIdx] = refreshed;
+        }
+
+        ApplyFilters();
+        NotifySummary();
     }
 
     [RelayCommand]
@@ -354,7 +368,35 @@ public partial class DashboardViewModel : ObservableObject
             hiddenList.Add(full);
         }
 
-        FilteredProjects = new ObservableCollection<ProjectInfo>(hiddenList.OrderBy(p => p.DisplayName));
+        _hiddenSnapshot = hiddenList.OrderBy(p => p.DisplayName).ToList();
+        ApplyFilters();
+    }
+
+    /// <summary>
+    /// Synchronizes FilteredProjects to the target sequence with minimal remove/
+    /// insert/move operations instead of replacing the collection. Surviving items
+    /// keep their item containers, so keyboard focus on a card outlives every
+    /// search keystroke, chip click, and sort change (a wholesale replacement
+    /// regenerated all containers and silently dropped focus).
+    /// </summary>
+    private void SetDisplayedProjects(IEnumerable<ProjectInfo> target)
+    {
+        var desired = target.ToList();
+        var desiredSet = new HashSet<ProjectInfo>(desired);
+
+        for (int i = FilteredProjects.Count - 1; i >= 0; i--)
+            if (!desiredSet.Contains(FilteredProjects[i]))
+                FilteredProjects.RemoveAt(i);
+
+        for (int i = 0; i < desired.Count; i++)
+        {
+            var item = desired[i];
+            var current = FilteredProjects.IndexOf(item);
+            if (current < 0)
+                FilteredProjects.Insert(Math.Min(i, FilteredProjects.Count), item);
+            else if (current != i)
+                FilteredProjects.Move(current, i);
+        }
     }
 
     [RelayCommand]
@@ -465,7 +507,12 @@ public partial class DashboardViewModel : ObservableObject
 
     private void ApplyFilters()
     {
-        var filtered = Projects.AsEnumerable();
+        // The Hidden view has its own source list — without this, ANY ApplyFilters
+        // call (search keystroke, sort change, timer refresh) silently replaced the
+        // hidden list with the normal project set while "Hidden" stayed selected.
+        var filtered = ActiveFilter == "hidden"
+            ? _hiddenSnapshot.AsEnumerable()
+            : Projects.AsEnumerable();
 
         // Summary bar filter
         if (ActiveFilter == "dirty")
@@ -510,6 +557,6 @@ public partial class DashboardViewModel : ObservableObject
             _ => filtered.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
         };
 
-        FilteredProjects = new ObservableCollection<ProjectInfo>(filtered);
+        SetDisplayedProjects(filtered);
     }
 }
