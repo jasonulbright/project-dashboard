@@ -13,6 +13,7 @@ public partial class DashboardViewModel : ObservableObject
     private readonly INavigationService _navigationService;
     private readonly SettingsService _settingsService;
     private readonly GitHubService _gitHubService;
+    private readonly GitService _gitService;
     private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
@@ -41,7 +42,7 @@ public partial class DashboardViewModel : ObservableObject
             var root = s.ProjectsRootPath;
             return s.ExcludedDirectories.Count(d =>
                 Directory.Exists(Path.Combine(root, d)) &&
-                Directory.Exists(Path.Combine(root, d, ".git")));
+                GitService.IsGitRepo(Path.Combine(root, d)));
         }
     }
 
@@ -53,12 +54,13 @@ public partial class DashboardViewModel : ObservableObject
     public IAsyncRelayCommand LoadProjectsCommand { get; }
     public IAsyncRelayCommand ForceRefreshCommand { get; }
 
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
         _settingsService = settingsService;
         _gitHubService = gitHubService;
+        _gitService = gitService;
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
         ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
@@ -113,7 +115,7 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void FilterHidden() => ShowHiddenProjects();
+    private Task FilterHidden() => ShowHiddenProjectsAsync();
 
     [RelayCommand]
     private async Task NewProject()
@@ -194,21 +196,17 @@ public partial class DashboardViewModel : ObservableObject
         };
         await _discoveryService.SaveManifestAsync(projectPath, manifest);
 
-        // git init + commit on background thread
-        await Task.Run(() =>
+        // git init + stage + first commit — resolved git, real timeouts, errors surfaced.
+        var gitError = await _gitService.InitWithFirstCommitAsync(projectPath, "Initial project scaffold");
+        if (gitError is not null)
         {
-            var gitInit = Process.Start(new ProcessStartInfo("git", "init")
-                { WorkingDirectory = projectPath, UseShellExecute = false, CreateNoWindow = true });
-            gitInit?.WaitForExit();
-
-            var gitAdd = Process.Start(new ProcessStartInfo("git", "add -A")
-                { WorkingDirectory = projectPath, UseShellExecute = false, CreateNoWindow = true });
-            gitAdd?.WaitForExit();
-
-            var gitCommit = Process.Start(new ProcessStartInfo("git", "commit -m \"Initial project scaffold\"")
-                { WorkingDirectory = projectPath, UseShellExecute = false, CreateNoWindow = true });
-            gitCommit?.WaitForExit();
-        });
+            await new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "Project created, git setup incomplete",
+                Content = $"The folder and files were created, but git reported:\n\n{gitError}",
+                CloseButtonText = "OK"
+            }.ShowDialogAsync();
+        }
 
         // Refresh dashboard
         await ForceRefreshAsync();
@@ -316,21 +314,26 @@ public partial class DashboardViewModel : ObservableObject
         settings.ExcludedDirectories = excluded.ToArray();
         _settingsService.Save(settings);
 
-        // Refresh hidden list and main list
-        ShowHiddenProjects();
+        // Refresh main list first, then re-render the hidden view without the unhidden repo.
         await ForceRefreshAsync();
+        await ShowHiddenProjectsAsync();
     }
 
-    public async void ShowHiddenProjects()
+    public async Task ShowHiddenProjectsAsync()
     {
         ActiveFilter = "hidden";
 
         var settings = _settingsService.Load();
         var rootPath = settings.ProjectsRootPath;
+        if (!Directory.Exists(rootPath))
+        {
+            FilteredProjects = [];
+            return;
+        }
         var excluded = new HashSet<string>(settings.ExcludedDirectories, StringComparer.OrdinalIgnoreCase);
 
         var hiddenDirs = Directory.GetDirectories(rootPath)
-            .Where(d => excluded.Contains(Path.GetFileName(d)) && Directory.Exists(Path.Combine(d, ".git")))
+            .Where(d => excluded.Contains(Path.GetFileName(d)) && GitService.IsGitRepo(d))
             .ToList();
 
         var hiddenList = new List<ProjectInfo>();
@@ -339,7 +342,8 @@ public partial class DashboardViewModel : ObservableObject
             var dirName = Path.GetFileName(dir);
             var stub = new ProjectInfo { DirectoryName = dirName, FullPath = dir, DisplayName = dirName };
             var full = await _discoveryService.RefreshProjectAsync(stub);
-            full.Manifest.Status = "hidden";
+            // Flag, don't mutate the manifest — Status must never be overwritten by view state.
+            full.IsHidden = true;
             hiddenList.Add(full);
         }
 

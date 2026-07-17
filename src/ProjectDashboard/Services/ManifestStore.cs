@@ -65,13 +65,23 @@ public class ManifestStore
         }
     }
 
-    /// <summary>Returns true and the stored manifest for the given repo path, if present.</summary>
+    /// <summary>
+    /// Returns true and a COPY of the stored manifest for the given repo path, if present.
+    /// Copies both ways (get and save) so no caller ever holds a reference into the live
+    /// index — a mutated shared instance would silently persist on the next unrelated Save.
+    /// </summary>
     public bool TryGet(string repoPath, out ProjectManifest? manifest)
     {
         var index = Index();
         lock (_lock)
         {
-            return index.TryGetValue(NormalizeKey(repoPath), out manifest);
+            if (index.TryGetValue(NormalizeKey(repoPath), out var stored) && stored is not null)
+            {
+                manifest = Clone(stored);
+                return true;
+            }
+            manifest = null;
+            return false;
         }
     }
 
@@ -81,10 +91,20 @@ public class ManifestStore
         var index = Index();
         lock (_lock)
         {
-            index[NormalizeKey(repoPath)] = manifest;
+            index[NormalizeKey(repoPath)] = Clone(manifest);
             Persist(index);
         }
     }
+
+    private static ProjectManifest Clone(ProjectManifest m) => new()
+    {
+        Description = m.Description,
+        ProjectType = m.ProjectType,
+        Status = m.Status,
+        Category = m.Category,
+        ValidationSchedule = m.ValidationSchedule,
+        Notes = m.Notes
+    };
 
     private static void Persist(Dictionary<string, ProjectManifest> index)
     {

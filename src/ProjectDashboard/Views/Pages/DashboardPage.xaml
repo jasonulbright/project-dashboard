@@ -240,7 +240,7 @@
                                         <MenuItem.Style>
                                             <Style TargetType="MenuItem">
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding DataContext.Manifest.Status}" Value="hidden">
+                                                    <DataTrigger Binding="{Binding DataContext.IsHidden}" Value="True">
                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -254,7 +254,7 @@
                                             <Style TargetType="MenuItem">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding DataContext.Manifest.Status}" Value="hidden">
+                                                    <DataTrigger Binding="{Binding DataContext.IsHidden}" Value="True">
                                                         <Setter Property="Visibility" Value="Visible" />
                                                     </DataTrigger>
                                                 </Style.Triggers>

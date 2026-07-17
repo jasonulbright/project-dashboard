@@ -13,6 +13,9 @@ public partial class ProjectInfo : ObservableObject
     public string ReadmeContent { get; set; } = "";
     public string ChangelogContent { get; set; } = "";
 
+    /// <summary>Set only by the Hidden view — never persisted; manifest Status stays untouched.</summary>
+    [ObservableProperty] private bool _isHidden;
+
     [ObservableProperty] private GitStatus _gitStatus = new();
     [ObservableProperty] private ProjectManifest _manifest = new();
     [ObservableProperty] private int _openIssueCount;

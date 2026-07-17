@@ -73,7 +73,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             .Where(d =>
             {
                 var name = Path.GetFileName(d);
-                return !excluded.Contains(name) && Directory.Exists(Path.Combine(d, ".git"));
+                return !excluded.Contains(name) && GitService.IsGitRepo(d);
             })
             .ToList();
 

@@ -121,27 +121,24 @@ public partial class MainWindow : INavigationWindow
             settingsService.Save(s);
         };
 
-        _ = PopulateSidebarWhenReady();
+        WireSidebarProjects();
     }
 
-    private async Task PopulateSidebarWhenReady()
+    private void WireSidebarProjects()
     {
         var dashVm = _serviceProvider.GetRequiredService<DashboardViewModel>();
 
-        // Wait for initial load
-        for (int i = 0; i < 60; i++)
+        // Every refresh REPLACES the Projects collection, so listen for the property
+        // change (a CollectionChanged subscription would orphan on the first refresh
+        // and the sidebar would never update again).
+        dashVm.PropertyChanged += (_, e) =>
         {
-            if (dashVm.Projects.Count > 0) break;
-            await Task.Delay(500);
-        }
-
-        RefreshSidebarProjects(dashVm);
-
-        // Re-populate when projects collection changes (after refresh)
-        dashVm.Projects.CollectionChanged += (_, _) =>
-        {
-            Dispatcher.Invoke(() => RefreshSidebarProjects(dashVm));
+            if (e.PropertyName == nameof(DashboardViewModel.Projects))
+                Dispatcher.Invoke(() => RefreshSidebarProjects(dashVm));
         };
+
+        // The initial load may already have finished before this subscription.
+        RefreshSidebarProjects(dashVm);
     }
 
     private void RefreshSidebarProjects(DashboardViewModel dashVm)
@@ -210,7 +207,7 @@ public partial class MainWindow : INavigationWindow
                 // steals the selection.
                 var vm = _serviceProvider.GetRequiredService<DashboardViewModel>();
                 if (tag == "HiddenProjects")
-                    vm.ShowHiddenProjects();
+                    vm.FilterHiddenCommand.Execute(null);
                 else
                     vm.SetFilterCommand.Execute(tag switch
                     {
