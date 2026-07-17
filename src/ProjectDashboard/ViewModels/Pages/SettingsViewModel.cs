@@ -75,7 +75,9 @@ public partial class SettingsViewModel : ObservableObject
         // Load-then-mutate so window state (and any unseen fields) survive a Settings save.
         var settings = _settingsService.Load();
         settings.ProjectsRootPath = ProjectsRootPath;
-        settings.RefreshIntervalSeconds = RefreshIntervalSeconds;
+        // Clamp to a sane floor so a stray tiny/zero/negative value can't spin the timer.
+        settings.RefreshIntervalSeconds = Math.Max(30, RefreshIntervalSeconds);
+        RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         settings.Theme = CurrentTheme.ToString();
         settings.ExcludedDirectories = ExcludedDirectories
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

@@ -623,6 +623,9 @@
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
                                                         <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
                                                     </DataTrigger>
+                                                    <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="remote">
+                                                        <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                                    </DataTrigger>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
                                                         <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
                                                     </DataTrigger>
@@ -644,6 +647,10 @@
                                                                 <Setter Property="Symbol" Value="Desktop24" />
                                                                 <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
                                                             </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="remote">
+                                                                <Setter Property="Symbol" Value="Cloud24" />
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                            </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
                                                                 <Setter Property="Symbol" Value="QuestionCircle24" />
                                                                 <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
@@ -662,6 +669,9 @@
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
                                                                 <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="remote">
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
                                                                 <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />

@@ -254,6 +254,12 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             }
         }
 
+        // A non-GitHub remote (GitLab, self-hosted, …) has a remote but no visibility
+        // we can classify — "remote", not the misleading "local" (which means no-remote
+        // and draws the cloud-off icon). GitHub repos get their real visibility in the batch.
+        if (!string.IsNullOrEmpty(project.GitStatus.RemoteUrl) && string.IsNullOrEmpty(project.GitHubSlug))
+            project.GitStatus.Visibility = "remote";
+
         // GitHub-side data (visibility, counts) is applied afterwards in one batch;
         // the issues LIST loads lazily when a detail view actually needs it.
         return project;
