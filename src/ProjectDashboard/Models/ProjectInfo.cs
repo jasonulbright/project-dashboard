@@ -29,27 +29,18 @@ public partial class ProjectInfo : ObservableObject
         string.IsNullOrEmpty(Manifest.Notes) ? 0 :
         Manifest.Notes.Split('\n').Count(l => l.TrimStart().StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>"owner/repo" when origin is a github.com remote; "" otherwise (non-GitHub hosts get no GitHub links or gh calls).</summary>
     public string GitHubSlug
     {
         get
         {
-            if (string.IsNullOrEmpty(GitStatus.RemoteUrl)) return "";
-            var url = GitStatus.RemoteUrl.Replace(".git", "");
-            var parts = url.Split('/');
-            return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : "";
+            var remote = GitRemote.Parse(GitStatus.RemoteUrl);
+            return remote is { IsGitHub: true } ? $"{remote.Owner}/{remote.Repo}" : "";
         }
     }
 
-    /// <summary>Repo name from the remote slug (e.g. "trackr" from "jasonulbright/trackr"), or "".</summary>
-    public string RemoteRepoName
-    {
-        get
-        {
-            var slug = GitHubSlug;
-            var idx = slug.LastIndexOf('/');
-            return idx >= 0 && idx < slug.Length - 1 ? slug[(idx + 1)..] : "";
-        }
-    }
+    /// <summary>Repo name from the origin URL on ANY host (e.g. "trackr"), or "".</summary>
+    public string RemoteRepoName => GitRemote.Parse(GitStatus.RemoteUrl)?.Repo ?? "";
 
     /// <summary>
     /// True when a remote exists but its repo name doesn't match the local folder name
