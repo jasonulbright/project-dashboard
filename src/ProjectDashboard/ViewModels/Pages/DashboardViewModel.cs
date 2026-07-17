@@ -113,6 +113,9 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private string _discoveryErrorText = "";
     [ObservableProperty] private bool _discoveryErrorVisible;
 
+    // Transient operation feedback (clone / bulk sync progress and outcomes).
+    [ObservableProperty] private string _opStatusText = "";
+
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnSelectedSortChanged(string value) => ApplyFilters();
@@ -222,6 +225,172 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         // Refresh dashboard
+        await ForceRefreshAsync();
+    }
+
+    /// <summary>
+    /// Clone dialog: paste a URL or pick from the signed-in user's repositories
+    /// (type-to-filter). Clones into the configured projects root, then refreshes.
+    /// </summary>
+    [RelayCommand]
+    private async Task CloneRepo()
+    {
+        List<RemoteRepo> repos = [];
+        try { repos = await _gitHubService.GetUserReposAsync(); }
+        catch (Exception ex) { Log.Warn("repo list for clone unavailable", ex); }
+
+        var urlBox = new Wpf.Ui.Controls.TextBox
+        {
+            PlaceholderText = "Repository URL, owner/repo — or type to filter your repos below",
+            MinWidth = 460
+        };
+        var list = new System.Windows.Controls.ListBox
+        {
+            MaxHeight = 280,
+            Margin = new System.Windows.Thickness(0, 8, 0, 0),
+            ItemsSource = repos,
+            DisplayMemberPath = nameof(RemoteRepo.NameWithOwner)
+        };
+        System.Windows.Automation.AutomationProperties.SetName(list, "Your repositories");
+        System.Windows.Automation.AutomationProperties.SetName(urlBox, "Repository URL or filter");
+        urlBox.TextChanged += (_, _) =>
+        {
+            var term = urlBox.Text.Trim();
+            list.ItemsSource = term.Length == 0
+                ? repos
+                : repos.Where(r => r.NameWithOwner.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+        };
+
+        var dialog = new Wpf.Ui.Controls.MessageBox
+        {
+            Title = "Clone repository",
+            Content = new System.Windows.Controls.StackPanel { Children = { urlBox, list } },
+            PrimaryButtonText = "Clone",
+            CloseButtonText = "Cancel"
+        };
+        if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+        // Selection wins over typed filter text; a full URL or owner/repo both work.
+        string url;
+        if (list.SelectedItem is RemoteRepo picked)
+            url = $"https://github.com/{picked.NameWithOwner}.git";
+        else
+        {
+            var typed = urlBox.Text.Trim();
+            if (typed.Length == 0) return;
+            url = typed.Contains("://") || typed.Contains('@') ? typed
+                : $"https://github.com/{typed.TrimEnd('/')}.git";
+        }
+
+        var repoName = GitRemote.RepoNameFromUrl(url);
+        if (repoName.Length == 0)
+        {
+            OpStatusText = "Clone: that doesn't look like a valid repository URL.";
+            return;
+        }
+
+        var settings = _settingsService.Load();
+        var target = Path.Combine(settings.ProjectsRootPath, repoName);
+        if (Directory.Exists(target))
+        {
+            OpStatusText = $"Clone: {repoName} already exists in the projects root.";
+            return;
+        }
+
+        OpStatusText = $"Cloning {repoName}…";
+        var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
+        OpStatusText = error is null ? $"Cloned {repoName}." : $"Clone failed: {error}";
+        if (error is null)
+            await ForceRefreshAsync();
+    }
+
+    /// <summary>
+    /// Fetches every clean repo with a remote; fast-forwards the ones behind,
+    /// pushes the ones ahead. Dirty, diverged, conflicted, and error repos are
+    /// skipped and reported — bulk sync must never create surprise merges.
+    /// </summary>
+    [RelayCommand]
+    private async Task SyncAll()
+    {
+        var candidates = Projects.Where(p =>
+                !p.GitStatus.HasError &&
+                !p.GitStatus.IsDirty &&
+                !p.GitStatus.NeedsAttention &&
+                !p.GitStatus.IsDetached &&
+                !string.IsNullOrEmpty(p.GitStatus.RemoteUrl))
+            .ToList();
+        var skipped = Projects.Count - candidates.Count;
+        if (candidates.Count == 0)
+        {
+            OpStatusText = "Sync all: no clean repos with a remote to sync.";
+            return;
+        }
+
+        var outcomes = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var done = 0;
+        var semaphore = new SemaphoreSlim(4);
+
+        await Task.WhenAll(candidates.Select(async p =>
+        {
+            await semaphore.WaitAsync();
+            try
+            {
+                var name = p.DirectoryName;
+                var fetch = await _gitService.FetchAsync(p.FullPath);
+                if (!fetch.Success)
+                {
+                    outcomes.Add($"{name}: fetch failed — {fetch.FirstError}");
+                    return;
+                }
+
+                var state = await _gitService.GetWorkingStateAsync(p.FullPath);
+                if (state is null || !state.HasUpstream) return; // fetched; nothing to reconcile
+
+                switch (ahead: state.Ahead, behind: state.Behind)
+                {
+                    case (0, 0):
+                        break;
+                    case (0, > 0):
+                        var pull = await _gitService.PullAsync(p.FullPath);
+                        outcomes.Add(pull.Success ? $"{name}: pulled {state.Behind}" : $"{name}: pull failed — {pull.FirstError}");
+                        break;
+                    case ( > 0, 0):
+                        var push = await _gitService.PushAsync(p.FullPath);
+                        outcomes.Add(push.Success ? $"{name}: pushed {state.Ahead}" : $"{name}: push failed — {push.FirstError}");
+                        break;
+                    default:
+                        outcomes.Add($"{name}: diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                outcomes.Add($"{p.DirectoryName}: {ex.Message}");
+                Log.Warn($"sync-all failed for {p.FullPath}", ex);
+            }
+            finally
+            {
+                var n = Interlocked.Increment(ref done);
+                OpStatusText = $"Sync all: {n}/{candidates.Count}…";
+                semaphore.Release();
+            }
+        }));
+
+        var changed = outcomes.OrderBy(s => s).ToList();
+        OpStatusText = changed.Count == 0
+            ? $"Sync all: {candidates.Count} repos fetched, everything already in sync." + (skipped > 0 ? $" ({skipped} skipped)" : "")
+            : $"Sync all: done. {changed.Count} repos changed" + (skipped > 0 ? $" ({skipped} skipped)." : ".");
+
+        if (changed.Count > 0)
+        {
+            await new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "Sync all — results",
+                Content = string.Join("\n", changed),
+                CloseButtonText = "OK"
+            }.ShowDialogAsync();
+        }
+
         await ForceRefreshAsync();
     }
 

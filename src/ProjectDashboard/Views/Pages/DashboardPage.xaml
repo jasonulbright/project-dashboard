@@ -178,7 +178,18 @@
             <ui:Button Content="New" FontSize="12" Padding="8,6"
                        Icon="{ui:SymbolIcon Add24}"
                        Command="{Binding NewProjectCommand}"
-                       Width="80" />
+                       Width="80" Margin="0,0,8,0" />
+            <ui:Button Content="Clone" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon CloudArrowDown24}"
+                       Command="{Binding CloneRepoCommand}"
+                       Width="86" Margin="0,0,8,0" />
+            <ui:Button Content="Sync All" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon ArrowSyncCircle24}"
+                       Command="{Binding SyncAllCommand}"
+                       ToolTip="Fetch every clean repo; fast-forward the ones behind, push the ones ahead"
+                       Width="96" Margin="0,0,8,0" />
+            <TextBlock Text="{Binding OpStatusText}" FontSize="12" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
         </StackPanel>
 
         <!-- Filter + Sort bar -->
@@ -398,6 +409,10 @@
                                                             <Setter Property="Symbol" Value="CloudOff24" />
                                                             <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
                                                         </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.NeedsAttention}" Value="True">
+                                                            <Setter Property="Symbol" Value="Warning24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                        </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
                                                             <Setter Property="Symbol" Value="QuestionCircle24" />
                                                             <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
@@ -418,6 +433,11 @@
                                                         <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
                                                             <Setter Property="Text" Value="No remote" />
                                                         </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.NeedsAttention}" Value="True">
+                                                            <Setter Property="Text" Value="{Binding GitStatus.AttentionLabel}" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
                                                             <Setter Property="Text" Value="status unavailable" />
                                                         </DataTrigger>
@@ -425,6 +445,28 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+                                        <!-- Current branch + divergence -->
+                                        <TextBlock FontSize="11" FontFamily="Cascadia Code,Consolas" Margin="8,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="{Binding GitStatus.Branch}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.Branch}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDetached}" Value="True">
+                                                            <Setter Property="Text" Value="detached" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                   Text="{Binding GitStatus.AheadBehindLabel}"
+                                                   Foreground="{StaticResource StatusInfoFg}" />
                                     </StackPanel>
 
                                     <!-- Note prefix icons (right-justified) -->

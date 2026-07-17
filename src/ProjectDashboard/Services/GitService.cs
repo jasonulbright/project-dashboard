@@ -31,37 +31,36 @@ public class GitService
     {
         var status = new GitStatus();
 
-        // Dirty / modified / untracked — THE critical signal. `status --porcelain` works even on a
-        // repo with no commits yet, so only a real failure here means "status unknown".
-        try
-        {
-            var porcelain = await RunGitAsync(repoPath, ["status", "--porcelain"], ct);
-            if (!string.IsNullOrWhiteSpace(porcelain))
-            {
-                status.IsDirty = true;
-                foreach (var line in porcelain.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (line.Length < 2) continue;
-                    if (line.StartsWith("??"))
-                        status.UntrackedCount++;
-                    else
-                        status.ModifiedCount++;
-                }
-            }
-        }
-        catch (Exception ex)
+        // One porcelain-v2 read is THE critical signal (works on commitless repos too):
+        // dirty state, branch, detached, upstream divergence, and conflicts together.
+        var state = await GetWorkingStateAsync(repoPath, ct);
+        if (state is null)
         {
             // git missing / stale PATH / broken repo — must NOT masquerade as a clean repo.
             status.HasError = true;
-            Log.Warn($"git status failed for {repoPath}", ex);
             return status;
         }
 
-        // Everything below is best-effort metadata. A fresh repo with no commits/tags/remote/upstream
-        // is normal and must not blank out the dirty signal above.
-        try { status.Branch = (await RunGitAsync(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"], ct)).Trim(); }
-        catch { /* no commits yet */ }
+        status.IsDirty = state.IsDirty;
+        status.UntrackedCount = state.Files.Count(f => f.IsUntracked);
+        status.ModifiedCount = state.Files.Count - status.UntrackedCount;
+        status.Branch = state.Detached ? "HEAD" : state.Branch;
+        status.IsDetached = state.Detached;
+        status.HasConflicts = state.HasConflicts;
+        status.AheadBy = state.Ahead;
+        status.BehindBy = state.Behind;
+        status.ActivityLabel = state.Activity switch
+        {
+            RepoActivity.Merging => "merge",
+            RepoActivity.Rebasing => "rebase",
+            RepoActivity.CherryPicking => "cherry-pick",
+            RepoActivity.Reverting => "revert",
+            RepoActivity.Bisecting => "bisect",
+            _ => ""
+        };
 
+        // Best-effort metadata. A fresh repo with no commits/tags/remote is normal
+        // and must not blank out the signals above.
         try { status.LatestTag = (await RunGitAsync(repoPath, ["describe", "--tags", "--abbrev=0"], ct)).Trim(); }
         catch { /* no tags */ }
 
@@ -82,19 +81,6 @@ public class GitService
 
         try { status.RemoteUrl = (await RunGitAsync(repoPath, ["config", "--get", "remote.origin.url"], ct)).Trim(); }
         catch { /* no remote */ }
-
-        try
-        {
-            // "<behind>\t<ahead>" relative to upstream, in one call.
-            var counts = await RunGitAsync(repoPath, ["rev-list", "--left-right", "--count", "@{u}...HEAD"], ct);
-            var parts = counts.Trim().Split('\t', ' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2)
-            {
-                if (int.TryParse(parts[0], out var behind)) status.BehindBy = behind;
-                if (int.TryParse(parts[1], out var ahead)) status.AheadBy = ahead;
-            }
-        }
-        catch { /* no upstream */ }
 
         return status;
     }

@@ -16,6 +16,24 @@ public sealed record GitRemote(string Host, string Owner, string Repo)
     /// ".git" is stripped only as a SUFFIX — never from inside a name
     /// (e.g. "user.github.io" must survive intact).
     /// </summary>
+    /// <summary>
+    /// Repository folder name from any clone URL — https/ssh/git/scp AND file:// and
+    /// local paths — for choosing a clone target directory. "" if none can be derived.
+    /// Broader than Parse (which is GitHub-scoped); this only needs the last segment.
+    /// </summary>
+    public static string RepoNameFromUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "";
+        var trimmed = url.Trim().TrimEnd('/', '\\');
+
+        var lastSlash = trimmed.LastIndexOfAny(['/', '\\', ':']);
+        var name = lastSlash >= 0 ? trimmed[(lastSlash + 1)..] : trimmed;
+
+        if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+            name = name[..^4];
+        return name.Trim();
+    }
+
     public static GitRemote? Parse(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return null;
