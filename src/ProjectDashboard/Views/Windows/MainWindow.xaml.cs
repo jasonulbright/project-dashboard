@@ -64,9 +64,22 @@ public partial class MainWindow : INavigationWindow
 
         // Keyboard back navigation: Alt+Left, BrowserBack, or Backspace outside a
         // text field. Without these, going back was mouse-only (XButton1 / on-screen
-        // back button) — a dead end for keyboard-only use.
+        // back button) — a dead end for keyboard-only use. Ctrl+K opens the palette.
         PreviewKeyDown += (_, e) =>
         {
+            if (e.Key == Key.K && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+            {
+                TogglePalette();
+                e.Handled = true;
+                return;
+            }
+            if (PaletteOverlay.Visibility == Visibility.Visible && e.Key == Key.Escape)
+            {
+                ClosePalette();
+                e.Handled = true;
+                return;
+            }
+
             var inTextBox = Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase
                          or System.Windows.Controls.PasswordBox;
             var altLeft = e.Key == Key.System && e.SystemKey == Key.Left
@@ -154,8 +167,36 @@ public partial class MainWindow : INavigationWindow
                 Dispatcher.Invoke(() => RefreshSidebarProjects(dashVm));
         };
 
+        // Card / palette "open project" selects that project's sidebar item, so
+        // navigation lands on the right project rather than the first of its type.
+        dashVm.NavigateToProjectRequested += project =>
+            Dispatcher.Invoke(() => NavigateToProject(project));
+
         // The initial load may already have finished before this subscription.
         RefreshSidebarProjects(dashVm);
+    }
+
+    private void NavigateToProject(Models.ProjectInfo project)
+    {
+        DashboardViewModel.SelectedProject = project;
+
+        var item = FindProjectNavItem(project);
+        if (item is not null)
+            RootNavigation.Navigate(item.Id); // selects THIS item; handler sets the same project
+        else
+            RootNavigation.Navigate(typeof(ProjectDetailPage)); // not in sidebar (filtered out) — fall back
+    }
+
+    private NavigationViewItem? FindProjectNavItem(Models.ProjectInfo project)
+    {
+        foreach (var item in RootNavigation.MenuItems)
+        {
+            if (item is NavigationViewItem { Content: "Projects" } parent)
+                foreach (var child in parent.MenuItems)
+                    if (child is NavigationViewItem nvi && ReferenceEquals(nvi.Tag, project))
+                        return nvi;
+        }
+        return null;
     }
 
     private void RefreshSidebarProjects(DashboardViewModel dashVm)
@@ -249,6 +290,138 @@ public partial class MainWindow : INavigationWindow
         if (sender.SelectedItem is NavigationViewItem selected && selected.Tag is Models.ProjectInfo proj)
             DashboardViewModel.SelectedProject = proj;
     }
+
+    // ── Command palette (Ctrl+K) ─────────────────────────────────────────────
+
+    private List<Models.PaletteItem> _paletteItems = [];
+
+    private void TogglePalette()
+    {
+        if (PaletteOverlay.Visibility == Visibility.Visible) { ClosePalette(); return; }
+
+        _paletteItems = BuildPaletteItems();
+        PaletteSearch.Text = "";
+        ApplyPaletteFilter("");
+        PaletteOverlay.Visibility = Visibility.Visible;
+        PaletteSearch.Focus();
+    }
+
+    private void ClosePalette()
+    {
+        PaletteOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private List<Models.PaletteItem> BuildPaletteItems()
+    {
+        var vm = _serviceProvider.GetRequiredService<DashboardViewModel>();
+        var items = new List<Models.PaletteItem>();
+
+        // Global actions first (stable order; matched by keyword).
+        void Action(string title, string keywords, SymbolRegular icon, System.Action run) =>
+            items.Add(new Models.PaletteItem
+            {
+                Title = title,
+                Subtitle = "Action",
+                Icon = icon,
+                SearchText = (title + " " + keywords).ToLowerInvariant(),
+                Invoke = run
+            });
+
+        Action("Refresh all", "reload sync scan", SymbolRegular.ArrowSync24,
+            () => vm.ForceRefreshCommand.Execute(null));
+        Action("New project", "create add", SymbolRegular.Add24,
+            () => vm.NewProjectCommand.Execute(null));
+        Action("Clone repository", "git download get", SymbolRegular.CloudArrowDown24,
+            () => vm.CloneRepoCommand.Execute(null));
+        Action("Sync all clean repos", "fetch pull push bulk", SymbolRegular.ArrowSyncCircle24,
+            () => vm.SyncAllCommand.Execute(null));
+        Action("Open Settings", "preferences config theme gh", SymbolRegular.Settings24,
+            () => RootNavigation.Navigate(typeof(SettingsPage)));
+        Action("Dashboard: all projects", "home filter", SymbolRegular.Home24,
+            () => { RootNavigation.Navigate(typeof(DashboardPage)); vm.SetFilterCommand.Execute("all"); });
+        Action("Filter: dirty", "uncommitted changes", SymbolRegular.Edit24,
+            () => { RootNavigation.Navigate(typeof(DashboardPage)); vm.SetFilterCommand.Execute("dirty"); });
+        Action("Filter: public", "visibility", SymbolRegular.Globe24,
+            () => { RootNavigation.Navigate(typeof(DashboardPage)); vm.SetFilterCommand.Execute("public"); });
+        Action("Filter: private", "visibility", SymbolRegular.LockClosed24,
+            () => { RootNavigation.Navigate(typeof(DashboardPage)); vm.SetFilterCommand.Execute("private"); });
+
+        // Then every project — jump straight to its detail (or clone if remote-only).
+        foreach (var p in vm.Projects.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            var proj = p;
+            items.Add(new Models.PaletteItem
+            {
+                Title = proj.DisplayName,
+                Subtitle = proj.IsRemoteOnly ? "Cloud repo" : "Project",
+                Icon = proj.IsRemoteOnly ? SymbolRegular.CloudArrowDown24 : SymbolRegular.Folder24,
+                SearchText = (proj.DisplayName + " " + proj.DirectoryName + " " + proj.Manifest.Category).ToLowerInvariant(),
+                Invoke = () => vm.OpenProjectCommand.Execute(proj)
+            });
+        }
+
+        return items;
+    }
+
+    private void ApplyPaletteFilter(string query)
+    {
+        var q = query.Trim().ToLowerInvariant();
+        var matches = _paletteItems
+            .Select(item => (item, score: item.Score(q)))
+            .Where(x => x.score >= 0)
+            .OrderByDescending(x => x.score)
+            .ThenBy(x => x.item.Title, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.item)
+            .Take(50)
+            .ToList();
+
+        PaletteList.ItemsSource = matches;
+        if (matches.Count > 0) PaletteList.SelectedIndex = 0;
+    }
+
+    private void PaletteSearch_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        => ApplyPaletteFilter(PaletteSearch.Text);
+
+    private void PaletteSearch_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Down:
+                MovePaletteSelection(1);
+                e.Handled = true;
+                break;
+            case Key.Up:
+                MovePaletteSelection(-1);
+                e.Handled = true;
+                break;
+            case Key.Enter:
+                InvokeSelectedPaletteItem();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void MovePaletteSelection(int delta)
+    {
+        var count = PaletteList.Items.Count;
+        if (count == 0) return;
+        var next = PaletteList.SelectedIndex + delta;
+        PaletteList.SelectedIndex = Math.Clamp(next, 0, count - 1);
+        PaletteList.ScrollIntoView(PaletteList.SelectedItem);
+    }
+
+    private void InvokeSelectedPaletteItem()
+    {
+        if (PaletteList.SelectedItem is Models.PaletteItem item)
+        {
+            ClosePalette();
+            // Let the overlay collapse before the action navigates/opens a dialog.
+            Dispatcher.BeginInvoke(item.Invoke);
+        }
+    }
+
+    private void PaletteItem_Invoke(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        => InvokeSelectedPaletteItem();
 
     public INavigationView GetNavigation() => RootNavigation;
 

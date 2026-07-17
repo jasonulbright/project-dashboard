@@ -5,6 +5,7 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:pages="clr-namespace:ProjectDashboard.Views.Pages"
     xmlns:local="clr-namespace:ProjectDashboard.Views.Windows"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
     Title="Project Dashboard"
     Icon="pack://application:,,,/app.ico"
     Width="1621"
@@ -72,5 +73,65 @@
             </local:AppNavigationView.ContentOverlay>
 
         </local:AppNavigationView>
+
+        <!-- ═══ Ctrl+K COMMAND PALETTE ═══ -->
+        <Grid x:Name="PaletteOverlay" Grid.Row="0" Grid.RowSpan="2"
+              Background="#99000000" Visibility="Collapsed"
+              KeyboardNavigation.TabNavigation="Cycle">
+            <Grid.InputBindings>
+                <MouseBinding MouseAction="LeftClick" Command="{x:Null}" />
+            </Grid.InputBindings>
+            <Border Width="620" MaxHeight="460" VerticalAlignment="Top" Margin="0,120,0,0"
+                    Background="{DynamicResource ApplicationBackgroundBrush}"
+                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1"
+                    CornerRadius="10">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5" Color="Black" />
+                </Border.Effect>
+                <Grid Margin="6">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <ui:TextBox x:Name="PaletteSearch" Grid.Row="0" Margin="4"
+                                PlaceholderText="Jump to a project or run an action…"
+                                Icon="{ui:SymbolIcon Search24}"
+                                AutomationProperties.Name="Command palette search"
+                                TextChanged="PaletteSearch_TextChanged"
+                                PreviewKeyDown="PaletteSearch_PreviewKeyDown" />
+                    <ListBox x:Name="PaletteList" Grid.Row="1" Margin="4,6,4,4"
+                             Background="Transparent" BorderThickness="0"
+                             MaxHeight="360"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             AutomationProperties.Name="Command palette results">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:PaletteItem}">
+                                <DockPanel Margin="2,3">
+                                    <ui:SymbolIcon DockPanel.Dock="Left" Symbol="{Binding Icon}" FontSize="16"
+                                                   Margin="4,0,12,0" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Subtitle}" FontSize="11"
+                                               VerticalAlignment="Center" Margin="12,0,4,0"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <TextBlock Text="{Binding Title}" FontSize="13" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="6,4" />
+                                <EventSetter Event="MouseDoubleClick" Handler="PaletteItem_Invoke" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                    </ListBox>
+                    <TextBlock Grid.Row="2" Margin="8,2,8,4" FontSize="11"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               Text="↑↓ move · Enter open · Esc close" />
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </ui:FluentWindow>

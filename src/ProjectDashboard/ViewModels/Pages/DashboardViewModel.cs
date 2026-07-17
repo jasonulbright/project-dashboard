@@ -27,6 +27,14 @@ public partial class DashboardViewModel : ObservableObject
     /// <summary>Used to pass the selected project to ProjectDetailPage.</summary>
     public static ProjectInfo? SelectedProject { get; set; }
 
+    /// <summary>
+    /// Raised to open a project's detail view. MainWindow selects that project's
+    /// sidebar item so navigation lands on the RIGHT project — navigating by page
+    /// TYPE resolves to the first item of that type and the selection handler then
+    /// overwrites SelectedProject with the wrong one.
+    /// </summary>
+    public event Action<ProjectInfo>? NavigateToProjectRequested;
+
     public int TotalCount => Projects.Count;
     public int CloudCount => Projects.Count(p => p.IsRemoteOnly);
     public bool HasCloud => CloudCount > 0;
@@ -407,7 +415,10 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
         SelectedProject = project;
-        _navigationService.Navigate(typeof(ProjectDetailPage));
+        if (NavigateToProjectRequested is not null)
+            NavigateToProjectRequested.Invoke(project);
+        else
+            _navigationService.Navigate(typeof(ProjectDetailPage));
     }
 
     /// <summary>Clones a Cloud card's repo into the projects root, then refreshes.</summary>
