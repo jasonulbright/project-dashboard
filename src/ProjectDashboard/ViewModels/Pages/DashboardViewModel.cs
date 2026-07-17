@@ -83,9 +83,16 @@ public partial class DashboardViewModel : ObservableObject
         };
         _refreshTimer.Tick += async (_, _) =>
         {
-            if (!LoadProjectsCommand.IsRunning)
+            if (LoadProjectsCommand.IsRunning) return;
+            try
             {
                 await LoadProjectsCommand.ExecuteAsync(null);
+            }
+            catch (Exception ex)
+            {
+                // A transient background-refresh failure must not pop an error dialog
+                // every interval; the next tick retries anyway.
+                Log.Warn("Scheduled refresh failed", ex);
             }
         };
         _refreshTimer.Start();

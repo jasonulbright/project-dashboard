@@ -11,7 +11,7 @@ public partial class SettingsViewModel : ObservableObject
 
     private readonly SettingsService _settingsService;
     private readonly GitHubService _gitHubService;
-    private readonly ProjectDiscoveryService _discoveryService;
+    private readonly DashboardViewModel _dashboardViewModel;
 
     [ObservableProperty] private ApplicationTheme _currentTheme = ApplicationTheme.Dark;
     [ObservableProperty] private string _projectsRootPath = "";
@@ -21,11 +21,11 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _ghPath = "";
     [ObservableProperty] private string _syncStatus = "";
 
-    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, ProjectDiscoveryService discoveryService)
+    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel)
     {
         _settingsService = settingsService;
         _gitHubService = gitHubService;
-        _discoveryService = discoveryService;
+        _dashboardViewModel = dashboardViewModel;
 
         LoadSettings();
         _ = CheckGitHubStatusAsync();
@@ -83,8 +83,10 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task ForceSync()
     {
+        // Refresh through the dashboard VM so the visible list updates too —
+        // refreshing only the discovery cache left the UI stale until the timer.
         SyncStatus = "Syncing...";
-        await _discoveryService.ForceRefreshAllAsync();
+        await _dashboardViewModel.ForceRefreshCommand.ExecuteAsync(null);
         SyncStatus = $"Synced at {DateTime.Now:HH:mm:ss}";
     }
 
