@@ -48,8 +48,10 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
     public async Task<ProjectInfo> RefreshProjectAsync(ProjectInfo project, CancellationToken ct = default)
     {
-        var ghAvailable = await gitHubService.IsAvailableAsync(ct);
-        return await BuildProjectInfoAsync(project.FullPath, ghAvailable, ct);
+        var refreshed = await BuildProjectInfoAsync(project.FullPath, ct);
+        if (await gitHubService.IsAvailableAsync(ct))
+            await ApplyRemoteDataAsync([refreshed], ct);
+        return refreshed;
     }
 
     public Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
@@ -75,15 +77,14 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             })
             .ToList();
 
-        var ghAvailable = await gitHubService.IsAvailableAsync(ct);
-
+        // Phase A: local git/file facts, parallel with a small concurrency cap.
         var semaphore = new SemaphoreSlim(6);
         var tasks = dirs.Select(async dir =>
         {
             await semaphore.WaitAsync(ct);
             try
             {
-                return await BuildProjectInfoAsync(dir, ghAvailable, ct);
+                return await BuildProjectInfoAsync(dir, ct);
             }
             finally
             {
@@ -91,14 +92,45 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             }
         });
 
-        var results = await Task.WhenAll(tasks);
-
-        return results
+        var results = (await Task.WhenAll(tasks))
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // Phase B: one batched gh call per ~25 GitHub repos (was 3 spawns per repo).
+        if (await gitHubService.IsAvailableAsync(ct))
+            await ApplyRemoteDataAsync(results, ct);
+
+        return results;
     }
 
-    private async Task<ProjectInfo> BuildProjectInfoAsync(string dirPath, bool ghAvailable, CancellationToken ct)
+    /// <summary>Fetches visibility + open issue/PR counts for all GitHub-hosted projects in bulk.</summary>
+    private async Task ApplyRemoteDataAsync(List<ProjectInfo> projects, CancellationToken ct)
+    {
+        var githubProjects = projects.Where(p => !string.IsNullOrEmpty(p.GitHubSlug)).ToList();
+        if (githubProjects.Count == 0) return;
+
+        var data = await gitHubService.GetRepoDataBatchAsync(
+            githubProjects.Select(p => p.GitHubSlug).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), ct);
+
+        foreach (var project in githubProjects)
+        {
+            if (data.TryGetValue(project.GitHubSlug, out var remote))
+            {
+                project.GitStatus.Visibility = remote.Visibility;
+                project.OpenIssueCount = remote.OpenIssues;
+                project.OpenPrCount = remote.OpenPrs;
+            }
+            else
+            {
+                // Batch call itself failed — unknown, NOT zero and NOT "local".
+                project.GitStatus.Visibility = "unknown";
+                project.OpenIssueCount = null;
+                project.OpenPrCount = null;
+            }
+        }
+    }
+
+    private async Task<ProjectInfo> BuildProjectInfoAsync(string dirPath, CancellationToken ct)
     {
         var dirName = Path.GetFileName(dirPath);
         var readmePath = Path.Combine(dirPath, "README.md");
@@ -161,15 +193,8 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             }
         }
 
-        // GitHub data
-        if (ghAvailable && !string.IsNullOrEmpty(project.GitHubSlug))
-        {
-            project.OpenIssueCount = await gitHubService.GetOpenIssueCountAsync(project.GitHubSlug, ct);
-            project.OpenPrCount = await gitHubService.GetOpenPrCountAsync(project.GitHubSlug, ct);
-            project.Issues = await gitHubService.GetIssuesAsync(project.GitHubSlug, "open", ct);
-            project.GitStatus.Visibility = await gitHubService.GetRepoVisibilityAsync(project.GitHubSlug, ct);
-        }
-
+        // GitHub-side data (visibility, counts) is applied afterwards in one batch;
+        // the issues LIST loads lazily when a detail view actually needs it.
         return project;
     }
 

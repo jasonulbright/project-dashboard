@@ -64,6 +64,76 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
+    /// <summary>
+    /// Remote facts for one repo from the batch query. Null counts mean "couldn't
+    /// fetch" — callers must not render them as zero.
+    /// </summary>
+    public sealed record RepoRemoteData(string Visibility, int? OpenIssues, int? OpenPrs, bool Found);
+
+    /// <summary>
+    /// Fetches visibility + open issue/PR counts for MANY repos in a few
+    /// `gh api graphql` calls (aliased repository fields, ~25 per call) instead of
+    /// three gh spawns per repo. Partial failures poison only their own alias.
+    /// Returns a map keyed by slug; missing key = fetch failed for that repo.
+    /// </summary>
+    public async Task<Dictionary<string, RepoRemoteData>> GetRepoDataBatchAsync(
+        IReadOnlyList<string> slugs, CancellationToken ct = default)
+    {
+        var results = new Dictionary<string, RepoRemoteData>(StringComparer.OrdinalIgnoreCase);
+
+        const int chunkSize = 25;
+        for (var offset = 0; offset < slugs.Count; offset += chunkSize)
+        {
+            var chunk = slugs.Skip(offset).Take(chunkSize).ToList();
+            var query = new System.Text.StringBuilder("query {\n");
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                var parts = chunk[i].Split('/', 2);
+                if (parts.Length != 2) continue;
+                var owner = parts[0].Replace("\\", "\\\\").Replace("\"", "\\\"");
+                var name = parts[1].Replace("\\", "\\\\").Replace("\"", "\\\"");
+                query.Append($"  r{i}: repository(owner: \"{owner}\", name: \"{name}\") {{ ...F }}\n");
+            }
+            query.Append("}\nfragment F on Repository { visibility issues(states: OPEN) { totalCount } pullRequests(states: OPEN) { totalCount } }");
+
+            // gh exits 1 when ANY alias errors, but stdout still carries the data
+            // for every alias that resolved — parse stdout regardless of exit code.
+            var run = await RunAsync(["api", "graphql", "-f", $"query={query}"], ct, TimeSpan.FromSeconds(30));
+            if (run.TimedOut || string.IsNullOrWhiteSpace(run.StdOut))
+            {
+                Log.Warn($"gh graphql batch failed ({chunk.Count} repos): {run.FirstError}");
+                continue;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(run.StdOut);
+                if (!doc.RootElement.TryGetProperty("data", out var data)) continue;
+
+                for (var i = 0; i < chunk.Count; i++)
+                {
+                    if (!data.TryGetProperty($"r{i}", out var repo)) continue;
+                    if (repo.ValueKind == JsonValueKind.Null)
+                    {
+                        // Alias errored (repo missing / no access): known-not-found.
+                        results[chunk[i]] = new RepoRemoteData("unknown", null, null, Found: false);
+                        continue;
+                    }
+                    var vis = repo.TryGetProperty("visibility", out var v) ? v.GetString()?.ToLowerInvariant() ?? "unknown" : "unknown";
+                    int? issues = repo.TryGetProperty("issues", out var iss) && iss.TryGetProperty("totalCount", out var ic) ? ic.GetInt32() : null;
+                    int? prs = repo.TryGetProperty("pullRequests", out var pr) && pr.TryGetProperty("totalCount", out var pc) ? pc.GetInt32() : null;
+                    results[chunk[i]] = new RepoRemoteData(vis, issues, prs, Found: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("gh graphql batch response unparseable", ex);
+            }
+        }
+
+        return results;
+    }
+
     public async Task<List<GitHubIssue>> GetIssuesAsync(string repoSlug, string state = "open", CancellationToken ct = default)
     {
         try
@@ -85,64 +155,6 @@ public class GitHubService(SettingsService settingsService)
         {
             Log.Warn($"gh issue list failed for {repoSlug} (showing 0 issues)", ex);
             return [];
-        }
-    }
-
-    public async Task<string> GetRepoVisibilityAsync(string repoSlug, CancellationToken ct = default)
-    {
-        try
-        {
-            var output = await RunGhAsync(
-                ["repo", "view", repoSlug, "--json", "visibility", "--jq", ".visibility"], ct);
-            var vis = output?.Trim().ToLowerInvariant() ?? "";
-            // "unknown" (not "local") when a remote exists but gh couldn't determine visibility —
-            // don't conflate a gh failure with a genuinely remote-less repo.
-            return vis is "public" or "private" or "internal" ? vis : "unknown";
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"gh repo view failed for {repoSlug}", ex);
-            return "unknown";
-        }
-    }
-
-    public async Task<int> GetOpenIssueCountAsync(string repoSlug, CancellationToken ct = default)
-    {
-        try
-        {
-            var output = await RunGhAsync(
-                ["issue", "list", "--repo", repoSlug, "--state", "open", "--json", "number", "--limit", "100"], ct);
-
-            if (string.IsNullOrWhiteSpace(output))
-                return 0;
-
-            var items = JsonSerializer.Deserialize<List<JsonElement>>(output);
-            return items?.Count ?? 0;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"gh issue count failed for {repoSlug} (showing 0)", ex);
-            return 0;
-        }
-    }
-
-    public async Task<int> GetOpenPrCountAsync(string repoSlug, CancellationToken ct = default)
-    {
-        try
-        {
-            var output = await RunGhAsync(
-                ["pr", "list", "--repo", repoSlug, "--state", "open", "--json", "number", "--limit", "100"], ct);
-
-            if (string.IsNullOrWhiteSpace(output))
-                return 0;
-
-            var items = JsonSerializer.Deserialize<List<JsonElement>>(output);
-            return items?.Count ?? 0;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"gh pr count failed for {repoSlug} (showing 0)", ex);
-            return 0;
         }
     }
 

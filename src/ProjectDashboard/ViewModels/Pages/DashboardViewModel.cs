@@ -33,7 +33,7 @@ public partial class DashboardViewModel : ObservableObject
     public int TotalBugCount => Projects.Sum(p => p.BugCount);
     public int TotalWaitCount => Projects.Sum(p => p.WaitCount);
     public int TotalTaskCount => Projects.Sum(p => p.TaskCount);
-    public int IssueCount => Projects.Sum(p => p.OpenIssueCount);
+    public int IssueCount => Projects.Sum(p => p.OpenIssueCount ?? 0);
     public int HiddenCount
     {
         get

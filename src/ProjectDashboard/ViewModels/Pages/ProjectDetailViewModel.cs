@@ -77,11 +77,28 @@ public partial class ProjectDetailViewModel : ObservableObject
 
     public Task SetProjectAsync(ProjectInfo project)
     {
-        // Use the data discovery already loaded — NO per-switch git/gh subprocess chatter.
-        // Freshness comes from the dashboard's Refresh / Sync Now, not from re-hitting gh on
-        // every project click. (gh = network; don't add to the noise Windows already makes.)
+        // Local data renders instantly from what discovery already loaded. The issues
+        // LIST is the one remote thing this page shows, and discovery no longer
+        // prefetches it for every repo — refresh it lazily for just this project.
         ApplyProject(project);
+        _ = LoadIssuesLazilyAsync(project);
         return Task.CompletedTask;
+    }
+
+    private async Task LoadIssuesLazilyAsync(ProjectInfo project)
+    {
+        if (string.IsNullOrEmpty(project.GitHubSlug)) return;
+        try
+        {
+            var issues = await _gitHubService.GetIssuesAsync(project.GitHubSlug, "open");
+            project.Issues = issues; // cache on the model for the next visit
+            if (ReferenceEquals(Project, project)) // user may have moved on mid-fetch
+                Issues = new ObservableCollection<GitHubIssue>(issues);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Issue list load failed for {project.GitHubSlug}", ex);
+        }
     }
 
     private void ApplyProject(ProjectInfo p)
