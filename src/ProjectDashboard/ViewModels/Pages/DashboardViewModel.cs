@@ -28,6 +28,8 @@ public partial class DashboardViewModel : ObservableObject
     public static ProjectInfo? SelectedProject { get; set; }
 
     public int TotalCount => Projects.Count;
+    public int CloudCount => Projects.Count(p => p.IsRemoteOnly);
+    public bool HasCloud => CloudCount > 0;
     public int DirtyCount => Projects.Count(p => p.GitStatus.IsDirty);
     public int TodoCount => Projects.Count(p => p.TaskCount > 0 || p.BugCount > 0 || p.WaitCount > 0);
     public int TotalBugCount => Projects.Sum(p => p.BugCount);
@@ -46,8 +48,8 @@ public partial class DashboardViewModel : ObservableObject
         }
     }
 
-    public int MismatchCount => Projects.Count(p => p.HasRemoteMismatch);
-    public int IncompleteCount => Projects.Count(p => p.HasIncompleteMetadata);
+    public int MismatchCount => Projects.Count(p => !p.IsRemoteOnly && p.HasRemoteMismatch);
+    public int IncompleteCount => Projects.Count(p => !p.IsRemoteOnly && p.HasIncompleteMetadata);
     public bool HasMismatches => MismatchCount > 0;
     public bool HasIncomplete => IncompleteCount > 0;
 
@@ -398,8 +400,36 @@ public partial class DashboardViewModel : ObservableObject
     private void OpenProject(ProjectInfo? project)
     {
         if (project is null) return;
+        // Remote-only cards have no local repo to open — clicking clones instead.
+        if (project.IsRemoteOnly)
+        {
+            _ = CloneRemoteOnly(project);
+            return;
+        }
         SelectedProject = project;
         _navigationService.Navigate(typeof(ProjectDetailPage));
+    }
+
+    /// <summary>Clones a Cloud card's repo into the projects root, then refreshes.</summary>
+    [RelayCommand]
+    private async Task CloneRemoteOnly(ProjectInfo? project)
+    {
+        if (project is null || !project.IsRemoteOnly || project.RemoteSlug.Length == 0) return;
+
+        var settings = _settingsService.Load();
+        var target = Path.Combine(settings.ProjectsRootPath, project.DirectoryName);
+        if (Directory.Exists(target))
+        {
+            OpStatusText = $"Clone: {project.DirectoryName} already exists in the projects root.";
+            return;
+        }
+
+        OpStatusText = $"Cloning {project.DirectoryName}…";
+        var url = $"https://github.com/{project.RemoteSlug}.git";
+        var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
+        OpStatusText = error is null ? $"Cloned {project.DirectoryName}." : $"Clone failed: {error}";
+        if (error is null)
+            await ForceRefreshAsync();
     }
 
     [RelayCommand]
@@ -692,6 +722,8 @@ public partial class DashboardViewModel : ObservableObject
     private void NotifySummary()
     {
         OnPropertyChanged(nameof(TotalCount));
+        OnPropertyChanged(nameof(CloudCount));
+        OnPropertyChanged(nameof(HasCloud));
         OnPropertyChanged(nameof(DirtyCount));
         OnPropertyChanged(nameof(TodoCount));
         OnPropertyChanged(nameof(TotalTaskCount));
@@ -731,6 +763,8 @@ public partial class DashboardViewModel : ObservableObject
             filtered = filtered.Where(p => p.GitStatus.Visibility == "private");
         else if (ActiveFilter == "nonlocal")
             filtered = filtered.Where(p => p.GitStatus.Visibility != "local");
+        else if (ActiveFilter == "cloud")
+            filtered = filtered.Where(p => p.IsRemoteOnly);
 
         if (!string.IsNullOrEmpty(SelectedCategory) && SelectedCategory != "All")
         {

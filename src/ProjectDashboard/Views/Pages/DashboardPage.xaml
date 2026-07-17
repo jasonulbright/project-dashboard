@@ -125,6 +125,23 @@
                 </StackPanel>
             </Border>
 
+            <!-- Cloud chip: GitHub repos not cloned locally (ROADMAP v1.1) -->
+            <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="12,8" Margin="0,0,8,0"
+                    Cursor="Hand" ToolTip="Show GitHub repos that aren't cloned locally"
+                    AutomationProperties.Name="{Binding CloudCount, StringFormat='Show cloud-only repos, {0} not cloned'}"
+                    Visibility="{Binding HasCloud, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding SetFilterCommand}" CommandParameter="cloud" />
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <ui:SymbolIcon Symbol="Cloud24" FontSize="14" Margin="0,0,6,0"
+                                   Foreground="{StaticResource StatusInfoFg}" VerticalAlignment="Center" />
+                    <TextBlock Text="Cloud: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding CloudCount}" FontWeight="SemiBold" FontSize="12" Foreground="{StaticResource StatusInfoFg}" />
+                </StackPanel>
+            </Border>
+
             <!-- Data-quality badges: only shown when there's something to fix -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Margin="0,0,8,0"
@@ -251,9 +268,33 @@
                             </Border.Tag>
                             <Border.ContextMenu>
                                 <ContextMenu DataContext="{Binding PlacementTarget, RelativeSource={RelativeSource Self}}">
+                                    <MenuItem Header="Clone"
+                                              Command="{Binding Tag.CloneRemoteOnlyCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                     <MenuItem Header="Open Details"
                                               Command="{Binding Tag.OpenProjectCommand}"
-                                              CommandParameter="{Binding DataContext}" />
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                     <MenuItem Header="Refresh Status"
                                               Command="{Binding Tag.RefreshSingleCommand}"
                                               CommandParameter="{Binding DataContext}" />
@@ -417,6 +458,10 @@
                                                             <Setter Property="Symbol" Value="QuestionCircle24" />
                                                             <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
                                                         </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsRemoteOnly}" Value="True">
+                                                            <Setter Property="Symbol" Value="CloudArrowDown24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                        </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </ui:SymbolIcon.Style>
@@ -440,6 +485,10 @@
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
                                                             <Setter Property="Text" Value="status unavailable" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsRemoteOnly}" Value="True">
+                                                            <Setter Property="Text" Value="Not cloned — click to clone" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>

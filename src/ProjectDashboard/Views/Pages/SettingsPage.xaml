@@ -111,6 +111,16 @@
                             PlaceholderText="Auto-detect (leave blank to use PATH)" />
             </DockPanel>
 
+            <!-- GitHub discovery -->
+            <TextBlock Text="GitHub Discovery" FontSize="16" Margin="0,24,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <CheckBox Content="Show my GitHub repos that aren't cloned locally (Cloud cards)"
+                      IsChecked="{Binding EnableGitHubDiscovery}"
+                      Margin="0,0,0,4" />
+            <TextBlock Text="When on, signed-in GitHub repositories with no local clone appear as Cloud cards you can clone in one click. Requires gh signed in."
+                       FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
             <!-- About -->
             <TextBlock Text="About" FontSize="16" Margin="0,24,0,8"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />

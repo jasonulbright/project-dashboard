@@ -98,9 +98,63 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
         // Phase B: one batched gh call per ~25 GitHub repos (was 3 spawns per repo).
         if (await gitHubService.IsAvailableAsync(ct))
+        {
             await ApplyRemoteDataAsync(results, ct);
 
-        return results;
+            // Phase C (ROADMAP v1.1): surface GitHub repos not cloned locally as Cloud cards.
+            if (settings.EnableGitHubDiscovery)
+                await AppendRemoteOnlyAsync(results, ct);
+        }
+
+        return results
+            .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Adds the signed-in user's repositories that have no local clone as remote-only
+    /// ("Cloud") entries. A repo is "local" if any discovered project's GitHub slug or
+    /// folder name matches it, so a repo cloned under a renamed folder isn't duplicated.
+    /// </summary>
+    private async Task AppendRemoteOnlyAsync(List<ProjectInfo> local, CancellationToken ct)
+    {
+        List<RemoteRepo> remotes;
+        try { remotes = await gitHubService.GetUserReposAsync(ct); }
+        catch (Exception ex) { Log.Warn("remote-only discovery skipped", ex); return; }
+        if (remotes.Count == 0) return;
+
+        var localSlugs = new HashSet<string>(
+            local.Select(p => p.GitHubSlug).Where(s => s.Length > 0), StringComparer.OrdinalIgnoreCase);
+        var localNames = new HashSet<string>(
+            local.Select(p => p.DirectoryName), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var repo in remotes)
+        {
+            if (localSlugs.Contains(repo.NameWithOwner) || localNames.Contains(repo.Name))
+                continue;
+
+            var manifest = manifestStore.TryGet(repo.NameWithOwner, out var stored) && stored is not null
+                ? stored
+                : new ProjectManifest { Description = repo.Description };
+
+            local.Add(new ProjectInfo
+            {
+                DirectoryName = repo.Name,
+                DisplayName = repo.Name,
+                FullPath = "",
+                Description = repo.Description,
+                IsRemoteOnly = true,
+                RemoteSlug = repo.NameWithOwner,
+                HasManifest = true,
+                Manifest = manifest,
+                GitStatus = new GitStatus
+                {
+                    Visibility = repo.Visibility,
+                    RemoteUrl = $"https://github.com/{repo.NameWithOwner}",
+                    LastCommitDate = repo.UpdatedAt == default ? null : repo.UpdatedAt
+                }
+            });
+        }
     }
 
     /// <summary>Fetches visibility + open issue/PR counts for all GitHub-hosted projects in bulk.</summary>

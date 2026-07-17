@@ -19,6 +19,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _excludedDirectories = "";
     [ObservableProperty] private string _gitHubStatus = "Checking...";
     [ObservableProperty] private string _ghPath = "";
+    [ObservableProperty] private bool _enableGitHubDiscovery = true;
     [ObservableProperty] private string _syncStatus = "";
 
     public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel)
@@ -38,6 +39,7 @@ public partial class SettingsViewModel : ObservableObject
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         ExcludedDirectories = string.Join(", ", settings.ExcludedDirectories);
         GhPath = settings.GhPath;
+        EnableGitHubDiscovery = settings.EnableGitHubDiscovery;
 
         if (Enum.TryParse<ApplicationTheme>(settings.Theme, out var theme))
             CurrentTheme = theme;
@@ -76,6 +78,7 @@ public partial class SettingsViewModel : ObservableObject
         settings.ExcludedDirectories = ExcludedDirectories
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         settings.GhPath = GhPath.Trim();
+        settings.EnableGitHubDiscovery = EnableGitHubDiscovery;
 
         _settingsService.Save(settings);
     }

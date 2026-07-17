@@ -16,6 +16,11 @@ public partial class ProjectInfo : ObservableObject
     /// <summary>Set only by the Hidden view — never persisted; manifest Status stays untouched.</summary>
     [ObservableProperty] private bool _isHidden;
 
+    /// <summary>True for a GitHub repo that isn't cloned locally (a "Cloud" card — no git status, offers Clone).</summary>
+    public bool IsRemoteOnly { get; set; }
+    /// <summary>owner/repo for a remote-only entry (drives Clone + browser links).</summary>
+    public string RemoteSlug { get; set; } = "";
+
     [ObservableProperty] private GitStatus _gitStatus = new();
     [ObservableProperty] private ProjectManifest _manifest = new();
     // Null = "couldn't fetch" — rendered as absent, never as zero.
@@ -38,6 +43,7 @@ public partial class ProjectInfo : ObservableObject
     {
         get
         {
+            if (IsRemoteOnly) return RemoteSlug;
             var remote = GitRemote.Parse(GitStatus.RemoteUrl);
             return remote is { IsGitHub: true } ? $"{remote.Owner}/{remote.Repo}" : "";
         }
