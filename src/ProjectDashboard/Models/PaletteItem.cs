@@ -23,7 +23,7 @@ public sealed class PaletteItem
         var hay = SearchText;
 
         var idx = hay.IndexOf(queryLower, StringComparison.Ordinal);
-        if (idx >= 0) return 1000 - idx; // contiguous match, prefer earlier
+        if (idx >= 0) return Math.Max(300, 1000 - idx); // contiguous match, prefer earlier; stays > subsequence
 
         // Fall back to in-order subsequence.
         int qi = 0;

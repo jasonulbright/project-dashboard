@@ -32,10 +32,11 @@ public sealed class ProjectWatcherService : IDisposable
         Stop();
         if (!Directory.Exists(rootPath)) return;
 
-        _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+        lock (_gate) { _root = root; }
         try
         {
-            _watcher = new FileSystemWatcher(_root)
+            _watcher = new FileSystemWatcher(root)
             {
                 IncludeSubdirectories = true,
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
@@ -77,8 +78,13 @@ public sealed class ProjectWatcherService : IDisposable
 
     private void Queue(string fullPath)
     {
+        // Test the path RELATIVE to the root: an ignored word (bin, packages, .vs, …)
+        // in an ANCESTOR of the root must not silently drop every event.
+        if (!fullPath.StartsWith(_root, StringComparison.OrdinalIgnoreCase)) return;
+        var relative = fullPath[_root.Length..];
+
         // "\segment\" test needs delimiters on both sides; pad so a leading .git catches too.
-        var padded = "\\" + fullPath + "\\";
+        var padded = "\\" + relative.TrimStart('\\', '/') + "\\";
         foreach (var seg in IgnoredSegments)
             if (padded.Contains(seg, StringComparison.OrdinalIgnoreCase))
             {
@@ -129,6 +135,7 @@ public sealed class ProjectWatcherService : IDisposable
 
     private void OnError(object sender, ErrorEventArgs e)
     {
+        lock (_gate) { if (_disposed) return; }
         // Buffer overflow: we lost events. Signal a full refresh (empty set).
         Log.Warn("file watcher buffer overflow — requesting full refresh", e.GetException());
         try { Changed?.Invoke([]); } catch { }

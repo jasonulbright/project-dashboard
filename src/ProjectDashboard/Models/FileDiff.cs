@@ -72,6 +72,12 @@ public sealed class FileDiff
 
             if (current.IsCombined)
             {
+                if (line.StartsWith("Binary files ", StringComparison.Ordinal) ||
+                    line.StartsWith("GIT binary patch", StringComparison.Ordinal))
+                {
+                    current.IsBinary = true;
+                    continue;
+                }
                 // Combined-diff body: keep it readable rather than mis-counting columns.
                 if (line.StartsWith("@@@", StringComparison.Ordinal))
                     current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
@@ -148,17 +154,22 @@ public sealed class FileDiff
         return files;
     }
 
-    /// <summary>Path from a "diff --git a/foo b/foo" header (handles spaces via the a//b/ split).</summary>
+    /// <summary>
+    /// Path from a "diff --git a/P b/P" header. For an unrenamed change git emits the
+    /// identical path twice, so P = the front half of "P b/P" — computed by length rather
+    /// than by finding " b/" (which a path containing that substring would break).
+    /// </summary>
     private static string PathFromDiffGit(string line)
     {
-        var rest = line["diff --git ".Length..];
-        var bSlash = rest.IndexOf(" b/", StringComparison.Ordinal);
-        if (bSlash > 0)
-        {
-            var b = rest[(bSlash + 3)..].Trim();
-            return b;
-        }
-        return "";
+        var rest = line["diff --git ".Length..].Trim();
+        if (!rest.StartsWith("a/", StringComparison.Ordinal)) return "";
+        var body = rest[2..]; // "P b/P"
+        // body == P + " b/" + P  =>  len(body) = 2*len(P) + 3
+        if ((body.Length - 3) % 2 != 0) return "";
+        var pLen = (body.Length - 3) / 2;
+        if (pLen <= 0) return "";
+        var p = body[..pLen];
+        return body == $"{p} b/{p}" ? p : "";
     }
 
     private static string StripPrefix(string path) =>

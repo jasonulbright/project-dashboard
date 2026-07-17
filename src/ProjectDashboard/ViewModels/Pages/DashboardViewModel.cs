@@ -97,27 +97,39 @@ public partial class DashboardViewModel : ObservableObject
     {
         _ = Application.Current?.Dispatcher.InvokeAsync(async () =>
         {
+            // A bulk op (sync all / clone) is already writing git state; don't read a repo
+            // mid-write (index.lock contention) only to have the op's own refresh clobber it.
+            if (_bulkOpRunning || LoadProjectsCommand.IsRunning) return;
             try
             {
                 if (repoDirs.Count == 0)
                 {
-                    if (!LoadProjectsCommand.IsRunning)
-                        await LoadProjectsCommand.ExecuteAsync(null);
+                    await LoadProjectsCommand.ExecuteAsync(null);
                     return;
                 }
 
                 var names = new HashSet<string>(repoDirs, StringComparer.OrdinalIgnoreCase);
                 var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)).ToList();
+                var changed = false;
                 foreach (var project in affected)
                 {
                     // Local-only refresh — the watcher fires on every save; no gh/network here.
                     var refreshed = await _discoveryService.RefreshProjectLocalAsync(project.FullPath);
-                    var idx = Projects.IndexOf(project);
-                    if (idx >= 0) Projects[idx] = refreshed;
+
+                    // Carry forward GitHub-derived data a local refresh can't know, so the card
+                    // doesn't flip to "local"/no-issues and drop out of a filtered view.
+                    if (project.GitStatus.Visibility is "public" or "private" or "internal" or "unknown")
+                        refreshed.GitStatus.Visibility = project.GitStatus.Visibility;
+
+                    // Mutate the EXISTING instance in place (raises change) rather than replacing
+                    // it — keeps sidebar/palette references valid and avoids a full sidebar rebuild
+                    // (which would drop the current selection/focus on every save).
+                    project.GitStatus = refreshed.GitStatus;
+                    project.RecentCommits = refreshed.RecentCommits;
+                    changed = true;
                 }
-                if (affected.Count > 0)
+                if (changed)
                 {
-                    OnPropertyChanged(nameof(Projects));
                     ApplyFilters();
                     NotifySummary();
                 }
@@ -501,6 +513,9 @@ public partial class DashboardViewModel : ObservableObject
     private async Task CloneRemoteOnly(ProjectInfo? project)
     {
         if (project is null || !project.IsRemoteOnly || project.RemoteSlug.Length == 0) return;
+        // A card LeftClick calls this raw method (not the AsyncRelayCommand), so it bypasses
+        // the command's IsRunning gate — a fast second click would clone twice into one path.
+        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
 
         var settings = _settingsService.Load();
         var target = Path.Combine(settings.ProjectsRootPath, project.DirectoryName);
@@ -510,12 +525,17 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        OpStatusText = $"Cloning {project.DirectoryName}…";
-        var url = $"https://github.com/{project.RemoteSlug}.git";
-        var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
-        OpStatusText = error is null ? $"Cloned {project.DirectoryName}." : $"Clone failed: {error}";
-        if (error is null)
-            await ForceRefreshAsync();
+        _bulkOpRunning = true;
+        try
+        {
+            OpStatusText = $"Cloning {project.DirectoryName}…";
+            var url = $"https://github.com/{project.RemoteSlug}.git";
+            var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
+            OpStatusText = error is null ? $"Cloned {project.DirectoryName}." : $"Clone failed: {error}";
+            if (error is null)
+                await ForceRefreshAsync();
+        }
+        finally { _bulkOpRunning = false; }
     }
 
     [RelayCommand]

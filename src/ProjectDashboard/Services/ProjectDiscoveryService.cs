@@ -140,9 +140,10 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             if (localSlugs.Contains(repo.NameWithOwner) || localNames.Contains(repo.Name))
                 continue;
 
-            var manifest = manifestStore.TryGet(repo.NameWithOwner, out var stored) && stored is not null
-                ? stored
-                : new ProjectManifest { Description = repo.Description };
+            // A remote-only card has no local path, so there's no manifest to key on —
+            // synthesize one from the repo description (the manifest editor is unavailable
+            // until it's cloned anyway).
+            var manifest = new ProjectManifest { Description = repo.Description };
 
             local.Add(new ProjectInfo
             {
