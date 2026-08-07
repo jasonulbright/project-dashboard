@@ -518,7 +518,7 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     [Fact]
-    public async Task AConflictingReorder_AbortsAndStillOffersUndoAndTheLeaveStoppedRetry()
+    public async Task AConflictingReorder_AbortsAndOffersTheRetryRatherThanAnUndo()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed");
         repo.Write("shared.txt", "1\n");
@@ -542,9 +542,17 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Contains("the rebase was aborted", vm.SurgeryFailureText);
         Assert.Contains("refs, index and tracked content are unchanged", vm.SurgeryFailureText);
         Assert.True(vm.SurgeryLeaveStoppedOfferVisible);
-        // The undo the service hands back on failure is offered too — the backup outlives it.
-        Assert.True(vm.SurgeryUndoVisible);
+        // The backup outlives the abort, but restoring it ends in a hard reset over a repository
+        // the abort already put back — the retry is the offer that has work left to do.
+        Assert.False(vm.SurgeryUndoVisible);
         Assert.Equal(before, await repo.FullStateAsync());
+
+        await vm.RetrySurgeryLeavingItStoppedCommand.ExecuteAsync(null);
+
+        // Stopped mid-rebase: now the repository has moved and the undo is the way back.
+        Assert.True(repo.RebaseInProgress);
+        Assert.True(vm.SurgeryUndoVisible);
+        Assert.True(vm.UndoLastSurgeryCommand.CanExecute(null));
     }
 
     // ── offers belong to the project they were made on ─────────────────────
@@ -570,6 +578,7 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.False(vm.UndoLastSurgeryCommand.CanExecute(null));
         Assert.Equal(["beta", "seed"], await repo.SubjectsAsync());
     }
+
     /// <summary>Switches the view-model to <paramref name="repo"/> the way the project list does.</summary>
     private static Task SwitchToAsync(ProjectDetailViewModel vm, SurgeryRepo repo)
     {
@@ -635,5 +644,58 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Equal("", vm.SurgeryStatusText);
         Assert.False(vm.IsBusy);
         Assert.Equal(["beta", "seed"], await repo.SubjectsAsync());
+    }
+
+    // ── an offer is only made where it is the answer ────────────────────────
+
+    [Fact]
+    public async Task ARefusalFromTheBusyRegistry_DoesNotOfferAStash()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var busy = new RepoBusyRegistry();
+        var git = new GitService();
+        var vm = await VmForAsync(repo);
+        vm.Surgery = new SurgeryCoordinator(
+            new BackupService(git, new SettingsService()), busy, git,
+            new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work")));
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        // Held elsewhere, and dirty: a stash would clear the tree and change nothing.
+        Assert.True(busy.TryAcquire(repo.Path, out var lease));
+        using (lease)
+        {
+            repo.Write("alpha.txt", "uncommitted edit\n");
+            await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        }
+
+        Assert.Contains("busy", vm.SurgeryFailureText);
+        Assert.False(vm.SurgeryStashOfferVisible);
+        Assert.False(vm.SurgeryUndoVisible);
+        Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
+    }
+
+    [Fact]
+    public async Task OpeningThePlanDialog_ClearsTheFailureTextAndTheOffersItExplained()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var vm = await VmForAsync(repo);
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        repo.Write("alpha.txt", "uncommitted edit\n");
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        Assert.True(vm.SurgeryStashOfferVisible);
+
+        await repo.GitAsync("checkout", "--", "alpha.txt");
+        await vm.RefreshWorkingStateAsync();
+        vm.SelectedCommit = vm.Commits[1];
+        vm.ShowHistoryPlanAsync = _ => Task.FromResult<IReadOnlyList<PlannedCommit>?>(null);
+
+        await vm.PlanHistoryEditCommand.ExecuteAsync(null);
+
+        Assert.Equal("", vm.SurgeryFailureText);
+        Assert.False(vm.SurgeryStashOfferVisible);
+        Assert.False(vm.SurgeryLeaveStoppedOfferVisible);
     }
 }

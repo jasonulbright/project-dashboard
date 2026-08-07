@@ -578,7 +578,11 @@ public partial class ProjectDetailViewModel
         if (surgery is null || depth < 1) return;
 
         var gen = _generation;
+        // The failure text and the two offers that explain it are one message; clearing the text
+        // alone would leave a Retry or a Stash button standing with nothing on screen naming it.
         SurgeryFailureText = "";
+        SurgeryLeaveStoppedOfferVisible = false;
+        SurgeryStashOfferVisible = false;
         SurgeryStatusText = "Reading the editable range…";
 
         RebaseScope scope;
@@ -792,11 +796,13 @@ public partial class ProjectDetailViewModel
             await RefreshWorkingStateAsync();
             await ReloadCommitsAsync();
 
-            // A refusal made before git ran carries neither result, so a dirty tree is the
-            // reason the reader can act on. Decided against the freshly read state, because
-            // the state the gate refused may be newer than the one the command was enabled on.
+            // Only the tree gate is fixed by stashing. A busy registry and an unreadable
+            // repository refuse with the same shape — neither result, no undo — and a stash
+            // would change nothing. Decided against the freshly read state, because the state
+            // the gate refused may be newer than the one the command was enabled on.
             SurgeryStashOfferVisible =
-                !result.Success && result.Rebase is null && result.Edit is null && WorkingState is { IsDirty: true };
+                !result.Success && result.Rebase is null && result.Edit is null
+                && IsWorkingTreeRefusal(result.FailureReason) && WorkingState is { IsDirty: true };
             return result.Success;
         }
         catch (Exception ex)
@@ -815,6 +821,16 @@ public partial class ProjectDetailViewModel
         }
     }
 
+    /// <summary>
+    /// Whether a pre-git refusal names the working tree, which is the only one a stash resolves.
+    /// The gate reports the offending files itself, so its wording is the discriminator this
+    /// layer has — <see cref="SurgeryResult"/> carries no code for which gate refused.
+    /// </summary>
+    private static bool IsWorkingTreeRefusal(string? reason) =>
+        reason is not null &&
+        (reason.Contains("uncommitted change(s)", StringComparison.Ordinal) ||
+         reason.Contains("unstaged change(s)", StringComparison.Ordinal));
+
     private void PublishSurgeryResult(
         string label,
         string repo,
@@ -822,7 +838,12 @@ public partial class ProjectDetailViewModel
         Func<RebaseConflictPolicy, Task<SurgeryResult>> operate,
         bool retryable)
     {
-        if (result.Undo is not null)
+        // A backup is handed back for every gated call, refusals included. Restoring one ends in
+        // a hard reset, so offering it where nothing moved can only discard uncommitted work.
+        var repositoryMayHaveMoved =
+            result.Success || result.Rebase?.RepositoryUntouched == false || result.Edit?.RepositoryUntouched == false;
+
+        if (result.Undo is not null && repositoryMayHaveMoved)
         {
             _surgeryUndo = result.Undo;
             _surgeryUndoRepo = repo;
