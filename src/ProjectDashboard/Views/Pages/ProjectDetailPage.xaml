@@ -144,7 +144,10 @@
         </StackPanel>
 
         <!-- ═══ STATE BANNER ═══ -->
-        <Border Grid.Row="1"
+        <!-- Disabled behind the wizard's scrim with the branch bar and the work-area tabs: these
+             rows sit outside the TabControl, so without this a keystroke still reaches them. -->
+        <Border Grid.Row="1" x:Name="StateBanner"
+                IsEnabled="{Binding RewriteWizardHidden}"
                 Visibility="{Binding StateBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Background="{StaticResource StatusWarnBg}"
                 BorderBrush="{StaticResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
@@ -160,7 +163,12 @@
         </Border>
 
         <!-- ═══ BRANCH BAR ═══ -->
-        <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
+        <!-- Pull is guarded only by IsBusy, which is clear on the wizard's Result step: reached
+             behind the scrim it merges the remote's un-rewritten history back over the rewrite
+             the Result screen is still reporting on. -->
+        <Border Grid.Row="2" x:Name="BranchBar"
+                IsEnabled="{Binding RewriteWizardHidden}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
                 CornerRadius="8" Padding="12,6" Margin="0,8,0,8">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
