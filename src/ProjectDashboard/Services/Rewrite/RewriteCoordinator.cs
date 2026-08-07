@@ -162,7 +162,7 @@ public sealed class RewriteCoordinator
                 };
 
             // 7. Success: clear the journal, hand back the report and a one-click undo.
-            await _journal.CompleteAsync(ct);
+            await _journal.CompleteAsync(repo, ct);
             return new RewriteExecutionResult { Success = true, Report = report, Swap = swap, Undo = undo };
         }
         finally

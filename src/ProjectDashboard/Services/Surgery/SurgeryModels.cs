@@ -123,9 +123,26 @@ public sealed class HistoryEditResult
 
     public IReadOnlyList<string> ConflictPaths { get; init; } = [];
 
+    /// <summary>
+    /// True when the operation finished but git's sequencer state is still present — a
+    /// `revert --no-commit` leaves REVERT_HEAD behind. Every gated operation refuses a repository
+    /// in that state, so the outcome is a success the caller has to conclude, not a clean one.
+    /// </summary>
+    public bool LeftMidOperation { get; init; }
+
+    /// <summary>What is still outstanding when <see cref="LeftMidOperation"/> is set.</summary>
+    public string? Advisory { get; init; }
+
+    /// <summary>
+    /// True when the result is a refusal made before git could change anything, so no backup
+    /// needs keeping and no recovery marker should survive the call.
+    /// </summary>
+    public bool RepositoryUntouched { get; init; }
+
     public string HeadAfter { get; init; } = "";
 
-    internal static HistoryEditResult Failed(string reason) => new() { Success = false, FailureReason = reason };
+    internal static HistoryEditResult Failed(string reason) =>
+        new() { Success = false, FailureReason = reason, RepositoryUntouched = true };
 }
 
 /// <summary>
@@ -141,6 +158,9 @@ public sealed class SurgeryResult
     public string? FailureReason { get; init; }
 
     public UndoHandle? Undo { get; init; }
+
+    /// <summary>Set when the operation succeeded yet left work for the user to conclude — see <see cref="HistoryEditResult.LeftMidOperation"/>.</summary>
+    public string? Advisory { get; init; }
 
     public RebaseRunResult? Rebase { get; init; }
 

@@ -120,7 +120,7 @@ public class SurgeryCoordinatorTests
     }
 
     [Fact]
-    public async Task Reorder_ThatConflicts_AbortsAndLeavesTheJournalPendingWithItsBackup()
+    public async Task Reorder_ThatConflicts_AbortsAndKeepsTheBackupButClearsTheJournal()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed");
         repo.Write("shared.txt", "a\nSHARED-ONE\n");
@@ -138,13 +138,54 @@ public class SurgeryCoordinatorTests
         Assert.Equal(shas[1], result.Rebase.ConflictCommit);
         Assert.Equal(stateBefore, await repo.FullStateAsync());
 
-        // The backup and journal survive the refusal so recovery and undo both still work.
+        // The backup survives the refusal, so undo still works. The recovery marker does NOT:
+        // the abort proved nothing moved, and a marker for an operation that never landed would
+        // offer a restore at the next launch for history that was never rewritten.
         Assert.NotNull(result.Undo);
         Assert.NotEmpty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+    }
+
+    [Fact]
+    public async Task Squash_RefusedByValidation_LeavesNoRecoveryMarker()
+    {
+        // A driver refusal never reaches git, so a pending marker would train the user to
+        // dismiss the prompt that matters.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta", "gamma");
+        var before = await repo.FullStateAsync();
+        var shas = await repo.RangeShasAsync(4);
+
+        var result = await NewCoordinator().SquashAsync(repo.Path, 3, [shas[1], shas[3]]);
+
+        Assert.False(result.Success);
+        Assert.Contains("contiguous", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await repo.FullStateAsync());
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+    }
+
+    [Fact]
+    public async Task Reorder_ThatConflicts_UnderLeaveStopped_KeepsTheRecoveryMarker()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed");
+        repo.Write("shared.txt", "a\nSHARED-ONE\n");
+        await repo.CommitAllAsync("one");
+        repo.Write("shared.txt", "a\nSHARED-TWO\n");
+        await repo.CommitAllAsync("two");
+        var shas = await repo.RangeShasAsync(2);
+
+        var result = await NewCoordinator().ReorderAsync(
+            repo.Path, 2, [shas[1], shas[0]], RebaseConflictPolicy.LeaveStopped);
+
+        Assert.False(result.Success);
+        Assert.True(result.Rebase!.LeftStopped);
+        // The repository really is mid-rebase, so the marker is what makes it recoverable.
         var pending = await new RewriteJournal().ReadPendingAsync();
         Assert.NotNull(pending);
         Assert.Equal(repo.Path, pending!.RepoPath);
-        await new RewriteJournal().CompleteAsync();
+        Assert.Equal("rebase", pending.Phase);
+
+        await repo.GitAsync("rebase", "--abort");
+        await new RewriteJournal().ClearAllAsync();
     }
 
     // ── amend a fix into an older commit ─────────────────────────────────
@@ -420,6 +461,37 @@ public class SurgeryCoordinatorTests
     }
 
     [Fact]
+    public async Task Revert_WithoutAutoCommit_ReportsThatTheRepositoryIsLeftMidRevert()
+    {
+        // `revert --no-commit` succeeds but leaves REVERT_HEAD, which every later gated
+        // operation refuses. A bare success plus a cleared marker would hide that.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var shas = await repo.RangeShasAsync(3);
+
+        var result = await NewCoordinator().RevertAsync(repo.Path, shas[2], autoCommit: false);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.True(result.Edit!.LeftMidOperation);
+        Assert.Contains("mid-revert", result.Advisory, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(result.Edit.Advisory, result.Advisory);
+
+        // The repository really does read as mid-revert, so the next operation is refused.
+        var state = await new GitService().GetWorkingStateAsync(repo.Path);
+        Assert.Equal(ProjectDashboard.Models.RepoActivity.Reverting, state!.Activity);
+        var next = await NewCoordinator().ResetAsync(repo.Path, shas[1], ResetMode.Soft);
+        Assert.False(next.Success);
+        Assert.Contains("revert", next.FailureReason, StringComparison.OrdinalIgnoreCase);
+
+        // The marker survives the "success", because the operation is not concluded.
+        var pending = await new RewriteJournal().ReadPendingAsync();
+        Assert.NotNull(pending);
+        Assert.Equal("revert", pending!.Phase);
+
+        await repo.GitAsync("revert", "--quit");
+        await new RewriteJournal().ClearAllAsync();
+    }
+
+    [Fact]
     public async Task Revert_ThatConflicts_LeavesTheRepositoryMidRevertWithTheJournalPending()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed");
@@ -450,7 +522,7 @@ public class SurgeryCoordinatorTests
         Assert.Equal("revert", pending!.Phase);
 
         await repo.GitAsync("revert", "--abort");
-        await new RewriteJournal().CompleteAsync();
+        await new RewriteJournal().ClearAllAsync();
         _output.WriteLine($"revert conflict left mid-revert on {string.Join(", ", result.Edit.ConflictPaths)}; journal pending for undo");
     }
 
@@ -504,6 +576,6 @@ public class SurgeryCoordinatorTests
         Assert.NotNull(result.Undo);
 
         await repo.GitAsync("cherry-pick", "--abort");
-        await new RewriteJournal().CompleteAsync();
+        await new RewriteJournal().ClearAllAsync();
     }
 }

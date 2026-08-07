@@ -202,15 +202,18 @@ public sealed class SurgeryCoordinator
                 return SurgeryResult.Failed($"the {phase} failed: {ex.Message}", undo);
             }
 
-            // 6. Only success clears the journal. A failure — including a deliberately
-            // conflicted revert or cherry-pick — leaves it pending with its backup.
-            if (success && journalled)
-                await _journal.CompleteAsync(ct);
+            // 6. The journal stays pending only when the repository may have been left altered:
+            // a success that left sequencer state behind, a stopped rebase, a conflicted revert
+            // or cherry-pick. A success that concluded, and any refusal that proves nothing
+            // moved, clear it — the backup stays either way.
+            if (journalled && (success ? edit?.LeftMidOperation != true : ProvesNothingMoved(rebase, edit)))
+                await _journal.CompleteAsync(repoPath, ct);
 
             return new SurgeryResult
             {
                 Success = success,
                 FailureReason = reason,
+                Advisory = edit?.Advisory,
                 Undo = undo,
                 Rebase = rebase,
                 Edit = edit
@@ -220,6 +223,18 @@ public sealed class SurgeryCoordinator
         {
             lease.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Whether a failed outcome establishes that no ref, index entry, or tracked file moved — a
+    /// rebase that aborted all the way back, or a refusal that never reached git. Both results
+    /// null means the operation was refused before any git-level work existed to report.
+    /// </summary>
+    private static bool ProvesNothingMoved(RebaseRunResult? rebase, HistoryEditResult? edit)
+    {
+        if (rebase is not null) return rebase.RepositoryUntouched;
+        if (edit is not null) return edit.RepositoryUntouched;
+        return true;
     }
 
     private static string? CheckTree(Models.WorkingState state, TreeRequirement requirement)

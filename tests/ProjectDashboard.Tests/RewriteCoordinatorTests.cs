@@ -245,12 +245,12 @@ public class RewriteCoordinatorTests
         var recovery = new RewriteRecoveryService(new RewriteJournal());
         await recovery.StartAsync(CancellationToken.None);
         Assert.True(recovery.DetectionComplete);
-        Assert.NotNull(recovery.Pending);
-        Assert.Equal(f.SourcePath, recovery.Pending!.RepoPath);
-        Assert.Equal("swap", recovery.Pending.Phase);
+        var pending = Assert.Single(recovery.Pending);
+        Assert.Equal(f.SourcePath, pending.RepoPath);
+        Assert.Equal("swap", pending.Phase);
 
         // Clear it so it does not bleed into the next sandbox test.
-        await new RewriteJournal().CompleteAsync();
+        await new RewriteJournal().ClearAllAsync();
     }
 
     private sealed class ThrowingSwap : SwapService

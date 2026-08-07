@@ -38,11 +38,80 @@ public class RewriteJournalTests
         var journal = new RewriteJournal(path);
         await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\demo", Phase = "backup" });
 
-        await journal.CompleteAsync();
+        await journal.CompleteAsync(@"C:\projects\demo");
 
         Assert.Null(await new RewriteJournal(path).ReadPendingAsync());
         Assert.False(File.Exists(path));
         Assert.False(File.Exists(path + ".bak"));
+    }
+
+    [Fact]
+    public async Task Begin_TwoRepositories_BothPendingAndCompletingOneKeepsTheOther()
+    {
+        // One repository's success must not delete another's marker: that would orphan the
+        // second repository's backup with nothing left on disk pointing at it.
+        var path = TempJournalPath();
+        var journal = new RewriteJournal(path);
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\alpha", Phase = "rebase" });
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\beta", Phase = "swap" });
+
+        Assert.Equal(2, (await journal.ReadAllPendingAsync()).Count);
+
+        await journal.CompleteAsync(@"C:\projects\beta");
+
+        var remaining = Assert.Single(await new RewriteJournal(path).ReadAllPendingAsync());
+        Assert.Equal(@"C:\projects\alpha", remaining.RepoPath);
+        Assert.Equal("rebase", remaining.Phase);
+        Assert.Null(await journal.ReadPendingAsync(@"C:\projects\beta"));
+        Assert.NotNull(await journal.ReadPendingAsync(@"C:\projects\alpha"));
+    }
+
+    [Fact]
+    public async Task RecoveryService_Startup_SurfacesEveryPendingRepository()
+    {
+        var path = TempJournalPath();
+        var journal = new RewriteJournal(path);
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\alpha", Phase = "rebase" });
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\beta", Phase = "swap" });
+
+        var service = new RewriteRecoveryService(journal);
+        var raised = new List<RewriteJournalEntry>();
+        service.PendingDetected += e => raised.Add(e);
+
+        await service.StartAsync(CancellationToken.None);
+
+        Assert.Equal(2, service.Pending.Count);
+        Assert.Equal(2, raised.Count);
+        Assert.Contains(service.Pending, e => e.RepoPath == @"C:\projects\alpha");
+        Assert.Contains(service.Pending, e => e.RepoPath == @"C:\projects\beta");
+    }
+
+    [Fact]
+    public async Task ReadPending_SingleEntryJournalFromAnOlderBuild_IsStillRecovered()
+    {
+        // The file used to hold one entry at the top level. A pending marker in that shape is
+        // precisely what must not be dropped by an upgrade.
+        var path = TempJournalPath();
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, """
+            {
+              "RepoPath": "C:\\projects\\legacy",
+              "BackupHandle": { "RepoPath": "C:\\projects\\legacy", "UtcStamp": "20260807-115900000", "BundlePath": "b.bundle" },
+              "Phase": "swap",
+              "UtcStamp": "20260807-120000000"
+            }
+            """);
+
+        var journal = new RewriteJournal(path);
+        var pending = Assert.Single(await journal.ReadAllPendingAsync());
+        Assert.Equal(@"C:\projects\legacy", pending.RepoPath);
+        Assert.Equal("swap", pending.Phase);
+        Assert.Equal("b.bundle", pending.BackupHandle!.BundlePath);
+
+        // And it is addressable by repo path, so completing that repo clears it.
+        Assert.NotNull(await journal.ReadPendingAsync(@"C:\projects\legacy"));
+        await journal.CompleteAsync(@"C:\projects\legacy");
+        Assert.Empty(await journal.ReadAllPendingAsync());
     }
 
     [Fact]
@@ -65,9 +134,9 @@ public class RewriteJournalTests
         await service.StartAsync(CancellationToken.None);
 
         Assert.True(service.DetectionComplete);
-        Assert.NotNull(service.Pending);
-        Assert.Equal(@"C:\projects\demo", service.Pending!.RepoPath);
-        Assert.Same(service.Pending, raised);
+        var pending = Assert.Single(service.Pending);
+        Assert.Equal(@"C:\projects\demo", pending.RepoPath);
+        Assert.Same(pending, raised);
         // Detection must not clear the journal — the entry is held for a restore prompt.
         Assert.True(File.Exists(path));
     }
@@ -87,7 +156,7 @@ public class RewriteJournalTests
         await service.StartAsync(CancellationToken.None); // must not throw
 
         Assert.True(service.DetectionComplete);
-        Assert.Null(service.Pending);
+        Assert.Empty(service.Pending);
         // The corrupt file is quarantined, not left live to re-break the next launch.
         Assert.False(File.Exists(path));
         var dir = System.IO.Path.GetDirectoryName(path)!;
@@ -101,6 +170,6 @@ public class RewriteJournalTests
         await service.StartAsync(CancellationToken.None);
 
         Assert.True(service.DetectionComplete);
-        Assert.Null(service.Pending);
+        Assert.Empty(service.Pending);
     }
 }

@@ -51,8 +51,10 @@ public sealed class HistoryEdits
 
     /// <summary>
     /// Reverts one commit. With <paramref name="autoCommit"/> false the revert is staged and
-    /// left uncommitted. A conflict is reported, not resolved, and the repository stays
-    /// mid-revert for the terminal.
+    /// left uncommitted, which keeps git's REVERT_HEAD in place: the result then carries
+    /// <see cref="HistoryEditResult.LeftMidOperation"/>, because every later gated operation
+    /// refuses a repository that reads as mid-revert until it is committed or aborted.
+    /// A conflict is reported, not resolved, and the repository stays mid-revert for the terminal.
     /// </summary>
     public async Task<HistoryEditResult> RevertAsync(
         string repoPath, string commit, bool autoCommit = true, CancellationToken ct = default)
@@ -65,7 +67,29 @@ public sealed class HistoryEdits
         if (!autoCommit) args.Add("--no-commit");
         args.Add(resolved.StdOut.Trim());
 
-        return await RunReplayAsync(repoPath, args, "revert", ct);
+        var result = await RunReplayAsync(repoPath, args, "revert", ct);
+        if (!result.Success || !await IsMidRevertAsync(repoPath, ct)) return result;
+
+        return new HistoryEditResult
+        {
+            Success = true,
+            LeftMidOperation = true,
+            Advisory = "the revert is staged but not committed — the repository is left mid-revert " +
+                       "(REVERT_HEAD is present) and further history operations are refused until it is " +
+                       "committed or `git revert --abort` is run",
+            HeadAfter = result.HeadAfter
+        };
+    }
+
+    /// <summary>Whether git's revert sequencer state survives — the state that makes the repository read as mid-revert.</summary>
+    private async Task<bool> IsMidRevertAsync(string repoPath, CancellationToken ct)
+    {
+        var path = await _git.RunAsync(repoPath, ["rev-parse", "--git-path", "REVERT_HEAD"], ct, ShortTimeout);
+        if (!path.Success) return false;
+        var file = path.StdOut.Trim();
+        if (file.Length == 0) return false;
+        if (!System.IO.Path.IsPathRooted(file)) file = System.IO.Path.Combine(repoPath, file);
+        return System.IO.File.Exists(file);
     }
 
     /// <summary>Applies commits onto the current branch in the order given, with the same conflict discipline as revert.</summary>
