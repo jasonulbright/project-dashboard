@@ -24,6 +24,15 @@ public sealed class AppSettings
     /// <summary>Gate for the destructive GitHub-admin surface; off until the user opts in (R-05).</summary>
     public bool DangerZoneEnabled { get; set; }
 
+    /// <summary>
+    /// Full paths of repos pinned to the front of the card grid. Paths, not folder
+    /// names: two roots can hold folders of the same name.
+    /// </summary>
+    public string[] PinnedProjectPaths { get; set; } = [];
+
+    /// <summary>Card density: "compact" tightens padding and minimum height; anything else is comfortable.</summary>
+    public string CardDensity { get; set; } = "comfortable";
+
     // Window state
     public double WindowLeft { get; set; } = -1;
     public double WindowTop { get; set; } = -1;

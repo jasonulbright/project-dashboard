@@ -16,6 +16,12 @@ public partial class ProjectInfo : ObservableObject
     /// <summary>Set only by the Hidden view — never persisted; manifest Status stays untouched.</summary>
     [ObservableProperty] private bool _isHidden;
 
+    /// <summary>
+    /// Mirrors the pinned-paths setting for the card glyph and ordering. Re-applied
+    /// from settings after every load: the discovery cache can carry a stale value.
+    /// </summary>
+    [ObservableProperty] private bool _isPinned;
+
     /// <summary>True for a GitHub repo that isn't cloned locally (a "Cloud" card — no git status, offers Clone).</summary>
     public bool IsRemoteOnly { get; set; }
     /// <summary>owner/repo for a remote-only entry (drives Clone + browser links).</summary>
