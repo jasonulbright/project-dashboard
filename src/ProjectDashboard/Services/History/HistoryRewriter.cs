@@ -903,6 +903,13 @@ public sealed class HistoryRewriter
         return corpus.ToString();
     }
 
+    /// <summary>
+    /// Every author and committer the scope selected, plus the taggers on the tags riding those
+    /// commits. A log line that does not parse into four fields throws, as an unparseable tag
+    /// record does, so the caller degrades the check to a note: a dropped record is an identity
+    /// the corpus never held, and the mapping would then find no survivor in it while the check
+    /// still reported itself complete.
+    /// </summary>
     private async Task<List<(string Name, string Email)>> FetchIdentitiesAsync(
         HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
     {
@@ -912,11 +919,11 @@ public sealed class HistoryRewriter
         foreach (var line in SplitLines(log))
         {
             var f = line.Split('\x1f');
-            if (f.Length == 4)
-            {
-                identities.Add((f[0], f[1]));
-                identities.Add((f[2], f[3]));
-            }
+            if (f.Length != 4)
+                throw new HistoryPipelineException(
+                    "verify", $"git log emitted an identity record the scrub cannot parse: '{line}'");
+            identities.Add((f[0], f[1]));
+            identities.Add((f[2], f[3]));
         }
 
         var inScope = scope.CommitScoped ? new HashSet<string>(scope.InScopeCommits, StringComparer.Ordinal) : null;

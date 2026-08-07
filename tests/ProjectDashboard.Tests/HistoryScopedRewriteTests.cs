@@ -1015,6 +1015,44 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     /// which fast-import accepts and fsck --strict passes, so nothing below the scrub can react
     /// to it. Latin-1 encodes the whole feed because every other byte in it is ASCII.
     /// </summary>
+    /// <summary>
+    /// An ident carrying the byte the identity read-back splits fields on. Dropping the record
+    /// it mangles would leave that identity out of the corpus entirely, so a mapping would find
+    /// no survivor in a history the check never read while still reporting itself complete. The
+    /// check degrades to a note instead, as it does for a tag record it cannot parse.
+    /// </summary>
+    [Fact]
+    public async Task AnIdentityRecordTheReadBackCannotParseDegradesTheCheckToANote()
+    {
+        using var f = Fixture(bareSource: true);
+        f.GitWithStdin(SeparatorInIdentFeed(), "fast-import", "--quiet");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            IdentityMappings = [new IdentityMapping { OldName = "Nobody", NewName = "Anon" }]
+        });
+
+        var check = Assert.Single(report.ScrubChecks);
+        output.WriteLine($"unparseable ident record: performed={check.Performed} complete={check.Complete} " +
+                         $"verdict={RewriteScrubVerdict.For(check)}; note={check.Note}");
+
+        Assert.Equal("identity", check.Kind);
+        Assert.False(check.Performed);
+        Assert.False(check.Complete);
+        Assert.Empty(check.Hits);
+        Assert.Contains("cannot parse", check.Note);
+        Assert.Equal(ScrubVerdict.NotVerified, RewriteScrubVerdict.For(check));
+    }
+
+    /// <summary>One commit whose author name carries a 0x1f byte — the separator the identity read-back splits on.</summary>
+    private static byte[] SeparatorInIdentFeed() => Encoding.ASCII.GetBytes(
+        "blob\nmark :1\ndata 5\nbody\n\n" +
+        "commit refs/heads/main\nmark :2\n" +
+        "author Sep" + (char)0x1f + "Arated <old@example.com> 1700000000 +0000\n" +
+        "committer Fixture <fixture@example.com> 1700000000 +0000\n" +
+        "data 3\nc1\nM 100644 :1 a.txt\n\n");
+
     private static byte[] NonUtf8AuthorFeed() => Encoding.Latin1.GetBytes(
         "blob\nmark :1\ndata 5\nbody\n\n" +
         "commit refs/heads/main\nmark :2\n" +
