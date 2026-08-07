@@ -658,6 +658,47 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
                          $"scope='{report.ScopeDescription}'");
     }
 
+    /// <summary>
+    /// A tag message is arbitrary bytes. When the message scrub reads tags through a
+    /// delimited format, a message carrying that delimiter deletes or truncates its own
+    /// record, and a surviving needle is then reported as a clean bill.
+    /// </summary>
+    [Theory]
+    [InlineData("no separator", -1)]
+    [InlineData("unit separator", 0x1f)]
+    [InlineData("record separator", 0x1e)]
+    public async Task ATagMessageCarryingAScrubSeparatorStillReportsItsSurvivor(string label, int separator)
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "body\n");
+        f.CommitAll("clean commit");
+
+        // Invalid UTF-8 makes the message transform skip it, so the needle genuinely
+        // survives in the target and the scrub is obliged to say so.
+        // The separator precedes the needle: a format that splits on it truncates the record
+        // exactly where the needle would have been.
+        var message = new List<byte>(Encoding.ASCII.GetBytes("release "));
+        if (separator >= 0) message.Add((byte)separator);
+        message.AddRange(Encoding.ASCII.GetBytes($" {Needle} "));
+        message.AddRange([0xFF, 0xFE, (byte)'\n']);
+        var messagePath = Path.Combine(f.Root, "tag-message.bin");
+        File.WriteAllBytes(messagePath, message.ToArray());
+        f.Git("tag", "-a", "rel", "-F", messagePath, "--cleanup=verbatim");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }]
+        });
+
+        var targetTag = FixtureRepo.RunGit(f.TargetPath, ["for-each-ref", "refs/tags/rel", "--format=%(contents)"], null, null);
+        Assert.Contains(Needle, targetTag);
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.NotEmpty(check.Hits);
+        output.WriteLine($"{label}: needleSurvivesInTarget=True scrubHits={check.Hits.Count} Complete={check.Complete}");
+    }
+
     // ---- Identity rewrite ----------------------------------------------------------------
 
     [Fact]

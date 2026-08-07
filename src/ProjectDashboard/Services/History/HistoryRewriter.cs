@@ -766,41 +766,74 @@ public sealed class HistoryRewriter
         return text.ToString();
     }
 
-    /// <summary>One annotated or lightweight tag in the target, with the commit it resolves to.</summary>
-    private readonly record struct TagFacts(string TargetOid, string TaggerName, string TaggerEmail, string Contents);
+    /// <summary>One annotated or lightweight tag ref in the target, with the commit it resolves to.</summary>
+    private readonly record struct TagFacts(string RefName, string TargetOid, string TaggerName, string TaggerEmail);
 
     /// <summary>
-    /// Every tag in one call. The 0x1e record separator and 0x1f field separator survive
-    /// a multi-line <c>%(contents)</c>, which no line-oriented format does.
+    /// Every tag ref with its target commit and tagger, one line per ref. A ref name cannot
+    /// carry an ASCII control byte and an ident header cannot carry a newline, so neither the
+    /// line split nor the 0x1f field split can be forced by tag content. The tag message is
+    /// deliberately absent from this record: <c>%(contents)</c> is arbitrary bytes, so a
+    /// message holding the separator would drop or truncate its own record. Messages come
+    /// from <see cref="FetchTagMessagesAsync"/> instead.
+    /// A line that does not parse into five fields is never skipped — dropping a tag would
+    /// remove its message and tagger from the scrub corpus while the check still read as
+    /// having covered them.
     /// </summary>
-    private async Task<List<TagFacts>> FetchTagsAsync(HistoryRewriteRequest request, CancellationToken ct)
+    private async Task<List<TagFacts>> FetchTagRefsAsync(HistoryRewriteRequest request, CancellationToken ct)
     {
         var tags = new List<TagFacts>();
         var result = await ProcessRunner.RunAsync(
             _gitExe,
-            ["for-each-ref", "refs/tags", "--format=%(objectname)%1f%(*objectname)%1f%(taggername)%1f%(taggeremail)%1f%(contents)%1e"],
+            ["for-each-ref", "refs/tags", "--format=%(refname)%1f%(objectname)%1f%(*objectname)%1f%(taggername)%1f%(taggeremail)"],
             request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
         if (!result.Success) return tags;
 
-        foreach (var raw in result.StdOut.Split('\x1e'))
+        foreach (var line in SplitLines(result.StdOut))
         {
-            var record = raw.Trim('\n', '\r');
-            if (record.Length == 0) continue;
-            var f = record.Split('\x1f');
-            if (f.Length != 5) continue;
+            var f = line.Split('\x1f');
+            if (f.Length != 5 || !f[0].StartsWith("refs/tags/", StringComparison.Ordinal))
+                throw new HistoryPipelineException(
+                    "verify", $"for-each-ref emitted a tag record the scrub cannot parse: '{line}'");
             // A lightweight tag has no peeled object; it names the commit directly.
-            tags.Add(new TagFacts(f[1].Length > 0 ? f[1] : f[0], f[2], f[3].Trim('<', '>'), f[4]));
+            tags.Add(new TagFacts(f[0], f[2].Length > 0 ? f[2] : f[1], f[3], f[4].Trim('<', '>')));
         }
         return tags;
+    }
+
+    /// <summary>
+    /// The named tags' messages, concatenated with no record structure at all. Nothing is
+    /// parsed out of this output, so no byte a tag message contains can remove a byte from
+    /// the scrub corpus — the property a delimited <c>%(contents)</c> format cannot hold.
+    /// Ref names are literal patterns here: git forbids <c>*</c>, <c>?</c>, and <c>[</c> in a
+    /// ref name, and a directory/file conflict forbids a ref below another ref, so each
+    /// pattern selects exactly its own ref.
+    /// </summary>
+    private async Task<string> FetchTagMessagesAsync(
+        HistoryRewriteRequest request, IReadOnlyList<string> refNames, CancellationToken ct)
+    {
+        var text = new StringBuilder();
+        foreach (var chunk in Chunk(refNames))
+        {
+            List<string> args = ["for-each-ref", "--format=%(contents)", .. chunk];
+            var result = await ProcessRunner.RunAsync(
+                _gitExe, args, request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
+            if (!result.Success) break;
+            text.Append(result.StdOut).Append('\n');
+        }
+        return text.ToString();
     }
 
     private async Task<string> FetchMessageCorpusAsync(HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
     {
         var corpus = new StringBuilder(await FetchScrubLogAsync(request, scope, "--format=%B", "message", ct));
         var inScope = scope.CommitScoped ? new HashSet<string>(scope.InScopeCommits, StringComparer.Ordinal) : null;
-        foreach (var tag in await FetchTagsAsync(request, ct))
-            if (inScope is null || inScope.Contains(tag.TargetOid))
-                corpus.Append('\n').Append(tag.Contents);
+        var refNames = (await FetchTagRefsAsync(request, ct))
+            .Where(tag => inScope is null || inScope.Contains(tag.TargetOid))
+            .Select(tag => tag.RefName)
+            .ToList();
+        if (refNames.Count > 0)
+            corpus.Append('\n').Append(await FetchTagMessagesAsync(request, refNames, ct));
         return corpus.ToString();
     }
 
@@ -821,7 +854,7 @@ public sealed class HistoryRewriter
         }
 
         var inScope = scope.CommitScoped ? new HashSet<string>(scope.InScopeCommits, StringComparer.Ordinal) : null;
-        foreach (var tag in await FetchTagsAsync(request, ct))
+        foreach (var tag in await FetchTagRefsAsync(request, ct))
             if (tag.TaggerName.Length > 0 && (inScope is null || inScope.Contains(tag.TargetOid)))
                 identities.Add((tag.TaggerName, tag.TaggerEmail));
         return identities;
