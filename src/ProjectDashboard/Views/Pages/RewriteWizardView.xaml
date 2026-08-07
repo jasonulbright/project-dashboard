@@ -521,7 +521,7 @@
                                        Visibility="{Binding RewriteShowNext, Converter={StaticResource BooleanToVisibilityConverter}}"
                                        AutomationProperties.Name="Continue to the next step" />
 
-                            <!-- R-02: without a held dry run this control is absent, not merely disabled. -->
+                            <!-- Without a held dry run this control is absent, not merely disabled. -->
                             <ui:Button Content="Rewrite history now" Appearance="Danger" FontSize="13" Padding="16,5"
                                        Icon="{ui:SymbolIcon Warning24}"
                                        Command="{Binding ExecuteRewriteCommand}"

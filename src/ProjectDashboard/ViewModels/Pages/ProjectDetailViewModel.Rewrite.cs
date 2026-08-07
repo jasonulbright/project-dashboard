@@ -181,8 +181,8 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _rewriteShowNext = true;
 
     /// <summary>
-    /// R-02 in one flag: the Execute control is bound to this, so without a held dry run the
-    /// control is absent from the surface entirely rather than merely disabled.
+    /// The Execute control is bound to this, so without a held dry run the control is absent
+    /// from the surface entirely rather than merely disabled.
     /// </summary>
     [ObservableProperty] private bool _rewriteShowExecute;
 
@@ -522,8 +522,8 @@ public partial class ProjectDetailViewModel
                 await RunRewritePreview();
                 break;
             case RewriteWizardStep.Preview:
-                // R-02: the confirm step, and with it the only Execute affordance, is
-                // unreachable until a dry run for these exact inputs succeeded.
+                // The confirm step, and with it the only Execute affordance, is unreachable
+                // until a dry run for these exact inputs succeeded.
                 if (!RewritePreviewAvailable)
                 {
                     RewriteErrorText = "Run the dry run before continuing.";
@@ -632,9 +632,9 @@ public partial class ProjectDetailViewModel
     // ── Step 4: typed confirmation ──────────────────────────────────────────────
 
     /// <summary>
-    /// R-05. The phrase is required for every rewrite, not only whole-history ones: a
-    /// commit-scoped edit still propagates into every descendant that does not re-touch the
-    /// path, and every rewrite makes the local history diverge from the remote.
+    /// The phrase is required for every rewrite, not only whole-history ones: a commit-scoped
+    /// edit still propagates into every descendant that does not re-touch the path, and every
+    /// rewrite makes the local history diverge from the remote.
     /// </summary>
     internal bool RewriteConfirmSatisfied =>
         RewriteConfirmPhrase.Length > 0

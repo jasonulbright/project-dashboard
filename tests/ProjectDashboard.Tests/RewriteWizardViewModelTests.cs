@@ -118,7 +118,7 @@ public class RewriteWizardViewModelTests
         await vm.RewriteNextCommand.ExecuteAsync(null);
     }
 
-    // ── R-02: no Execute without a dry run ───────────────────────────────────
+    // ── No Execute without a dry run ─────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAffordance_DoesNotExistUntilADryRunHasProducedAReport()
@@ -262,7 +262,7 @@ public class RewriteWizardViewModelTests
         Assert.Equal(0, session.ExecuteCount);
     }
 
-    // ── R-05: typed confirmation ─────────────────────────────────────────────
+    // ── Typed confirmation ───────────────────────────────────────────────────
 
     [Fact]
     public async Task TypedConfirm_RejectsAWrongNameAndAcceptsTheRepositoryName()
