@@ -124,13 +124,26 @@ public partial class MainWindow : INavigationWindow
         // Restore window state
         var settingsService = _serviceProvider.GetRequiredService<SettingsService>();
         var settings = settingsService.Load();
-        if (settings.WindowLeft >= 0 && settings.WindowTop >= 0)
+        // -1/-1 is the never-saved default; geometry cannot distinguish it from
+        // a real position, so it short-circuits to OS placement, not the clamp.
+        if (!(settings.WindowLeft == -1 && settings.WindowTop == -1))
         {
-            Left = settings.WindowLeft;
-            Top = settings.WindowTop;
+            var position = ClampToVirtualScreen(
+                settings.WindowLeft, settings.WindowTop, settings.WindowWidth, settings.WindowHeight,
+                SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+            if (position.HasValue)
+            {
+                Left = position.Value.Left;
+                Top = position.Value.Top;
+            }
         }
-        Width = settings.WindowWidth;
-        Height = settings.WindowHeight;
+        // Assigning a non-finite or non-positive length throws in WPF; a damaged
+        // settings file must not take the window down at startup.
+        if (double.IsFinite(settings.WindowWidth) && settings.WindowWidth > 0)
+            Width = settings.WindowWidth;
+        if (double.IsFinite(settings.WindowHeight) && settings.WindowHeight > 0)
+            Height = settings.WindowHeight;
         if (settings.WindowMaximized)
             WindowState = WindowState.Maximized;
         RootNavigation.IsPaneOpen = settings.PaneOpen;
@@ -152,6 +165,47 @@ public partial class MainWindow : INavigationWindow
         };
 
         WireSidebarProjects();
+    }
+
+    /// <summary>
+    /// Placement policy for a saved window position. Multi-monitor coordinates
+    /// are signed — a monitor left of or above the primary yields valid negative
+    /// positions, so no sign check can distinguish "off-screen". A position is
+    /// kept verbatim when at least 100×50 px of the window rect lies inside the
+    /// virtual screen (enough to grab with the mouse); otherwise each axis
+    /// clamps to the nearest value restoring that minimum, so a position saved
+    /// on a since-undocked monitor lands back in view. Null (non-finite input)
+    /// means do not restore; the caller keeps default placement.
+    /// </summary>
+    public static (double Left, double Top)? ClampToVirtualScreen(
+        double left, double top, double width, double height,
+        double screenLeft, double screenTop, double screenWidth, double screenHeight)
+    {
+        const double minVisibleWidth = 100;
+        const double minVisibleHeight = 50;
+
+        if (!double.IsFinite(left) || !double.IsFinite(top))
+            return null;
+        // A degenerate size still yields a usable clamp: treat the window as
+        // minimum-visibility sized, which forces it fully into view.
+        if (!double.IsFinite(width) || width < minVisibleWidth) width = minVisibleWidth;
+        if (!double.IsFinite(height) || height < minVisibleHeight) height = minVisibleHeight;
+
+        return (
+            ClampAxis(left, width, screenLeft, screenWidth, minVisibleWidth),
+            ClampAxis(top, height, screenTop, screenHeight, minVisibleHeight));
+    }
+
+    /// <summary>
+    /// Positions already showing at least minVisible on the axis lie inside
+    /// [min, max] and pass through unchanged; anything else moves to the nearer
+    /// bound. A virtual screen narrower than minVisible degenerates to its start.
+    /// </summary>
+    private static double ClampAxis(double position, double size, double screenStart, double screenExtent, double minVisible)
+    {
+        var min = screenStart + minVisible - size;
+        var max = screenStart + screenExtent - minVisible;
+        return min <= max ? Math.Clamp(position, min, max) : screenStart;
     }
 
     private void WireSidebarProjects()
