@@ -13,7 +13,12 @@ namespace ProjectDashboard.Services;
 /// </summary>
 internal static class DurableJsonFile
 {
-    public static void Write(string path, string json)
+    /// <summary>
+    /// keepBackup: false suits stores whose content is fully reconstructible
+    /// (caches) — the swap still prevents a torn live file, but the replaced
+    /// version is not retained as .bak.
+    /// </summary>
+    public static void Write(string path, string json, bool keepBackup = true)
     {
         var tmp = path + ".tmp";
         using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -27,7 +32,7 @@ internal static class DurableJsonFile
         }
 
         if (File.Exists(path))
-            File.Replace(tmp, path, path + ".bak");
+            File.Replace(tmp, path, keepBackup ? path + ".bak" : null);
         else
             File.Move(tmp, path);
     }

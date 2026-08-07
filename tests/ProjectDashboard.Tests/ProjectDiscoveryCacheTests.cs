@@ -66,6 +66,21 @@ public class ProjectDiscoveryCacheTests
     }
 
     [Fact]
+    public async Task SaveCache_SwapsAtomically_LeavesNoTmpAndNoBak()
+    {
+        var service = NewService(new ManifestStore());
+
+        // Two saves: the second exercises the replace-over-existing path, which
+        // must not retain a .bak (cache content is reconstructible by a re-scan).
+        await service.ForceRefreshAllAsync();
+        await service.ForceRefreshAllAsync();
+
+        Assert.True(File.Exists(AppPaths.DiscoveryCacheFile));
+        Assert.False(File.Exists(AppPaths.DiscoveryCacheFile + ".tmp"));
+        Assert.False(File.Exists(AppPaths.DiscoveryCacheFile + ".bak"));
+    }
+
+    [Fact]
     public async Task DiscoverAll_CachedLocalEntry_StillReconciledFromManifestStore()
     {
         var localPath = Path.Combine(TestEnv.Root, "local-repo");

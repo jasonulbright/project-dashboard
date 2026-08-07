@@ -327,8 +327,11 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 Projects = projects
             };
 
-            var json = JsonSerializer.Serialize(cache, JsonOptions);
-            File.WriteAllText(CachePath, json);
+            // tmp+swap so a crash mid-write cannot truncate the live cache, but no
+            // .bak: the cache is fully reconstructible by a re-scan, and LoadCache
+            // already falls back to one on any parse failure — a backup would only
+            // re-serve stale projects.
+            DurableJsonFile.Write(CachePath, JsonSerializer.Serialize(cache, JsonOptions), keepBackup: false);
         }
         catch (Exception ex)
         {
