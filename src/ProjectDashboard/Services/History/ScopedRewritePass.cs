@@ -281,9 +281,24 @@ public sealed class ScopedRewritePass
         return false;
     }
 
+    /// <summary>
+    /// Live blob payload lengths keyed by mark, walked from the records so marks a split
+    /// minted after parse are present. <see cref="PurgeSpec.MinBlobSize"/> therefore measures
+    /// the payload the import will receive, not the exported one: a blob a content op shrank
+    /// below the threshold is kept, and one it grew past the threshold is purged.
+    /// </summary>
+    private Dictionary<long, long> LiveBlobSizes()
+    {
+        var sizes = new Dictionary<long, long>();
+        foreach (var record in _parsed.Records)
+            if (record is BlobRecord { Mark: { } mark } blob)
+                sizes[mark] = blob.Data.Length;
+        return sizes;
+    }
+
     private void ApplyPurge(ScopedRewriteOutcome outcome, CancellationToken ct)
     {
-        var blobs = _parsed.Index.Blobs;
+        var blobSizes = LiveBlobSizes();
         // Only commits this purge stripped are prune candidates; a commit that was already
         // empty is a marker the caller never asked to remove.
         var emptiedByPurge = new HashSet<long>();
@@ -296,7 +311,7 @@ public sealed class ScopedRewritePass
                 switch (cmd)
                 {
                     case FileModify fm:
-                        long? size = fm.MarkRef is { } m && blobs.TryGetValue(m, out var e) ? e.Payload.Length : null;
+                        long? size = fm.MarkRef is { } m && blobSizes.TryGetValue(m, out var live) ? live : null;
                         return PurgeMatches(fm, size);
                     case FileDelete del:
                         return _purge!.Paths is { } p1 && p1.Matches(del.Path.ToString());

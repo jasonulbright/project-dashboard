@@ -167,6 +167,11 @@ public sealed class PurgeSpec
 {
     public FileScope? Paths { get; init; }
 
+    /// <summary>
+    /// Threshold in bytes, measured against the payload the import will receive — after any
+    /// content op rewrote it and after a shared blob was split — not against the exported
+    /// payload. A blob a content op shrank below the threshold is kept.
+    /// </summary>
     public long? MinBlobSize { get; init; }
 }
 

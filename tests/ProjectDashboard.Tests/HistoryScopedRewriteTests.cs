@@ -488,6 +488,60 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"size purge: big.bin ({bigBlob[..10]}) removed, small.txt kept");
     }
 
+    [Fact]
+    public async Task SizePurgeSeesASplitBlobAtItsNewMark()
+    {
+        using var f = Fixture();
+        // Identical oversized content at two paths dedupes to one blob; scoping the content
+        // op to in.txt splits it, so in.txt's M line points at a mark minted after parse.
+        var payload = new string('x', 2000) + Needle + "\n";
+        f.Write("in.txt", payload);
+        f.Write("out.txt", payload);
+        f.CommitAll("shared oversized blob");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+        Assert.Equal(f.Git("rev-parse", "HEAD:in.txt").Trim(), f.Git("rev-parse", "HEAD:out.txt").Trim());
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }],
+            FileScope = new ExplicitPathsScope { Paths = ["in.txt"] },
+            Purge = new PurgeSpec { MinBlobSize = 1000 }
+        });
+
+        Assert.Equal(1, report.BlobsSplit);
+        // The same rule reaches both paths: the split mark is not exempt from the size purge.
+        Assert.Equal(2, report.FileCommandsRemoved);
+        var tree = FixtureRepo.RunGit(f.TargetPath, ["ls-tree", "-r", "--name-only", report.CommitMap[head]], null, null);
+        Assert.DoesNotContain("in.txt", tree);
+        Assert.DoesNotContain("out.txt", tree);
+        output.WriteLine($"size purge over a split: BlobsSplit={report.BlobsSplit}, both 2019-byte paths purged");
+    }
+
+    [Fact]
+    public async Task SizePurgeMeasuresThePostTransformPayload()
+    {
+        using var f = Fixture();
+        var run = new string('Z', 1200);
+        f.Write("shrink.txt", "PAD" + run + "\n");
+        f.WriteBytes("big.bin", Encoding.ASCII.GetBytes(new string('q', 5000)));
+        f.CommitAll("one shrinking blob, one staying big");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(run), Replace = Encoding.UTF8.GetBytes("z") }],
+            Purge = new PurgeSpec { MinBlobSize = 1000 }
+        });
+
+        var newHead = report.CommitMap[head];
+        // 1204 bytes before the op, 5 after: the threshold measures what the import receives.
+        Assert.Equal("PADz\n", Show(f, $"{newHead}:shrink.txt"));
+        var tree = FixtureRepo.RunGit(f.TargetPath, ["ls-tree", "-r", "--name-only", newHead], null, null);
+        Assert.DoesNotContain("big.bin", tree);
+        Assert.Equal(1, report.FileCommandsRemoved);
+        output.WriteLine("size purge on post-transform size: shrink.txt (1204->5) kept, big.bin (5000) purged");
+    }
+
     // ---- Message rewrite -----------------------------------------------------------------
 
     [Fact]
