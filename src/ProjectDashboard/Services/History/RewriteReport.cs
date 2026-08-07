@@ -4,11 +4,13 @@ using System.Text.Json;
 namespace ProjectDashboard.Services.History;
 
 /// <summary>
-/// One blob the transform could not scrub: either not valid UTF-8, or larger than the
-/// regex payload limit. <see cref="Path"/> is one path whose file command referenced the
-/// blob's mark (a mark may sit at several paths); null when the blob is unmarked or no
-/// file command referenced it. Size is the payload's byte length. A non-empty skip list
-/// means the grep-based scrub cannot prove those bytes clean — see <see cref="Reason"/>.
+/// One payload the transform could not scrub: a blob that is not valid UTF-8 or larger
+/// than the regex payload limit, or a commit/tag message that is not valid UTF-8.
+/// <see cref="Path"/> is one path whose file command referenced the blob's mark (a mark may
+/// sit at several paths); null for a message, and when the blob is unmarked or no file
+/// command referenced it. <see cref="Mark"/> is null for a message. Size is the payload's
+/// byte length. Each entry is an op that did not run, so a non-empty list means the scrub
+/// cannot prove those bytes clean — see <see cref="Reason"/>.
 /// </summary>
 public sealed record BinarySkip(long? Mark, long Size, string? Path, string Reason);
 
@@ -30,10 +32,11 @@ public sealed class ScrubCheckResult
     public required bool Performed { get; init; }
 
     /// <summary>
-    /// True only when this needle's verification covered everything: the grep ran over
-    /// every commit (no sampling), no blob was skipped (binary or over-limit), and paths
-    /// were scanned. When false, an empty <see cref="Hits"/> list does not prove the
-    /// needle is gone — <see cref="Note"/> names what was not covered.
+    /// True only when this needle's verification covered everything: the check ran over every
+    /// commit (no sampling), nothing it was responsible for was skipped — a blob that is
+    /// binary or over-limit for the tree scrub, a message that is not valid UTF-8 for the
+    /// message scrub — and paths were scanned. When false, an empty <see cref="Hits"/> list
+    /// does not prove the needle is gone — <see cref="Note"/> names what was not covered.
     /// </summary>
     public required bool Complete { get; init; }
 
