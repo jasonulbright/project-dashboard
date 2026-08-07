@@ -65,8 +65,8 @@ public partial class ProjectDetailPage
         var basePath = _viewModel.Project?.FullPath ?? "";
         try
         {
-            RenderMarkdown(IssueConversationRich,
-                BuildConversationMarkdown(d.Author, d.CreatedAt, d.Body, d.Comments), basePath);
+            IssueConversationRich.Document =
+                BuildConversationDocument(d.Author, d.CreatedAt, d.Body, d.Comments, basePath);
         }
         catch
         {
@@ -85,8 +85,8 @@ public partial class ProjectDetailPage
         var basePath = _viewModel.Project?.FullPath ?? "";
         try
         {
-            RenderMarkdown(PullRequestConversationRich,
-                BuildConversationMarkdown(d.Author, d.CreatedAt, d.Body, d.Comments), basePath);
+            PullRequestConversationRich.Document =
+                BuildConversationDocument(d.Author, d.CreatedAt, d.Body, d.Comments, basePath);
         }
         catch
         {
@@ -95,28 +95,43 @@ public partial class ProjectDetailPage
     }
 
     /// <summary>
-    /// Composes an issue/PR body and its comment thread into one markdown string:
-    /// each entry gets an author • relative-time header (H3) and a horizontal-rule
-    /// separator, then the existing native renderer turns it into a FlowDocument.
+    /// Renders an issue/PR body and its comment thread entry by entry: each header is
+    /// built as a block in code and each body is parsed on its own, so no body text is
+    /// ever concatenated into markup the parser reads as a neighbouring entry's header.
     /// </summary>
-    private string BuildConversationMarkdown(string author, DateTimeOffset created, string body,
-        IReadOnlyList<Models.IssueComment> comments)
+    private FlowDocument BuildConversationDocument(string author, DateTimeOffset created, string body,
+        IReadOnlyList<Models.IssueComment> comments, string basePath)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"### {ConversationHeader(author, created)}");
-        sb.AppendLine();
-        sb.AppendLine(string.IsNullOrWhiteSpace(body) ? "_No description provided._" : body);
+        var doc = NewFlowDocument();
+        AppendConversationEntry(doc, ConversationHeader(author, created), body, basePath);
         foreach (var c in comments)
-        {
-            sb.AppendLine();
-            sb.AppendLine("---");
-            sb.AppendLine();
-            sb.AppendLine($"### {ConversationHeader(c.Author, c.CreatedAt)}");
-            sb.AppendLine();
-            sb.AppendLine(string.IsNullOrWhiteSpace(c.Body) ? "_(no content)_" : c.Body);
-        }
-        return sb.ToString();
+            AppendConversationEntry(doc, ConversationHeader(c.Author, c.CreatedAt), c.Body, basePath);
+        return doc;
     }
+
+    /// <summary>
+    /// Appends one entry: an author header block followed by that entry's rendered body.
+    /// </summary>
+    internal static void AppendConversationEntry(FlowDocument doc, string headerText, string body, string basePath)
+    {
+        doc.Blocks.Add(ConversationHeaderBlock(headerText));
+        AppendMarkdown(doc, string.IsNullOrWhiteSpace(body) ? "(no content)" : body, basePath);
+    }
+
+    /// <summary>
+    /// The app's own comment header. Its left accent bar is chrome the markdown
+    /// renderer never emits — a body line such as "### maintainer • 2 hours ago"
+    /// above a "---" rule produces bold text and a bottom border, never this block,
+    /// so a forged header cannot pass for a real one in the pane that informs a merge.
+    /// </summary>
+    internal static Paragraph ConversationHeaderBlock(string headerText)
+        => new(new Run(headerText) { FontWeight = FontWeights.SemiBold, FontSize = 15 })
+        {
+            BorderBrush = new SolidColorBrush(Color.FromRgb(108, 164, 217)),
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            Padding = new Thickness(8, 2, 0, 2),
+            Margin = new Thickness(0, 16, 0, 4)
+        };
 
     private string ConversationHeader(string author, DateTimeOffset when)
     {
@@ -271,18 +286,29 @@ public partial class ProjectDetailPage
     /// </summary>
     private static void RenderMarkdown(System.Windows.Controls.RichTextBox rtb, string markdown, string basePath)
     {
-        var doc = new FlowDocument
-        {
-            PagePadding = new Thickness(0),
-            FontFamily = new FontFamily("Segoe UI"),
-            FontSize = 13,
-            LineHeight = 20
-        };
+        var doc = NewFlowDocument();
+        AppendMarkdown(doc, markdown, basePath);
+        rtb.Document = doc;
+    }
 
+    private static FlowDocument NewFlowDocument() => new()
+    {
+        PagePadding = new Thickness(0),
+        FontFamily = new FontFamily("Segoe UI"),
+        FontSize = 13,
+        LineHeight = 20
+    };
+
+    /// <summary>
+    /// Appends one markdown fragment as its own run of blocks. Conversation rendering
+    /// calls this once per entry so a body can never be concatenated into a
+    /// neighbouring entry's markup.
+    /// </summary>
+    private static void AppendMarkdown(FlowDocument doc, string markdown, string basePath)
+    {
         if (string.IsNullOrWhiteSpace(markdown))
         {
             doc.Blocks.Add(new Paragraph(new Run("(empty)") { Foreground = Brushes.Gray }));
-            rtb.Document = doc;
             return;
         }
 
@@ -514,8 +540,6 @@ public partial class ProjectDetailPage
             };
             doc.Blocks.Add(p);
         }
-
-        rtb.Document = doc;
     }
 
     /// <summary>Theme-correct text brush at render time (hardcoded light gray was invisible in Light theme).</summary>
