@@ -59,6 +59,12 @@ public partial class App : Application
                 services.AddSingleton<ProjectDiscoveryService>();
                 services.AddSingleton<ProjectWatcherService>();
 
+                // Safety rails (R-01/R-06/R-08): shared singletons for the destructive stages.
+                services.AddSingleton<Services.Safety.RepoBusyRegistry>();
+                services.AddSingleton<Services.Safety.RewriteJournal>();
+                services.AddSingleton<Services.Safety.BackupService>();
+                services.AddSingleton<Services.Safety.RewriteRecoveryService>();
+
                 // Windows
                 services.AddSingleton<MainWindow>();
                 services.AddSingleton<MainWindowViewModel>();
@@ -71,7 +77,9 @@ public partial class App : Application
                 services.AddSingleton<SettingsPage>();
                 services.AddSingleton<SettingsViewModel>();
 
-                // Hosted service
+                // Hosted services run in registration order: crash-recovery detection must
+                // complete before ApplicationHostService shows the interactive window.
+                services.AddHostedService(sp => sp.GetRequiredService<Services.Safety.RewriteRecoveryService>());
                 services.AddHostedService<ApplicationHostService>();
             })
             .Build();

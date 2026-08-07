@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Safety;
 using ProjectDashboard.Views.Pages;
 
 namespace ProjectDashboard.ViewModels.Pages;
@@ -16,6 +17,7 @@ public partial class DashboardViewModel : ObservableObject
     private readonly GitHubService _gitHubService;
     private readonly GitService _gitService;
     private readonly ProjectWatcherService _watcher;
+    private readonly RepoBusyRegistry _busyRegistry;
     private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
@@ -66,7 +68,7 @@ public partial class DashboardViewModel : ObservableObject
     public IAsyncRelayCommand LoadProjectsCommand { get; }
     public IAsyncRelayCommand ForceRefreshCommand { get; }
 
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
@@ -74,6 +76,7 @@ public partial class DashboardViewModel : ObservableObject
         _gitHubService = gitHubService;
         _gitService = gitService;
         _watcher = watcher;
+        _busyRegistry = busyRegistry;
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
         ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
@@ -109,7 +112,9 @@ public partial class DashboardViewModel : ObservableObject
                 }
 
                 var names = new HashSet<string>(repoDirs, StringComparer.OrdinalIgnoreCase);
-                var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)).ToList();
+                // Never read a repo a destructive op is actively rewriting: its refs are mid-swap.
+                var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)
+                    && !_busyRegistry.IsBusy(p.FullPath)).ToList();
                 var changed = false;
                 foreach (var project in affected)
                 {
@@ -414,7 +419,9 @@ public partial class DashboardViewModel : ObservableObject
                 // path makes git run in the process cwd instead of the repo.
                 !p.IsRemoteOnly &&
                 !string.IsNullOrEmpty(p.FullPath) &&
-                !string.IsNullOrEmpty(p.GitStatus.RemoteUrl))
+                !string.IsNullOrEmpty(p.GitStatus.RemoteUrl) &&
+                // A repo under a destructive op is off-limits to bulk sync until it releases.
+                !_busyRegistry.IsBusy(p.FullPath))
             .ToList();
         var skipped = Projects.Count - candidates.Count;
         if (candidates.Count == 0)
