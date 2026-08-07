@@ -449,10 +449,16 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task LoadPullRequests()
     {
+        var gen = _generation;
         if (Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
-        PullRequests = new ObservableCollection<GitHubPullRequest>(
-            await _gitHubService.GetPullRequestsAsync(Project.GitHubSlug));
-        PullRequestsLoaded = true;
+        var pullRequests = await _gitHubService.GetPullRequestsAsync(Project.GitHubSlug);
+        // A stale write would also set PullRequestsLoaded, making the new project's
+        // tab skip its own load and open the previous project's PR numbers.
+        if (IsCurrent(gen))
+        {
+            PullRequests = new ObservableCollection<GitHubPullRequest>(pullRequests);
+            PullRequestsLoaded = true;
+        }
     }
 
     [RelayCommand]
