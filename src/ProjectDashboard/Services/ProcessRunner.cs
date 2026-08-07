@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading.Channels;
 
 namespace ProjectDashboard.Services;
 
@@ -37,13 +38,48 @@ public static class ProcessRunner
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    public static async Task<ProcessResult> RunAsync(
+    public static Task<ProcessResult> RunAsync(
         string fileName,
         IEnumerable<string> arguments,
         string? workingDirectory = null,
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default)
+        => RunCoreAsync(fileName, arguments, workingDirectory, timeout, environment,
+                        onStdOutLine: null, onStdErrLine: null, ct);
+
+    /// <summary>
+    /// RunAsync plus live output: each completed line is handed to the matching callback while
+    /// the child is still running. Invariants: callbacks run on thread-pool threads in
+    /// per-stream order — callers marshal to the UI thread themselves; the result still carries
+    /// the full captured stdout/stderr, so streaming is additive, not a replacement; a throwing
+    /// callback is caught and logged and draining continues; a slow or stalled callback cannot
+    /// back up the pipes or kill the child — lines queue between the pipe reader and the
+    /// callback, and the process result is never held hostage to delivery; CR, LF, and CRLF
+    /// each terminate a callback line (git progress redraws lines with bare CR); timeout,
+    /// cancellation, and kill semantics are identical to RunAsync.
+    /// </summary>
+    public static Task<ProcessResult> RunStreamingAsync(
+        string fileName,
+        IEnumerable<string> args,
+        string? workingDirectory,
+        TimeSpan timeout,
+        IReadOnlyDictionary<string, string>? environment,
+        Action<string>? onStdOutLine,
+        Action<string>? onStdErrLine,
+        CancellationToken ct = default)
+        => RunCoreAsync(fileName, args, workingDirectory, timeout, environment,
+                        onStdOutLine, onStdErrLine, ct);
+
+    private static async Task<ProcessResult> RunCoreAsync(
+        string fileName,
+        IEnumerable<string> arguments,
+        string? workingDirectory,
+        TimeSpan? timeout,
+        IReadOnlyDictionary<string, string>? environment,
+        Action<string>? onStdOutLine,
+        Action<string>? onStdErrLine,
+        CancellationToken ct)
     {
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(10);
 
@@ -78,8 +114,8 @@ public static class ProcessRunner
         }
 
         // Drain both pipes from the start — never let either fill.
-        var stdOutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-        var stdErrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        var (stdOutTask, stdOutDelivery) = BeginDrain(process.StandardOutput, onStdOutLine, fileName, "stdout");
+        var (stdErrTask, stdErrDelivery) = BeginDrain(process.StandardError, onStdErrLine, fileName, "stderr");
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(effectiveTimeout);
@@ -112,10 +148,120 @@ public static class ProcessRunner
             Log.Warn($"Abandoned pipe drain for {fileName} — a descendant process is holding the output handles");
         }
 
+        // Line delivery is decoupled from the pipes; a bounded wait lets callers normally
+        // observe every line before the result, while a stalled callback cannot hold the
+        // result hostage — its remaining lines deliver in the background.
+        if (stdOutDelivery is not null || stdErrDelivery is not null)
+        {
+            try
+            {
+                await Task.WhenAll(stdOutDelivery ?? Task.CompletedTask, stdErrDelivery ?? Task.CompletedTask)
+                          .WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                Log.Warn($"Line callback stalled for {fileName}; remaining lines deliver in the background");
+            }
+        }
+
         // Distinguish caller cancellation from a genuine timeout.
         ct.ThrowIfCancellationRequested();
 
         return new ProcessResult(timedOut ? -1 : process.ExitCode, stdOut, stdErr, timedOut);
+    }
+
+    /// <summary>
+    /// Starts draining one pipe. Without a callback this is a plain read-to-end. With one, the
+    /// reader pushes completed lines into an unbounded queue consumed on a thread-pool task, so
+    /// the pipe is drained at full speed no matter how slow the callback is — a subscriber can
+    /// never fill the pipe and block the child.
+    /// </summary>
+    private static (Task<string> Capture, Task? Delivery) BeginDrain(
+        StreamReader reader, Action<string>? onLine, string fileName, string streamName)
+    {
+        if (onLine is null)
+            return (reader.ReadToEndAsync(CancellationToken.None), null);
+
+        var lines = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = true
+        });
+
+        var delivery = Task.Run(async () =>
+        {
+            var logged = false;
+            await foreach (var line in lines.Reader.ReadAllAsync(CancellationToken.None))
+            {
+                try
+                {
+                    onLine(line);
+                }
+                catch (Exception ex)
+                {
+                    // Delivery outlives a faulty subscriber. Only the first exception per
+                    // stream is logged — a callback that throws on every line of a large
+                    // drain otherwise floods the log.
+                    if (!logged)
+                    {
+                        logged = true;
+                        Log.Warn($"{streamName} line callback threw for {fileName}", ex);
+                    }
+                }
+            }
+        });
+
+        return (CaptureAndStreamAsync(reader, lines.Writer), delivery);
+    }
+
+    private static async Task<string> CaptureAndStreamAsync(StreamReader reader, ChannelWriter<string> lines)
+    {
+        var captured = new StringBuilder();
+        var lineBuf = new StringBuilder();
+        var buffer = new char[4096];
+        var sawCr = false;
+        try
+        {
+            int read;
+            while ((read = await reader.ReadAsync(buffer.AsMemory(), CancellationToken.None)) > 0)
+            {
+                // Raw characters (line endings included) go to the capture untouched; the
+                // line split below is a parallel view, not a transformation.
+                captured.Append(buffer, 0, read);
+                for (var i = 0; i < read; i++)
+                {
+                    var c = buffer[i];
+                    if (c == '\n')
+                    {
+                        if (sawCr) { sawCr = false; continue; }
+                        lines.TryWrite(lineBuf.ToString());
+                        lineBuf.Clear();
+                    }
+                    else if (c == '\r')
+                    {
+                        // A bare CR terminates a callback line: git progress redraws with
+                        // CR-only updates, and holding those until LF defeats live progress.
+                        lines.TryWrite(lineBuf.ToString());
+                        lineBuf.Clear();
+                        sawCr = true;
+                    }
+                    else
+                    {
+                        sawCr = false;
+                        lineBuf.Append(c);
+                    }
+                }
+            }
+            if (lineBuf.Length > 0)
+                lines.TryWrite(lineBuf.ToString());
+        }
+        finally
+        {
+            // Delivery ends only when the writer completes — including when the read faults
+            // after a kill.
+            lines.Complete();
+        }
+        return captured.ToString();
     }
 
     /// <summary>True if an executable exists at the path, or bare name resolution is being attempted.</summary>
