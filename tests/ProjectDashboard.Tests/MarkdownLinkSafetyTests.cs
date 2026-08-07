@@ -71,7 +71,38 @@ public class MarkdownLinkSafetyTests
         var inlines = Render("[a](https://ok.example) and [b](file:///C:/x.exe)");
 
         var link = Assert.Single(inlines.OfType<Hyperlink>());
-        Assert.Equal("https://ok.example", link.ToolTip);
+        // The tooltip is built from the parsed Uri, which spells an empty path as "/".
+        Assert.Equal("https://ok.example/", link.ToolTip);
+    }
+
+    /// <summary>
+    /// The tooltip is the only thing telling a reader where an attacker-labelled link
+    /// really goes, so it must not repeat a host the reader cannot tell apart from the
+    /// one in the label. A Cyrillic а renders identically to the Latin a; punycode does
+    /// not.
+    /// </summary>
+    [Fact]
+    public void UnicodeLookalikeHost_IsDisclosedAsPunycode()
+    {
+        var inlines = Render("see [https://github.com/o/r/pull/12](http://\u0430pple.com/login) now");
+
+        var link = Assert.Single(inlines.OfType<Hyperlink>());
+        var tooltip = Assert.IsType<string>(link.ToolTip);
+        Assert.Equal("http://xn--pple-43d.com/login", tooltip);
+        Assert.DoesNotContain("\u0430", tooltip);
+    }
+
+    [Theory]
+    [InlineData("https://github.com/o/r/pull/12", "https://github.com/o/r/pull/12")]
+    [InlineData("HTTPS://Example.COM/x", "https://example.com/x")]
+    [InlineData("https://example.com/a?b=c#d", "https://example.com/a?b=c#d")]
+    [InlineData("https://example.com:8443/a", "https://example.com:8443/a")]
+    // Userinfo is what makes the host easy to miss, so it stays in the disclosure.
+    [InlineData("https://github.com@evil.example/x", "https://github.com@evil.example/x")]
+    public void AsciiHost_IsDisclosedUnchanged(string url, string expected)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var uri));
+        Assert.Equal(expected, ProjectDetailPage.LinkDisclosure(uri));
     }
 
     private static List<Inline> Render(string markdown)

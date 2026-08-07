@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Net.Http;
 using System.Text.RegularExpressions;
@@ -720,14 +721,37 @@ public partial class ProjectDetailPage
             : new SolidColorBrush(Color.FromArgb(50, 255, 255, 255));
 
     /// <summary>
-    /// Link targets allowed to become clickable. Rendered bodies include third-party
-    /// issue and comment text, and the click path is ShellExecute — file://, UNC,
-    /// data:, javascript: and any registered protocol handler would launch a local
-    /// program or leak credentials from a single click, so only http/https navigate.
+    /// Link targets allowed to become clickable, handing back the parsed Uri so the
+    /// tooltip and the launch both describe what was actually parsed. Rendered bodies
+    /// include third-party issue and comment text, and the click path is ShellExecute —
+    /// file://, UNC, data:, javascript: and any registered protocol handler would launch
+    /// a local program or leak credentials from a single click, so only http/https
+    /// navigate.
     /// </summary>
-    internal static bool IsNavigableLink(string url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri)
-        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    internal static bool TryGetNavigableUri(string url, [NotNullWhen(true)] out Uri? uri)
+    {
+        uri = null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed)) return false;
+        if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) return false;
+        uri = parsed;
+        return true;
+    }
+
+    internal static bool IsNavigableLink(string url) => TryGetNavigableUri(url, out _);
+
+    /// <summary>
+    /// The disclosure shown beside a clickable link, with the host in PUNYCODE. The
+    /// disclosure exists because the visible label is attacker-chosen, and a unicode
+    /// host defeats it: a Cyrillic а renders identically to the Latin a, so a body
+    /// labelled with a github.com URL can point at a lookalike domain and have the
+    /// tooltip agree with the label. The punycode form differs visibly.
+    /// </summary>
+    internal static string LinkDisclosure(Uri uri)
+    {
+        var userInfo = uri.UserInfo.Length > 0 ? uri.UserInfo + "@" : "";
+        var port = uri.IsDefaultPort ? "" : ":" + uri.Port;
+        return $"{uri.Scheme}://{userInfo}{uri.IdnHost}{port}{uri.PathAndQuery}{uri.Fragment}";
+    }
 
     /// <summary>
     /// Adds inline formatting: **bold**, *italic*, `code`, [links](url), ~~strikethrough~~
@@ -757,7 +781,7 @@ public partial class ProjectDetailPage
             {
                 var linkText = match.Groups[8].Value;
                 var linkUrl = match.Groups[9].Value;
-                if (!IsNavigableLink(linkUrl))
+                if (!TryGetNavigableUri(linkUrl, out var target))
                 {
                     // Inert text, and the real target printed beside it: the visible label
                     // is attacker-chosen and can name a URL the target is not.
@@ -769,7 +793,7 @@ public partial class ProjectDetailPage
                     {
                         Foreground = new SolidColorBrush(Color.FromRgb(108, 164, 217)),
                         TextDecorations = TextDecorations.Underline,
-                        ToolTip = linkUrl
+                        ToolTip = LinkDisclosure(target)
                     };
                     hyperlink.Click += (_, _) =>
                     {
