@@ -9,14 +9,18 @@ public sealed class ScopedRewriteOutcome
     /// <summary>Skip reason recorded when a message op could not run because the message is not valid UTF-8.</summary>
     public const string MessageNotUtf8 = "message is not valid UTF-8";
 
+    /// <summary>Skip reason recorded when an identity op could not run because the ident header is not valid UTF-8.</summary>
+    public const string IdentityNotUtf8 = "identity header is not valid UTF-8";
+
     public int BlobsChanged;
     public long BytesDelta;
 
     /// <summary>
     /// In-scope payloads the transform could not scrub: blob versions that are binary or
-    /// over-limit, and messages that are not valid UTF-8 (<see cref="MessageNotUtf8"/>,
-    /// carrying a null mark). Every entry is an op that did not run, so a check that covers
-    /// it cannot report itself complete.
+    /// over-limit, and messages (<see cref="MessageNotUtf8"/>) or ident headers
+    /// (<see cref="IdentityNotUtf8"/>) that are not valid UTF-8, both carrying a null mark.
+    /// Every entry is an op that did not run, so a check that covers it cannot report itself
+    /// complete.
     /// </summary>
     public readonly List<(long? Mark, long Size, string Reason)> Skips = [];
 
@@ -317,11 +321,19 @@ public sealed class ScopedRewritePass
             };
             if (headers is null) continue;
             for (var i = 0; i < headers.Count; i++)
+            {
                 if (IdentityHeader.TryRewrite(headers[i], _identityMappings, out var rewritten))
                 {
                     headers[i] = rewritten;
                     outcome.IdentitiesRewritten++;
                 }
+                // An ident the rewriter cannot decode is an op that did not run, and the
+                // read-back decodes the same bytes the same lossy way — so a mapping typed
+                // from the rendered name matches neither side and the run finds no survivor.
+                // Without this entry that no-op is indistinguishable from a clean bill.
+                else if (IdentityHeader.IsRoleLine(headers[i]) && !System.Text.Unicode.Utf8.IsValid(headers[i]))
+                    outcome.Skips.Add((null, headers[i].LongLength, ScopedRewriteOutcome.IdentityNotUtf8));
+            }
         }
     }
 

@@ -7,14 +7,27 @@ namespace ProjectDashboard.Services.History;
 /// <c>&lt;role&gt; NAME &lt;EMAIL&gt; WHEN</c>; only NAME and EMAIL are remapped, and the
 /// trailing timestamp/zone bytes (WHEN) are preserved verbatim so unchanged fields keep
 /// byte fidelity. Names and emails are decoded as UTF-8, so non-ASCII identities round-trip.
+/// A line whose bytes are not valid UTF-8 is refused outright: the decode would replace
+/// them, so a match could not be trusted and an unmapped field would not survive the
+/// re-encode byte for byte. <see cref="IsRoleLine"/> names those lines for the caller.
 /// </summary>
 public static class IdentityHeader
 {
     private static readonly string[] Roles = ["author ", "committer ", "tagger "];
+    private static readonly byte[][] RoleBytes = [.. Roles.Select(Encoding.ASCII.GetBytes)];
+
+    /// <summary>True when the line carries an ident role prefix. Role names are ASCII, so the raw bytes decide it without a decode.</summary>
+    public static bool IsRoleLine(ReadOnlySpan<byte> line)
+    {
+        foreach (var role in RoleBytes)
+            if (line.StartsWith(role)) return true;
+        return false;
+    }
 
     public static bool TryRewrite(byte[] line, IReadOnlyList<IdentityMapping> mappings, out byte[] rewritten)
     {
         rewritten = line;
+        if (!System.Text.Unicode.Utf8.IsValid(line)) return false;
         var text = Encoding.UTF8.GetString(line);
 
         var role = Roles.FirstOrDefault(r => text.StartsWith(r, StringComparison.Ordinal));

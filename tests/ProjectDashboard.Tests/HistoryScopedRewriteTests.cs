@@ -948,6 +948,80 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"identity rewrite: author+committer+tagger remapped ({report.IdentitiesRewritten} headers); identity scrub clean");
     }
 
+    /// <summary>
+    /// A stream carrying an ident whose bytes are not UTF-8: the rewriter and the read-back
+    /// both decode through UTF-8, so both see the same replacement character and a mapping
+    /// typed from the rendered name matches neither. Nothing is rewritten and nothing
+    /// survives the search, which is the shape of a clean bill — so the header the op could
+    /// not read must be reported as a gap, or the run signs off on an identity it never
+    /// matched.
+    /// </summary>
+    [Fact]
+    public async Task AnIdentHeaderThatIsNotUtf8IsReportedAsAGapNotAsClean()
+    {
+        using var f = Fixture(bareSource: true);
+        f.GitWithStdin(NonUtf8AuthorFeed(), "fast-import", "--quiet");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            IdentityMappings = [new IdentityMapping { OldName = "José", NewName = "Anon" }]
+        });
+
+        var check = Assert.Single(report.ScrubChecks);
+        var author = FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%an", "refs/heads/main"], null, null);
+        output.WriteLine($"non-UTF-8 ident: rewritten={report.IdentitiesRewritten} complete={check.Complete} " +
+                         $"withinScopeOnly={check.WithinScopeOnly} hits={check.Hits.Count} " +
+                         $"verdict={RewriteScrubVerdict.For(check)}; target author still '{author.Trim()}'");
+
+        Assert.Equal("identity", check.Kind);
+        Assert.Equal(0, report.IdentitiesRewritten);
+        Assert.Empty(check.Hits);
+        Assert.False(check.Complete);
+        Assert.Equal(ScrubVerdict.NotVerified, RewriteScrubVerdict.For(check));
+        Assert.Contains(report.BinarySkips, s => s.Reason == ScopedRewriteOutcome.IdentityNotUtf8);
+    }
+
+    /// <summary>
+    /// The same gap under a commit scope. "Clean within scope" is a claim about the commits
+    /// the caller named, and the unreadable ident sits inside one of them.
+    /// </summary>
+    [Fact]
+    public async Task AScopedIdentityRunOverANonUtf8IdentIsNotCleanWithinScope()
+    {
+        using var f = Fixture(bareSource: true);
+        f.GitWithStdin(NonUtf8AuthorFeed(), "fast-import", "--quiet");
+        var head = f.Git("rev-parse", "refs/heads/main").Trim();
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            IdentityMappings = [new IdentityMapping { OldName = "José", NewName = "Anon" }],
+            CommitScope = new ExplicitCommitsScope { Commits = [head] }
+        });
+
+        var check = Assert.Single(report.ScrubChecks);
+        output.WriteLine($"scoped non-UTF-8 ident: complete={check.Complete} withinScopeOnly={check.WithinScopeOnly} " +
+                         $"verdict={RewriteScrubVerdict.For(check)}");
+
+        Assert.True(check.WithinScopeOnly);
+        Assert.False(check.Complete);
+        Assert.NotEqual(ScrubVerdict.CleanWithinScope, RewriteScrubVerdict.For(check));
+        Assert.Equal(ScrubVerdict.NotVerified, RewriteScrubVerdict.For(check));
+    }
+
+    /// <summary>
+    /// One commit whose author name is <c>Jos\xE9</c> — Latin-1 bytes with no encoding header,
+    /// which fast-import accepts and fsck --strict passes, so nothing below the scrub can react
+    /// to it. Latin-1 encodes the whole feed because every other byte in it is ASCII.
+    /// </summary>
+    private static byte[] NonUtf8AuthorFeed() => Encoding.Latin1.GetBytes(
+        "blob\nmark :1\ndata 5\nbody\n\n" +
+        "commit refs/heads/main\nmark :2\n" +
+        "author José <old@example.com> 1700000000 +0000\n" +
+        "committer Fixture <fixture@example.com> 1700000000 +0000\n" +
+        "data 3\nc1\nM 100644 :1 a.txt\n\n");
+
     // ---- No-op scoped rewrite is byte-identical ------------------------------------------
 
     [Fact]

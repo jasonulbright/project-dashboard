@@ -539,9 +539,10 @@ public sealed class HistoryRewriter
             commits = SampleEvenly(allCommits, ScrubSampleCap);
             sampled = true;
         }
-        // Message skips belong to the message check, not to the tree scrub git grep runs.
+        // Metadata skips belong to the message and identity checks, not to the tree scrub git grep runs.
         var messageSkips = binarySkips.Count(s => s.Reason == ScopedRewriteOutcome.MessageNotUtf8);
-        var contentSkips = binarySkips.Count - messageSkips;
+        var identitySkips = binarySkips.Count(s => s.Reason == ScopedRewriteOutcome.IdentityNotUtf8);
+        var contentSkips = binarySkips.Count - messageSkips - identitySkips;
         var hasSkips = contentSkips > 0;
 
         // Only in-scope paths belong in the content scrub — an out-of-scope path carrying the
@@ -597,7 +598,7 @@ public sealed class HistoryRewriter
         }
 
         checks.AddRange(await MessageScrubChecksAsync(request, scope, messageSkips, ct));
-        checks.AddRange(await IdentityScrubChecksAsync(request, scope, ct));
+        checks.AddRange(await IdentityScrubChecksAsync(request, scope, identitySkips, ct));
         return checks;
 
         ScrubCheckResult Make(string kind, string needle, GrepOutcome grep, IReadOnlyList<string> extraHits)
@@ -700,8 +701,15 @@ public sealed class HistoryRewriter
         return checks;
     }
 
+    /// <summary>
+    /// Verifies identity mappings against the idents read back from the rewritten history.
+    /// <paramref name="identitySkips"/> counts ident headers the rewriter could not decode:
+    /// the read-back decodes those same bytes the same lossy way, so a mapping typed from the
+    /// rendered name matches neither side and the search finds nothing to report. Each is an
+    /// op that did not run, so a non-zero count leaves the check incomplete.
+    /// </summary>
     private async Task<List<ScrubCheckResult>> IdentityScrubChecksAsync(
-        HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
+        HistoryRewriteRequest request, ScrubScope scope, int identitySkips, CancellationToken ct)
     {
         var checks = new List<ScrubCheckResult>();
         if (request.Rewrite.IdentityMappings.Count == 0) return checks;
@@ -718,6 +726,15 @@ public sealed class HistoryRewriter
             return checks;
         }
 
+        var notes = new List<string>
+        {
+            scope.CommitScoped
+                ? $"author/committer/tagger identities verified in-process across the {scope.InScopeCommits.Count} in-scope commit(s) and the tags on them; out-of-scope identities are untouched and unchecked"
+                : "author/committer/tagger identities verified in-process across all history"
+        };
+        if (identitySkips > 0)
+            notes.Add($"{identitySkips} ident header(s) are not valid UTF-8, so the identity op never ran on them");
+
         foreach (var mapping in request.Rewrite.IdentityMappings)
         {
             var hits = identities
@@ -732,15 +749,14 @@ public sealed class HistoryRewriter
                 Kind = "identity",
                 Needle = DescribeMapping(mapping),
                 Performed = true,
-                // Every identity the scope selected is read back, so coverage is total whether
-                // or not the scope narrowed what the mapping was allowed to touch.
-                Complete = true,
+                // Every ident the scope selected is read back, but one the rewriter could not
+                // decode is read back through the same lossy decode — an absence there is not
+                // evidence, so coverage holds only when no ident was skipped.
+                Complete = identitySkips == 0,
                 WithinScopeOnly = scope.CommitScoped,
                 CommitsChecked = scope.CommitScoped ? scope.InScopeCommits.Count : 0,
                 Hits = hits,
-                Note = scope.CommitScoped
-                    ? $"author/committer/tagger identities verified in-process across the {scope.InScopeCommits.Count} in-scope commit(s) and the tags on them; out-of-scope identities are untouched and unchecked"
-                    : "author/committer/tagger identities verified in-process across all history"
+                Note = string.Join("; ", notes)
             });
         }
         return checks;
