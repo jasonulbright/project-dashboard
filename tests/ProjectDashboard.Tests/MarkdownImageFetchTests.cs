@@ -92,6 +92,35 @@ public class MarkdownImageFetchTests
     }
 
     /// <summary>
+    /// A badge row repeats one URL, and the decoded-image cache is written only once a
+    /// fetch completes — so on first render every occurrence would open its own
+    /// connection to the same host for the same bytes.
+    /// </summary>
+    [Fact]
+    public void ARepeatedImageUrl_IsFetchedOnce_NotOncePerOccurrence()
+    {
+        using var server = new StubImageServer(StubImageServer.Mode.Serve, SmallPng());
+        var url = server.Url("/repeated-badge.png");
+
+        RunOnDispatcher(async () =>
+        {
+            var doc = new FlowDocument();
+            var blocks = new List<BlockUIContainer>();
+            for (var occurrence = 0; occurrence < 5; occurrence++)
+            {
+                var block = new BlockUIContainer(new System.Windows.Controls.Image());
+                doc.Blocks.Add(block);
+                blocks.Add(block);
+            }
+
+            await Task.WhenAll(blocks.Select(
+                block => ProjectDetailPage.FillRemoteImageAsync(doc, block, url, "badge", Budget)));
+        });
+
+        Assert.Equal(1, server.Requests);
+    }
+
+    /// <summary>
     /// Runs an async body on an STA thread with a pumping dispatcher. FillRemoteImageAsync
     /// applies its result through <c>doc.Dispatcher.InvokeAsync</c>, which never runs on a
     /// thread whose dispatcher is idle.

@@ -578,6 +578,13 @@ public partial class ProjectDetailPage
     /// </summary>
     private static readonly ConcurrentDictionary<string, BitmapImage> RemoteImages = new();
 
+    /// <summary>
+    /// Fetches that have started and not yet reached the cache, keyed by URL. Renders run
+    /// on the UI thread, so an entry is registered before the next occurrence of the same
+    /// URL is reached; each entry is removed as its fetch completes.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Task<BitmapImage?>> RemoteImageFetches = new();
+
     /// <summary>The alt-text line shown wherever an image is refused or fails to decode.</summary>
     private static Paragraph ImageUnavailable(string alt) =>
         new(new Run(alt.Length > 0 ? $"[image not loaded: {alt}]" : "[image not loaded]")
@@ -654,6 +661,26 @@ public partial class ProjectDetailPage
             return;
         }
 
+        // The cache is written only once a fetch completes, so a README that repeats one
+        // badge URL would issue a GET per occurrence on first render. Occurrences after
+        // the first join the pending fetch.
+        var bitmap = await RemoteImageFetches
+            .GetOrAdd(url, u => FetchAndCacheAsync(u, timeout)).ConfigureAwait(false);
+
+        try
+        {
+            await doc.Dispatcher.InvokeAsync(() => ApplyRemoteImage(doc, block, bitmap, alt));
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// One fetch-and-decode per URL, caching the result and clearing its own in-flight
+    /// entry before it completes. Returns null for every failure — the caller renders the
+    /// alt-text line and never sees an exception.
+    /// </summary>
+    private static async Task<BitmapImage?> FetchAndCacheAsync(string url, TimeSpan? timeout)
+    {
         BitmapImage? bitmap = null;
         try
         {
@@ -667,12 +694,8 @@ public partial class ProjectDetailPage
             if (RemoteImages.Count >= MaxCachedRemoteImages) RemoteImages.Clear();
             RemoteImages[url] = bitmap;
         }
-
-        try
-        {
-            await doc.Dispatcher.InvokeAsync(() => ApplyRemoteImage(doc, block, bitmap, alt));
-        }
-        catch { }
+        RemoteImageFetches.TryRemove(url, out _);
+        return bitmap;
     }
 
     private static void ApplyRemoteImage(FlowDocument doc, BlockUIContainer block, BitmapImage? bitmap, string alt)
