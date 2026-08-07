@@ -530,9 +530,19 @@ public partial class ProjectDetailPage
             : new SolidColorBrush(Color.FromArgb(50, 255, 255, 255));
 
     /// <summary>
+    /// Link targets allowed to become clickable. Rendered bodies include third-party
+    /// issue and comment text, and the click path is ShellExecute — file://, UNC,
+    /// data:, javascript: and any registered protocol handler would launch a local
+    /// program or leak credentials from a single click, so only http/https navigate.
+    /// </summary>
+    internal static bool IsNavigableLink(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    /// <summary>
     /// Adds inline formatting: **bold**, *italic*, `code`, [links](url), ~~strikethrough~~
     /// </summary>
-    private static void AddFormattedInlines(InlineCollection inlines, string text)
+    internal static void AddFormattedInlines(InlineCollection inlines, string text)
     {
         var pattern = @"(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`(.+?)`)|(\[([^\]]+)\]\(([^)]+)\))|(~~(.+?)~~)";
         int lastIndex = 0;
@@ -555,18 +565,29 @@ public partial class ProjectDetailPage
                 });
             else if (match.Groups[8].Success) // [text](url)
             {
+                var linkText = match.Groups[8].Value;
                 var linkUrl = match.Groups[9].Value;
-                var hyperlink = new Hyperlink(new Run(match.Groups[8].Value))
+                if (!IsNavigableLink(linkUrl))
                 {
-                    Foreground = new SolidColorBrush(Color.FromRgb(108, 164, 217)),
-                    TextDecorations = TextDecorations.Underline
-                };
-                hyperlink.Click += (_, _) =>
+                    // Inert text, and the real target printed beside it: the visible label
+                    // is attacker-chosen and can name a URL the target is not.
+                    inlines.Add(new Run($"{linkText} ({linkUrl})"));
+                }
+                else
                 {
-                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(linkUrl) { UseShellExecute = true }); }
-                    catch { }
-                };
-                inlines.Add(hyperlink);
+                    var hyperlink = new Hyperlink(new Run(linkText))
+                    {
+                        Foreground = new SolidColorBrush(Color.FromRgb(108, 164, 217)),
+                        TextDecorations = TextDecorations.Underline,
+                        ToolTip = linkUrl
+                    };
+                    hyperlink.Click += (_, _) =>
+                    {
+                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(linkUrl) { UseShellExecute = true }); }
+                        catch { }
+                    };
+                    inlines.Add(hyperlink);
+                }
             }
             else if (match.Groups[11].Success) // ~~strikethrough~~
                 inlines.Add(new Run(match.Groups[11].Value) { TextDecorations = TextDecorations.Strikethrough });
