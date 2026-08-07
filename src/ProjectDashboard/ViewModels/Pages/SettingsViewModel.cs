@@ -51,7 +51,15 @@ public partial class SettingsViewModel : ObservableObject
         EnableAutoRefresh = settings.EnableAutoRefresh;
 
         if (Enum.TryParse<ApplicationTheme>(settings.Theme, out var theme))
+        {
             CurrentTheme = theme;
+            // The radio (CurrentTheme) and the applied theme must agree after a
+            // re-snapshot: resetting only the radio after a live-but-unsaved
+            // ChangeTheme lets Save persist a theme that is not on screen. Equal
+            // themes skip the apply so plain revisits cause no re-theme flicker.
+            if (ApplicationThemeManager.GetAppTheme() != theme)
+                ApplicationThemeManager.Apply(theme);
+        }
     }
 
     private async Task CheckGitHubStatusAsync()

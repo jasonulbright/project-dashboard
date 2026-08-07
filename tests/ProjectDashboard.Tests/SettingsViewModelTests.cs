@@ -1,6 +1,7 @@
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using ProjectDashboard.ViewModels.Pages;
+using Wpf.Ui.Appearance;
 
 namespace ProjectDashboard.Tests;
 
@@ -65,6 +66,25 @@ public class SettingsViewModelTests
         Assert.Equal(900, vm.RefreshIntervalSeconds);
         Assert.False(vm.EnableGitHubDiscovery);
         Assert.False(vm.EnableAutoRefresh);
+    }
+
+    [Fact]
+    public void LoadSettings_ReappliesThePersistedTheme_AfterLiveUnsavedChange()
+    {
+        var service = new SettingsService();
+        service.Save(new AppSettings { Theme = "Dark" });
+        var vm = NewVm(service);
+
+        // Live theme change, never saved — disk still says Dark.
+        vm.ChangeThemeCommand.Execute("Light");
+        Assert.Equal(ApplicationTheme.Light, ApplicationThemeManager.GetAppTheme());
+
+        // Navigation re-snapshot: the radio AND the applied theme must both
+        // return to the persisted value, else Save persists an off-screen theme.
+        vm.LoadSettings();
+
+        Assert.Equal(ApplicationTheme.Dark, vm.CurrentTheme);
+        Assert.Equal(ApplicationTheme.Dark, ApplicationThemeManager.GetAppTheme());
     }
 
     [Fact]
