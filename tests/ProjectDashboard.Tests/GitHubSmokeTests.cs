@@ -25,6 +25,11 @@ public class GitHubSmokeTests(ITestOutputHelper output)
             return;
         }
 
+        // The sandboxed XDG_CONFIG_HOME (TestEnv) also relocates gh's config, so gh
+        // reads signed-out. GH_CONFIG_DIR outranks XDG — point it at the real config.
+        Environment.SetEnvironmentVariable("GH_CONFIG_DIR",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GitHub CLI"));
+
         var svc = new GitHubService(new SettingsService());
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var repoName = $"pd-scratch-{suffix}";
@@ -284,6 +289,7 @@ public class GitHubSmokeTests(ITestOutputHelper output)
                 var del = await svc.RunAsync(["repo", "delete", forkSlug, "--yes"], timeout: TimeSpan.FromSeconds(30));
                 Info($"cleanup: gh repo delete {forkSlug} --yes", del.Success ? "deleted" : del.FirstError);
             }
+            Environment.SetEnvironmentVariable("GH_CONFIG_DIR", null);
 
             var transcriptPath = Environment.GetEnvironmentVariable("PD_GH_SMOKE_LOG")
                 ?? Path.Combine(Path.GetTempPath(), "pd-gh-smoke.log");
