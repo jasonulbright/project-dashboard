@@ -143,7 +143,7 @@ public sealed class HistoryRewriter
             throw new HistoryPipelineException(
                 "verify", "fsck --strict failed on the rewrite target", fsck.ExitCode, fsck.StdErr + "\n" + fsck.StdOut);
 
-        var scope = new ScrubScope(rewrite, inScopeCommitOids, commitMap);
+        var scope = new ScrubScope(rewrite, inScopeCommitOids, commitMap, changedTrees);
         var scrubChecks = await RunScrubChecksAsync(request, commitMap, binarySkips, byteSurvivors, paths, scope, ct);
 
         var report = new RewriteReport
@@ -160,6 +160,7 @@ public sealed class HistoryRewriter
             ScrubChecks = scrubChecks,
             ScopeDescription = $"files: {rewrite.FileScope.Describe()}; commits: {rewrite.CommitScope.Describe()}",
             InScopeCommitCount = inScopeCommitOids?.Count ?? commitMap.Count,
+            OutOfScopeCommitsWithChangedTrees = scope.OutOfScopeChangedTrees,
             MessagesChanged = scoped?.MessagesChanged ?? 0,
             IdentitiesRewritten = scoped?.IdentitiesRewritten ?? 0,
             FileCommandsRemoved = scoped?.FileCommandsRemoved ?? 0,
@@ -437,13 +438,30 @@ public sealed class HistoryRewriter
     private sealed class ScrubScope
     {
         public bool ContentScoped { get; }
+        public bool PathScoped { get; }
+        public bool CommitScoped { get; }
+
+        /// <summary>
+        /// Out-of-scope commits whose tree still differs. Under a commit scope this is
+        /// expected, not a defect: a git snapshot inherits, so a rewrite inside an in-scope
+        /// commit propagates to every descendant that does not re-touch the path.
+        /// </summary>
+        public int OutOfScopeChangedTrees { get; }
+
         public List<string> InScopeCommits { get; }
         public IReadOnlyList<string> PathSpecs { get; }
         public Func<string, bool> PathInScope { get; }
 
-        public ScrubScope(RewriteOptions rewrite, HashSet<string>? inScopeCommitOids, Dictionary<string, string> commitMap)
+        public ScrubScope(
+            RewriteOptions rewrite, HashSet<string>? inScopeCommitOids,
+            Dictionary<string, string> commitMap, IReadOnlyList<string> changedTreeOids)
         {
-            ContentScoped = !rewrite.FileScope.IsAllFiles || inScopeCommitOids is not null;
+            PathScoped = !rewrite.FileScope.IsAllFiles;
+            CommitScoped = inScopeCommitOids is not null;
+            ContentScoped = PathScoped || CommitScoped;
+            OutOfScopeChangedTrees = inScopeCommitOids is null
+                ? 0
+                : changedTreeOids.Count(oid => !inScopeCommitOids.Contains(oid.ToLowerInvariant()));
             InScopeCommits = inScopeCommitOids is null
                 ? commitMap.Values.Distinct().ToList()
                 : inScopeCommitOids.Where(commitMap.ContainsKey).Select(o => commitMap[o]).Distinct().ToList();
@@ -551,7 +569,14 @@ public sealed class HistoryRewriter
             if (hasSkips)
                 notes.Add($"{binarySkips.Count} blob(s) the transform skipped are invisible to git grep");
             if (scope.ContentScoped)
-                notes.Add($"scrubbed within scope only ({allCommits.Count} in-scope commit(s)); occurrences outside the scope are intentionally retained, not cleaned");
+            {
+                var scopeNote = new List<string> { $"scrubbed within scope only ({allCommits.Count} in-scope commit(s))" };
+                if (scope.PathScoped)
+                    scopeNote.Add("occurrences at out-of-scope paths are intentionally retained, not cleaned");
+                if (scope.CommitScoped)
+                    scopeNote.Add($"{scope.OutOfScopeChangedTrees} out-of-scope commit(s) have a changed tree: a rewrite inside an in-scope commit is inherited by every descendant that does not re-touch the path");
+                notes.Add(string.Join("; ", scopeNote));
+            }
 
             return new ScrubCheckResult
             {

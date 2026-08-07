@@ -269,6 +269,32 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"commit-range scope: c2,c3 scrubbed; c1 survivor retained honestly (Complete={scrub.Complete})");
     }
 
+    [Fact]
+    public async Task CommitScopedNoteReportsInheritedOutOfScopeChanges()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", $"v1 {Needle}\n");
+        f.CommitAll("c1 introduces");
+        var c1 = f.Git("rev-parse", "HEAD").Trim();
+        f.Write("b.txt", "unrelated\n");
+        f.CommitAll("c2 touches something else");
+        var c2 = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, Literal(Needle, Redacted, commits: new ExplicitCommitsScope { Commits = [c1] }));
+
+        // c2 never re-touches a.txt, so its snapshot inherits the rewritten blob.
+        Assert.Contains(Redacted, Show(f, $"{report.CommitMap[c2]}:a.txt"));
+        Assert.Contains(c2, report.CommitsWithChangedTrees);
+        Assert.Equal(1, report.OutOfScopeCommitsWithChangedTrees);
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.WithinScopeOnly);
+        Assert.NotNull(scrub.Note);
+        Assert.DoesNotContain("outside the scope are intentionally retained", scrub.Note);
+        Assert.Contains("1 out-of-scope commit(s) have a changed tree", scrub.Note);
+        output.WriteLine($"commit-scoped note: {scrub.Note}");
+    }
+
     // ---- Shared-blob split (the correctness core) ----------------------------------------
 
     [Fact]

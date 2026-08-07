@@ -42,10 +42,11 @@ public sealed class ScrubCheckResult
     public required IReadOnlyList<string> Hits { get; init; }
 
     /// <summary>
-    /// True when the check covered only a scope (a path/commit subset), so occurrences
-    /// outside the scope were deliberately left. An empty <see cref="Hits"/> list then proves
-    /// only "scrubbed within scope", never "scrubbed everywhere"; <see cref="Complete"/> is
-    /// always false while this is true.
+    /// True when the check covered only a scope (a path/commit subset). An empty
+    /// <see cref="Hits"/> list then proves only "scrubbed within scope", never "scrubbed
+    /// everywhere"; <see cref="Complete"/> is always false while this is true. It does not
+    /// mean out-of-scope content is unchanged: under a commit scope a rewrite propagates into
+    /// every descendant that does not re-touch the path. <see cref="Note"/> carries the count.
     /// </summary>
     public bool WithinScopeOnly { get; init; }
 
@@ -100,6 +101,14 @@ public sealed class RewriteReport
 
     /// <summary>Count of commits the scope selected for content transforms/purge (all history when unscoped).</summary>
     public int InScopeCommitCount { get; init; }
+
+    /// <summary>
+    /// Commits in <see cref="CommitsWithChangedTrees"/> the commit scope did not select. A
+    /// git snapshot inherits, so a rewrite inside an in-scope commit reaches every descendant
+    /// that does not re-touch the path — out-of-scope content does change, and this counts how
+    /// much. Zero when the run had no commit scope.
+    /// </summary>
+    public int OutOfScopeCommitsWithChangedTrees { get; init; }
 
     /// <summary>Commit and tag messages whose bytes a message op changed.</summary>
     public int MessagesChanged { get; init; }
