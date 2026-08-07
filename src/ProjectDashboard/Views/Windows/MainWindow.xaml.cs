@@ -1,6 +1,10 @@
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using ProjectDashboard.ViewModels.Pages;
 using ProjectDashboard.ViewModels.Windows;
@@ -33,6 +37,8 @@ public partial class MainWindow : INavigationWindow
         RootNavigation.SetServiceProvider(serviceProvider);
 
         WireTopNav();
+
+        ShortcutGroups.ItemsSource = ShortcutTable.Groups;
 
         // Arrow-key navigation within the nav pane. WPF-UI's Left pane doesn't provide it
         // (each item is a ButtonBase tab stop), so move focus up/down between items ourselves.
@@ -73,15 +79,35 @@ public partial class MainWindow : INavigationWindow
                 e.Handled = true;
                 return;
             }
-            if (PaletteOverlay.Visibility == Visibility.Visible && e.Key == Key.Escape)
+            if (e.Key == Key.Escape)
             {
-                ClosePalette();
-                e.Handled = true;
-                return;
+                if (ShortcutOverlay.Visibility == Visibility.Visible)
+                {
+                    CloseShortcuts();
+                    e.Handled = true;
+                    return;
+                }
+                if (PaletteOverlay.Visibility == Visibility.Visible)
+                {
+                    ClosePalette();
+                    e.Handled = true;
+                    return;
+                }
             }
 
             var inTextBox = Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase
                          or System.Windows.Controls.PasswordBox;
+
+            // Shift+/ is a literal "?" everywhere except inside a text field, where it
+            // is a character the user is typing.
+            if (e.Key == Key.OemQuestion && (Keyboard.Modifiers & ModifierKeys.Shift) != 0
+                && !inTextBox && PaletteOverlay.Visibility != Visibility.Visible)
+            {
+                ToggleShortcuts();
+                e.Handled = true;
+                return;
+            }
+
             var altLeft = e.Key == Key.System && e.SystemKey == Key.Left
                        && (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
             var back = e.Key == Key.BrowserBack || (e.Key == Key.Back && !inTextBox);
@@ -226,6 +252,9 @@ public partial class MainWindow : INavigationWindow
         dashVm.NavigateToProjectRequested += project =>
             Dispatcher.Invoke(() => NavigateToProject(project));
 
+        dashVm.NavigateToProjectTabRequested += (project, tab) =>
+            Dispatcher.Invoke(() => NavigateToProjectTab(project, tab));
+
         // The initial load may already have finished before this subscription.
         RefreshSidebarProjects(dashVm);
     }
@@ -363,6 +392,19 @@ public partial class MainWindow : INavigationWindow
 
     // ── Command palette (Ctrl+K) ─────────────────────────────────────────────
 
+    private const string ActionsGroup = "Actions";
+    private const string ProjectsGroup = "Projects";
+    private const string VerbsGroup = "Project actions";
+    private const string SearchGroup = "In files";
+
+    private static int GroupRank(string group) => group switch
+    {
+        ProjectsGroup => 0,
+        VerbsGroup => 1,
+        SearchGroup => 2,
+        _ => 3,
+    };
+
     private List<Models.PaletteItem> _paletteItems = [];
 
     private void TogglePalette()
@@ -379,6 +421,11 @@ public partial class MainWindow : INavigationWindow
     private void ClosePalette()
     {
         PaletteOverlay.Visibility = Visibility.Collapsed;
+        CancelRepoSearch();
+        // Keyboard focus stays on the now-hidden search box otherwise, and every
+        // single-key gesture (? for the cheat sheet, Backspace for back) is then read
+        // as typing into a text field and swallowed.
+        RootNavigation.Focus();
     }
 
     private List<Models.PaletteItem> BuildPaletteItems()
@@ -393,6 +440,8 @@ public partial class MainWindow : INavigationWindow
                 Title = title,
                 Subtitle = "Action",
                 Icon = icon,
+                Group = ActionsGroup,
+                Bias = 20,
                 SearchText = (title + " " + keywords).ToLowerInvariant(),
                 Invoke = run
             });
@@ -407,6 +456,8 @@ public partial class MainWindow : INavigationWindow
             () => vm.SyncAllCommand.Execute(null));
         Action("Open Settings", "preferences config theme gh", SymbolRegular.Settings24,
             () => RootNavigation.Navigate(typeof(SettingsPage)));
+        Action("Keyboard shortcuts", "help hotkeys cheat sheet bindings", SymbolRegular.Keyboard24,
+            ToggleShortcuts);
         Action("Dashboard: all projects", "home filter", SymbolRegular.Home24,
             () => { RootNavigation.Navigate(typeof(DashboardPage)); vm.SetFilterCommand.Execute("all"); });
         Action("Filter: dirty", "uncommitted changes", SymbolRegular.Edit24,
@@ -420,14 +471,48 @@ public partial class MainWindow : INavigationWindow
         foreach (var p in vm.Projects.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
             var proj = p;
+            var haystack = (proj.DisplayName + " " + proj.DirectoryName + " " + proj.Manifest.Category).ToLowerInvariant();
             items.Add(new Models.PaletteItem
             {
                 Title = proj.DisplayName,
                 Subtitle = proj.IsRemoteOnly ? "Cloud repo" : "Project",
                 Icon = proj.IsRemoteOnly ? SymbolRegular.CloudArrowDown24 : SymbolRegular.Folder24,
-                SearchText = (proj.DisplayName + " " + proj.DirectoryName + " " + proj.Manifest.Category).ToLowerInvariant(),
+                Group = ProjectsGroup,
+                // The jump outranks that project's own verbs, which match the same text.
+                Bias = 40,
+                SearchText = haystack,
                 Invoke = () => vm.OpenProjectCommand.Execute(proj)
             });
+
+            // Verbs need a working tree; a cloud card has none until it is cloned.
+            if (proj.IsRemoteOnly || proj.FullPath.Length == 0) continue;
+
+            void Verb(string title, string keywords, SymbolRegular icon, System.Action run) =>
+                items.Add(new Models.PaletteItem
+                {
+                    Title = title,
+                    Subtitle = proj.DirectoryName,
+                    Icon = icon,
+                    Group = VerbsGroup,
+                    AllowFuzzy = false,
+                    SearchText = (title + " " + haystack + " " + keywords).ToLowerInvariant(),
+                    Invoke = run
+                });
+
+            Verb($"Fetch {proj.DisplayName}", "git remote refs", SymbolRegular.ArrowDownload24,
+                () => vm.FetchProjectCommand.Execute(proj));
+            Verb($"Pull {proj.DisplayName}", "git fast-forward merge", SymbolRegular.ArrowSync24,
+                () => vm.PullProjectCommand.Execute(proj));
+            Verb($"Push {proj.DisplayName}", "git upload publish", SymbolRegular.ArrowUpload24,
+                () => vm.PushProjectCommand.Execute(proj));
+            Verb($"Open folder — {proj.DisplayName}", "explorer directory reveal", SymbolRegular.FolderOpen24,
+                () => vm.OpenFolderCommand.Execute(proj));
+            Verb($"Open terminal — {proj.DisplayName}", "shell console prompt", SymbolRegular.Window24,
+                () => vm.OpenTerminalCommand.Execute(proj));
+            Verb($"Copy path — {proj.DisplayName}", "clipboard location", SymbolRegular.Copy24,
+                () => vm.CopyPathCommand.Execute(proj));
+            Verb($"Changes — {proj.DisplayName}", "diff staged uncommitted", SymbolRegular.Edit24,
+                () => vm.OpenChangesTabCommand.Execute(proj));
         }
 
         return items;
@@ -439,18 +524,137 @@ public partial class MainWindow : INavigationWindow
         var matches = _paletteItems
             .Select(item => (item, score: item.Score(q)))
             .Where(x => x.score >= 0)
-            .OrderByDescending(x => x.score)
+            .OrderByDescending(x => x.score + x.item.Bias)
             .ThenBy(x => x.item.Title, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.item)
             .Take(50)
             .ToList();
 
-        PaletteList.ItemsSource = matches;
+        // File hits carry git's own ordering and are appended whole; they are only
+        // shown while they still describe the text in the box.
+        if (_searchRows.Count > 0 && string.Equals(_searchRowsQuery, q, StringComparison.Ordinal))
+            matches.AddRange(_searchRows);
+
+        // Grouping renders groups in first-appearance order, so without a fixed rank
+        // the section order changes with every query. OrderBy is stable, so each
+        // group keeps its own relevance order.
+        matches = [.. matches.OrderBy(item => GroupRank(item.Group))];
+
+        var view = new ListCollectionView(matches);
+        view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Models.PaletteItem.Group)));
+        PaletteList.ItemsSource = view;
         if (matches.Count > 0) PaletteList.SelectedIndex = 0;
     }
 
     private void PaletteSearch_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-        => ApplyPaletteFilter(PaletteSearch.Text);
+    {
+        ApplyPaletteFilter(PaletteSearch.Text);
+        ScheduleRepoSearch();
+    }
+
+    // ── Global file search behind the palette (X-12) ─────────────────────────
+
+    private CancellationTokenSource? _repoSearchCts;
+    private DispatcherTimer? _repoSearchDebounce;
+    private List<Models.PaletteItem> _searchRows = [];
+    private string _searchRowsQuery = "";
+
+    /// <summary>
+    /// Drops any in-flight fan-out and its results. Every keystroke calls this: an
+    /// abandoned search must stop spawning git rather than finish unseen and then
+    /// overwrite the list the user is now looking at.
+    /// </summary>
+    private void CancelRepoSearch()
+    {
+        _repoSearchDebounce?.Stop();
+        _repoSearchCts?.Cancel();
+        _repoSearchCts = null;
+        _searchRows = [];
+        _searchRowsQuery = "";
+    }
+
+    private void ScheduleRepoSearch()
+    {
+        CancelRepoSearch();
+        if (PaletteSearch.Text.Trim().Length < RepoSearchService.MinTermLength) return;
+
+        _repoSearchDebounce ??= CreateSearchDebounce();
+        _repoSearchDebounce.Start();
+    }
+
+    private DispatcherTimer CreateSearchDebounce()
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
+        timer.Tick += async (_, _) =>
+        {
+            timer.Stop();
+            await RunRepoSearchAsync(PaletteSearch.Text.Trim().ToLowerInvariant());
+        };
+        return timer;
+    }
+
+    private async Task RunRepoSearchAsync(string term)
+    {
+        if (term.Length < RepoSearchService.MinTermLength) return;
+
+        var cts = new CancellationTokenSource();
+        _repoSearchCts = cts;
+        try
+        {
+            var vm = _serviceProvider.GetRequiredService<DashboardViewModel>();
+            var result = await vm.SearchAllReposAsync(term, cts.Token);
+
+            // A newer keystroke replaced this fan-out while it ran; its rows are stale.
+            if (!ReferenceEquals(_repoSearchCts, cts)) return;
+
+            _searchRows = BuildSearchRows(vm, result);
+            _searchRowsQuery = term;
+            if (PaletteOverlay.Visibility == Visibility.Visible)
+                ApplyPaletteFilter(PaletteSearch.Text);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("repository search failed", ex);
+        }
+        finally
+        {
+            if (ReferenceEquals(_repoSearchCts, cts)) _repoSearchCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private static List<Models.PaletteItem> BuildSearchRows(DashboardViewModel vm, RepoSearchResult result)
+    {
+        var rows = new List<Models.PaletteItem>();
+        foreach (var hit in result.Hits)
+        {
+            var project = vm.FindByPath(hit.RepoPath);
+            rows.Add(new Models.PaletteItem
+            {
+                Title = hit.IsFileNameMatch ? hit.FilePath : hit.Text,
+                Subtitle = hit.Location,
+                Icon = hit.IsFileNameMatch ? SymbolRegular.Document24 : SymbolRegular.Code24,
+                Group = SearchGroup,
+                Invoke = project is null ? () => { } : () => vm.OpenProjectCommand.Execute(project)
+            });
+        }
+
+        if (result.More > 0)
+        {
+            rows.Add(new Models.PaletteItem
+            {
+                Title = $"{result.More} more matches — narrow the search",
+                Subtitle = $"{result.ReposSearched} repos searched",
+                Icon = SymbolRegular.MoreHorizontal24,
+                Group = SearchGroup
+            });
+        }
+
+        return rows;
+    }
 
     private void PaletteSearch_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -492,6 +696,75 @@ public partial class MainWindow : INavigationWindow
 
     private void PaletteItem_Invoke(object sender, System.Windows.Input.MouseButtonEventArgs e)
         => InvokeSelectedPaletteItem();
+
+    // ── Shortcut cheat sheet (X-13) ──────────────────────────────────────────
+
+    private void ToggleShortcuts()
+    {
+        if (ShortcutOverlay.Visibility == Visibility.Visible) { CloseShortcuts(); return; }
+        ClosePalette();
+        ShortcutOverlay.Visibility = Visibility.Visible;
+        // Focus lands inside the overlay so Tab and Esc address it, not the page behind.
+        ShortcutCloseButton.Focus();
+    }
+
+    private void CloseShortcuts() => ShortcutOverlay.Visibility = Visibility.Collapsed;
+
+    private void ShortcutClose_Click(object sender, RoutedEventArgs e) => CloseShortcuts();
+
+    // ── Detail-tab deep links (X-11) ─────────────────────────────────────────
+
+    private void NavigateToProjectTab(Models.ProjectInfo project, DetailTab tab)
+    {
+        NavigateToProject(project);
+        TrySelectDetailTab(tab, attemptsLeft: 8);
+    }
+
+    /// <summary>
+    /// The detail page publishes no tab-selection API, so the shell selects the tab
+    /// through the visual tree. Navigate() does not synchronously attach the page's
+    /// content, and the attempt count is what covers that: a single dispatcher pass
+    /// silently lands on the previous page.
+    /// </summary>
+    private void TrySelectDetailTab(DetailTab tab, int attemptsLeft)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (SelectDetailTab(tab)) return;
+            if (attemptsLeft > 1) TrySelectDetailTab(tab, attemptsLeft - 1);
+            else Log.Warn($"could not select detail tab {tab}: no visible tab host found");
+        }));
+    }
+
+    private bool SelectDetailTab(DetailTab tab)
+    {
+        foreach (var control in FindVisualChildren<System.Windows.Controls.TabControl>(RootNavigation))
+        {
+            if (!control.IsVisible) continue;
+            foreach (var item in control.Items)
+            {
+                // The DetailTab tag identifies the detail page's work-area host; any
+                // other TabControl in the tree carries different tags.
+                if (item is System.Windows.Controls.TabItem { Tag: DetailTab tag } tabItem && tag == tab)
+                {
+                    control.SelectedItem = tabItem;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) yield return match;
+            foreach (var nested in FindVisualChildren<T>(child)) yield return nested;
+        }
+    }
 
     public INavigationView GetNavigation() => RootNavigation;
 
