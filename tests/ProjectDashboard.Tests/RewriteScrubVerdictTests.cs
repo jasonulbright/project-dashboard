@@ -13,7 +13,7 @@ public class RewriteScrubVerdictTests
 {
     private static ScrubCheckResult Check(
         int hits, bool performed, bool complete, bool withinScopeOnly,
-        string kind = "literal", string? note = null) =>
+        string kind = "literal", string? note = null, int commitsChecked = 7) =>
         new()
         {
             Kind = kind,
@@ -21,7 +21,7 @@ public class RewriteScrubVerdictTests
             Performed = performed,
             Complete = complete,
             WithinScopeOnly = withinScopeOnly,
-            CommitsChecked = 7,
+            CommitsChecked = commitsChecked,
             Hits = Enumerable.Range(0, hits).Select(i => $"deadbeef:a{i}.txt:SECRET").ToList(),
             Note = note,
         };
@@ -110,6 +110,49 @@ public class RewriteScrubVerdictTests
         Assert.Contains("1 blob skipped as binary", line.Detail);
         Assert.Contains("assets/logo.png", line.Detail);
         Assert.Contains("not valid UTF-8", line.Detail);
+    }
+
+    public static TheoryData<bool, bool> CompleteAndScopedFlags()
+    {
+        var data = new TheoryData<bool, bool>();
+        foreach (var complete in new[] { true, false })
+            foreach (var scoped in new[] { true, false })
+                data.Add(complete, scoped);
+        return data;
+    }
+
+    /// <summary>
+    /// A check that never ran is silence under every other flag, including the scope flag.
+    /// WithinScopeOnly is set from the requested scope alone, so a scoped run whose grep was
+    /// rejected, timed out, or exited abnormally arrives here with the scope flag set and no
+    /// search behind it — the one shape that must never render as a cleaned scope.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CompleteAndScopedFlags))]
+    public void AnUnperformedCheckIsNotVerified_WhateverTheOtherFlagsSay(bool complete, bool scoped)
+    {
+        var line = RewriteScrubVerdict.Describe(
+            Check(0, performed: false, complete: complete, withinScopeOnly: scoped), []);
+
+        Assert.Equal(ScrubVerdict.NotVerified, line.Verdict);
+        Assert.Equal(RewriteScrubVerdict.NotVerifiedLabel, line.Label);
+        Assert.False(line.ClaimsClean);
+        Assert.True(line.IsProblem);
+        Assert.Contains("NOT proof", line.Headline);
+        Assert.DoesNotContain("was cleaned within the selected scope", line.Headline);
+        Assert.Contains("could not run", line.Detail);
+    }
+
+    /// <summary>The same gap through the summary line, where a scoped-clean verdict renders amber rather than red.</summary>
+    [Fact]
+    public void Overall_AnUnperformedScopedCheck_IsNotVerifiedNotCleanWithinScope()
+    {
+        var line = RewriteScrubVerdict.Overall(
+            Report(Check(0, performed: false, complete: true, withinScopeOnly: true)));
+
+        Assert.Equal(ScrubVerdict.NotVerified, line.Verdict);
+        Assert.False(line.ClaimsClean);
+        Assert.True(line.IsProblem);
     }
 
     [Fact]
