@@ -224,6 +224,69 @@ public class FastExportParserTests
     }
 
     [Fact]
+    public void OverflowingDataLengthIsAFormatErrorWithOffset()
+    {
+        var stream = Bytes("blob\nmark :1\ndata 99999999999999999999\nx\n");
+        var reader = new FastExportReader(new MemoryStream(stream));
+        var ex = Assert.Throws<FastExportFormatException>(() => reader.ReadRecord());
+        // The data line starts after "blob\nmark :1\n" = 13 bytes.
+        Assert.Equal(13, ex.ByteOffset);
+        Assert.Equal(3, ex.LineNumber);
+        Assert.Contains("malformed data length", ex.Message);
+    }
+
+    [Fact]
+    public void OverflowingMarkIsAFormatErrorWithOffset()
+    {
+        var stream = Bytes("blob\nmark :99999999999999999999\ndata 1\nx\n");
+        var reader = new FastExportReader(new MemoryStream(stream));
+        var ex = Assert.Throws<FastExportFormatException>(() => reader.ReadRecord());
+        // The mark line starts after "blob\n" = 5 bytes.
+        Assert.Equal(5, ex.ByteOffset);
+        Assert.Equal(2, ex.LineNumber);
+        Assert.Contains("malformed number", ex.Message);
+    }
+
+    [Fact]
+    public void MaxLongDataLengthParsesAndFailsAsTruncationNotOverflow()
+    {
+        // long.MaxValue itself is a valid length; only the digit run past it is malformed.
+        var stream = Bytes("blob\ndata 9223372036854775807\nhi");
+        var reader = new FastExportReader(new MemoryStream(stream));
+        var ex = Assert.Throws<FastExportFormatException>(() => reader.ReadRecord());
+        Assert.Contains("truncated", ex.Message);
+    }
+
+    [Fact]
+    public void EmptyDeletePathIsAFormatErrorWithOffset()
+    {
+        var stream = Bytes(
+            "commit refs/heads/x\n" +
+            "mark :1\n" +
+            "committer A <a@x> 1 +0000\n" +
+            "data 2\nm\n" +
+            "D \n" +
+            "\n");
+        var reader = new FastExportReader(new MemoryStream(stream));
+        var ex = Assert.Throws<FastExportFormatException>(() => reader.ReadRecord());
+        // The D line starts after commit(20) + mark(8) + committer(26) + data line(7) + payload(2) = 63 bytes.
+        Assert.Equal(63, ex.ByteOffset);
+        Assert.Equal(5, ex.LineNumber);
+        Assert.Contains("empty path token", ex.Message);
+    }
+
+    [Fact]
+    public void DoneWithoutTrailingLfIsRefused()
+    {
+        var reader = new FastExportReader(new MemoryStream(Bytes("done")));
+        var ex = Assert.Throws<FastExportFormatException>(() => reader.ReadRecord());
+        Assert.Equal(0, ex.ByteOffset);
+        Assert.Equal(1, ex.LineNumber);
+        Assert.Contains("done record", ex.Message);
+        Assert.Contains("no LF", ex.Message);
+    }
+
+    [Fact]
     public void CatBlobAndLsAreRefused()
     {
         var catBlob = Assert.Throws<FastExportFormatException>(() => ParseAll(Bytes("cat-blob :1\n")));

@@ -260,7 +260,11 @@ internal static class Utf8Ascii
         foreach (var b in digits)
         {
             if (b is < (byte)'0' or > (byte)'9') return false;
-            value = checked(value * 10 + (b - (byte)'0'));
+            var digit = b - (byte)'0';
+            // Overflow is a parse failure like any other malformed number; an escaping
+            // OverflowException would bypass the offset-carrying format error.
+            if (value > (long.MaxValue - digit) / 10) return false;
+            value = value * 10 + digit;
         }
         return true;
     }

@@ -297,14 +297,15 @@ internal sealed class StreamCursor
         if (_stream.CanSeek)
         {
             // The window is drained, so the physical position equals the logical one and a
-            // relative seek is safe. Seeking past EOF does not fault — verify by length.
-            var target = Position + remaining;
-            if (target > _stream.Length)
+            // relative seek is safe. The truncation check is written subtraction-first:
+            // `Position + remaining` can wrap negative for lengths near long.MaxValue and
+            // would then slip past a sum-based comparison into a faulting seek.
+            if (remaining > _stream.Length - Position)
                 throw new FastExportFormatException(
                     $"stream truncated inside {context}: expected {count} bytes, got {count - remaining + Math.Max(0, _stream.Length - Position)}",
                     Position, LineNumber);
             _stream.Seek(remaining, SeekOrigin.Current);
-            Position = target;
+            Position += remaining;
             return;
         }
 
@@ -378,6 +379,9 @@ public sealed class FastExportReader
             return ConsumeRawLine(new ProgressRecord { ByteOffset = offset, RawLine = line }, hasLf);
         if (Utf8Ascii.IsExactly(line, "done"))
         {
+            // Accepting an unterminated done would make re-emission (which always writes
+            // the LF) the one place output bytes differ from input bytes.
+            RequireLf(hasLf, "done record");
             _cursor.ConsumeLine();
             _doneSeen = true;
             return new DoneRecord { ByteOffset = offset };
@@ -714,6 +718,8 @@ public sealed class FastExportReader
 
     private GitPath ParsePathToken(ReadOnlySpan<byte> token, byte[] line, bool wholeRemainder)
     {
+        if (token.IsEmpty)
+            throw Unexpected(line, "path (empty path token)");
         if (token[0] == (byte)'"')
         {
             if (!PathQuoting.TryUnquote(token, out var decoded, out var consumed))
