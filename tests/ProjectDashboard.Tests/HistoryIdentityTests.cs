@@ -233,6 +233,37 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task NestedTagMaskedByReplaceRefIsStillRefused()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("tag", "-a", "inner", "-m", "inner tag");
+        f.Git("-c", "advice.nestedTag=false", "tag", "-a", "outer", "-m", "tag of tag", "inner");
+        f.Git("tag", "-a", "decoy", "-m", "plain tag of commit");
+
+        // Replacing the nested tag object with a tag-of-commit makes replace-following
+        // reads report outer as tag→commit; the preflight must read the original object.
+        var outerOid = f.Git("rev-parse", "outer").Trim();
+        var decoyOid = f.Git("rev-parse", "decoy").Trim();
+        f.Git("replace", "-f", outerOid, decoyOid);
+        Assert.Contains("commit", f.Git("for-each-ref", "refs/tags/outer", "--format=%(refname) %(objecttype) %(type)"));
+
+        var pipeline = new HistoryPipeline(GitGuard.GitExe);
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => pipeline.RunAsync(new HistoryPipelineOptions
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(1),
+            ImportTimeout = TimeSpan.FromMinutes(1)
+        }));
+
+        Assert.Equal("preflight", ex.Phase);
+        Assert.Contains("refs/tags/outer", ex.Message);
+    }
+
+    [Fact]
     public async Task TagOfBlobRoundTrips()
     {
         using var f = new FixtureRepo();

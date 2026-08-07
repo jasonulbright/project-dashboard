@@ -373,8 +373,12 @@ public sealed class HistoryPipeline
     /// </summary>
     private async Task RefuseNestedTagsAsync(string sourceRepository, CancellationToken ct)
     {
+        // Global --no-replace-objects, matching the export flags: %(type) reads the tag
+        // object's content, and with a replace ref active it reads the replacement's
+        // content instead, so a nested tag can masquerade as tag→commit and slip past
+        // this check while the export still walks the original nested tag.
         var result = await RunGitCheckedAsync(sourceRepository,
-            ["for-each-ref", "refs/tags", "--format=%(refname) %(objecttype) %(type)"], "preflight", ct);
+            ["--no-replace-objects", "for-each-ref", "refs/tags", "--format=%(refname) %(objecttype) %(type)"], "preflight", ct);
 
         var nested = new List<string>();
         foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
