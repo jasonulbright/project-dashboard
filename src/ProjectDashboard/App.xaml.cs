@@ -65,6 +65,20 @@ public partial class App : Application
                 services.AddSingleton<Services.Safety.BackupService>();
                 services.AddSingleton<Services.Safety.RewriteRecoveryService>();
 
+                // Rewrite engine. Singletons because the coordinator's collaborators cache
+                // probes (git executable, settings) and the busy registry must be the one
+                // registry every destructive surface contends on. Explicit factories because
+                // both constructors carry optional parameters the container will not fill.
+                services.AddSingleton(sp => new Services.Rewrite.SwapService(sp.GetRequiredService<GitService>()));
+                services.AddSingleton(sp => new Services.Rewrite.RewriteCoordinator(
+                    sp.GetRequiredService<Services.Safety.BackupService>(),
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
+                    sp.GetRequiredService<GitService>(),
+                    sp.GetRequiredService<Services.Rewrite.SwapService>(),
+                    sp.GetRequiredService<Services.Safety.RewriteJournal>()));
+                services.AddSingleton<IRewriteSessionFactory>(sp =>
+                    new CoordinatorRewriteSessionFactory(sp.GetRequiredService<Services.Rewrite.RewriteCoordinator>()));
+
                 // Windows
                 services.AddSingleton<MainWindow>();
                 services.AddSingleton<MainWindowViewModel>();
