@@ -46,7 +46,26 @@ public static class ProcessRunner
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default)
         => RunCoreAsync(fileName, arguments, workingDirectory, timeout, environment,
-                        onStdOutLine: null, onStdErrLine: null, ct);
+                        onStdOutLine: null, onStdErrLine: null, standardInput: null, ct);
+
+    /// <summary>
+    /// RunAsync that also writes <paramref name="standardInput"/> to the child's stdin and
+    /// closes it (sending EOF). For commands that take a script on stdin — e.g. the single
+    /// all-or-nothing `git update-ref --stdin` transaction — where argument passing cannot
+    /// express the payload. The input is drained concurrently with stdout/stderr so a child
+    /// that echoes while reading cannot deadlock; a write failure is logged, stdin is still
+    /// closed, and the child's own exit code reports the outcome.
+    /// </summary>
+    public static Task<ProcessResult> RunWithInputAsync(
+        string fileName,
+        IEnumerable<string> arguments,
+        string standardInput,
+        string? workingDirectory = null,
+        TimeSpan? timeout = null,
+        IReadOnlyDictionary<string, string>? environment = null,
+        CancellationToken ct = default)
+        => RunCoreAsync(fileName, arguments, workingDirectory, timeout, environment,
+                        onStdOutLine: null, onStdErrLine: null, standardInput, ct);
 
     /// <summary>
     /// RunAsync plus live output: each completed line is handed to the matching callback while
@@ -71,7 +90,7 @@ public static class ProcessRunner
         Action<string>? onStdErrLine,
         CancellationToken ct = default)
         => RunCoreAsync(fileName, args, workingDirectory, timeout, environment,
-                        onStdOutLine, onStdErrLine, ct);
+                        onStdOutLine, onStdErrLine, standardInput: null, ct);
 
     private static async Task<ProcessResult> RunCoreAsync(
         string fileName,
@@ -81,6 +100,7 @@ public static class ProcessRunner
         IReadOnlyDictionary<string, string>? environment,
         Action<string>? onStdOutLine,
         Action<string>? onStdErrLine,
+        string? standardInput,
         CancellationToken ct)
     {
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(10);
@@ -90,6 +110,7 @@ public static class ProcessRunner
         {
             FileName = fileName,
             WorkingDirectory = workingDirectory ?? "",
+            RedirectStandardInput = standardInput is not null,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Utf8NoBom,
@@ -97,6 +118,8 @@ public static class ProcessRunner
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        if (standardInput is not null)
+            process.StartInfo.StandardInputEncoding = Utf8NoBom;
         foreach (var arg in arguments)
             process.StartInfo.ArgumentList.Add(arg);
         if (environment is not null)
@@ -118,6 +141,16 @@ public static class ProcessRunner
         // Drain both pipes from the start — never let either fill.
         var (stdOutTask, stdOutDelivery) = BeginDrain(process.StandardOutput, onStdOutLine, fileName, "stdout");
         var (stdErrTask, stdErrDelivery) = BeginDrain(process.StandardError, onStdErrLine, fileName, "stderr");
+
+        // Feed stdin while the pipes drain, then close it so the child sees EOF. A write that
+        // faults (child already exited) is logged, not thrown: the exit code is the outcome.
+        if (standardInput is not null)
+        {
+            try { await process.StandardInput.WriteAsync(standardInput.AsMemory(), ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            { Log.Warn($"stdin write failed for {fileName}", ex); }
+            finally { try { process.StandardInput.Close(); } catch { /* already closed */ } }
+        }
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(effectiveTimeout);
