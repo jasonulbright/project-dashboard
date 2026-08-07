@@ -79,15 +79,20 @@ public sealed class FileDiff
                     continue;
                 }
                 // Combined-diff body: keep it readable rather than mis-counting columns.
+                // Headers (index, mode, --- / +++) appear only before the first @@@;
+                // past it, a body line can itself begin with "---"/"+++" (two status
+                // columns plus content), so headers are skipped by position, not prefix.
                 if (line.StartsWith("@@@", StringComparison.Ordinal))
                     current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
-                else if (line.StartsWith("+", StringComparison.Ordinal))
+                else if (current.Lines.Count == 0 || line.Length == 0)
+                {
+                    // Pre-hunk metadata, or the blank artifact of a trailing newline.
+                }
+                else if (line.StartsWith('+'))
                     current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line });
-                else if (line.StartsWith("-", StringComparison.Ordinal))
+                else if (line.StartsWith('-'))
                     current.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = line });
-                else if (!line.StartsWith("index ", StringComparison.Ordinal) &&
-                         !line.StartsWith("--- ", StringComparison.Ordinal) &&
-                         !line.StartsWith("+++ ", StringComparison.Ordinal))
+                else
                     current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line });
                 continue;
             }

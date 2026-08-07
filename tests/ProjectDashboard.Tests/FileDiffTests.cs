@@ -160,12 +160,22 @@ public class FileDiffTests
         Assert.True(diff.IsCombined);
         Assert.Equal("conflicted.txt", diff.Path);
 
+        // index/---/+++ between the file header and @@@ are metadata: they must not
+        // surface as Removed/Added/Context rows, and the blank artifact of the
+        // trailing newline must not become a row either.
+        Assert.DoesNotContain(diff.Lines, l => l.Text.StartsWith("--- ", StringComparison.Ordinal));
+        Assert.DoesNotContain(diff.Lines, l => l.Text.StartsWith("+++ ", StringComparison.Ordinal));
+        Assert.DoesNotContain(diff.Lines, l => l.Text.StartsWith("index ", StringComparison.Ordinal));
+        Assert.DoesNotContain(diff.Lines, l => l.Text.Length == 0);
+
         var hunk = Assert.Single(diff.Lines, l => l.Kind == DiffLineKind.HunkHeader);
         Assert.StartsWith("@@@", hunk.Text);
+        Assert.Same(hunk, diff.Lines[0]);
+        Assert.Equal(7, diff.Lines.Count);
 
         // Body rows after the hunk header: two-column status prefixes are kept verbatim,
         // classified by first column only, with no line-number gutters.
-        var body = diff.Lines.Skip(diff.Lines.IndexOf(hunk) + 1).Where(l => l.Text.Length > 0).ToList();
+        var body = diff.Lines.Skip(1).ToList();
         Assert.Equal(6, body.Count);
         Assert.Equal(DiffLineKind.Context, body[0].Kind);
         Assert.Equal("  shared line", body[0].Text);
