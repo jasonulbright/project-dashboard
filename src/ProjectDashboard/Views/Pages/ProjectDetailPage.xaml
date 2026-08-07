@@ -6,6 +6,7 @@
     xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
     xmlns:local="clr-namespace:ProjectDashboard.ViewModels.Pages"
     xmlns:models="clr-namespace:ProjectDashboard.Models"
+    xmlns:pages="clr-namespace:ProjectDashboard.Views.Pages"
     FontFamily="Segoe UI"
     Focusable="True"
     PreviewKeyDown="Page_PreviewKeyDown">
@@ -550,6 +551,24 @@
             <!-- ── HISTORY ── -->
             <TabItem Header="History" Tag="{x:Static models:DetailTab.History}">
                 <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <ui:Button DockPanel.Dock="Right" Content="Rewrite history…" Appearance="Danger"
+                                   FontSize="12" Padding="12,4"
+                                   Icon="{ui:SymbolIcon History24}"
+                                   Command="{Binding OpenRewriteWizardCommand}"
+                                   ToolTip="Rewrite this repository's history — replace text, remove files, or fix authorship"
+                                   AutomationProperties.Name="Rewrite history" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   Text="Rewriting replaces commits with new ones. A backup is taken first and nothing is pushed." />
+                    </DockPanel>
+
+                <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="380" />
                         <ColumnDefinition Width="280" />
@@ -636,6 +655,7 @@
                                      AutomationProperties.Name="Commit diff" />
                         </Grid>
                     </Border>
+                </Grid>
                 </Grid>
             </TabItem>
 
@@ -1455,5 +1475,14 @@
                 </Grid>
             </TabItem>
         </TabControl>
+
+        <!-- ═══ REWRITE WIZARD ═══
+             A pane rather than a dialog: the dry-run report is long-form and scrolls, the run
+             stays visible while the page's busy gate is held, and every gate it enforces is
+             view-model state a headless test can drive. The negative margin cancels the page
+             padding so the scrim covers the whole surface. -->
+        <pages:RewriteWizardView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                                 Visibility="{Binding RewriteWizardVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                 AutomationProperties.Name="Rewrite history wizard" />
     </Grid>
 </Page>

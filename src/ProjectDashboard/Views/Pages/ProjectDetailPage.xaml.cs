@@ -208,6 +208,22 @@ public partial class ProjectDetailPage
     // row's existing left-click command (open on GitHub) without a mouse.
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // The rewrite wizard is modal over the whole page: Esc cancels it, and the tab
+        // hotkeys stay inert so a digit cannot move the surface behind an open wizard.
+        if (_viewModel.RewriteWizardVisible)
+        {
+            if (e.Key == Key.Escape)
+            {
+                _viewModel.CloseRewriteWizardCommand.Execute(null);
+                e.Handled = true;
+            }
+            else if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is >= Key.D0 and <= Key.D9)
+            {
+                e.Handled = true;
+            }
+            return;
+        }
+
         // Ctrl+1..9,0 jumps between work-area tabs (D0 = 10th). Digits past the live
         // tab count are inert, so this scales as tabs are added without renumbering.
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is >= Key.D0 and <= Key.D9)
