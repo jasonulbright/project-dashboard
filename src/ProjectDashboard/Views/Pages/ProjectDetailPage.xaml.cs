@@ -13,6 +13,7 @@ namespace ProjectDashboard.Views.Pages;
 public partial class ProjectDetailPage
 {
     private readonly ProjectDetailViewModel _viewModel;
+    private readonly Helpers.RelativeTimeConverter _relativeTime = new();
 
     public ProjectDetailPage(ProjectDetailViewModel viewModel)
     {
@@ -26,10 +27,103 @@ public partial class ProjectDetailPage
         // this page is transient and must not be pinned by a static event.
         Loaded += (_, _) => Wpf.Ui.Appearance.ApplicationThemeManager.Changed += OnThemeChanged;
         Unloaded += (_, _) => Wpf.Ui.Appearance.ApplicationThemeManager.Changed -= OnThemeChanged;
+
+        // Issue/PR bodies render natively into their FlowDocuments when the fetched
+        // detail lands. Unloaded unsubscribes — this page is transient.
+        viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        Unloaded += (_, _) => viewModel.PropertyChanged -= OnViewModelPropertyChanged;
     }
 
     private void OnThemeChanged(Wpf.Ui.Appearance.ApplicationTheme theme, System.Windows.Media.Color accent)
-        => RenderDocuments();
+    {
+        RenderDocuments();
+        RenderIssueConversation();
+        RenderPullRequestConversation();
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(ProjectDetailViewModel.IssueDetail):
+                RenderIssueConversation();
+                break;
+            case nameof(ProjectDetailViewModel.PullRequestDetail):
+                RenderPullRequestConversation();
+                break;
+        }
+    }
+
+    private void RenderIssueConversation()
+    {
+        var d = _viewModel.IssueDetail;
+        if (d is null)
+        {
+            IssueConversationRich.Document = new FlowDocument();
+            return;
+        }
+        var basePath = _viewModel.Project?.FullPath ?? "";
+        try
+        {
+            RenderMarkdown(IssueConversationRich,
+                BuildConversationMarkdown(d.Author, d.CreatedAt, d.Body, d.Comments), basePath);
+        }
+        catch
+        {
+            IssueConversationRich.Document = new FlowDocument(new Paragraph(new Run(d.Body) { FontSize = 12 }));
+        }
+    }
+
+    private void RenderPullRequestConversation()
+    {
+        var d = _viewModel.PullRequestDetail;
+        if (d is null)
+        {
+            PullRequestConversationRich.Document = new FlowDocument();
+            return;
+        }
+        var basePath = _viewModel.Project?.FullPath ?? "";
+        try
+        {
+            RenderMarkdown(PullRequestConversationRich,
+                BuildConversationMarkdown(d.Author, d.CreatedAt, d.Body, d.Comments), basePath);
+        }
+        catch
+        {
+            PullRequestConversationRich.Document = new FlowDocument(new Paragraph(new Run(d.Body) { FontSize = 12 }));
+        }
+    }
+
+    /// <summary>
+    /// Composes an issue/PR body and its comment thread into one markdown string:
+    /// each entry gets an author • relative-time header (H3) and a horizontal-rule
+    /// separator, then the existing native renderer turns it into a FlowDocument.
+    /// </summary>
+    private string BuildConversationMarkdown(string author, DateTimeOffset created, string body,
+        IReadOnlyList<Models.IssueComment> comments)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"### {ConversationHeader(author, created)}");
+        sb.AppendLine();
+        sb.AppendLine(string.IsNullOrWhiteSpace(body) ? "_No description provided._" : body);
+        foreach (var c in comments)
+        {
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine($"### {ConversationHeader(c.Author, c.CreatedAt)}");
+            sb.AppendLine();
+            sb.AppendLine(string.IsNullOrWhiteSpace(c.Body) ? "_(no content)_" : c.Body);
+        }
+        return sb.ToString();
+    }
+
+    private string ConversationHeader(string author, DateTimeOffset when)
+    {
+        var name = string.IsNullOrWhiteSpace(author) ? "(unknown)" : author;
+        var rel = _relativeTime.Convert(when, typeof(string), null!, System.Globalization.CultureInfo.CurrentCulture) as string;
+        return string.IsNullOrEmpty(rel) ? name : $"{name} • {rel}";
+    }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {

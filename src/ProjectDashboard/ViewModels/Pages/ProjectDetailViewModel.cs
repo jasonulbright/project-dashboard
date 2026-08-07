@@ -147,6 +147,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         PullRequestsLoaded = false;
         StateBannerVisible = false;
         StateBannerText = "";
+        ResetGitHubState();
 
         _ = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";

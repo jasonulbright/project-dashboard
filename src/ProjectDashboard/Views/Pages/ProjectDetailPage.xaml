@@ -728,188 +728,653 @@
 
             <!-- ── ISSUES ── -->
             <TabItem Header="Issues" Tag="{x:Static models:DetailTab.Issues}">
-                <Grid Margin="0,12,0,0" MaxWidth="1000" HorizontalAlignment="Left">
+                <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" FontSize="12" Margin="0,0,0,8"
-                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                               Text="Open issues — Enter or click opens on GitHub." />
-                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            CornerRadius="8" Padding="10,8">
-                        <Grid>
-                            <TextBlock Text="No open issues." FontSize="12"
-                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Issues.Count}" Value="0">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <ListBox ItemsSource="{Binding Issues}"
-                                     Background="Transparent" BorderThickness="0"
-                                     AutomationProperties.Name="Open issues">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="4,4" />
-                                        <EventSetter Event="MouseDoubleClick" Handler="IssueRow_Open" />
-                                        <EventSetter Event="KeyDown" Handler="IssueRow_KeyDown" />
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:GitHubIssue}">
-                                        <DockPanel>
-                                            <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
-                                                       FontFamily="Cascadia Code,Consolas"
-                                                       Foreground="{StaticResource StatusInfoFg}">
-                                                <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
-                                            </TextBlock>
-                                            <TextBlock DockPanel.Dock="Right" MinWidth="56" FontSize="11" HorizontalAlignment="Right"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding UpdatedAt, Converter={StaticResource RelativeTimeConverter}}"
-                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                                            <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,0"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding Author}"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                            <Border DockPanel.Dock="Right" Background="{StaticResource StatusInfoBg}"
-                                                    CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
-                                                    Visibility="{Binding HasLabels, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <TextBlock Text="{Binding Labels}" FontSize="10"
-                                                           Foreground="{StaticResource StatusInfoFg}" />
-                                            </Border>
-                                            <TextBlock Text="{Binding Title}" FontSize="13"
-                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
-                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                        </DockPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </Grid>
-                    </Border>
-                </Grid>
-            </TabItem>
 
-            <!-- ── PULL REQUESTS ── -->
-            <TabItem Header="Pull Requests" Tag="{x:Static models:DetailTab.PullRequests}">
-                <Grid Margin="0,12,0,0" MaxWidth="1000" HorizontalAlignment="Left">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
                     <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="8,0,0,0"
                                    Icon="{ui:SymbolIcon ArrowSync24}"
-                                   Command="{Binding LoadPullRequestsCommand}" />
+                                   Command="{Binding RefreshIssuesCommand}"
+                                   AutomationProperties.Name="Refresh issues" />
+                        <ui:Button DockPanel.Dock="Right" Content="New Issue" FontSize="12" Padding="10,4"
+                                   Appearance="Primary" Icon="{ui:SymbolIcon Add24}"
+                                   Command="{Binding ShowNewIssueCommand}"
+                                   AutomationProperties.Name="New issue" />
                         <TextBlock FontSize="12" VerticalAlignment="Center"
-                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                   Text="Open pull requests — Enter or click opens on GitHub." />
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding GitHubStatusText}" />
                     </DockPanel>
-                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            CornerRadius="8" Padding="10,8">
-                        <Grid>
-                            <TextBlock Text="No open pull requests." FontSize="12"
-                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding PullRequests.Count}" Value="0">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <ListBox ItemsSource="{Binding PullRequests}"
-                                     Background="Transparent" BorderThickness="0"
-                                     AutomationProperties.Name="Open pull requests">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="4,4" />
-                                        <EventSetter Event="MouseDoubleClick" Handler="PrRow_Open" />
-                                        <EventSetter Event="KeyDown" Handler="PrRow_KeyDown" />
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:GitHubPullRequest}">
-                                        <DockPanel>
-                                            <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
-                                                       FontFamily="Cascadia Code,Consolas"
-                                                       Foreground="{StaticResource StatusInfoFg}">
-                                                <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
-                                            </TextBlock>
-                                            <TextBlock DockPanel.Dock="Right" MinWidth="56" FontSize="11" HorizontalAlignment="Right"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding UpdatedAt, Converter={StaticResource RelativeTimeConverter}}"
-                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                                            <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,0"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding Author}"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                            <!-- checks chip -->
-                                            <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="380" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Issue list -->
+                        <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                            <Grid>
+                                <TextBlock Text="No open issues." FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Issues.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding Issues}"
+                                         SelectedItem="{Binding SelectedIssue}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Open issues">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="4,4" />
+                                            <EventSetter Event="MouseDoubleClick" Handler="IssueRow_Open" />
+                                            <EventSetter Event="KeyDown" Handler="IssueRow_KeyDown" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:GitHubIssue}">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
+                                                           FontFamily="Cascadia Code,Consolas"
+                                                           Foreground="{StaticResource StatusInfoFg}">
+                                                    <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock DockPanel.Dock="Right" MinWidth="52" FontSize="11" HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           Text="{Binding UpdatedAt, Converter={StaticResource RelativeTimeConverter}}"
+                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Text="{Binding Title}" FontSize="13"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Border>
+
+                        <!-- Right pane: compose form OR issue detail OR hint -->
+                        <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="16,12">
+                            <Grid>
+                                <!-- Hint (no selection, not composing) -->
+                                <TextBlock Text="Select an issue to view its thread, or click New Issue."
+                                           FontSize="13" VerticalAlignment="Top"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding SelectedIssue}" Value="{x:Null}" />
+                                                        <Condition Binding="{Binding IssueComposeVisible}" Value="False" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Compose new issue -->
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                              Visibility="{Binding IssueComposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <TextBlock Text="New Issue" FontWeight="SemiBold" FontSize="15" Margin="0,0,0,10"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <TextBlock Text="Title" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewIssueTitle, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="Short summary" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="New issue title" />
+                                        <TextBlock Text="Body (Markdown)" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewIssueBody, UpdateSourceTrigger=PropertyChanged}"
+                                                    AcceptsReturn="True" MinHeight="120" MaxHeight="240"
+                                                    VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="New issue body" />
+                                        <TextBlock Text="Labels (comma-separated)" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewIssueLabels, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="bug, p1" Margin="0,0,0,4"
+                                                    AutomationProperties.Name="New issue labels" />
+                                        <ItemsControl ItemsSource="{Binding AvailableLabelNames}" Margin="0,0,0,10">
+                                            <ItemsControl.Style>
+                                                <Style TargetType="ItemsControl">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding AvailableLabelNames.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ItemsControl.Style>
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4"
+                                                            Padding="6,1" Margin="0,0,4,4">
+                                                        <TextBlock Text="{Binding}" FontSize="10"
+                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:Button Content="Create Issue" Appearance="Primary" FontSize="12" Padding="14,4"
+                                                       Margin="0,0,8,0" Command="{Binding SubmitNewIssueCommand}"
+                                                       AutomationProperties.Name="Create issue" />
+                                            <ui:Button Content="Cancel" FontSize="12" Padding="14,4"
+                                                       Command="{Binding CancelNewIssueCommand}"
+                                                       AutomationProperties.Name="Cancel new issue" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+
+                                <!-- Issue detail -->
+                                <Grid>
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedIssue}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IssueComposeVisible}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- Header -->
+                                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                                        <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left"
+                                                         Visibility="{Binding IssueDetailLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBlock Text="{Binding IssueDetailError}" FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{StaticResource StatusBadFg}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IssueDetailError}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <DockPanel LastChildFill="True">
+                                            <Border DockPanel.Dock="Right" CornerRadius="4" Padding="8,2" Margin="8,0,0,0"
                                                     VerticalAlignment="Center">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
-                                                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                        <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding ChecksState}" Value="">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding ChecksState}" Value="passing">
-                                                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding ChecksState}" Value="failing">
+                                                            <DataTrigger Binding="{Binding IssueDetail.State}" Value="closed">
                                                                 <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding ChecksState}" Value="pending">
-                                                                <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </Border.Style>
-                                                <TextBlock Text="{Binding ChecksState}" FontSize="10">
+                                                <TextBlock Text="{Binding IssueDetail.State}" FontSize="11">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding ChecksState}" Value="passing">
-                                                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding ChecksState}" Value="failing">
+                                                                <DataTrigger Binding="{Binding IssueDetail.State}" Value="closed">
                                                                     <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding ChecksState}" Value="pending">
-                                                                    <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
                                                     </TextBlock.Style>
                                                 </TextBlock>
                                             </Border>
-                                            <!-- draft chip -->
-                                            <Border DockPanel.Dock="Right" Background="{StaticResource StatusNeutralBg}"
-                                                    CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
-                                                    Visibility="{Binding IsDraft, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <TextBlock Text="draft" FontSize="10"
-                                                           Foreground="{StaticResource StatusNeutralFg}" />
-                                            </Border>
-                                            <TextBlock Text="{Binding Title}" FontSize="13"
-                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
-                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                            <TextBlock FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                       Text="{Binding IssueDetail.Title}" />
                                         </DockPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </Grid>
-                    </Border>
+                                        <TextBlock FontSize="11" Margin="0,2,0,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <Run Text="#" /><Run Text="{Binding IssueDetail.Number, Mode=OneWay}" />
+                                            <Run Text=" · labels: " /><Run Text="{Binding IssueDetail.Labels, Mode=OneWay}" />
+                                            <Run Text=" · assignees: " /><Run Text="{Binding IssueDetail.Assignees, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <!-- Conversation (body + comments, native markdown) -->
+                                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                                  PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+                                        <RichTextBox x:Name="IssueConversationRich" IsReadOnly="True"
+                                                     BorderThickness="0" Background="Transparent"
+                                                     FontFamily="Segoe UI" FontSize="13"
+                                                     AutomationProperties.Name="Issue conversation" />
+                                    </ScrollViewer>
+
+                                    <!-- Action bar -->
+                                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                        <ui:TextBox Text="{Binding IssueCommentDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="Add a comment (Markdown)"
+                                                    AcceptsReturn="True" MinHeight="48" MaxHeight="120"
+                                                    VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Issue comment" />
+                                        <WrapPanel>
+                                            <ui:Button Content="Comment" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Appearance="Primary" Command="{Binding CommentIssueCommand}"
+                                                       AutomationProperties.Name="Post comment" />
+                                            <ui:Button Content="Close issue" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding CloseIssueCommand}"
+                                                       AutomationProperties.Name="Close issue">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IssueDetail.State}" Value="closed">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                            <ui:Button Content="Reopen issue" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding ReopenIssueCommand}"
+                                                       AutomationProperties.Name="Reopen issue">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IssueDetail.State}" Value="closed">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                            <ui:Button Content="Open on GitHub" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Icon="{ui:SymbolIcon Open24}"
+                                                       Command="{Binding OpenIssueCommand}"
+                                                       CommandParameter="{Binding SelectedIssue}"
+                                                       AutomationProperties.Name="Open issue on GitHub" />
+                                        </WrapPanel>
+                                        <WrapPanel Margin="0,2,0,0">
+                                            <ui:TextBox Text="{Binding IssueAssignee, UpdateSourceTrigger=PropertyChanged}"
+                                                        PlaceholderText="assignee (login or @me)" Width="180" Margin="0,0,6,6"
+                                                        AutomationProperties.Name="Assignee login" />
+                                            <ui:Button Content="Assign" FontSize="12" Padding="12,4" Margin="0,0,12,6"
+                                                       Command="{Binding AssignIssueCommand}"
+                                                       AutomationProperties.Name="Assign issue" />
+                                            <ComboBox ItemsSource="{Binding AvailableLabelNames}"
+                                                      SelectedItem="{Binding SelectedLabelToAdd}"
+                                                      Width="150" Margin="0,0,6,6" FontSize="12"
+                                                      AutomationProperties.Name="Label to add" />
+                                            <ui:Button Content="Add label" FontSize="12" Padding="12,4" Margin="0,0,12,6"
+                                                       Command="{Binding AddIssueLabelCommand}"
+                                                       AutomationProperties.Name="Add label" />
+                                            <ComboBox ItemsSource="{Binding IssueLabels}"
+                                                      SelectedItem="{Binding SelectedLabelToRemove}"
+                                                      Width="150" Margin="0,0,6,6" FontSize="12"
+                                                      AutomationProperties.Name="Label to remove" />
+                                            <ui:Button Content="Remove label" FontSize="12" Padding="12,4" Margin="0,0,0,6"
+                                                       Command="{Binding RemoveIssueLabelCommand}"
+                                                       AutomationProperties.Name="Remove label" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ── PULL REQUESTS ── -->
+            <TabItem Header="Pull Requests" Tag="{x:Static models:DetailTab.PullRequests}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadPullRequestsCommand}"
+                                   AutomationProperties.Name="Refresh pull requests" />
+                        <ui:Button DockPanel.Dock="Right" Content="New PR" FontSize="12" Padding="10,4"
+                                   Appearance="Primary" Icon="{ui:SymbolIcon Add24}"
+                                   Command="{Binding ShowNewPrCommand}"
+                                   AutomationProperties.Name="New pull request from current branch" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding GitHubStatusText}" />
+                    </DockPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="380" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- PR list -->
+                        <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                            <Grid>
+                                <TextBlock Text="No open pull requests." FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding PullRequests.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding PullRequests}"
+                                         SelectedItem="{Binding SelectedPullRequest}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Open pull requests">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="4,4" />
+                                            <EventSetter Event="MouseDoubleClick" Handler="PrRow_Open" />
+                                            <EventSetter Event="KeyDown" Handler="PrRow_KeyDown" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:GitHubPullRequest}">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
+                                                           FontFamily="Cascadia Code,Consolas"
+                                                           Foreground="{StaticResource StatusInfoFg}">
+                                                    <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <!-- checks chip -->
+                                                <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+                                                        VerticalAlignment="Center">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="passing">
+                                                                    <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="failing">
+                                                                    <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding ChecksState}" Value="pending">
+                                                                    <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding ChecksState}" FontSize="10">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding ChecksState}" Value="passing">
+                                                                        <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding ChecksState}" Value="failing">
+                                                                        <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding ChecksState}" Value="pending">
+                                                                        <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Border>
+                                                <!-- draft chip -->
+                                                <Border DockPanel.Dock="Right" Background="{StaticResource StatusNeutralBg}"
+                                                        CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                        Visibility="{Binding IsDraft, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <TextBlock Text="draft" FontSize="10"
+                                                               Foreground="{StaticResource StatusNeutralFg}" />
+                                                </Border>
+                                                <TextBlock Text="{Binding Title}" FontSize="13"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Border>
+
+                        <!-- Right pane: compose form OR PR detail OR hint -->
+                        <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="16,12">
+                            <Grid>
+                                <!-- Hint -->
+                                <TextBlock Text="Select a pull request to view it, or click New PR to open one from the current branch."
+                                           FontSize="13" VerticalAlignment="Top" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding SelectedPullRequest}" Value="{x:Null}" />
+                                                        <Condition Binding="{Binding PullRequestComposeVisible}" Value="False" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Compose new PR -->
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                              Visibility="{Binding PullRequestComposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <TextBlock Text="New Pull Request" FontWeight="SemiBold" FontSize="15" Margin="0,0,0,4"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <TextBlock FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <Run Text="Head branch: " /><Run Text="{Binding BranchLabel, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="Title" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewPrTitle, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="Short summary" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="New pull request title" />
+                                        <TextBlock Text="Body (Markdown)" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewPrBody, UpdateSourceTrigger=PropertyChanged}"
+                                                    AcceptsReturn="True" MinHeight="120" MaxHeight="240"
+                                                    VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="New pull request body" />
+                                        <TextBlock Text="Base branch (blank = repo default)" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewPrBase, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="main" Margin="0,0,0,8" Width="220" HorizontalAlignment="Left"
+                                                    AutomationProperties.Name="New pull request base branch" />
+                                        <CheckBox Content="Create as draft" FontSize="12" Margin="0,0,0,10"
+                                                  IsChecked="{Binding NewPrDraft}"
+                                                  AutomationProperties.Name="Create pull request as draft" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:Button Content="Create PR" Appearance="Primary" FontSize="12" Padding="14,4"
+                                                       Margin="0,0,8,0" Command="{Binding SubmitNewPrCommand}"
+                                                       AutomationProperties.Name="Create pull request" />
+                                            <ui:Button Content="Cancel" FontSize="12" Padding="14,4"
+                                                       Command="{Binding CancelNewPrCommand}"
+                                                       AutomationProperties.Name="Cancel new pull request" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+
+                                <!-- PR detail -->
+                                <Grid>
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedPullRequest}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding PullRequestComposeVisible}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- Header -->
+                                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                                        <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left"
+                                                         Visibility="{Binding PullRequestDetailLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBlock Text="{Binding PullRequestDetailError}" FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{StaticResource StatusBadFg}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding PullRequestDetailError}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                   Text="{Binding PullRequestDetail.Title}" />
+                                        <TextBlock FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <Run Text="#" /><Run Text="{Binding PullRequestDetail.Number, Mode=OneWay}" />
+                                            <Run Text="  " /><Run Text="{Binding PullRequestDetail.HeadRef, Mode=OneWay}" />
+                                            <Run Text=" → " /><Run Text="{Binding PullRequestDetail.BaseRef, Mode=OneWay}" />
+                                            <Run Text="  ·  " /><Run Text="{Binding PullRequestDetail.ChangedFiles, Mode=OneWay}" />
+                                            <Run Text=" files  +" /><Run Text="{Binding PullRequestDetail.Additions, Mode=OneWay}" />
+                                            <Run Text=" -" /><Run Text="{Binding PullRequestDetail.Deletions, Mode=OneWay}" />
+                                            <Run Text="  ·  checks: " /><Run Text="{Binding PullRequestDetail.ChecksState, Mode=OneWay}" />
+                                            <Run Text="  ·  " /><Run Text="{Binding PullRequestDetail.Mergeable, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <!-- Description + comments (native markdown) -->
+                                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                                  PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+                                        <RichTextBox x:Name="PullRequestConversationRich" IsReadOnly="True"
+                                                     BorderThickness="0" Background="Transparent"
+                                                     FontFamily="Segoe UI" FontSize="13"
+                                                     AutomationProperties.Name="Pull request conversation" />
+                                    </ScrollViewer>
+
+                                    <!-- Action bar -->
+                                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                        <ui:TextBox Text="{Binding PrCommentDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="Add a comment (Markdown)"
+                                                    AcceptsReturn="True" MinHeight="44" MaxHeight="100"
+                                                    VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Pull request comment" />
+                                        <WrapPanel Margin="0,0,0,4">
+                                            <ui:Button Content="Comment" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding CommentPrCommand}"
+                                                       AutomationProperties.Name="Post comment" />
+                                            <ui:Button Content="Checkout locally" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Icon="{ui:SymbolIcon ArrowDownload24}"
+                                                       Command="{Binding CheckoutPrCommand}"
+                                                       AutomationProperties.Name="Checkout pull request locally" />
+                                            <ui:Button Content="Close" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding ClosePrCommand}"
+                                                       AutomationProperties.Name="Close pull request" />
+                                            <ui:Button Content="Mark ready" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding MarkPrReadyCommand}"
+                                                       AutomationProperties.Name="Mark pull request ready for review">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding PullRequestDetail.IsDraft}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                            <ui:Button Content="Open on GitHub" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Icon="{ui:SymbolIcon Open24}"
+                                                       Command="{Binding OpenPullRequestCommand}"
+                                                       CommandParameter="{Binding SelectedPullRequest}"
+                                                       AutomationProperties.Name="Open pull request on GitHub" />
+                                        </WrapPanel>
+
+                                        <!-- Merge row -->
+                                        <WrapPanel Margin="0,0,0,4">
+                                            <TextBlock Text="Merge:" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,6"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.MergeStrategies}"
+                                                      SelectedItem="{Binding SelectedMergeStrategy}"
+                                                      Width="110" FontSize="12" Margin="0,0,6,6"
+                                                      AutomationProperties.Name="Merge strategy" />
+                                            <CheckBox Content="Delete branch" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,6"
+                                                      IsChecked="{Binding MergeDeleteBranch}"
+                                                      AutomationProperties.Name="Delete branch after merge" />
+                                            <ui:Button Content="Merge" Appearance="Primary" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding MergePrCommand}"
+                                                       AutomationProperties.Name="Merge pull request" />
+                                        </WrapPanel>
+
+                                        <!-- Review row -->
+                                        <ui:TextBox Text="{Binding ReviewBody, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="Review comment (required for request changes)"
+                                                    AcceptsReturn="True" MinHeight="40" MaxHeight="90"
+                                                    VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Review comment" />
+                                        <WrapPanel>
+                                            <TextBlock Text="Review:" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,6"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <ui:Button Content="Approve" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding ReviewPrCommand}"
+                                                       CommandParameter="{x:Static models:ReviewAction.Approve}"
+                                                       AutomationProperties.Name="Approve pull request" />
+                                            <ui:Button Content="Request changes" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding ReviewPrCommand}"
+                                                       CommandParameter="{x:Static models:ReviewAction.RequestChanges}"
+                                                       AutomationProperties.Name="Request changes on pull request" />
+                                            <ui:Button Content="Comment review" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                       Command="{Binding ReviewPrCommand}"
+                                                       CommandParameter="{x:Static models:ReviewAction.Comment}"
+                                                       AutomationProperties.Name="Submit review comment" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Grid>
             </TabItem>
 
