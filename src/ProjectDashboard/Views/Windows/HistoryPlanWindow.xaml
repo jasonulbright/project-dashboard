@@ -1,0 +1,133 @@
+<ui:FluentWindow
+    x:Class="ProjectDashboard.Views.Windows.HistoryPlanWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:pages="clr-namespace:ProjectDashboard.ViewModels.Pages"
+    Title="Plan a history edit"
+    Width="900"
+    Height="620"
+    FontFamily="Segoe UI"
+    ShowInTaskbar="False"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    WindowBackdropType="Mica">
+
+    <ui:FluentWindow.InputBindings>
+        <KeyBinding Key="Up" Modifiers="Alt" Command="{Binding MoveUpCommand}" />
+        <KeyBinding Key="Down" Modifiers="Alt" Command="{Binding MoveDownCommand}" />
+        <KeyBinding Key="D" Modifiers="Ctrl" Command="{Binding ToggleDropCommand}" />
+        <KeyBinding Key="S" Modifiers="Ctrl" Command="{Binding ToggleSquashCommand}" />
+    </ui:FluentWindow.InputBindings>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="Plan a history edit" ShowMaximize="False" ShowMinimize="False" />
+
+        <TextBlock Grid.Row="1" Margin="16,8,16,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Text="Oldest first — the order git replays them. Alt+Up and Alt+Down move the selected commit, Ctrl+D marks it dropped, Ctrl+S folds it into the commit above it." />
+
+        <TextBlock Grid.Row="2" Margin="16,6,16,8" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                   Text="One kind of change per apply: a reorder, or drops, or a squash. Each rewrites the range, so the next kind is planned on the history this one produces." />
+
+        <Grid Grid.Row="3" Margin="16,0,16,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="360" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="8,6" Margin="0,0,12,0">
+                <ListBox x:Name="PlanList" ItemsSource="{Binding Commits}"
+                         SelectedIndex="{Binding SelectedIndex}"
+                         Background="Transparent" BorderThickness="0"
+                         HorizontalContentAlignment="Stretch"
+                         AutomationProperties.Name="Planned commits, oldest first">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type pages:PlannedCommit}">
+                            <DockPanel Margin="0,2">
+                                <TextBlock DockPanel.Dock="Left" Width="54" Text="{Binding MarkLabel}"
+                                           FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock DockPanel.Dock="Left" Width="76" Text="{Binding ShortSha}"
+                                           FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                <CheckBox DockPanel.Dock="Right" Content="squash" FontSize="11" Margin="8,0,0,0"
+                                          IsChecked="{Binding SquashIntoPrevious}"
+                                          AutomationProperties.Name="Fold this commit into the one above it" />
+                                <CheckBox DockPanel.Dock="Right" Content="drop" FontSize="11" Margin="8,0,0,0"
+                                          IsChecked="{Binding Drop}"
+                                          AutomationProperties.Name="Drop this commit" />
+                                <TextBlock Text="{Binding Subject}" FontSize="12"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="8,6">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Resulting history (preview)" FontSize="12" FontWeight="SemiBold"
+                               Margin="4,2,4,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Preview}"
+                             Background="Transparent" BorderThickness="0" Focusable="False"
+                             AutomationProperties.Name="Resulting history preview">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding}"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="4" Margin="16,10,16,0" FontSize="12" TextWrapping="Wrap"
+                   Text="{Binding StatusText}"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   AutomationProperties.Name="Plan status" />
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,10,16,16">
+            <ui:Button Content="Move _up" Padding="12,5" Margin="0,0,8,0"
+                       Command="{Binding MoveUpCommand}"
+                       AutomationProperties.Name="Move the selected commit earlier in history" />
+            <ui:Button Content="Move _down" Padding="12,5" Margin="0,0,8,0"
+                       Command="{Binding MoveDownCommand}"
+                       AutomationProperties.Name="Move the selected commit later in history" />
+            <ui:Button Content="Toggle dro_p" Padding="12,5" Margin="0,0,8,0"
+                       Command="{Binding ToggleDropCommand}"
+                       AutomationProperties.Name="Toggle dropping the selected commit" />
+            <ui:Button Content="Toggle _squash" Padding="12,5" Margin="0,0,20,0"
+                       Command="{Binding ToggleSquashCommand}"
+                       AutomationProperties.Name="Toggle folding the selected commit into the one above it" />
+            <ui:Button Content="Reset _marks" Padding="12,5" Margin="0,0,8,0"
+                       Command="{Binding ResetPlanCommand}"
+                       AutomationProperties.Name="Discard every move and mark" />
+            <ui:Button x:Name="CancelButton" Content="Cancel" Padding="14,5" Margin="0,0,8,0"
+                       IsCancel="True" Click="OnCancel"
+                       AutomationProperties.Name="Close without applying anything" />
+            <ui:Button x:Name="ApplyButton" Content="Apply" Padding="14,5" Appearance="Primary"
+                       IsEnabled="{Binding CanApply}" Click="OnApply"
+                       AutomationProperties.Name="Apply this plan" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
