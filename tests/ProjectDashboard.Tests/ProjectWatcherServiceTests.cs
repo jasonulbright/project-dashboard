@@ -130,9 +130,15 @@ public class ProjectWatcherServiceTests
         // Hold until a full quiet window passes with no further signal: a rogue
         // duplicate arriving after coverage would otherwise land after the
         // snapshot and escape the count ceiling below. The window exceeds the
-        // debounce, so any signal already in flight arrives inside it.
+        // debounce, so any signal already in flight arrives inside it. The
+        // drain is capped: a watcher stuck signaling continuously must fail
+        // loudly here, not hang the run (xunit has no per-test timeout).
+        var drains = 0;
         while (await harness.SignalArrivedWithinAsync(QuietWindow))
         {
+            if (++drains >= 10)
+                Assert.Fail($"signals still arriving after {drains} quiet-window drains: " +
+                    string.Join(" | ", harness.Signals.Select(b => string.Join(",", b))));
         }
 
         var batches = harness.Signals;
