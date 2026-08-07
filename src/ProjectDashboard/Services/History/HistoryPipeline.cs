@@ -167,7 +167,7 @@ public sealed class HistoryPipeline
         }
         if (scratchHeadRef is not null)
             await RunGitCheckedAsync(options.TargetBareRepository, ["update-ref", "-d", scratchHeadRef], "align-head", ct);
-        await AlignTargetHeadAsync(options, ct);
+        await AlignTargetHeadAsync(options, index, marksPath, ct);
 
         return new HistoryPipelineResult
         {
@@ -242,8 +242,13 @@ public sealed class HistoryPipeline
     /// Points target HEAD where source HEAD points. The import feed carries no HEAD
     /// record (see <see cref="BuildImportFeed"/>), so without this the target keeps
     /// whatever symref `git init` chose — possibly naming a branch that does not exist.
+    /// A detached HEAD names a commit oid; under a content rewrite that source oid does
+    /// not exist in the target, so it must be mapped through original-oid → mark → import
+    /// oid before it is written, or target HEAD would point at unscrubbed (or absent)
+    /// content.
     /// </summary>
-    private async Task AlignTargetHeadAsync(HistoryPipelineOptions options, CancellationToken ct)
+    private async Task AlignTargetHeadAsync(
+        HistoryPipelineOptions options, FastExportIndex index, string marksPath, CancellationToken ct)
     {
         var symref = await ProcessRunner.RunAsync(
             _gitExe, ["symbolic-ref", "-q", "HEAD"], options.SourceRepository,
@@ -257,10 +262,32 @@ public sealed class HistoryPipeline
 
         // Detached: --no-deref writes HEAD itself; a plain update-ref would follow the
         // target's default symref and recreate the phantom branch.
-        var sha = (await RunGitCheckedAsync(options.SourceRepository,
+        var sourceOid = (await RunGitCheckedAsync(options.SourceRepository,
             ["rev-parse", "--verify", "HEAD"], "align-head", ct)).StdOut.Trim();
+        var targetOid = MapSourceOidToTarget(sourceOid, index, marksPath);
         await RunGitCheckedAsync(options.TargetBareRepository,
-            ["update-ref", "--no-deref", "HEAD", sha], "align-head", ct);
+            ["update-ref", "--no-deref", "HEAD", targetOid], "align-head", ct);
+    }
+
+    /// <summary>Resolves a source commit oid to its imported oid via original-oid → mark → marks file. Fails loudly when the source oid is not in the exported history.</summary>
+    private static string MapSourceOidToTarget(string sourceOid, FastExportIndex index, string marksPath)
+    {
+        var entry = index.CommitsInOrder.FirstOrDefault(c =>
+            string.Equals(c.OriginalOid, sourceOid, StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
+            throw new HistoryPipelineException(
+                "align-head", $"detached HEAD commit {sourceOid} is absent from the exported history — cannot align target HEAD");
+
+        foreach (var raw in File.ReadLines(marksPath))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.Length == 0 || line[0] != ':') continue;
+            var sp = line.IndexOf(' ');
+            if (sp > 1 && long.TryParse(line.AsSpan(1, sp - 1), out var mark) && mark == entry.Mark)
+                return line[(sp + 1)..];
+        }
+        throw new HistoryPipelineException(
+            "align-head", $"detached HEAD commit {sourceOid} (mark :{entry.Mark}) is missing from the import marks file");
     }
 
     private async Task<ProcessResult> RunGitCheckedAsync(

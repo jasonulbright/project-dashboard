@@ -405,6 +405,51 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task DetachedHeadWithUniqueCommitAlignsToRewrittenCommit()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", $"base {Needle}\n");
+        f.CommitAll("base");
+        f.Git("checkout", "-q", "--detach", "HEAD");
+        f.Write("detached.txt", $"detached {Needle}\n");
+        f.CommitAll("reachable only from HEAD");
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        // Target HEAD is detached and points at the rewritten (not the source) commit.
+        Assert.StartsWith("detached ", HistoryTestSupport.DescribeHead(f.TargetPath));
+        var targetHead = FixtureRepo.RunGit(f.TargetPath, ["rev-parse", "HEAD"], null, null).Trim();
+        Assert.Equal(report.CommitMap[oldHead], targetHead);
+        Assert.NotEqual(oldHead, targetHead);
+        Assert.DoesNotContain("pd-import", FixtureRepo.RunGit(f.TargetPath, ["for-each-ref"], null, null));
+
+        // The commit target HEAD names carries scrubbed content.
+        var shown = FixtureRepo.RunGit(f.TargetPath, ["show", $"{targetHead}:detached.txt"], null, null);
+        Assert.Contains(Redacted, shown);
+        Assert.DoesNotContain(Needle, shown);
+    }
+
+    [Fact]
+    public async Task DetachedHeadAtBranchTipAlignsToRewrittenTip()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", $"tip {Needle}\n");
+        f.CommitAll("base");
+        f.Git("checkout", "-q", "--detach", "HEAD");
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        Assert.StartsWith("detached ", HistoryTestSupport.DescribeHead(f.TargetPath));
+        var targetHead = FixtureRepo.RunGit(f.TargetPath, ["rev-parse", "HEAD"], null, null).Trim();
+        Assert.Equal(report.CommitMap[oldHead], targetHead);
+        var shown = FixtureRepo.RunGit(f.TargetPath, ["show", $"{targetHead}:a.txt"], null, null);
+        Assert.Contains(Redacted, shown);
+        Assert.DoesNotContain(Needle, shown);
+    }
+
+    [Fact]
     public async Task RegexRewriteOverUnicodeContent()
     {
         using var f = Fixture();
