@@ -227,4 +227,116 @@ public class WindowPlacementTests
 
         Assert.Equal((5660.0, 1030.0), result);
     }
+
+    // ── Saved settings → startup placement ───────────────────────────────────
+
+    /// <summary>Where the window already is when the saved placement is applied.</summary>
+    private static readonly MainWindow.ScreenRect CurrentRect = new(1000, 200, 1600, 900);
+
+    [Fact]
+    public void DeviceRectSavedOnALowerDpiSecondary_RestoresWhereItWasSaved()
+    {
+        // Saved at device x=4000 on the 100% secondary, relaunched with the window
+        // starting on the 200% primary. A rect in device pixels does not move with
+        // the starting monitor's scale, so it lands back on the secondary.
+        var settings = new AppSettings { WindowDeviceRect = new SavedWindowRect(4000, 100, 1200, 800) };
+
+        var placement = MainWindow.SavedPlacement(settings, 2, CurrentRect, MixedDpi);
+
+        Assert.Equal(new MainWindow.ScreenRect(4000, 100, 1200, 800), placement.Rect);
+        Assert.False(placement.Maximized);
+    }
+
+    [Fact]
+    public void MaximizedRestore_ClampsTheRectItWillRestoreTo()
+    {
+        // Saved maximized on the mixed-DPI secondary, relaunched after unplugging it.
+        // The saved rect is the restore bounds the maximized window carries, so the
+        // clamp has to reach it before the window maximizes.
+        var settings = new AppSettings
+        {
+            WindowDeviceRect = new SavedWindowRect(4200, 300, 1200, 800),
+            WindowMaximized = true,
+        };
+
+        var placement = MainWindow.SavedPlacement(settings, 2, CurrentRect, [MixedDpi[0]]);
+
+        Assert.Equal(new MainWindow.ScreenRect(3740, 300, 1200, 800), placement.Rect);
+        Assert.True(placement.Maximized);
+    }
+
+    [Fact]
+    public void LegacyDipRect_IsScaledByTheStartingMonitorAndClamped()
+    {
+        // A settings file predating the device-pixel rect: 4000 was DIPs on the 100%
+        // secondary, and the scale it was written in is not recorded. Read against a
+        // 200% start it doubles to 8000 and the clamp is what keeps it reachable.
+        var settings = new AppSettings
+        {
+            WindowLeft = 4000, WindowTop = 200, WindowWidth = 1200, WindowHeight = 800,
+        };
+
+        var placement = MainWindow.SavedPlacement(settings, 2, CurrentRect, MixedDpi);
+
+        Assert.Equal(new MainWindow.ScreenRect(5660, 400, 2400, 1600), placement.Rect);
+    }
+
+    [Fact]
+    public void LegacyDipRect_AtTheStartingMonitorsOwnScale_IsExact()
+    {
+        var settings = new AppSettings
+        {
+            WindowLeft = 300, WindowTop = 150, WindowWidth = 1200, WindowHeight = 800,
+        };
+
+        var placement = MainWindow.SavedPlacement(settings, 1, CurrentRect, MixedDpi);
+
+        Assert.Equal(new MainWindow.ScreenRect(300, 150, 1200, 800), placement.Rect);
+    }
+
+    [Fact]
+    public void NeverSavedPosition_LeavesTheWindowWhereItIs()
+    {
+        var placement = MainWindow.SavedPlacement(new AppSettings(), 1, CurrentRect, MixedDpi);
+
+        Assert.Equal(CurrentRect, placement.Rect);
+    }
+
+    [Fact]
+    public void NeverSavedPositionWhileMaximized_StillMaximizes()
+    {
+        var placement = MainWindow.SavedPlacement(
+            new AppSettings { WindowMaximized = true }, 1, CurrentRect, MixedDpi);
+
+        Assert.Equal(CurrentRect, placement.Rect);
+        Assert.True(placement.Maximized);
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 800)]
+    [InlineData(1200, 0)]
+    [InlineData(-1200, 800)]
+    public void UnusableSavedSize_KeepsTheWindowsOwnSize(double width, double height)
+    {
+        var settings = new AppSettings
+        {
+            WindowLeft = 300, WindowTop = 150, WindowWidth = width, WindowHeight = height,
+        };
+
+        var placement = MainWindow.SavedPlacement(settings, 1, CurrentRect, MixedDpi);
+
+        Assert.Equal(300, placement.Rect.Left);
+        Assert.Equal(150, placement.Rect.Top);
+        Assert.True(placement.Rect.Width > 0 && placement.Rect.Height > 0);
+    }
+
+    [Fact]
+    public void NonFiniteSavedPosition_LeavesTheWindowWhereItIs()
+    {
+        var settings = new AppSettings { WindowLeft = double.NaN, WindowTop = 150 };
+
+        var placement = MainWindow.SavedPlacement(settings, 1, CurrentRect, MixedDpi);
+
+        Assert.Equal(CurrentRect, placement.Rect);
+    }
 }

@@ -33,11 +33,22 @@ public sealed class AppSettings
     /// <summary>Card density: "compact" tightens padding and minimum height; anything else is comfortable.</summary>
     public string CardDensity { get; set; } = "comfortable";
 
-    // Window state
+    /// <summary>
+    /// Saved window rect in device pixels. Null in a settings file written before this
+    /// field existed, where the per-monitor DIP fields below hold the rect instead.
+    /// </summary>
+    public SavedWindowRect? WindowDeviceRect { get; set; }
+
+    // Window rect in the closing monitor's DIPs, read only to migrate a settings file
+    // that predates WindowDeviceRect. -1/-1 is the never-saved default.
     public double WindowLeft { get; set; } = -1;
     public double WindowTop { get; set; } = -1;
     public double WindowWidth { get; set; } = 1621;
     public double WindowHeight { get; set; } = 823;
+
     public bool WindowMaximized { get; set; }
     public bool PaneOpen { get; set; } = true;
 }
+
+/// <summary>A window rect in device pixels: the unit monitor rectangles are also in.</summary>
+public sealed record SavedWindowRect(int Left, int Top, int Width, int Height);

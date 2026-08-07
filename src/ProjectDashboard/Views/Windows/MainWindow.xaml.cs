@@ -149,43 +149,20 @@ public partial class MainWindow : INavigationWindow
 
     private void FluentWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        // Restore window state
         var settingsService = _serviceProvider.GetRequiredService<SettingsService>();
         var settings = settingsService.Load();
-        // -1/-1 is the never-saved default; geometry cannot distinguish it from
-        // a real position, so it short-circuits to OS placement.
-        if (!(settings.WindowLeft == -1 && settings.WindowTop == -1)
-            && double.IsFinite(settings.WindowLeft) && double.IsFinite(settings.WindowTop))
-        {
-            Left = settings.WindowLeft;
-            Top = settings.WindowTop;
-        }
-        // Assigning a non-finite or non-positive length throws in WPF; a damaged
-        // settings file must not take the window down at startup.
-        if (double.IsFinite(settings.WindowWidth) && settings.WindowWidth > 0)
-            Width = settings.WindowWidth;
-        if (double.IsFinite(settings.WindowHeight) && settings.WindowHeight > 0)
-            Height = settings.WindowHeight;
-        if (settings.WindowMaximized)
-            WindowState = WindowState.Maximized;
+        RestoreSavedPlacement(settings);
         RootNavigation.IsPaneOpen = settings.PaneOpen;
 
-        // Deferred: the assignments above reach the HWND during layout, and the
-        // correction reads the real window rect rather than the requested one.
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(EnsureRestoredPositionIsOnScreen));
-
-        // Save on close
         Closing += (_, _) =>
         {
             var s = settingsService.Load();
             s.WindowMaximized = WindowState == WindowState.Maximized;
-            if (WindowState == WindowState.Normal)
-            {
-                s.WindowLeft = Left;
-                s.WindowTop = Top;
-                s.WindowWidth = Width;
-                s.WindowHeight = Height;
-            }
+            // A maximized window's rect describes the monitor, not the placement to
+            // come back to, so the stored one stands.
+            if (WindowState == WindowState.Normal && DeviceRect() is { } rect)
+                s.WindowDeviceRect = new SavedWindowRect(
+                    (int)rect.Left, (int)rect.Top, (int)rect.Width, (int)rect.Height);
             s.PaneOpen = RootNavigation.IsPaneOpen;
             settingsService.Save(s);
         };
@@ -200,6 +177,50 @@ public partial class MainWindow : INavigationWindow
 
     /// <summary>A screen rectangle in device pixels: a monitor work area or a window rect.</summary>
     public readonly record struct ScreenRect(double Left, double Top, double Width, double Height);
+
+    /// <summary>Startup geometry: a rect already corrected onto a live monitor, and the state to apply after it.</summary>
+    public readonly record struct RestoredPlacement(ScreenRect Rect, bool Maximized);
+
+    /// <summary>
+    /// Startup placement for the saved window state, in device pixels. The clamp runs
+    /// whatever the saved state: a window that comes back maximized carries the saved
+    /// rect as its restore bounds, Windows does not validate those against the current
+    /// monitors, and an unvalidated one sends Restore to a monitor that may be gone.
+    /// Applying the rect before the maximize is what puts the corrected rectangle
+    /// there. <paramref name="current"/> — the window's own rect — supplies whatever
+    /// the settings do not hold.
+    /// </summary>
+    public static RestoredPlacement SavedPlacement(
+        AppSettings settings, double dpiScale, ScreenRect current, IReadOnlyList<ScreenRect> screens)
+    {
+        var rect = SavedRect(settings, dpiScale) ?? current;
+        if (!double.IsFinite(rect.Width) || rect.Width <= 0) rect = rect with { Width = current.Width };
+        if (!double.IsFinite(rect.Height) || rect.Height <= 0) rect = rect with { Height = current.Height };
+
+        if (ClampToMonitors(rect.Left, rect.Top, rect.Width, rect.Height, screens) is { } placed)
+            rect = rect with { Left = placed.Left, Top = placed.Top };
+
+        return new RestoredPlacement(rect, settings.WindowMaximized);
+    }
+
+    /// <summary>
+    /// The saved rect in device pixels, or null when nothing usable is stored. A rect
+    /// carried in the legacy DIP fields was written in the closing monitor's scale,
+    /// which is not recorded: the starting monitor's scale is the only reading
+    /// available for it, and the clamp bounds how far that reading can be wrong.
+    /// </summary>
+    private static ScreenRect? SavedRect(AppSettings settings, double dpiScale)
+    {
+        if (settings.WindowDeviceRect is { } saved)
+            return new ScreenRect(saved.Left, saved.Top, saved.Width, saved.Height);
+        if (settings.WindowLeft == -1 && settings.WindowTop == -1) return null;
+        if (!double.IsFinite(settings.WindowLeft) || !double.IsFinite(settings.WindowTop)) return null;
+
+        var scale = double.IsFinite(dpiScale) && dpiScale > 0 ? dpiScale : 1;
+        return new ScreenRect(
+            settings.WindowLeft * scale, settings.WindowTop * scale,
+            settings.WindowWidth * scale, settings.WindowHeight * scale);
+    }
 
     /// <summary>
     /// Placement policy for a saved window position, in device pixels against the
@@ -260,28 +281,35 @@ public partial class MainWindow : INavigationWindow
     }
 
     /// <summary>
-    /// Corrects the restored position in DEVICE pixels against the live monitor work
-    /// areas. Window.Left/Top are per-monitor DIPs under this app's PerMonitorV2
-    /// manifest while SystemParameters.VirtualScreen* are system-DPI DIPs: on a 200%
-    /// primary beside a 100% secondary the virtual screen reads 2880 DIPs wide, and a
-    /// window saved on the secondary at 3840 clamps to 2780 and restores displaced.
-    /// Both sides of the comparison are device pixels here, so no scale enters it.
-    /// A non-Normal state is left alone — Windows owns the restore bounds of a
-    /// maximized window and sanitizes them itself.
+    /// Applies the saved placement through the HWND. Window.Left/Top are per-monitor
+    /// DIPs under this app's PerMonitorV2 manifest, so a rect saved on one monitor and
+    /// re-applied through them lands scaled by the ratio of the two monitors' DPIs —
+    /// on a 200% primary beside a 100% secondary a window saved at device x=4000
+    /// returns at 8000, off every screen. Save, restore and clamp all stay in device
+    /// pixels here, so no scale enters any of them.
     /// </summary>
-    private void EnsureRestoredPositionIsOnScreen()
+    private void RestoreSavedPlacement(AppSettings settings)
     {
-        if (WindowState != WindowState.Normal) return;
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return;
+        var current = DeviceRect();
+        var placement = SavedPlacement(settings, VisualTreeHelper.GetDpi(this).DpiScaleX,
+            current ?? new ScreenRect(0, 0, ActualWidth, ActualHeight), WorkAreas());
 
-        var placed = ClampToMonitors(
-            rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, WorkAreas());
-        if (placed is not { } position || (position.Left == rect.Left && position.Top == rect.Top))
-            return;
+        if (current is { } rect && rect != placement.Rect)
+            SetWindowPos(hwnd, IntPtr.Zero,
+                (int)placement.Rect.Left, (int)placement.Rect.Top,
+                (int)placement.Rect.Width, (int)placement.Rect.Height,
+                SwpNoZOrder | SwpNoActivate);
 
-        SetWindowPos(hwnd, IntPtr.Zero, (int)position.Left, (int)position.Top, 0, 0,
-            SwpNoSize | SwpNoZOrder | SwpNoActivate);
+        if (placement.Maximized) WindowState = WindowState.Maximized;
+    }
+
+    /// <summary>The window's own rect in device pixels; null before its HWND exists.</summary>
+    private ScreenRect? DeviceRect()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return null;
+        return new ScreenRect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
     }
 
     /// <summary>
@@ -312,7 +340,7 @@ public partial class MainWindow : INavigationWindow
 
     private const int SmXVirtualScreen = 76, SmYVirtualScreen = 77,
                       SmCxVirtualScreen = 78, SmCyVirtualScreen = 79;
-    private const uint SwpNoSize = 0x0001, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+    private const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Win32Rect { public int Left, Top, Right, Bottom; }
