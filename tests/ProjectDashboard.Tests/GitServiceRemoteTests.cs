@@ -198,6 +198,38 @@ public class GitServiceRemoteTests
     }
 
     [Fact]
+    public async Task Status_FetchOnlyOrigin_DoesNotInventRemoteUrl()
+    {
+        // A fetch-only stanza (remote.origin.fetch set, url unset) makes `git
+        // remote` list origin while `git remote get-url origin` exits 0 echoing
+        // the literal name "origin" — which must never surface as a RemoteUrl.
+        using var repo = await TempRepo.CreateWithCommitAsync("fetch-only-origin");
+        await repo.GitAsync("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+
+        Assert.Null(await _git.ResolveDefaultRemoteAsync(repo.Path));
+        var status = await _git.GetStatusAsync(repo.Path);
+
+        Assert.False(status.HasError);
+        Assert.Equal("", status.RemoteUrl);
+    }
+
+    [Fact]
+    public async Task Status_UrlLessOrigin_YieldsToRemoteWithUrl()
+    {
+        using var origin = await Origin.CreateAsync();
+        using var other = await Origin.CreateAsync();
+        using var clone = await TempRepo.CloneFromAsync(origin.Bare, "urlless-origin");
+        await clone.GitAsync("remote", "add", "backup", other.Url);
+        await clone.GitAsync("config", "--unset", "remote.origin.url");
+
+        Assert.Equal("backup", await _git.ResolveDefaultRemoteAsync(clone.Path));
+        var status = await _git.GetStatusAsync(clone.Path);
+
+        Assert.False(status.HasError);
+        Assert.Equal(other.Url, status.RemoteUrl);
+    }
+
+    [Fact]
     public async Task Push_NewBranchWithoutUpstream_SetsUpstreamOnOrigin()
     {
         using var origin = await Origin.CreateAsync();

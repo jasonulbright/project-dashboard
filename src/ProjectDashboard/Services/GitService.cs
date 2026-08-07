@@ -90,7 +90,10 @@ public class GitService
             var remote = await ResolveDefaultRemoteAsync(repoPath, ct);
             if (remote is not null)
             {
-                try { status.RemoteUrl = (await RunGitAsync(repoPath, ["remote", "get-url", remote], ct)).Trim(); }
+                // config --get, not `remote get-url`: get-url's legacy name-as-URL
+                // fallback exits 0 and echoes the bare remote name when
+                // remote.<name>.url is unset, which would surface here as a URL.
+                try { status.RemoteUrl = (await RunGitAsync(repoPath, ["config", "--get", $"remote.{remote}.url"], ct)).Trim(); }
                 catch { /* remote removed between listing and read */ }
             }
         }
@@ -366,21 +369,30 @@ public class GitService
     }
 
     /// <summary>
-    /// The remote a repo's remote-dependent operations target: origin when
-    /// present, else the only/first listed remote; null when none exist. Single
-    /// authority for remote resolution — any operation needing a remote name
-    /// (status, push, and future remote-mutating commands) resolves through
-    /// here, because a second resolution site reintroduces origin-hardcoding
-    /// that misreads renamed-remote repos as local.
+    /// The remote a repo's remote-dependent operations target: the first remote
+    /// whose remote.&lt;name&gt;.url is set, origin preferred; null when no remote
+    /// has a URL. Single authority for remote resolution — any operation needing
+    /// a remote name (status, push, and future remote-mutating commands)
+    /// resolves through here, because a second resolution site reintroduces
+    /// origin-hardcoding that misreads renamed-remote repos as local.
     /// </summary>
     public async Task<string?> ResolveDefaultRemoteAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["remote"], ct);
         if (!result.Success) return null;
         var remotes = result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(r => r.Trim()).Where(r => r.Length > 0).ToList();
-        if (remotes.Count == 0) return null;
-        return remotes.FirstOrDefault(r => r == "origin") ?? remotes[0];
+            .Select(r => r.Trim()).Where(r => r.Length > 0)
+            .OrderBy(r => r == "origin" ? 0 : 1);
+
+        // `git remote` also lists fetch-only stanzas (remote.<name>.fetch with no
+        // url). A URL-less remote can be neither fetched nor pushed, so it must
+        // not shadow a later remote that has a URL.
+        foreach (var remote in remotes)
+        {
+            var url = await RunAsync(repoPath, ["config", "--get", $"remote.{remote}.url"], ct);
+            if (url.Success && url.StdOut.Trim().Length > 0) return remote;
+        }
+        return null;
     }
 
     // ── Stash ───────────────────────────────────────────────────────────────
