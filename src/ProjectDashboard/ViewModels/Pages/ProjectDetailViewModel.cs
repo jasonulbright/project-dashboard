@@ -35,11 +35,16 @@ public partial class ProjectDetailViewModel : ObservableObject
     public IRelayCommand<GitCommit> OpenCommitCommand { get; }
     public IRelayCommand<GitHubIssue> OpenIssueCommand { get; }
 
-    public ProjectDetailViewModel(ProjectDiscoveryService discoveryService, GitService gitService, GitHubService gitHubService)
+    public ProjectDetailViewModel(
+        ProjectDiscoveryService discoveryService,
+        GitService gitService,
+        GitHubService gitHubService,
+        IRewriteSessionFactory? rewriteSessions = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
         _gitHubService = gitHubService;
+        _rewriteSessions = rewriteSessions;
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);
@@ -155,6 +160,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         StateBannerVisible = false;
         StateBannerText = "";
         ResetGitHubState();
+        // A held dry run belongs to the repository it ran against; carrying it across a switch
+        // would arm Execute on the new project with the previous one's report on screen.
+        ResetRewriteState();
 
         WorkingStateRefresh = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";
