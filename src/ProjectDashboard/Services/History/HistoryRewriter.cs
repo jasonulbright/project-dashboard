@@ -499,6 +499,15 @@ public sealed class HistoryRewriter
                 why = "pattern uses (?…) constructs POSIX ERE lacks; scrub grep skipped";
                 return false;
             }
+            // POSIX character classes [:…:], collating [.….], and equivalence [=…=]
+            // are literal bracket contents to .NET but structural to ERE, so the two
+            // engines read the same bracket expression differently — grepping the ERE
+            // reading would verify the wrong thing.
+            if (c == '[' && i + 1 < pattern.Length && pattern[i + 1] is ':' or '.' or '=')
+            {
+                why = "pattern uses a POSIX class/collating/equivalence bracket ERE and .NET read differently; scrub grep skipped";
+                return false;
+            }
             if (c == '\\')
             {
                 if (i + 1 >= pattern.Length) { why = "pattern ends in a bare backslash"; return false; }

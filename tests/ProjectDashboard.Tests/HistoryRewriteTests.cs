@@ -519,6 +519,28 @@ public class HistoryRewriterTests(ITestOutputHelper output)
             FixtureRepo.RunGit(f.TargetPath, ["show", $"{report.CommitMap[head]}:a.txt"], null, null));
     }
 
+    [Theory]
+    [InlineData("[[:digit:]]")]
+    [InlineData("[[.x.]]")]
+    [InlineData("[[=a=]]")]
+    public async Task PosixBracketExpressionsAreRefusedByTheEreGate(string pattern)
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "plain content 7\n");
+        f.CommitAll("one");
+
+        // These are literal bracket contents to .NET but structural to POSIX ERE, so the
+        // scrub grep must skip rather than verify the ERE reading of a different edit.
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new RegexReplace { Pattern = pattern, Replacement = "Z" }]
+        });
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.False(scrub.Performed);
+        Assert.Contains("POSIX", scrub.Note);
+    }
+
     [Fact]
     public async Task EmptyReplacementDeletesNeedleAcrossHistory()
     {
