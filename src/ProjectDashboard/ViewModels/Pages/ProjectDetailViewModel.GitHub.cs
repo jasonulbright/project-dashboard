@@ -19,6 +19,7 @@ public partial class ProjectDetailViewModel
     // Labels defined on the repo, fetched once per project for the add/remove editor.
     [ObservableProperty] private ObservableCollection<string> _availableLabelNames = [];
     private bool _labelsLoaded;
+    private Task<List<Label>?>? _labelFetch;
 
     // ── Issues detail + compose ─────────────────────────────────────────────────
     [ObservableProperty] private GitHubIssue? _selectedIssue;
@@ -68,6 +69,8 @@ public partial class ProjectDetailViewModel
         GitHubStatusText = "";
         AvailableLabelNames = [];
         _labelsLoaded = false;
+        // The in-flight fetch belongs to the project being left; the new one refetches.
+        _labelFetch = null;
 
         SelectedIssue = null;
         IssueDetail = null;
@@ -168,8 +171,19 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         if (slug.Length == 0) return;
         var gen = _generation;
-        var labels = await FetchLabelsAsync(slug);
-        if (!IsCurrent(gen) || labels is null) return; // null = fetch failed; retry next open
+        // _labelsLoaded is only set after the await, so every issue selected before the
+        // first fetch returns would start another gh label list for the same repo.
+        // Joining the in-flight one keeps it at a single process per project.
+        var fetch = _labelFetch ??= FetchLabelsAsync(slug);
+        var labels = await fetch;
+        if (labels is null)
+        {
+            // null = fetch failed. Dropping the task lets the next open retry rather
+            // than caching the failure for the life of the project.
+            if (ReferenceEquals(_labelFetch, fetch)) _labelFetch = null;
+            return;
+        }
+        if (!IsCurrent(gen)) return;
         AvailableLabelNames = new ObservableCollection<string>(labels.Select(l => l.Name));
         _labelsLoaded = true;
     }

@@ -255,6 +255,90 @@ public class ProjectDetailViewModelGitHubTests
         Assert.Equal("Pick a label to add first.", vm.GitHubStatusText);
     }
 
+    /// <summary>
+    /// Arrowing down the issue list loads a detail per selection, and each one wants the
+    /// repo's labels. The "already loaded" flag is only set once a fetch returns, so
+    /// every selection made while the first fetch is still running used to start its own
+    /// gh label list — one extra process per issue looked at, all fetching one list.
+    /// </summary>
+    [Fact]
+    public async Task SelectionsMadeWhileTheLabelFetchIsRunning_JoinItInsteadOfStartingAnother()
+    {
+        var vm = new DeferredLabelViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+
+        for (var number = 1; number <= 10; number++)
+            vm.SelectedIssue = new GitHubIssue { Number = number, Title = "x" };
+
+        Assert.Equal(1, vm.LabelFetches);
+
+        vm.ReleaseLabels([new Label { Name = "bug" }, new Label { Name = "p1" }]);
+        await WaitUntil(() => vm.AvailableLabelNames.Count == 2);
+        Assert.Equal(1, vm.LabelFetches);
+    }
+
+    [Fact]
+    public async Task AFailedLabelFetch_IsNotCachedAsPermanent()
+    {
+        // Released up front, so every fetch fails immediately and the awaited command
+        // path returns only once the failure has been handled.
+        var vm = new DeferredLabelViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.ReleaseLabels(null);
+
+        await vm.ShowNewIssueCommand.ExecuteAsync(null);
+        Assert.Equal(1, vm.LabelFetches);
+        Assert.Empty(vm.AvailableLabelNames);
+
+        await vm.ShowNewIssueCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.LabelFetches);
+    }
+
+    [Fact]
+    public async Task AProjectSwitch_DropsTheInFlightLabelFetch_SoTheNewRepoIsFetched()
+    {
+        var vm = new DeferredLabelViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.SelectedIssue = new GitHubIssue { Number = 1, Title = "x" };
+        Assert.Equal(1, vm.LabelFetches);
+
+        await vm.SetProjectAsync(RemoteProject());
+        vm.SelectedIssue = new GitHubIssue { Number = 2, Title = "y" };
+
+        Assert.Equal(2, vm.LabelFetches);
+    }
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 500 && !condition(); attempt++)
+            await Task.Delay(10);
+        Assert.True(condition(), "condition never held");
+    }
+
+    /// <summary>
+    /// Holds every label fetch open until the test releases it, so several issue details
+    /// can be in flight at once. The detail fetch stays synchronous: each selection must
+    /// reach the label load before the next selection is made.
+    /// </summary>
+    private sealed class DeferredLabelViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    {
+        private readonly TaskCompletionSource<List<Label>?> _labels =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int LabelFetches { get; private set; }
+
+        internal override Task<IssueDetail?> FetchIssueDetailAsync(string slug, int number)
+            => Task.FromResult<IssueDetail?>(new IssueDetail { Number = number, Title = "x", LabelNames = [] });
+
+        internal override Task<List<Label>?> FetchLabelsAsync(string slug)
+        {
+            LabelFetches++;
+            return _labels.Task;
+        }
+
+        public void ReleaseLabels(List<Label>? labels) => _labels.TrySetResult(labels);
+    }
+
     private static LabelCountingViewModel StubVm() => new()
     {
         Detail = new IssueDetail { Number = 7, Title = "x", LabelNames = ["bug"] },
