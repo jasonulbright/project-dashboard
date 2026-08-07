@@ -381,6 +381,7 @@ public partial class ProjectDetailViewModel
         var commit = SelectedCommit;
         var depth = DepthOfSelected;
         var repo = RepoPath;
+        var gen = _generation;
         if (surgery is null || commit is null || depth < 1) return;
 
         var message = await PromptForCommitMessageAsync(
@@ -394,7 +395,7 @@ public partial class ProjectDetailViewModel
                 "Reword")))
             return;
 
-        await RunSurgeryAsync($"Reword {commit.ShortHash}",
+        await RunSurgeryAsync($"Reword {commit.ShortHash}", repo, gen,
             policy => surgery.RewordAsync(repo, depth, commit.ShortHash, message, policy),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
@@ -406,6 +407,7 @@ public partial class ProjectDetailViewModel
         var commit = SelectedCommit;
         var index = SelectedCommitIndex;
         var repo = RepoPath;
+        var gen = _generation;
         if (surgery is null || commit is null || index < 0 || index + 1 >= Commits.Count) return;
 
         var previous = Commits[index + 1];
@@ -424,7 +426,7 @@ public partial class ProjectDetailViewModel
                 "Squash")))
             return;
 
-        await RunSurgeryAsync($"Squash {commit.ShortHash} into {previous.ShortHash}",
+        await RunSurgeryAsync($"Squash {commit.ShortHash} into {previous.ShortHash}", repo, gen,
             policy => surgery.SquashAsync(repo, depth, [previous.ShortHash, commit.ShortHash], message, policy),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
@@ -436,6 +438,7 @@ public partial class ProjectDetailViewModel
         var commit = SelectedCommit;
         var depth = DepthOfSelected;
         var repo = RepoPath;
+        var gen = _generation;
         if (surgery is null || commit is null || depth < 1) return;
 
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
@@ -446,7 +449,7 @@ public partial class ProjectDetailViewModel
                 "Drop")))
             return;
 
-        await RunSurgeryAsync($"Drop {commit.ShortHash}",
+        await RunSurgeryAsync($"Drop {commit.ShortHash}", repo, gen,
             policy => surgery.DropAsync(repo, depth, [commit.ShortHash], policy),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
@@ -466,6 +469,7 @@ public partial class ProjectDetailViewModel
         var commit = SelectedCommit;
         var index = SelectedCommitIndex;
         var repo = RepoPath;
+        var gen = _generation;
         if (surgery is null || commit is null || index < 0) return;
 
         var effect = mode switch
@@ -481,7 +485,7 @@ public partial class ProjectDetailViewModel
                 $"{mode} reset")))
             return;
 
-        await RunSurgeryAsync($"{mode} reset to {commit.ShortHash}",
+        await RunSurgeryAsync($"{mode} reset to {commit.ShortHash}", repo, gen,
             _ => surgery.ResetAsync(repo, commit.ShortHash, mode),
             RebaseConflictPolicy.AbortAndReport, retryable: false);
     }
@@ -492,6 +496,7 @@ public partial class ProjectDetailViewModel
         var surgery = Surgery;
         var commit = SelectedCommit;
         var repo = RepoPath;
+        var gen = _generation;
         if (surgery is null || commit is null) return;
 
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
@@ -501,7 +506,7 @@ public partial class ProjectDetailViewModel
                 "Revert")))
             return;
 
-        await RunSurgeryAsync($"Revert {commit.ShortHash}",
+        await RunSurgeryAsync($"Revert {commit.ShortHash}", repo, gen,
             _ => surgery.RevertAsync(repo, commit.ShortHash),
             RebaseConflictPolicy.AbortAndReport, retryable: false);
     }
@@ -512,6 +517,7 @@ public partial class ProjectDetailViewModel
         var surgery = Surgery;
         var commit = SelectedCommit;
         var repo = RepoPath;
+        var gen = _generation;
         if (surgery is null || commit is null) return;
 
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
@@ -521,7 +527,7 @@ public partial class ProjectDetailViewModel
                 "Cherry-pick")))
             return;
 
-        await RunSurgeryAsync($"Cherry-pick {commit.ShortHash}",
+        await RunSurgeryAsync($"Cherry-pick {commit.ShortHash}", repo, gen,
             _ => surgery.CherryPickAsync(repo, [commit.ShortHash]),
             RebaseConflictPolicy.AbortAndReport, retryable: false);
     }
@@ -533,6 +539,7 @@ public partial class ProjectDetailViewModel
         var commit = SelectedCommit;
         var index = SelectedCommitIndex;
         var repo = RepoPath;
+        var gen = _generation;
         var staged = WorkingState?.Staged.Count() ?? 0;
         if (surgery is null || commit is null || index < 0) return;
 
@@ -543,7 +550,7 @@ public partial class ProjectDetailViewModel
                 "Fold in")))
             return;
 
-        await RunSurgeryAsync($"Fold staged changes into {commit.ShortHash}",
+        await RunSurgeryAsync($"Fold staged changes into {commit.ShortHash}", repo, gen,
             policy => surgery.InjectStagedIntoAsync(repo, commit.ShortHash, policy),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
@@ -609,7 +616,7 @@ public partial class ProjectDetailViewModel
             _ => $"Reorder {shas.Count} commit(s)"
         };
 
-        await RunSurgeryAsync(label, policy => resolution.Kind switch
+        await RunSurgeryAsync(label, repo, gen, policy => resolution.Kind switch
         {
             HistoryPlanKind.Drop => surgery.DropAsync(repo, depth, shas, policy),
             HistoryPlanKind.Squash => surgery.SquashAsync(repo, depth, shas, null, policy),
@@ -625,6 +632,7 @@ public partial class ProjectDetailViewModel
         var operate = _surgeryRetry;
         var label = _surgeryRetryLabel;
         var repo = _surgeryRetryRepo;
+        var gen = _generation;
         if (operate is null || IsBusy || repo.Length == 0 || repo != RepoPath) return;
 
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
@@ -634,10 +642,11 @@ public partial class ProjectDetailViewModel
                 "Open in Terminal, or abort it there. Undo restores the backup either way.",
                 "Retry and stop")))
             return;
+        if (!IsCurrent(gen)) return;
 
         _surgeryRetry = null;
         SurgeryLeaveStoppedOfferVisible = false;
-        await RunSurgeryAsync($"{label}, stopping at the conflict", operate,
+        await RunSurgeryAsync($"{label}, stopping at the conflict", repo, gen, operate,
             RebaseConflictPolicy.LeaveStopped, retryable: false);
     }
 
@@ -647,6 +656,7 @@ public partial class ProjectDetailViewModel
         var undo = _surgeryUndo;
         var repo = _surgeryUndoRepo;
         var operation = _surgeryUndoOperation;
+        var gen = _generation;
         if (undo is null || IsBusy || repo.Length == 0 || repo != RepoPath) return;
 
         var dirty = WorkingState is { IsDirty: true } ? WorkingState.Files.Count : 0;
@@ -660,8 +670,10 @@ public partial class ProjectDetailViewModel
                 $"Restore this repository to the backup taken before “{operation}”?\n\n{warning}",
                 "Restore")))
             return;
+        // The dirty count above describes the repository this handle restores. A switch while the
+        // confirm was open means that count is on screen for nothing, so the restore is dropped.
+        if (!IsCurrent(gen)) return;
 
-        var gen = _generation;
         IsBusy = true;
         SurgeryStatusText = "Restoring the backup…";
         try
@@ -732,16 +744,22 @@ public partial class ProjectDetailViewModel
     /// Runs one gated surgery through the generation-owned busy gate the other tabs use, then
     /// republishes the outcome: the service's own failure text, the undo it hands back on
     /// success and failure alike, and the retry offer when a stopped rebase was aborted.
+    ///
+    /// <paramref name="repo"/> and <paramref name="gen"/> are the caller's, read before the
+    /// prompt and the confirm — neither is re-read here. A confirm does not block input, so
+    /// reading either afterwards would attribute this run, its undo and its retry to whichever
+    /// project the user switched to while the dialog was open. A generation that moved during
+    /// the confirm means the surface that asked for this is gone, so nothing runs.
     /// </summary>
     private async Task<bool> RunSurgeryAsync(
         string label,
+        string repo,
+        int gen,
         Func<RebaseConflictPolicy, Task<SurgeryResult>> operate,
         RebaseConflictPolicy policy,
         bool retryable)
     {
-        if (IsBusy) return false;
-        var gen = _generation;
-        var repo = RepoPath;
+        if (IsBusy || !IsCurrent(gen) || repo.Length == 0) return false;
         IsBusy = true;
         SurgeryStatusText = $"{label}…";
         SurgeryFailureText = "";

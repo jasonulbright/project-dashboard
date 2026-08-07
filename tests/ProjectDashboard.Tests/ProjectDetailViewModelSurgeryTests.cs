@@ -563,4 +563,70 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.False(vm.UndoLastSurgeryCommand.CanExecute(null));
         Assert.Equal(["beta", "seed"], await repo.SubjectsAsync());
     }
+    /// <summary>Switches the view-model to <paramref name="repo"/> the way the project list does.</summary>
+    private static Task SwitchToAsync(ProjectDetailViewModel vm, SurgeryRepo repo)
+    {
+        var name = Path.GetFileName(repo.Path);
+        return vm.SetProjectAsync(new ProjectInfo { DirectoryName = name, DisplayName = name, FullPath = repo.Path });
+    }
+
+    [Fact]
+    public async Task AProjectSwitchWhileTheConfirmIsOpen_LeavesNothingAttributedToEitherProject()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        using var other = await SurgeryRepo.CreateAsync("other-seed");
+        other.Write("dirt-one.txt", "1\n");
+        other.Write("dirt-two.txt", "2\n");
+        other.Write("dirt-three.txt", "3\n");
+
+        var vm = await VmForAsync(repo);
+        vm.SelectedCommit = vm.Commits[1];
+        // A confirmation does not block input: the switch lands between the click and the answer.
+        vm.ConfirmSurgeryAsync = async _ =>
+        {
+            await SwitchToAsync(vm, other);
+            return true;
+        };
+
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+
+        // Nothing describes the drop on the project now on screen, and its dirty tree — which an
+        // undo's hard reset would discard — is not what any offer counts.
+        Assert.Equal("", vm.SurgeryStatusText);
+        Assert.Equal("", vm.SurgeryFailureText);
+        Assert.False(vm.SurgeryUndoVisible);
+        Assert.False(vm.SurgeryLeaveStoppedOfferVisible);
+        Assert.False(vm.UndoLastSurgeryCommand.CanExecute(null));
+        Assert.False(vm.IsBusy);
+        Assert.Equal(3, (await other.StatusAsync()).Split('\n').Length);
+        // The surface that asked for the drop is gone, so the drop it would have to report is
+        // not run behind the reader's back either.
+        Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
+    }
+
+    [Fact]
+    public async Task AProjectSwitchWhileTheUndoConfirmIsOpen_RestoresNothing()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        using var other = await SurgeryRepo.CreateAsync("other-seed");
+        var vm = await VmForAsync(repo);
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        Assert.True(vm.SurgeryUndoVisible);
+
+        vm.ConfirmSurgeryAsync = async _ =>
+        {
+            await SwitchToAsync(vm, other);
+            return true;
+        };
+        await vm.UndoLastSurgeryCommand.ExecuteAsync(null);
+
+        // The dirty count the confirm quoted was the dropped-on repository's; a restore running
+        // after the switch would report against a repository the reader never saw it named.
+        Assert.Equal("", vm.SurgeryStatusText);
+        Assert.False(vm.IsBusy);
+        Assert.Equal(["beta", "seed"], await repo.SubjectsAsync());
+    }
 }
