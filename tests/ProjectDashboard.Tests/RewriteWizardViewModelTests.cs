@@ -312,6 +312,9 @@ public class RewriteWizardViewModelTests
         Assert.Contains("force-push it yourself", vm.RewriteConfirmMessage);
         Assert.Contains("never pushes", vm.RewriteConfirmMessage);
         Assert.Contains("Undo restores", vm.RewriteConfirmMessage);
+        // Closing the wizard drops the one-click undo, so the promise names its lifetime.
+        Assert.Contains("goes away when you close this wizard", vm.RewriteConfirmMessage);
+        Assert.Contains("backup itself is kept", vm.RewriteConfirmMessage);
         Assert.Contains($"Type {vm.RewriteConfirmPhrase} below", vm.RewriteConfirmMessage);
     }
 
