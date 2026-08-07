@@ -44,23 +44,23 @@ public class ProjectStatusGlyphTests
 }
 
 /// <summary>
-/// Pure-geometry checks for the saved-position clamp. The virtual screen is
+/// Pure-geometry checks for the saved-position clamp. The screen rectangles are
 /// passed explicitly, so no display or WPF machinery is involved.
 /// </summary>
 public class WindowPlacementTests
 {
-    // Primary 1920x1080 with a second monitor to its LEFT: virtual screen
-    // starts at a negative X. Positions there are valid and must survive.
-    private const double DualLeft = -1920, DualTop = 0, DualWidth = 3840, DualHeight = 1080;
+    // The single rectangle monitor enumeration falls back to: the virtual-screen
+    // bounding box. Primary 1920x1080 with a second monitor to its LEFT, so the box
+    // starts at a negative X and positions there are valid.
+    private static readonly MainWindow.ScreenRect[] VirtualScreenDual = [new(-1920, 0, 3840, 1080)];
 
     // Single primary monitor, e.g. after undocking the second one.
-    private const double SingleLeft = 0, SingleTop = 0, SingleWidth = 1920, SingleHeight = 1080;
+    private static readonly MainWindow.ScreenRect[] SinglePrimary = [new(0, 0, 1920, 1080)];
 
     [Fact]
     public void PositionOnMonitorLeftOfPrimary_IsPreserved()
     {
-        var result = MainWindow.ClampToVirtualScreen(
-            -1900, 10, 1200, 800, DualLeft, DualTop, DualWidth, DualHeight);
+        var result = MainWindow.ClampToMonitors(-1900, 10, 1200, 800, VirtualScreenDual);
 
         Assert.Equal((-1900, 10), result);
     }
@@ -71,8 +71,7 @@ public class WindowPlacementTests
         // Saved on the left monitor, restored after undocking it: the rect no
         // longer intersects the remaining screen, so the left edge clamps until
         // the minimum 100 px is visible again.
-        var result = MainWindow.ClampToVirtualScreen(
-            -2400, 200, 1200, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(-2400, 200, 1200, 800, SinglePrimary);
 
         Assert.Equal((-1100, 200), result);
     }
@@ -80,8 +79,7 @@ public class WindowPlacementTests
     [Fact]
     public void PositionFarBeyondBottomRight_IsClampedToVisibleMargin()
     {
-        var result = MainWindow.ClampToVirtualScreen(
-            99999, 99999, 1200, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(99999, 99999, 1200, 800, SinglePrimary);
 
         Assert.Equal((1820, 1030), result);
     }
@@ -90,8 +88,7 @@ public class WindowPlacementTests
     public void PositionAboveScreen_ClampsTopUntilMinimumVisible()
     {
         // Only 10 px of the window's bottom shows: below the 50 px floor.
-        var result = MainWindow.ClampToVirtualScreen(
-            100, -790, 1200, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(100, -790, 1200, 800, SinglePrimary);
 
         Assert.Equal((100, -750), result);
     }
@@ -100,8 +97,7 @@ public class WindowPlacementTests
     public void PositionExactlyAtMinimumVisibility_IsPreserved()
     {
         // Precisely 100 px of the window's right edge is on-screen.
-        var result = MainWindow.ClampToVirtualScreen(
-            -1100, 200, 1200, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(-1100, 200, 1200, 800, SinglePrimary);
 
         Assert.Equal((-1100, 200), result);
     }
@@ -113,8 +109,7 @@ public class WindowPlacementTests
     [InlineData(100, double.NegativeInfinity)]
     public void NonFinitePosition_IsRejected(double left, double top)
     {
-        var result = MainWindow.ClampToVirtualScreen(
-            left, top, 1200, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(left, top, 1200, 800, SinglePrimary);
 
         Assert.Null(result);
     }
@@ -124,8 +119,7 @@ public class WindowPlacementTests
     {
         // NaN width degrades to the minimum-visibility size, so the clamp keeps
         // the whole (assumed tiny) window inside the screen.
-        var result = MainWindow.ClampToVirtualScreen(
-            5000, 100, double.NaN, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(5000, 100, double.NaN, 800, SinglePrimary);
 
         Assert.Equal((1820, 100), result);
     }
@@ -135,8 +129,7 @@ public class WindowPlacementTests
     {
         // The caller filters the -1/-1 never-saved sentinel; the geometry itself
         // treats a 1 px overhang as an ordinary near-corner position.
-        var result = MainWindow.ClampToVirtualScreen(
-            -1, -1, 1200, 800, SingleLeft, SingleTop, SingleWidth, SingleHeight);
+        var result = MainWindow.ClampToMonitors(-1, -1, 1200, 800, SinglePrimary);
 
         Assert.Equal((-1, -1), result);
     }
@@ -171,16 +164,6 @@ public class WindowPlacementTests
         var result = MainWindow.ClampToMonitors(3900, 100, 1200, 800, MixedDpi);
 
         Assert.Equal((3900.0, 100.0), result);
-    }
-
-    [Fact]
-    public void SameMixedDpiPosition_IsDisplacedByTheVirtualScreenBoundingBox()
-    {
-        // The regression this replaces: the DIP bounding box is 2880 wide, so a
-        // position valid on the secondary clamps to a monitor it is not on.
-        var result = MainWindow.ClampToVirtualScreen(3900, 100, 1200, 800, 0, 0, 2880, 2160);
-
-        Assert.Equal((2780.0, 100.0), result);
     }
 
     [Fact]

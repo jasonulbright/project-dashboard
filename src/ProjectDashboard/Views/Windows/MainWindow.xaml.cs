@@ -243,13 +243,6 @@ public partial class MainWindow : INavigationWindow
         return nearest;
     }
 
-    /// <summary>Single-screen form: the virtual-screen bounding box as one rectangle.</summary>
-    public static (double Left, double Top)? ClampToVirtualScreen(
-        double left, double top, double width, double height,
-        double screenLeft, double screenTop, double screenWidth, double screenHeight)
-        => ClampToMonitors(left, top, width, height,
-            [new ScreenRect(screenLeft, screenTop, screenWidth, screenHeight)]);
-
     /// <summary>Length shared by [start, start+size] and the screen's span; negative when disjoint.</summary>
     private static double Overlap(double start, double size, double screenStart, double screenExtent) =>
         Math.Min(start + size, screenStart + screenExtent) - Math.Max(start, screenStart);
