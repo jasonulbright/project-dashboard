@@ -388,6 +388,12 @@ public sealed class HistoryPipeline
     /// diff. Detection reads each annotated tag's own `type` header via %(type) —
     /// %(*objecttype) is unusable for this because it peels recursively to the final
     /// non-tag object. Tags of blobs or trees round-trip and pass.
+    /// Residual refusal class: only refs/tags is scanned, so a nested tag object
+    /// referenced from a ref outside refs/tags evades this preflight, as does an
+    /// annotated tag whose embedded tag-name header mismatches its ref basename
+    /// (fast-export emits the ref basename, so the re-imported tag object hashes
+    /// differently). Both die loudly downstream — at fast-import or as a verification
+    /// ref difference — never as a silently wrong target.
     /// </summary>
     private async Task RefuseNestedTagsAsync(string sourceRepository, CancellationToken ct)
     {

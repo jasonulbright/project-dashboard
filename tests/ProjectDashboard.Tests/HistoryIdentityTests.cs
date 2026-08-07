@@ -264,6 +264,41 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task TagWithMismatchedInternalNameEvadesPreflightAndFailsVerification()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("tag", "-a", "alpha", "-m", "inner message");
+        var tagOid = f.Git("rev-parse", "alpha").Trim();
+        f.Git("update-ref", "refs/tags/beta", tagOid);
+        f.Git("tag", "-d", "alpha");
+
+        // Pins the residual refusal class: the tag object's embedded name (alpha)
+        // mismatches its ref basename (beta). Preflight sees tag→commit and passes;
+        // fast-export emits `tag beta`, so the re-imported tag object hashes differently
+        // and the failure surfaces as a loud verification difference, never silently.
+        var pipeline = new HistoryPipeline(GitGuard.GitExe);
+        var result = await pipeline.RunAsync(new HistoryPipelineOptions
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(1),
+            ImportTimeout = TimeSpan.FromMinutes(1)
+        });
+        Assert.NotNull(result);
+
+        var verify = await IdentityVerifier.VerifyAsync(
+            GitGuard.GitExe, f.SourcePath, f.TargetPath, TimeSpan.FromMinutes(1));
+        Assert.False(verify.Success);
+        var difference = Assert.Single(verify.Differences);
+        Assert.Equal("refs/tags/beta", difference.RefName);
+        Assert.Equal(tagOid, difference.SourceObjectId);
+        Assert.NotEqual(tagOid, difference.TargetObjectId);
+    }
+
+    [Fact]
     public async Task TagOfBlobRoundTrips()
     {
         using var f = new FixtureRepo();
