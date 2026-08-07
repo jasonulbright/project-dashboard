@@ -198,41 +198,46 @@ public partial class ProjectDetailViewModel
     private async Task StageFile(WorkingFile? file)
     {
         if (file is null || IsBusy) return;
-        await RunOp(repo => _gitService.StageAsync(repo, file.Path), "Stage");
+        await RunOp(repo => _gitService.StageAsync(repo, file.Path), "Stage", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task UnstageFile(WorkingFile? file)
     {
         if (file is null || IsBusy) return;
-        await RunOp(repo => _gitService.UnstageAsync(repo, file.Path), "Unstage");
+        await RunOp(repo => _gitService.UnstageAsync(repo, file.Path), "Unstage", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task StageAll()
     {
         if (IsBusy) return;
-        await RunOp(repo => _gitService.StageAllAsync(repo), "Stage all");
+        await RunOp(repo => _gitService.StageAllAsync(repo), "Stage all", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task UnstageAll()
     {
         if (IsBusy) return;
-        await RunOp(repo => _gitService.UnstageAllAsync(repo), "Unstage all");
+        await RunOp(repo => _gitService.UnstageAllAsync(repo), "Unstage all", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task DiscardFile(WorkingFile? file)
     {
         if (file is null || IsBusy) return;
+        // Read before the dialog: the confirmation names this repo and this file, and
+        // `git checkout --` is irreversible, so a switch landing while it is open must
+        // not redirect the discard onto the project that takes the screen.
+        var confirmedRepo = RepoPath;
+        var gen = _generation;
 
         var verb = file.IsUntracked ? "Delete untracked file" : "Discard changes to";
         var confirmed = await ConfirmAsync("Discard changes?",
             $"{verb} {file.Path}?\n\nThis cannot be undone.", "Discard");
-        if (!confirmed) return;
+        if (!confirmed || !IsCurrent(gen)) return;
 
-        await RunOp(repo => _gitService.DiscardAsync(repo, file), "Discard");
+        await RunOp(repo => _gitService.DiscardAsync(repo, file), "Discard", confirmedRepo, gen);
     }
 
     [RelayCommand]
@@ -252,7 +257,7 @@ public partial class ProjectDetailViewModel
 
         var gen = _generation;
         var result = await RunOp(repo => _gitService.CommitAsync(repo, CommitMessage.Trim(), AmendMode),
-            AmendMode ? "Amend" : "Commit");
+            AmendMode ? "Amend" : "Commit", RepoPath, gen);
         // A stale success must not clear a draft typed on the project switched to.
         if (result && IsCurrent(gen))
         {
@@ -283,21 +288,21 @@ public partial class ProjectDetailViewModel
     private async Task Fetch()
     {
         if (IsBusy) return;
-        await RunOp(repo => _gitService.FetchAsync(repo), "Fetch");
+        await RunOp(repo => _gitService.FetchAsync(repo), "Fetch", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task Pull()
     {
         if (IsBusy) return;
-        await RunOp(repo => _gitService.PullAsync(repo), "Pull");
+        await RunOp(repo => _gitService.PullAsync(repo), "Pull", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task Push()
     {
         if (IsBusy) return;
-        var ok = await RunOp(repo => _gitService.PushAsync(repo), "Push");
+        var ok = await RunOp(repo => _gitService.PushAsync(repo), "Push", RepoPath, _generation);
         if (ok) await ReloadCommitsAsync();
     }
 
@@ -326,7 +331,8 @@ public partial class ProjectDetailViewModel
         var name = NewBranchName.Trim();
         if (name.Length == 0 || IsBusy) return;
         var gen = _generation;
-        var ok = await RunOp(repo => _gitService.CreateBranchAsync(repo, name), "Create branch");
+        var ok = await RunOp(repo => _gitService.CreateBranchAsync(repo, name), "Create branch",
+            RepoPath, gen);
         // A stale success must not blank a branch name typed on the project switched to.
         if (ok && IsCurrent(gen))
         {
@@ -339,7 +345,8 @@ public partial class ProjectDetailViewModel
     private async Task SwitchBranch(BranchInfo? branch)
     {
         if (branch is null || branch.IsCurrent || IsBusy) return;
-        var ok = await RunOp(repo => _gitService.SwitchBranchAsync(repo, branch.Name), "Switch branch");
+        var ok = await RunOp(repo => _gitService.SwitchBranchAsync(repo, branch.Name), "Switch branch",
+            RepoPath, _generation);
         if (ok)
         {
             await LoadBranches();
@@ -356,12 +363,17 @@ public partial class ProjectDetailViewModel
             SyncStatusText = "Can't delete the current branch — switch away first.";
             return;
         }
+        // Two repos can hold the same branch name, so a rebind survives the delete's
+        // own merged-only check and removes a ref the confirmation never named.
+        var confirmedRepo = RepoPath;
+        var gen = _generation;
 
         var confirmed = await ConfirmAsync("Delete branch?",
             $"Delete local branch {branch.Name}?\n\nOnly fully merged branches can be deleted this way.", "Delete");
-        if (!confirmed) return;
+        if (!confirmed || !IsCurrent(gen)) return;
 
-        var ok = await RunOp(repo => _gitService.DeleteBranchAsync(repo, branch.Name), "Delete branch");
+        var ok = await RunOp(repo => _gitService.DeleteBranchAsync(repo, branch.Name), "Delete branch",
+            confirmedRepo, gen);
         if (ok) await LoadBranches();
     }
 
@@ -387,7 +399,8 @@ public partial class ProjectDetailViewModel
     private async Task StashApply(StashEntry? stash)
     {
         if (stash is null || IsBusy) return;
-        var ok = await RunOp(repo => _gitService.StashApplyAsync(repo, stash.Ref), "Apply stash");
+        var ok = await RunOp(repo => _gitService.StashApplyAsync(repo, stash.Ref), "Apply stash",
+            RepoPath, _generation);
         if (ok) await LoadStashes();
     }
 
@@ -395,7 +408,8 @@ public partial class ProjectDetailViewModel
     private async Task StashPop(StashEntry? stash)
     {
         if (stash is null || IsBusy) return;
-        var ok = await RunOp(repo => _gitService.StashPopAsync(repo, stash.Ref), "Pop stash");
+        var ok = await RunOp(repo => _gitService.StashPopAsync(repo, stash.Ref), "Pop stash",
+            RepoPath, _generation);
         if (ok) await LoadStashes();
     }
 
@@ -403,11 +417,17 @@ public partial class ProjectDetailViewModel
     private async Task StashDrop(StashEntry? stash)
     {
         if (stash is null || IsBusy) return;
+        // stash@{0} resolves in every repo that has a stash, so a rebind silently drops
+        // a different repo's entry — unrecoverable once the reflog entry is gone.
+        var confirmedRepo = RepoPath;
+        var gen = _generation;
+
         var confirmed = await ConfirmAsync("Drop stash?",
             $"Drop {stash.Ref} ({stash.Subject})?\n\nThis cannot be undone.", "Drop");
-        if (!confirmed) return;
+        if (!confirmed || !IsCurrent(gen)) return;
 
-        var ok = await RunOp(repo => _gitService.StashDropAsync(repo, stash.Ref), "Drop stash");
+        var ok = await RunOp(repo => _gitService.StashDropAsync(repo, stash.Ref), "Drop stash",
+            confirmedRepo, gen);
         if (ok) await LoadStashes();
     }
 
@@ -488,9 +508,13 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.
-    /// The op receives the repo path captured at entry and must run against it —
-    /// reading the live RepoPath from inside an op lets a stale-lock retry replay
-    /// the op against whatever repo a later switch made current.
+    /// The op receives the repo path the CALLER captured and must run against it —
+    /// reading the live RepoPath here would rebind any op that awaited something first
+    /// (a confirmation dialog, a stale-lock cleanup) to whatever repo a switch made
+    /// current, so a confirmed discard/branch delete/stash drop would destroy work in a
+    /// repository the confirmation never named.
+    /// A run whose captured generation has moved is suppressed before the op starts, not
+    /// merely denied its UI writes: the sanction belongs to a project no longer on screen.
     /// The busy gate is generation-owned: only the generation that acquired it may
     /// release it, so a stale release is impossible, not merely unlikely. A project
     /// switch resets IsBusy and bumps the generation; an old op's finally observing a
@@ -499,11 +523,9 @@ public partial class ProjectDetailViewModel
     /// on one repository (index.lock / FETCH_HEAD.lock collisions). A stale op also
     /// returns false and writes no status, so caller continuations are skipped.
     /// </summary>
-    private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label)
+    private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label, string repo, int gen)
     {
-        if (IsBusy) return false;
-        var gen = _generation;
-        var repo = RepoPath;
+        if (!IsCurrent(gen) || IsBusy) return false;
         IsBusy = true;
         SyncStatusText = $"{label}…";
         StaleLockRetryVisible = false;
@@ -576,7 +598,7 @@ public partial class ProjectDetailViewModel
             if (!removed)
                 return new ProcessResult(-1, "", "no stale lock found — a git process may still be running", TimedOut: false);
             return await op(repo);
-        }, label);
+        }, label, repo, gen);
     }
 
     private async Task ReloadCommitsAsync()
@@ -588,7 +610,11 @@ public partial class ProjectDetailViewModel
         if (Project is not null) Project.RecentCommits = commits;
     }
 
-    private static async Task<bool> ConfirmAsync(string title, string message, string confirmText)
+    /// <summary>
+    /// Overridable so the interleave a confirmed op has to survive — a project switch
+    /// landing while the dialog is open — is reachable without a message pump.
+    /// </summary>
+    internal virtual async Task<bool> ConfirmAsync(string title, string message, string confirmText)
     {
         var result = await new Wpf.Ui.Controls.MessageBox
         {

@@ -245,6 +245,128 @@ public class ProjectDetailViewModelTests
         Assert.False(vm.StaleLockRetryVisible);
     }
 
+    // ── Mid-confirm project switch (two-repo probe) ──────────────────────────
+    //
+    // Every confirmed op names a repository in its dialog text. Reading RepoPath
+    // after the dialog closes binds the op to whatever project a switch made
+    // current instead — `git checkout --`, `branch -d` and `stash drop` against a
+    // repository the reader never sanctioned. Both fixture repos carry the same
+    // file, branch and stash names, so a wrong-repo run destroys real state rather
+    // than failing on a missing ref.
+
+    /// <summary>
+    /// Answers the confirmation without WPF, running a hook first: the interleave
+    /// point is the open dialog, which no headless test can otherwise reach.
+    /// </summary>
+    private sealed class ConfirmProbeViewModel(GitService git)
+        : ProjectDetailViewModel(null!, git, null!)
+    {
+        public Func<Task>? WhileDialogOpen { get; set; }
+
+        internal override async Task<bool> ConfirmAsync(string title, string message, string confirmText)
+        {
+            if (WhileDialogOpen is not null) await WhileDialogOpen();
+            return true;
+        }
+    }
+
+    /// <summary>Two repos with identical names inside, so only the bound path tells them apart.</summary>
+    private static async Task<TempRepo> TwinRepoAsync(string prefix, string content)
+    {
+        var repo = await TempRepo.CreateWithCommitAsync(prefix);
+        repo.WriteFile("shared.txt", content);
+        await repo.CommitAllAsync("add shared.txt");
+        await repo.GitAsync("branch", "feature");
+        repo.WriteFile("shared.txt", content + "edited\n");
+        await repo.GitAsync("stash", "push", "-m", "twin stash");
+        repo.WriteFile("shared.txt", content + "edited\n");
+        return repo;
+    }
+
+    private static ConfirmProbeViewModel ProbeSwitchingTo(TempRepo target)
+    {
+        var vm = new ConfirmProbeViewModel(new GitService());
+        vm.WhileDialogOpen = () => vm.SetProjectAsync(ProjectFor(target));
+        return vm;
+    }
+
+    /// <summary>The switched-to project is left idle: no busy gate, no status, no retry offer.</summary>
+    private static void AssertNothingAttributed(ProjectDetailViewModel vm)
+    {
+        Assert.False(vm.IsBusy);
+        Assert.Equal("", vm.SyncStatusText);
+        Assert.False(vm.StaleLockRetryVisible);
+    }
+
+    [Fact]
+    public async Task DiscardMidConfirm_SwitchingProjects_DiscardsInNeitherRepo()
+    {
+        using var repoA = await TwinRepoAsync("discard-a", "a\n");
+        using var repoB = await TwinRepoAsync("discard-b", "b\n");
+
+        var vm = ProbeSwitchingTo(repoB);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+
+        await vm.DiscardFileCommand.ExecuteAsync(
+            new WorkingFile { Path = "shared.txt", WorktreeStatus = 'M' });
+
+        // The confirmation was given for A and the generation moved, so the op is
+        // suppressed: B keeps the edit it never offered up, and A keeps its own.
+        Assert.Equal("b\nedited\n", repoB.ReadFile("shared.txt"));
+        Assert.Equal("a\nedited\n", repoA.ReadFile("shared.txt"));
+        AssertNothingAttributed(vm);
+    }
+
+    [Fact]
+    public async Task DeleteBranchMidConfirm_SwitchingProjects_DeletesInNeitherRepo()
+    {
+        using var repoA = await TwinRepoAsync("branch-a", "a\n");
+        using var repoB = await TwinRepoAsync("branch-b", "b\n");
+
+        var vm = ProbeSwitchingTo(repoB);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+
+        await vm.DeleteBranchCommand.ExecuteAsync(new BranchInfo { Name = "feature" });
+
+        Assert.Contains("feature", await repoB.GitAsync("branch", "--list", "feature"));
+        Assert.Contains("feature", await repoA.GitAsync("branch", "--list", "feature"));
+        AssertNothingAttributed(vm);
+    }
+
+    [Fact]
+    public async Task StashDropMidConfirm_SwitchingProjects_DropsInNeitherRepo()
+    {
+        using var repoA = await TwinRepoAsync("stash-a", "a\n");
+        using var repoB = await TwinRepoAsync("stash-b", "b\n");
+
+        var vm = ProbeSwitchingTo(repoB);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+
+        await vm.StashDropCommand.ExecuteAsync(
+            new StashEntry { Ref = "stash@{0}", Subject = "twin stash" });
+
+        var git = new GitService();
+        Assert.Single(await git.GetStashesAsync(repoB.Path));
+        Assert.Single(await git.GetStashesAsync(repoA.Path));
+        AssertNothingAttributed(vm);
+    }
+
+    [Fact]
+    public async Task DiscardConfirmed_WithoutSwitch_StillDiscards()
+    {
+        using var repo = await TwinRepoAsync("discard-plain", "a\n");
+
+        var vm = new ConfirmProbeViewModel(new GitService());
+        await vm.SetProjectAsync(ProjectFor(repo));
+
+        await vm.DiscardFileCommand.ExecuteAsync(
+            new WorkingFile { Path = "shared.txt", WorktreeStatus = 'M' });
+
+        Assert.Equal("a\n", repo.ReadFile("shared.txt"));
+        Assert.Equal("Discard done.", vm.SyncStatusText);
+        Assert.False(vm.IsBusy);
+    }
+
     [Fact]
     public async Task Commit_WithoutSwitch_ClearsMessageAndReloadsCommits()
     {
