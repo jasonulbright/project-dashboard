@@ -288,8 +288,19 @@ public partial class DashboardViewModel : ObservableObject
 
     // ── Empty states (X-14) ───────────────────────────────────────────────────
 
-    /// <summary>Probed once per load: a per-property Directory.Exists would hit the disk on every render.</summary>
+    /// <summary>
+    /// Probed once per load: two bindings read the root and every dashboard-search
+    /// keystroke re-raises them, so reading settings per property would mean a
+    /// synchronous file read and deserialize per character on the UI thread.
+    /// </summary>
     private bool _rootExists = true;
+    private string _configuredRoot = "";
+
+    private void ProbeConfiguredRoot()
+    {
+        _configuredRoot = _settingsService.Load().ProjectsRootPath;
+        _rootExists = Directory.Exists(_configuredRoot);
+    }
 
     public DashboardContent Content => DashboardEmptyState.Select(
         LoadProjectsCommand.IsRunning, DiscoveryErrorVisible, _rootExists, Projects.Count, FilteredProjects.Count);
@@ -304,7 +315,7 @@ public partial class DashboardViewModel : ObservableObject
     /// <summary>Inline progress for a reload that keeps the rendered grid in place.</summary>
     public bool ShowRefreshing => LoadProjectsCommand.IsRunning && Content == DashboardContent.Cards;
 
-    public string ConfiguredRootPath => _settingsService.Load().ProjectsRootPath;
+    public string ConfiguredRootPath => _configuredRoot;
 
     private void NotifyContentState()
     {
@@ -1040,7 +1051,7 @@ public partial class DashboardViewModel : ObservableObject
         SyncWatcherToSettings();
         try
         {
-            _rootExists = Directory.Exists(_settingsService.Load().ProjectsRootPath);
+            ProbeConfiguredRoot();
             var results = await _discoveryService.DiscoverAllAsync();
             UpdateProjectList(results);
             DiscoveryErrorVisible = false;
@@ -1059,7 +1070,7 @@ public partial class DashboardViewModel : ObservableObject
     {
         try
         {
-            _rootExists = Directory.Exists(_settingsService.Load().ProjectsRootPath);
+            ProbeConfiguredRoot();
             var results = await _discoveryService.ForceRefreshAllAsync();
             UpdateProjectList(results);
             DiscoveryErrorVisible = false;
