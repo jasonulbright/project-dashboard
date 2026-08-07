@@ -56,9 +56,12 @@ public class RewriteWizardViewModelTests
             return Task.FromResult(ExecuteResult);
         }
 
+        public Exception? UndoThrows { get; set; }
+
         public Task<RestoreResult> UndoAsync(CancellationToken ct = default)
         {
             UndoCount++;
+            if (UndoThrows is { } ex) throw ex;
             return Task.FromResult(RestoreResult);
         }
 
@@ -531,6 +534,37 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.RewriteHasReport);
         Assert.Contains("was not changed", vm.RewriteUndoText);
         Assert.Contains("left as the rewrite made it", vm.RewriteStatusText);
+    }
+
+    /// <summary>
+    /// A throw carries no position: it can land before the restore's ref transaction or after
+    /// it, so the surface may neither keep the rewrite's success banner nor repeat the refusal
+    /// guidance's "Nothing was changed".
+    /// </summary>
+    [Fact]
+    public async Task UndoThatThrows_DropsTheSuccessBannerAndClaimsNothingAboutWhatMoved()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-undo-throw");
+        using var _ = repo;
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        session.UndoThrows = new IOException("git could not be started");
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        Assert.True(vm.RewriteResultSucceeded);
+
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, session.UndoCount);
+        Assert.False(vm.RewriteResultSucceeded);
+        Assert.False(vm.RewriteHasReport);
+        Assert.Contains("git could not be started", vm.RewriteUndoText);
+        Assert.DoesNotContain("Undo…", vm.RewriteStatusText);
+        var surfaced = vm.RewriteUndoText + "\n" + vm.RewriteStatusText + "\n" + vm.RewriteErrorText;
+        Assert.DoesNotContain("othing was changed", surfaced);
+        Assert.DoesNotContain("was not changed", surfaced);
     }
 
     [Fact]

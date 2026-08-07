@@ -758,7 +758,27 @@ public partial class ProjectDetailViewModel
 
         await RunRewriteStepAsync("Undo", async gen =>
         {
-            var restore = await session.UndoAsync();
+            RestoreResult restore;
+            try
+            {
+                restore = await session.UndoAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Handled here rather than by the step's own catch: that one renders a rewrite
+                // refusal, whose guidance ends in "Nothing was changed" — a claim a throw from
+                // either side of the restore's ref transaction cannot support.
+                Log.Warn($"Undo threw for {RepoPath}", ex);
+                if (!IsCurrent(gen)) return;
+                ClearRewriteReport();
+                RewriteResultSucceeded = false;
+                RewriteUndoText = "Undo failed before it could report where it stopped, so the refs may be " +
+                                  $"pre-rewrite, rewritten, or partly restored. {ex.Message}";
+                RewriteStatusText = "Undo failed. Check this repository's refs before running anything else against it.";
+                await ReloadCommitsAsync();
+                await SafeRefreshWorkingStateAsync();
+                return;
+            }
             if (!IsCurrent(gen)) return;
 
             // Retired before the outcome is read, for every outcome: a restore that put the
