@@ -650,8 +650,8 @@ public partial class ProjectDetailPage
     /// <summary>
     /// Fills a README/CHANGELOG image block from the network. A failed fetch, one
     /// abandoned at the time budget, an oversized body, or an out-of-bounds decode swaps
-    /// the block for the alt-text line instead of leaving a gap. Runs only where images are allowed — issue and pull
-    /// request bodies never reach it.
+    /// the block for the alt-text line instead of leaving a gap. Runs only where images
+    /// are allowed — issue and pull request bodies never reach it.
     /// </summary>
     internal static async Task FillRemoteImageAsync(
         FlowDocument doc, BlockUIContainer block, string url, string alt, TimeSpan? timeout = null)
