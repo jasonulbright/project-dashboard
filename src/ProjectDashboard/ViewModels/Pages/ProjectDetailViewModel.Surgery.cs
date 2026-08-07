@@ -840,10 +840,9 @@ public partial class ProjectDetailViewModel
     {
         // A backup is handed back for every gated call, refusals included. Restoring one ends in
         // a hard reset, so offering it where nothing moved can only discard uncommitted work.
-        var repositoryMayHaveMoved =
-            result.Success || result.Rebase?.RepositoryUntouched == false || result.Edit?.RepositoryUntouched == false;
-
-        if (result.Undo is not null && repositoryMayHaveMoved)
+        // The service's own claim is the discriminator: a failure it could not classify carries
+        // neither git-level result and is exactly the case the undo exists for.
+        if (result.Undo is not null && !result.RepositoryUntouched)
         {
             _surgeryUndo = result.Undo;
             _surgeryUndoRepo = repo;

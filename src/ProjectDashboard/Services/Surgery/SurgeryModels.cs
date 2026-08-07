@@ -23,6 +23,26 @@ public enum ResetMode
     Hard
 }
 
+/// <summary>
+/// Which gate turned a gated operation away before git ran. <see cref="None"/> once the
+/// operation reached git, whatever it then reported.
+///
+/// Only <see cref="UncommittedChanges"/> describes a tree a stash resolves. The
+/// <see cref="UnstagedChanges"/> gate guards an operation whose input is the staged changes,
+/// and `git stash push` takes those with it, so stashing there removes what the operation runs on.
+/// </summary>
+public enum SurgeryRefusal
+{
+    None,
+    RepositoryBusy,
+    RepositoryUnreadable,
+    OperationInProgress,
+    UncommittedChanges,
+    UnstagedChanges,
+    NothingStaged,
+    BackupFailed
+}
+
 /// <summary>What the clean-tree gate demands before a destructive operation runs.</summary>
 public enum TreeRequirement
 {
@@ -173,6 +193,23 @@ public sealed class SurgeryResult
 
     public HistoryEditResult? Edit { get; init; }
 
+    /// <summary>Which gate refused before git ran, or <see cref="SurgeryRefusal.None"/> once it did.</summary>
+    public SurgeryRefusal Refusal { get; init; }
+
+    /// <summary>
+    /// True only where no ref, index entry, or tracked file moved: a gate refusal, or an outcome
+    /// whose underlying result proves the repository is back where it started. A failure that left
+    /// the operation as an exception leaves this false — what had already reached the repository is
+    /// unknown at that point, which is the case <see cref="Undo"/> exists for. A caller MUST NOT
+    /// withhold the undo unless this is true.
+    /// </summary>
+    public bool RepositoryUntouched { get; init; }
+
+    /// <summary>A gate refusal: nothing ran, so nothing moved.</summary>
+    internal static SurgeryResult Refused(string reason, SurgeryRefusal refusal) =>
+        new() { Success = false, FailureReason = reason, Refusal = refusal, RepositoryUntouched = true };
+
+    /// <summary>A failure whose effect on the repository is unknown. <paramref name="undo"/> is the way back.</summary>
     internal static SurgeryResult Failed(string reason, UndoHandle? undo = null) =>
         new() { Success = false, FailureReason = reason, Undo = undo };
 }

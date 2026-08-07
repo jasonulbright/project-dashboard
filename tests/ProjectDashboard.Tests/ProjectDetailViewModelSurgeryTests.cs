@@ -675,6 +675,46 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
     }
 
+    /// <summary>
+    /// A driver whose replay throws after the gates have passed. The throw is what leaves the
+    /// outcome unknown: no <see cref="RebaseRunResult"/> is ever produced to classify it.
+    /// </summary>
+    private sealed class ThrowingRebaseDriver : RebaseDriver
+    {
+        public ThrowingRebaseDriver(GitService git)
+            : base(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"))
+        {
+        }
+
+        public override Task<RebaseRunResult> RunTodoAsync(
+            RebaseScope scope, IReadOnlyList<string> todoLines, IReadOnlyDictionary<string, string> messageFiles,
+            RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
+            throw new IOException("the prepared todo could not be written");
+    }
+
+    [Fact]
+    public async Task AFailureTheServiceCouldNotClassify_KeepsTheUndoOffer()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var git = new GitService();
+        var vm = await VmForAsync(repo);
+        vm.Surgery = new SurgeryCoordinator(
+            new BackupService(git, new SettingsService()), new RepoBusyRegistry(), git,
+            new ThrowingRebaseDriver(git));
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+
+        // Neither git-level result exists, which is the one outcome the service refuses to call
+        // untouched — it leaves the journal pending for exactly this case, so the offer that
+        // answers it has to stand rather than be read as "nothing ran".
+        Assert.Contains("the rebase failed", vm.SurgeryFailureText);
+        Assert.True(vm.SurgeryUndoVisible);
+        Assert.True(vm.UndoLastSurgeryCommand.CanExecute(null));
+        Assert.False(vm.SurgeryStashOfferVisible);
+    }
+
     [Fact]
     public async Task OpeningThePlanDialog_ClearsTheFailureTextAndTheOffersItExplained()
     {

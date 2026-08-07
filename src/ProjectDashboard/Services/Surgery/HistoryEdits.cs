@@ -44,9 +44,17 @@ public sealed class HistoryEdits
         };
 
         var reset = await _git.RunAsync(repoPath, ["reset", flag, resolved.StdOut.Trim()], ct, OperationTimeout);
-        return reset.Success
-            ? new HistoryEditResult { Success = true, HeadAfter = await HeadShaAsync(repoPath, ct) }
-            : HistoryEditResult.Failed($"git reset {flag} failed: {reset.FirstError}");
+        if (reset.Success)
+            return new HistoryEditResult { Success = true, HeadAfter = await HeadShaAsync(repoPath, ct) };
+
+        // A non-zero `git reset` is not a refusal: --hard writes tracked content as it walks and
+        // reports failure on the first path it cannot replace, having already replaced the others.
+        return new HistoryEditResult
+        {
+            Success = false,
+            FailureReason = $"git reset {flag} failed: {reset.FirstError}",
+            HeadAfter = await HeadShaAsync(repoPath, ct)
+        };
     }
 
     /// <summary>

@@ -149,7 +149,8 @@ public sealed class SurgeryCoordinator
     {
         // 1. Busy gate: a second destructive operation on the same repo is refused, not queued.
         if (!_busy.TryAcquire(repoPath, out var lease))
-            return SurgeryResult.Failed($"repository is busy with another operation: {repoPath}");
+            return SurgeryResult.Refused(
+                $"repository is busy with another operation: {repoPath}", SurgeryRefusal.RepositoryBusy);
 
         UndoHandle? undo = null;
         var journalled = false;
@@ -159,13 +160,15 @@ public sealed class SurgeryCoordinator
             // with the offending files so the caller can act rather than guess.
             var state = await _git.GetWorkingStateAsync(repoPath, ct);
             if (state is null)
-                return SurgeryResult.Failed($"repository '{repoPath}' could not be read by git");
+                return SurgeryResult.Refused(
+                    $"repository '{repoPath}' could not be read by git", SurgeryRefusal.RepositoryUnreadable);
             if (state.Activity != Models.RepoActivity.None)
-                return SurgeryResult.Failed(
-                    $"the repository is already in the middle of a {Describe(state.Activity)} — finish or abort it first");
-            var refusal = CheckTree(state, requirement);
+                return SurgeryResult.Refused(
+                    $"the repository is already in the middle of a {Describe(state.Activity)} — finish or abort it first",
+                    SurgeryRefusal.OperationInProgress);
+            var (refusalKind, refusal) = CheckTree(state, requirement);
             if (refusal is not null)
-                return SurgeryResult.Failed(refusal);
+                return SurgeryResult.Refused(refusal, refusalKind);
 
             // 3. Verified backup: no destructive operation proceeds without one.
             if (backup)
@@ -177,7 +180,8 @@ public sealed class SurgeryCoordinator
                 }
                 catch (BackupException ex)
                 {
-                    return SurgeryResult.Failed($"backup failed — no history was touched: {ex.Message}");
+                    return SurgeryResult.Refused(
+                        $"backup failed — no history was touched: {ex.Message}", SurgeryRefusal.BackupFailed);
                 }
                 undo = new UndoHandle(_backup, _busy, handle);
 
@@ -204,6 +208,8 @@ public sealed class SurgeryCoordinator
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                // The operation threw part-way: what already reached the repository is unknown, so
+                // the journal stays pending and the result claims nothing about the repository.
                 return SurgeryResult.Failed($"the {phase} failed: {ex.Message}", undo);
             }
 
@@ -221,7 +227,8 @@ public sealed class SurgeryCoordinator
                 Advisory = edit?.Advisory,
                 Undo = undo,
                 Rebase = rebase,
-                Edit = edit
+                Edit = edit,
+                RepositoryUntouched = !success && ProvesNothingMoved(rebase, edit)
             };
         }
         finally
@@ -242,25 +249,28 @@ public sealed class SurgeryCoordinator
         return true;
     }
 
-    private static string? CheckTree(Models.WorkingState state, TreeRequirement requirement)
+    /// <summary>Which requirement the tree fails and how to say so, or <see cref="SurgeryRefusal.None"/> with a null reason.</summary>
+    private static (SurgeryRefusal Kind, string? Reason) CheckTree(Models.WorkingState state, TreeRequirement requirement)
     {
         switch (requirement)
         {
             case TreeRequirement.Clean when state.IsDirty:
-                return $"working tree has {state.Files.Count} uncommitted change(s) — " +
-                       $"refusing (stash or commit first): {List(state.Files)}";
+                return (SurgeryRefusal.UncommittedChanges,
+                    $"working tree has {state.Files.Count} uncommitted change(s) — " +
+                    $"refusing (stash or commit first): {List(state.Files)}");
             case TreeRequirement.NoUnstagedChanges:
             {
                 var unstaged = state.Unstaged.ToList();
                 if (unstaged.Count > 0)
-                    return $"working tree has {unstaged.Count} unstaged change(s) — " +
-                           $"stage or stash them first: {List(unstaged)}";
+                    return (SurgeryRefusal.UnstagedChanges,
+                        $"working tree has {unstaged.Count} unstaged change(s) — " +
+                        $"stage or stash them first: {List(unstaged)}");
                 if (!state.Staged.Any())
-                    return "nothing is staged — stage the fix first";
-                return null;
+                    return (SurgeryRefusal.NothingStaged, "nothing is staged — stage the fix first");
+                return (SurgeryRefusal.None, null);
             }
             default:
-                return null;
+                return (SurgeryRefusal.None, null);
         }
     }
 
