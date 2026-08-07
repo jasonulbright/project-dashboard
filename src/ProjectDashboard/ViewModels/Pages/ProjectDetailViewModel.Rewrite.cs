@@ -74,14 +74,21 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
     private PreviewHandle? _preview;
     private UndoHandle? _undo;
 
+    /// <summary>
+    /// The off-thread deletion of the handles this session has released; held so a caller can
+    /// await it. Both release sites run on the thread that started the wizard step — for
+    /// <see cref="PreviewAsync"/> before its first await, for <see cref="ExecuteAsync"/> on the
+    /// resumed continuation — which in the app is the dispatcher.
+    /// </summary>
+    internal Task ScratchDisposal { get; private set; } = Task.CompletedTask;
+
     public bool CanUndo => _undo is not null;
 
     public async Task<RewritePreviewOutcome> PreviewAsync(RewriteRequest request, CancellationToken ct = default)
     {
         // A superseded preview's scratch tree is dropped here; keeping it would leave a bare
         // repo per edit under the work root for the process lifetime.
-        _preview?.Dispose();
-        _preview = null;
+        ReleaseSpentPreview();
         try
         {
             _preview = await coordinator.PreviewAsync(request, ct);
@@ -106,8 +113,7 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
         _undo ??= result.Undo;
         // The handle is spent either way — the wizard requires a fresh dry run before any
         // further execute — so holding it only keeps its scratch tree alive.
-        preview.Dispose();
-        _preview = null;
+        ReleaseSpentPreview();
         return result;
     }
 
@@ -116,10 +122,27 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
             ? Task.FromResult(new RestoreResult(false, "no backup was taken for this rewrite"))
             : _undo.RestoreAsync(ct);
 
+    /// <summary>
+    /// Hands a spent handle to the pool. Deleting its scratch tree enumerates every file,
+    /// rewrites the attributes of each, deletes recursively, and sleeps between retries while a
+    /// just-exited git still holds handles, so it never runs on the thread that released it.
+    /// </summary>
+    private void ReleaseSpentPreview()
+    {
+        var spent = _preview;
+        _preview = null;
+        if (spent is not null) ScratchDisposal = Task.Run(spent.Dispose);
+    }
+
+    /// <summary>
+    /// Deletes in place: every caller detaches a session off the dispatcher already. Joining
+    /// the pending release keeps a completed disposal meaning the scratch trees are gone.
+    /// </summary>
     public void Dispose()
     {
         _preview?.Dispose();
         _preview = null;
+        ScratchDisposal.GetAwaiter().GetResult();
     }
 }
 

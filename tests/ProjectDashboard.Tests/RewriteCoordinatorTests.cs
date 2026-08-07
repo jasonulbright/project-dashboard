@@ -3,6 +3,7 @@ using ProjectDashboard.Services;
 using ProjectDashboard.Services.History;
 using ProjectDashboard.Services.Rewrite;
 using ProjectDashboard.Services.Safety;
+using ProjectDashboard.ViewModels.Pages;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -373,5 +374,113 @@ public class RewriteCoordinatorTests
         Assert.True(result.Success, result.FailureReason);
         Assert.Same(preview.Report, result.Report);
         Assert.Equal(0, GrepHits(f.SourcePath, AllCommits(f.SourcePath), Needle));
+    }
+
+    /// <summary>
+    /// Executing a session resumes on the thread the step was started from. Deleting the spent
+    /// preview's scratch tree enumerates every file, rewrites the attributes of each, deletes
+    /// recursively, and sleeps between retries while a just-exited git still holds handles —
+    /// on the thread the surface is drawn on that is a frozen window right as the rewrite
+    /// finishes. The deletion therefore leaves the resuming thread, and the session hands back
+    /// the task that carries it.
+    /// </summary>
+    [Fact]
+    public async Task ExecutingASession_DeletesTheSpentPreviewOffTheThreadTheStepResumedOn()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+        var workRoot = Path.Combine(Path.GetTempPath(), "pd-fixtures", "rewrite-workroot-" + Guid.NewGuid().ToString("N")[..8]);
+        var git = new GitService();
+        var coordinator = new RewriteCoordinator(
+            new BackupService(git, new SettingsService()),
+            new RepoBusyRegistry(),
+            git,
+            new SwapService(git, GitGuard.GitExe),
+            gitExecutable: GitGuard.GitExe,
+            workRoot: workRoot);
+        var session = new CoordinatorRewriteSession(coordinator);
+
+        try
+        {
+            using var pump = new SingleThreadContext();
+            var resumedOn = 0;
+            pump.Run(async () =>
+            {
+                var preview = await session.PreviewAsync(Request(f));
+                Assert.Null(preview.FailureReason);
+                Assert.Single(Directory.GetDirectories(workRoot));
+
+                var result = await session.ExecuteAsync();
+                resumedOn = Environment.CurrentManagedThreadId;
+                Assert.True(result.Success);
+            });
+
+            Assert.Equal(pump.ThreadId, resumedOn);
+            Assert.NotSame(Task.CompletedTask, session.ScratchDisposal);
+            await session.ScratchDisposal;
+            Assert.Empty(Directory.GetDirectories(workRoot));
+            _output.WriteLine($"spent preview released off the resuming thread {resumedOn}; work root {workRoot} is empty");
+        }
+        finally
+        {
+            session.Dispose();
+            RewriteScratch.TryDeleteTree(workRoot);
+        }
+    }
+
+    /// <summary>
+    /// A single-threaded synchronization context on a dedicated thread, which is what an
+    /// awaited step sees when the app runs it: every continuation is posted back to the one
+    /// thread the surface is drawn on. A pool thread can never serve as this thread, so work
+    /// handed to the pool is provably not running here.
+    /// </summary>
+    private sealed class SingleThreadContext : SynchronizationContext, IDisposable
+    {
+        private readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = [];
+        private readonly Thread _thread;
+
+        public SingleThreadContext()
+        {
+            _thread = new Thread(Pump) { IsBackground = true, Name = "rewrite-test-pump" };
+            _thread.Start();
+        }
+
+        public int ThreadId => _thread.ManagedThreadId;
+
+        public override void Post(SendOrPostCallback d, object? state) => _queue.Add((d, state));
+
+        public override void Send(SendOrPostCallback d, object? state) =>
+            throw new NotSupportedException("the pump only accepts posted continuations");
+
+        /// <summary>Runs the body on the pump thread, drains every continuation it posts, and rethrows what it threw.</summary>
+        public void Run(Func<Task> body)
+        {
+            Task work = Task.CompletedTask;
+            Post(_ =>
+            {
+                try
+                {
+                    work = body();
+                }
+                catch (Exception ex)
+                {
+                    work = Task.FromException(ex);
+                }
+                // Off the pump so the shutdown signal cannot be queued behind the continuations
+                // it is waiting on.
+                work.ContinueWith(_ => _queue.CompleteAdding(), TaskScheduler.Default);
+            }, null);
+            _thread.Join();
+            work.GetAwaiter().GetResult();
+        }
+
+        private void Pump()
+        {
+            SetSynchronizationContext(this);
+            foreach (var (callback, state) in _queue.GetConsumingEnumerable())
+                callback(state);
+        }
+
+        public void Dispose() => _queue.Dispose();
     }
 }
