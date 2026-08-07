@@ -39,6 +39,13 @@ public partial class DashboardViewModel : ObservableObject
     /// </summary>
     public event Action<ProjectInfo>? NavigateToProjectRequested;
 
+    /// <summary>
+    /// Raised to open a project's detail view with one work-area tab already selected.
+    /// The detail page exposes no tab-selection API, so MainWindow drives the selection
+    /// from the shell side after navigation.
+    /// </summary>
+    public event Action<ProjectInfo, DetailTab>? NavigateToProjectTabRequested;
+
     public int TotalCount => Projects.Count;
     public int CloudCount => Projects.Count(p => p.IsRemoteOnly);
     public bool HasCloud => CloudCount > 0;
@@ -77,9 +84,19 @@ public partial class DashboardViewModel : ObservableObject
         _gitService = gitService;
         _watcher = watcher;
         _busyRegistry = busyRegistry;
+        _searchService = new RepoSearchService(gitService, busyRegistry);
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
         ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
+
+        // The empty-state choice depends on whether a load is in flight, and IsRunning
+        // raises only on the command itself.
+        LoadProjectsCommand.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(IAsyncRelayCommand.IsRunning)) NotifyContentState();
+        };
+
+        ReloadViewPreferences();
 
         // Fire and forget load on construction
         _ = LoadProjectsCommand.ExecuteAsync(null);
@@ -198,6 +215,261 @@ public partial class DashboardViewModel : ObservableObject
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnSelectedSortChanged(string value) => ApplyFilters();
+
+    // ── View preferences: pinned cards + density (X-10) ───────────────────────
+
+    private readonly RepoSearchService _searchService;
+    private HashSet<string> _pinnedKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    [ObservableProperty] private bool _isCompactDensity;
+
+    public Thickness CardPadding => IsCompactDensity ? new Thickness(9) : new Thickness(14);
+    public double CardMinHeight => IsCompactDensity ? 132 : 200;
+
+    /// <summary>Names the density the toggle switches TO, so the control reads as its own action.</summary>
+    public string DensityToggleLabel => IsCompactDensity ? "Comfortable" : "Compact";
+
+    partial void OnDiscoveryErrorVisibleChanged(bool value) => NotifyContentState();
+
+    partial void OnIsCompactDensityChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CardPadding));
+        OnPropertyChanged(nameof(CardMinHeight));
+        OnPropertyChanged(nameof(DensityToggleLabel));
+    }
+
+    /// <summary>Reads pinned paths and density from settings without touching the project list.</summary>
+    private void ReloadViewPreferences()
+    {
+        var settings = _settingsService.Load();
+        _pinnedKeys = DashboardOrdering.KeySet(settings.PinnedProjectPaths);
+        IsCompactDensity = string.Equals(settings.CardDensity, "compact", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [RelayCommand]
+    private void ToggleDensity()
+    {
+        IsCompactDensity = !IsCompactDensity;
+        // Load-mutate-save, never a fresh AppSettings: the window geometry and every
+        // other key live in the same file and a wholesale write would reset them.
+        var settings = _settingsService.Load();
+        settings.CardDensity = IsCompactDensity ? "compact" : "comfortable";
+        _settingsService.Save(settings);
+    }
+
+    [RelayCommand]
+    private void TogglePin(ProjectInfo? project)
+    {
+        // A remote-only card has no path to key a pin on; it isn't in the grid's local set.
+        if (project is null || project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return;
+
+        var key = DashboardOrdering.RepoKey(project.FullPath);
+        var settings = _settingsService.Load();
+        var pinned = settings.PinnedProjectPaths.ToList();
+
+        if (_pinnedKeys.Remove(key))
+            pinned.RemoveAll(p => DashboardOrdering.RepoKey(p) == key);
+        else
+        {
+            _pinnedKeys.Add(key);
+            pinned.Add(project.FullPath);
+        }
+
+        settings.PinnedProjectPaths = [.. pinned];
+        _settingsService.Save(settings);
+
+        ApplyPinnedFlags();
+        ApplyFilters();
+    }
+
+    private void ApplyPinnedFlags()
+    {
+        foreach (var project in Projects) project.IsPinned = DashboardOrdering.IsPinned(project, _pinnedKeys);
+        foreach (var project in _hiddenSnapshot) project.IsPinned = DashboardOrdering.IsPinned(project, _pinnedKeys);
+    }
+
+    // ── Empty states (X-14) ───────────────────────────────────────────────────
+
+    /// <summary>Probed once per load: a per-property Directory.Exists would hit the disk on every render.</summary>
+    private bool _rootExists = true;
+
+    public DashboardContent Content => DashboardEmptyState.Select(
+        LoadProjectsCommand.IsRunning, DiscoveryErrorVisible, _rootExists, Projects.Count, FilteredProjects.Count);
+
+    public bool ShowLoading => Content == DashboardContent.Loading;
+    public bool ShowRootMissing => Content == DashboardContent.RootMissing;
+    public bool ShowEmptyRoot => Content == DashboardContent.EmptyRoot;
+    public bool ShowNoMatches => Content == DashboardContent.NoMatches;
+    public bool ShowCards => Content == DashboardContent.Cards;
+
+    public string ConfiguredRootPath => _settingsService.Load().ProjectsRootPath;
+
+    private void NotifyContentState()
+    {
+        OnPropertyChanged(nameof(Content));
+        OnPropertyChanged(nameof(ShowLoading));
+        OnPropertyChanged(nameof(ShowRootMissing));
+        OnPropertyChanged(nameof(ShowEmptyRoot));
+        OnPropertyChanged(nameof(ShowNoMatches));
+        OnPropertyChanged(nameof(ShowCards));
+        OnPropertyChanged(nameof(ConfiguredRootPath));
+    }
+
+    // ── Card quick actions (X-11) ─────────────────────────────────────────────
+
+    [RelayCommand] private Task FetchProject(ProjectInfo? project) => RunCardActionAsync(project, CardAction.Fetch);
+    [RelayCommand] private Task PullProject(ProjectInfo? project) => RunCardActionAsync(project, CardAction.Pull);
+    [RelayCommand] private Task PushProject(ProjectInfo? project) => RunCardActionAsync(project, CardAction.Push);
+
+    /// <summary>
+    /// Runs one card-level git op under the same refusals bulk sync applies. Every path
+    /// out of here writes OpStatusText: a refused action that said nothing would read as
+    /// a dead button.
+    /// </summary>
+    private async Task RunCardActionAsync(ProjectInfo? project, CardAction action)
+    {
+        if (project is null) return;
+        var verb = DashboardCardActions.Verb(action);
+        var name = project.DirectoryName;
+
+        var busy = !string.IsNullOrEmpty(project.FullPath) && _busyRegistry.IsBusy(project.FullPath);
+        var refusal = DashboardCardActions.RefuseReason(project, action, _bulkOpRunning, busy);
+        if (refusal is not null)
+        {
+            OpStatusText = $"{verb} {name}: {refusal}";
+            return;
+        }
+
+        // The lease both claims the repo and makes the watcher, the periodic reconcile,
+        // and Sync All skip it while git is writing refs here.
+        if (!_busyRegistry.TryAcquire(project.FullPath, out var lease))
+        {
+            OpStatusText = $"{verb} {name}: {DashboardCardActions.BusyReason}";
+            return;
+        }
+
+        try
+        {
+            OpStatusText = $"{verb} {name}…";
+            var fetch = await _gitService.FetchAsync(project.FullPath);
+            if (!fetch.Success)
+            {
+                OpStatusText = $"{name}: fetch failed — {fetch.FirstError}";
+                return;
+            }
+            if (action == CardAction.Fetch)
+            {
+                OpStatusText = $"{name}: fetched.";
+                return;
+            }
+
+            var state = await _gitService.GetWorkingStateAsync(project.FullPath);
+            var postFetch = DashboardCardActions.RefuseReason(
+                project, action, bulkOpRunning: false, repoBusy: false, hasUpstream: state?.HasUpstream);
+            if (postFetch is not null)
+            {
+                OpStatusText = $"{verb} {name}: {postFetch}";
+                return;
+            }
+            if (state is null)
+            {
+                OpStatusText = $"{verb} {name}: {DashboardCardActions.StatusUnavailableReason}";
+                return;
+            }
+
+            // Divergence is only knowable after the fetch; the pre-flight guard saw stale counts.
+            if (state.Ahead > 0 && state.Behind > 0)
+            {
+                OpStatusText = $"{verb} {name}: diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal.";
+                return;
+            }
+
+            if (action == CardAction.Pull)
+            {
+                if (state.Behind == 0) { OpStatusText = $"{name}: already up to date."; return; }
+                var pull = await _gitService.PullAsync(project.FullPath);
+                OpStatusText = pull.Success
+                    ? $"{name}: pulled {state.Behind}."
+                    : $"{name}: pull failed — {pull.FirstError}";
+            }
+            else
+            {
+                if (state.Ahead == 0) { OpStatusText = $"{name}: nothing to push."; return; }
+                var push = await _gitService.PushAsync(project.FullPath);
+                OpStatusText = push.Success
+                    ? $"{name}: pushed {state.Ahead}."
+                    : $"{name}: push failed — {push.FirstError}";
+            }
+        }
+        catch (Exception ex)
+        {
+            OpStatusText = $"{verb} {name}: {ex.Message}";
+            Log.Warn($"card {verb} failed for {project.FullPath}", ex);
+        }
+        finally
+        {
+            // Released before the refresh so the reconcile it triggers can read the repo.
+            lease.Dispose();
+            await RefreshSingle(project);
+        }
+    }
+
+    // ── Deep links into the detail page's tabs (X-11) ─────────────────────────
+
+    [RelayCommand] private void OpenChangesTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.Changes);
+    [RelayCommand] private void OpenBranchesTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.Branches);
+    [RelayCommand] private void OpenIssuesTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.Issues);
+    [RelayCommand] private void OpenPullRequestsTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.PullRequests);
+
+    private void OpenAtTab(ProjectInfo? project, DetailTab tab)
+    {
+        if (project is null || project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return;
+        SelectedProject = project;
+        if (NavigateToProjectTabRequested is not null)
+            NavigateToProjectTabRequested.Invoke(project, tab);
+        else
+            OpenProject(project);
+    }
+
+    [RelayCommand]
+    private void CopyPath(ProjectInfo? project)
+    {
+        if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
+        try
+        {
+            Clipboard.SetText(project.FullPath);
+            OpStatusText = $"Copied {project.FullPath}";
+        }
+        catch (Exception ex)
+        {
+            // Another process holding the clipboard makes SetText throw; that is a
+            // failed copy, not a crash.
+            OpStatusText = $"Copy path failed — {ex.Message}";
+            Log.Warn("clipboard copy failed", ex);
+        }
+    }
+
+    // ── Global search fan-out (X-12) ──────────────────────────────────────────
+
+    /// <summary>
+    /// Searches every discovered local repo. Remote-only cards carry no working tree,
+    /// so they never reach the fan-out.
+    /// </summary>
+    public Task<RepoSearchResult> SearchAllReposAsync(string term, CancellationToken ct)
+    {
+        var targets = Projects
+            .Where(p => !p.IsRemoteOnly && !string.IsNullOrEmpty(p.FullPath))
+            .Select(p => new RepoSearchTarget(p.DisplayName, p.FullPath))
+            .ToList();
+        return _searchService.SearchAsync(term, targets, ct);
+    }
+
+    /// <summary>The loaded project whose working tree is at this path, if any.</summary>
+    public ProjectInfo? FindByPath(string repoPath) =>
+        Projects.FirstOrDefault(p => !p.IsRemoteOnly
+            && !string.IsNullOrEmpty(p.FullPath)
+            && string.Equals(DashboardOrdering.RepoKey(p.FullPath), DashboardOrdering.RepoKey(repoPath),
+                StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Summary-bar filter. Key: "all" | "dirty" | "todos" | "issues" | "mismatch" | "incomplete".</summary>
     [RelayCommand]
@@ -559,6 +831,9 @@ public partial class DashboardViewModel : ObservableObject
         var refreshed = await _discoveryService.RefreshProjectAsync(project);
         if (refreshed is null) return;
 
+        // A refresh REPLACES the instance; the pin flag is view state the new one lacks.
+        refreshed.IsPinned = DashboardOrdering.IsPinned(refreshed, _pinnedKeys);
+
         var idx = Projects.IndexOf(project);
         if (idx >= 0)
         {
@@ -690,6 +965,7 @@ public partial class DashboardViewModel : ObservableObject
             if (full is null) continue;
             // Flag, don't mutate the manifest — Status must never be overwritten by view state.
             full.IsHidden = true;
+            full.IsPinned = DashboardOrdering.IsPinned(full, _pinnedKeys);
             hiddenList.Add(full);
         }
 
@@ -760,6 +1036,7 @@ public partial class DashboardViewModel : ObservableObject
         SyncWatcherToSettings();
         try
         {
+            _rootExists = Directory.Exists(_settingsService.Load().ProjectsRootPath);
             var results = await _discoveryService.DiscoverAllAsync();
             UpdateProjectList(results);
             DiscoveryErrorVisible = false;
@@ -778,6 +1055,7 @@ public partial class DashboardViewModel : ObservableObject
     {
         try
         {
+            _rootExists = Directory.Exists(_settingsService.Load().ProjectsRootPath);
             var results = await _discoveryService.ForceRefreshAllAsync();
             UpdateProjectList(results);
             DiscoveryErrorVisible = false;
@@ -795,6 +1073,7 @@ public partial class DashboardViewModel : ObservableObject
         var root = _settingsService.Load().ProjectsRootPath;
         DiscoveryErrorText = $"Couldn't scan {root} — {ex.Message}";
         DiscoveryErrorVisible = true;
+        NotifyContentState();
     }
 
     private async Task UpdateGhBannerAsync()
@@ -841,6 +1120,11 @@ public partial class DashboardViewModel : ObservableObject
     private void UpdateProjectList(List<ProjectInfo> results)
     {
         Projects = new ObservableCollection<ProjectInfo>(results);
+
+        // Settings may have changed since the last load (Settings page, another window),
+        // and cached ProjectInfo carries whatever IsPinned was serialized with.
+        ReloadViewPreferences();
+        ApplyPinnedFlags();
 
         var cats = results
             .Select(p => p.Manifest.Category)
@@ -918,16 +1202,160 @@ public partial class DashboardViewModel : ObservableObject
                 p.DirectoryName.Contains(term, StringComparison.OrdinalIgnoreCase));
         }
 
-        // Sort
-        filtered = SelectedSort switch
-        {
-            "Last Commit" => filtered.OrderByDescending(p => p.GitStatus.LastCommitDate),
-            "Status" => filtered.OrderBy(p => p.Manifest.Status).ThenBy(p => p.DisplayName),
-            "Dirty First" => filtered.OrderByDescending(p => p.GitStatus.IsDirty).ThenBy(p => p.DisplayName),
-            "Category" => filtered.OrderBy(p => p.Manifest.Category).ThenBy(p => p.DisplayName),
-            _ => filtered.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
-        };
+        SetDisplayedProjects(DashboardOrdering.Apply(filtered, SelectedSort, _pinnedKeys));
+        NotifyContentState();
+    }
+}
 
-        SetDisplayedProjects(filtered);
+/// <summary>Which body the dashboard shows instead of, or as, the card grid.</summary>
+public enum DashboardContent
+{
+    Loading,
+    ScanFailed,
+    RootMissing,
+    EmptyRoot,
+    NoMatches,
+    Cards,
+}
+
+/// <summary>
+/// Chooses the dashboard body from load state alone. An empty grid has four distinct
+/// causes — a scan still running, a scan that faulted, a root that isn't there, and a
+/// root with no repositories — and rendering one blank panel for all of them tells the
+/// user nothing about which.
+/// </summary>
+public static class DashboardEmptyState
+{
+    /// <summary>
+    /// A load in flight wins over a stale failure so a retry doesn't keep showing the
+    /// error it is retrying; filter-emptiness is last because it only means anything
+    /// once a scan has produced projects.
+    /// </summary>
+    public static DashboardContent Select(
+        bool loading, bool scanFailed, bool rootExists, int discoveredCount, int filteredCount)
+    {
+        if (loading) return DashboardContent.Loading;
+        if (scanFailed) return DashboardContent.ScanFailed;
+        if (!rootExists) return DashboardContent.RootMissing;
+        if (discoveredCount == 0) return DashboardContent.EmptyRoot;
+        if (filteredCount == 0) return DashboardContent.NoMatches;
+        return DashboardContent.Cards;
+    }
+}
+
+/// <summary>Card-level git verbs that share bulk sync's refusals.</summary>
+public enum CardAction
+{
+    Fetch,
+    Pull,
+    Push,
+}
+
+/// <summary>
+/// Pre-flight refusals for the per-card git verbs. Pure so every refusal is
+/// assertable without a repo: the guard, not the button, is what keeps a surprise
+/// merge or a push from a diverged branch off the dashboard.
+/// </summary>
+public static class DashboardCardActions
+{
+    public const string BulkReason = "another operation is in progress.";
+    public const string NotClonedReason = "not cloned locally.";
+    public const string BusyReason = "busy with another operation.";
+    public const string StatusUnavailableReason = "status unavailable.";
+    public const string DetachedReason = "detached HEAD — check out a branch first.";
+    public const string NoRemoteReason = "no remote.";
+    public const string NoUpstreamReason = "no upstream branch.";
+    public const string DirtyReason = "uncommitted changes.";
+
+    public static string Verb(CardAction action) => action switch
+    {
+        CardAction.Pull => "Pull",
+        CardAction.Push => "Push",
+        _ => "Fetch",
+    };
+
+    /// <summary>
+    /// The reason this action is refused, or null when it may run. <paramref name="hasUpstream"/>
+    /// is null before the caller has read the working state; false refuses Pull and Push.
+    /// Fetch is exempt from the working-tree refusals — it writes remote refs only and
+    /// cannot disturb uncommitted work — but shares every repo-level one.
+    /// </summary>
+    public static string? RefuseReason(
+        ProjectInfo? project,
+        CardAction action,
+        bool bulkOpRunning,
+        bool repoBusy,
+        bool? hasUpstream = null)
+    {
+        if (project is null) return NotClonedReason;
+        if (bulkOpRunning) return BulkReason;
+        if (project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return NotClonedReason;
+        if (repoBusy) return BusyReason;
+        if (project.GitStatus.HasError) return StatusUnavailableReason;
+        if (project.GitStatus.NeedsAttention) return $"{project.GitStatus.AttentionLabel} — resolve in a terminal.";
+        if (project.GitStatus.IsDetached) return DetachedReason;
+        if (string.IsNullOrEmpty(project.GitStatus.RemoteUrl)) return NoRemoteReason;
+
+        if (action == CardAction.Fetch) return null;
+
+        if (hasUpstream == false) return NoUpstreamReason;
+        if (project.GitStatus.IsDirty) return DirtyReason;
+        if (project.GitStatus.AheadBy > 0 && project.GitStatus.BehindBy > 0)
+            return $"diverged (↑{project.GitStatus.AheadBy} ↓{project.GitStatus.BehindBy}) — resolve in a terminal.";
+
+        return null;
+    }
+}
+
+/// <summary>Card-grid ordering: the active sort, with pinned projects lifted to the front.</summary>
+public static class DashboardOrdering
+{
+    /// <summary>
+    /// Pinning is a partition of the sorted sequence, not an extra sort key: each side
+    /// keeps the active sort's order exactly, including for sorts whose keys tie.
+    /// </summary>
+    public static IEnumerable<ProjectInfo> Apply(IEnumerable<ProjectInfo> projects, string sort, ISet<string> pinnedKeys)
+    {
+        var sorted = Sort(projects, sort).ToList();
+        return sorted.Where(p => IsPinned(p, pinnedKeys)).Concat(sorted.Where(p => !IsPinned(p, pinnedKeys)));
+    }
+
+    private static IEnumerable<ProjectInfo> Sort(IEnumerable<ProjectInfo> projects, string sort) => sort switch
+    {
+        "Last Commit" => projects.OrderByDescending(p => p.GitStatus.LastCommitDate),
+        "Status" => projects.OrderBy(p => p.Manifest.Status).ThenBy(p => p.DisplayName),
+        "Dirty First" => projects.OrderByDescending(p => p.GitStatus.IsDirty).ThenBy(p => p.DisplayName),
+        "Category" => projects.OrderBy(p => p.Manifest.Category).ThenBy(p => p.DisplayName),
+        _ => projects.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase),
+    };
+
+    public static bool IsPinned(ProjectInfo project, ISet<string> pinnedKeys) =>
+        !string.IsNullOrEmpty(project.FullPath) && pinnedKeys.Contains(RepoKey(project.FullPath));
+
+    public static HashSet<string> KeySet(IEnumerable<string> paths)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            var key = RepoKey(path);
+            if (key.Length > 0) keys.Add(key);
+        }
+        return keys;
+    }
+
+    /// <summary>
+    /// Comparison key for a repo path: a trailing separator or a relative spelling must
+    /// not make one pinned repo look like two. An unparseable path keys as itself rather
+    /// than throwing — a damaged settings entry is inert, not fatal.
+    /// </summary>
+    public static string RepoKey(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch (Exception ex)
+        {
+            Log.Warn($"unusable repo path in settings: {path}", ex);
+            return path.Trim();
+        }
     }
 }

@@ -225,25 +225,96 @@
 
             <ui:TextBox PlaceholderText="Search projects..."
                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                        Width="272" />
+                        Width="272" Margin="0,0,12,0" />
+
+            <ui:Button Content="{Binding DensityToggleLabel}" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon ArrowAutofitHeight24}"
+                       Command="{Binding ToggleDensityCommand}"
+                       ToolTip="Switch card density"
+                       AutomationProperties.Name="{Binding DensityToggleLabel, StringFormat='Switch cards to {0} density'}"
+                       Width="140" />
         </StackPanel>
 
-        <!-- Loading indicator -->
-        <TextBlock Grid.Row="2"
-                   Text="Loading projects..."
-                   FontSize="16"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Visibility="{Binding LoadProjectsCommand.IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
+        <!-- Loading: distinct from every empty state below -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Visibility="{Binding ShowLoading, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ui:ProgressRing IsIndeterminate="True" Width="32" Height="32" HorizontalAlignment="Center" />
+            <TextBlock Text="Scanning for projects…" FontSize="15" Margin="0,12,0,0"
+                       HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        </StackPanel>
+
+        <!-- Configured root does not exist: a different fault from an empty one -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520"
+                    Visibility="{Binding ShowRootMissing, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ui:SymbolIcon Symbol="FolderProhibited24" FontSize="34" HorizontalAlignment="Center"
+                           Foreground="{StaticResource StatusBadFg}" />
+            <TextBlock Text="That projects folder isn't there" FontSize="17" FontWeight="SemiBold"
+                       Margin="0,12,0,0" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="{Binding ConfiguredRootPath}" FontSize="12" Margin="0,6,0,0"
+                       FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"
+                       HorizontalAlignment="Center" TextAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="The drive may be disconnected, or the folder moved."
+                       FontSize="13" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center"
+                       TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
+                <ui:Button Content="Change projects folder" Appearance="Primary" FontSize="12" Padding="12,6"
+                           Command="{Binding OpenSettingsCommand}" Margin="0,0,8,0" />
+                <ui:Button Content="Scan again" FontSize="12" Padding="12,6"
+                           Command="{Binding ForceRefreshCommand}" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Root exists but holds no repositories -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520"
+                    Visibility="{Binding ShowEmptyRoot, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ui:SymbolIcon Symbol="FolderOpen24" FontSize="34" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="No git repositories here yet" FontSize="17" FontWeight="SemiBold"
+                       Margin="0,12,0,0" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="{Binding ConfiguredRootPath}" FontSize="12" Margin="0,6,0,0"
+                       FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"
+                       HorizontalAlignment="Center" TextAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="Start a project, clone one, or point the dashboard at a different folder."
+                       FontSize="13" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center"
+                       TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
+                <ui:Button Content="New project" Appearance="Primary" FontSize="12" Padding="12,6"
+                           Icon="{ui:SymbolIcon Add24}"
+                           Command="{Binding NewProjectCommand}" Margin="0,0,8,0" />
+                <ui:Button Content="Clone a repository" FontSize="12" Padding="12,6"
+                           Icon="{ui:SymbolIcon CloudArrowDown24}"
+                           Command="{Binding CloneRepoCommand}" Margin="0,0,8,0" />
+                <ui:Button Content="Change projects folder" FontSize="12" Padding="12,6"
+                           Command="{Binding OpenSettingsCommand}" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Projects exist; the current filter/search matches none of them -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="480"
+                    Visibility="{Binding ShowNoMatches, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ui:SymbolIcon Symbol="SearchInfo24" FontSize="30" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="No projects match this view" FontSize="16" FontWeight="SemiBold"
+                       Margin="0,10,0,0" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <ui:Button Content="Clear filters" FontSize="12" Padding="12,6" Margin="0,12,0,0"
+                       HorizontalAlignment="Center"
+                       Command="{Binding SetFilterCommand}" CommandParameter="all" />
+        </StackPanel>
 
         <!-- Card grid -->
         <ScrollViewer Grid.Row="2"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
+                      Visibility="{Binding ShowCards, Converter={StaticResource BooleanToVisibilityConverter}}"
                       PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
             <ItemsControl ItemsSource="{Binding FilteredProjects}"
-                          KeyboardNavigation.TabNavigation="Once"
+                          KeyboardNavigation.TabNavigation="Local"
                           KeyboardNavigation.DirectionalNavigation="Cycle">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -253,15 +324,17 @@
 
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type models:ProjectInfo}">
-                        <Border Width="320" MinHeight="200" Margin="8"
+                        <Border Width="320" Margin="8"
+                                MinHeight="{Binding DataContext.CardMinHeight, RelativeSource={RelativeSource AncestorType=Page}}"
+                                Padding="{Binding DataContext.CardPadding, RelativeSource={RelativeSource AncestorType=Page}}"
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
-                                Padding="14"
                                 Cursor="Hand"
                                 Focusable="True"
                                 FocusVisualStyle="{StaticResource FocusRing}"
+                                KeyboardNavigation.TabNavigation="Local"
                                 AutomationProperties.Name="{Binding DisplayName}">
                             <Border.Tag>
                                 <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Page}" />
@@ -308,6 +381,77 @@
                                             </Style>
                                         </MenuItem.Style>
                                     </MenuItem>
+                                    <!-- Pin/Unpin key on the repo path, which a remote-only card has none of. -->
+                                    <MenuItem Header="Pin to Top"
+                                              Command="{Binding Tag.TogglePinCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsPinned}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <MenuItem Header="Unpin"
+                                              Command="{Binding Tag.TogglePinCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsPinned}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <Separator />
+                                    <MenuItem Header="Fetch"
+                                              Command="{Binding Tag.FetchProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <MenuItem Header="Pull"
+                                              Command="{Binding Tag.PullProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <MenuItem Header="Push"
+                                              Command="{Binding Tag.PushProjectCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                     <Separator />
                                     <MenuItem Header="Open on GitHub"
                                               Command="{Binding Tag.OpenGitHubCommand}"
@@ -333,6 +477,19 @@
                                     </MenuItem>
                                     <MenuItem Header="Open in Terminal"
                                               Command="{Binding Tag.OpenTerminalCommand}"
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
+                                    <MenuItem Header="Copy Path"
+                                              Command="{Binding Tag.CopyPathCommand}"
                                               CommandParameter="{Binding DataContext}">
                                         <MenuItem.Style>
                                             <Style TargetType="MenuItem">
@@ -416,14 +573,21 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
-                                <!-- Display Name -->
-                                <TextBlock Grid.Row="0"
-                                           Text="{Binding DisplayName}"
-                                           FontWeight="Bold" FontSize="14"
-                                           TextTrimming="CharacterEllipsis"
-                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <!-- Display Name + pin marker -->
+                                <DockPanel Grid.Row="0">
+                                    <ui:SymbolIcon DockPanel.Dock="Right" Symbol="Pin24" FontSize="14"
+                                                   VerticalAlignment="Center" Margin="6,0,0,0"
+                                                   ToolTip="Pinned to the top of the grid"
+                                                   Foreground="{StaticResource StatusInfoFg}"
+                                                   Visibility="{Binding IsPinned, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <TextBlock Text="{Binding DisplayName}"
+                                               FontWeight="Bold" FontSize="14"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </DockPanel>
 
                                 <!-- Version + Status -->
                                 <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,0">
@@ -512,7 +676,15 @@
                                                 </Style>
                                             </ui:SymbolIcon.Style>
                                         </ui:SymbolIcon>
-                                        <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                        <!-- Deep link: the working-tree summary opens the Changes tab. -->
+                                        <TextBlock FontSize="12" Cursor="Hand"
+                                                   ToolTip="Open the Changes tab"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                            <TextBlock.InputBindings>
+                                                <MouseBinding MouseAction="LeftClick"
+                                                              Command="{Binding Tag.OpenChangesTabCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                              CommandParameter="{Binding}" />
+                                            </TextBlock.InputBindings>
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="Synced" />
@@ -540,10 +712,16 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
-                                        <!-- Current branch + divergence -->
+                                        <!-- Current branch + divergence; deep link to the Branches tab -->
                                         <TextBlock FontSize="11" FontFamily="Cascadia Code,Consolas" Margin="8,0,0,0"
-                                                   VerticalAlignment="Center"
+                                                   VerticalAlignment="Center" Cursor="Hand"
+                                                   ToolTip="Open the Branches tab"
                                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <TextBlock.InputBindings>
+                                                <MouseBinding MouseAction="LeftClick"
+                                                              Command="{Binding Tag.OpenBranchesTabCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                              CommandParameter="{Binding}" />
+                                            </TextBlock.InputBindings>
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="{Binding GitStatus.Branch}" />
@@ -561,7 +739,14 @@
                                         </TextBlock>
                                         <TextBlock FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"
                                                    Text="{Binding GitStatus.AheadBehindLabel}"
-                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                   Cursor="Hand" ToolTip="Open the Branches tab"
+                                                   Foreground="{StaticResource StatusInfoFg}">
+                                            <TextBlock.InputBindings>
+                                                <MouseBinding MouseAction="LeftClick"
+                                                              Command="{Binding Tag.OpenBranchesTabCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                              CommandParameter="{Binding}" />
+                                            </TextBlock.InputBindings>
+                                        </TextBlock>
                                     </StackPanel>
 
                                     <!-- Note prefix icons (right-justified) -->
@@ -757,7 +942,7 @@
                                                HorizontalAlignment="Right"
                                                Foreground="#E8A317"
                                                Cursor="Hand"
-                                               ToolTip="View open issues on GitHub">
+                                               ToolTip="Open the Issues tab">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Visible" />
@@ -776,7 +961,7 @@
                                         </TextBlock.Style>
                                         <TextBlock.InputBindings>
                                             <MouseBinding MouseAction="LeftClick"
-                                                          Command="{Binding Tag.OpenIssuesCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                          Command="{Binding Tag.OpenIssuesTabCommand, RelativeSource={RelativeSource AncestorType=Border}}"
                                                           CommandParameter="{Binding}" />
                                         </TextBlock.InputBindings>
                                         <Run Text="{Binding OpenIssueCount, Mode=OneWay}" />
@@ -788,7 +973,7 @@
                                                Margin="0,0,10,0"
                                                Foreground="{StaticResource StatusInfoFg}"
                                                Cursor="Hand"
-                                               ToolTip="View open pull requests on GitHub">
+                                               ToolTip="Open the Pull Requests tab">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Visible" />
@@ -807,13 +992,54 @@
                                         </TextBlock.Style>
                                         <TextBlock.InputBindings>
                                             <MouseBinding MouseAction="LeftClick"
-                                                          Command="{Binding Tag.OpenPullRequestsCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                                          Command="{Binding Tag.OpenPullRequestsTabCommand, RelativeSource={RelativeSource AncestorType=Border}}"
                                                           CommandParameter="{Binding}" />
                                         </TextBlock.InputBindings>
                                         <Run Text="{Binding OpenPrCount, Mode=OneWay}" />
                                         <Run Text=" PRs" />
                                     </TextBlock>
                                 </DockPanel>
+
+                                <!-- Quick actions: revealed on hover, and again whenever one of them
+                                     takes keyboard focus — Opacity 0 keeps them in the card's tab
+                                     order, where Visibility Collapsed would remove them from it. -->
+                                <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,8,0,0"
+                                            HorizontalAlignment="Left">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Opacity" Value="0" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsRemoteOnly}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Border}}" Value="True">
+                                                    <Setter Property="Opacity" Value="1" />
+                                                </DataTrigger>
+                                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                                    <Setter Property="Opacity" Value="1" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <ui:Button Content="Fetch" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                                               Icon="{ui:SymbolIcon ArrowDownload24}"
+                                               ToolTip="Fetch this repository"
+                                               AutomationProperties.Name="{Binding DisplayName, StringFormat='Fetch {0}'}"
+                                               Command="{Binding Tag.FetchProjectCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                               CommandParameter="{Binding}" />
+                                    <ui:Button Content="Pull" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                                               Icon="{ui:SymbolIcon ArrowSync24}"
+                                               ToolTip="Fetch, then fast-forward this repository"
+                                               AutomationProperties.Name="{Binding DisplayName, StringFormat='Pull {0}'}"
+                                               Command="{Binding Tag.PullProjectCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                               CommandParameter="{Binding}" />
+                                    <ui:Button Content="Push" FontSize="11" Padding="8,3"
+                                               Icon="{ui:SymbolIcon ArrowUpload24}"
+                                               ToolTip="Fetch, then push this repository"
+                                               AutomationProperties.Name="{Binding DisplayName, StringFormat='Push {0}'}"
+                                               Command="{Binding Tag.PushProjectCommand, RelativeSource={RelativeSource AncestorType=Border}}"
+                                               CommandParameter="{Binding}" />
+                                </StackPanel>
                             </Grid>
                         </Border>
                     </DataTemplate>
