@@ -105,6 +105,35 @@ public class MarkdownLinkSafetyTests
         Assert.Equal(expected, ProjectDetailPage.LinkDisclosure(uri));
     }
 
+    /// <summary>
+    /// What reaches ShellExecute is the parsed form, not the raw capture. An embedded
+    /// carriage return or tab and any surrounding whitespace survive the http/https
+    /// allow-list untouched, so the normalization has to happen before the launch.
+    /// </summary>
+    [Theory]
+    [InlineData("https://evil.example/\rfoo", "https://evil.example/%0Dfoo")]
+    [InlineData("https://x/\t/y", "https://x/%09/y")]
+    [InlineData("  https://x  ", "https://x/")]
+    [InlineData("https://evil.example/\nfoo", "https://evil.example/%0Afoo")]
+    [InlineData("HTTPS://Example.COM/x", "https://example.com/x")]
+    [InlineData("https://github.com/o/r/pull/12", "https://github.com/o/r/pull/12")]
+    public void LaunchedTarget_IsTheNormalizedAbsoluteUri(string url, string expected)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var uri));
+        Assert.Equal(expected, ProjectDetailPage.NavigationTarget(uri));
+    }
+
+    [Fact]
+    public void PaddedLinkTarget_StillRendersClickable()
+    {
+        // The markdown capture keeps the padding; the allow-list must not reject it and
+        // the launch must not carry it.
+        var inlines = Render("[a](  https://ok.example/x  )");
+
+        var link = Assert.Single(inlines.OfType<Hyperlink>());
+        Assert.Equal("https://ok.example/x", link.ToolTip);
+    }
+
     private static List<Inline> Render(string markdown)
     {
         var paragraph = new Paragraph();

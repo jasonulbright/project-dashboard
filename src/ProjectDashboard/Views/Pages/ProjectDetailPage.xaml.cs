@@ -754,6 +754,14 @@ public partial class ProjectDetailPage
     }
 
     /// <summary>
+    /// The exact string handed to ShellExecute for a navigable link. The raw capture is
+    /// not it: a target such as https://host/&lt;CR&gt;foo, an embedded tab, or one padded
+    /// with spaces passes the allow-list and would otherwise reach the shell with those
+    /// characters intact. The parsed form percent-encodes them and drops the padding.
+    /// </summary>
+    internal static string NavigationTarget(Uri uri) => uri.AbsoluteUri;
+
+    /// <summary>
     /// Adds inline formatting: **bold**, *italic*, `code`, [links](url), ~~strikethrough~~
     /// </summary>
     internal static void AddFormattedInlines(InlineCollection inlines, string text)
@@ -795,9 +803,10 @@ public partial class ProjectDetailPage
                         TextDecorations = TextDecorations.Underline,
                         ToolTip = LinkDisclosure(target)
                     };
+                    var launch = NavigationTarget(target);
                     hyperlink.Click += (_, _) =>
                     {
-                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(linkUrl) { UseShellExecute = true }); }
+                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(launch) { UseShellExecute = true }); }
                         catch { }
                     };
                     inlines.Add(hyperlink);
