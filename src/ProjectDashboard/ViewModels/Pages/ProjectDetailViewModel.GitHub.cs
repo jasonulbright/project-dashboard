@@ -272,7 +272,11 @@ public partial class ProjectDetailViewModel
         // command's busy gate or its status line.
         var gen = _generation;
         if (!await ConfirmAsync("Close issue?", $"Close issue #{issue.Number} — {issue.Title}?", "Close")) return;
-        if (!IsCurrent(gen)) return;
+        if (!IsCurrent(gen))
+        {
+            GitHubStatusText = ProjectSwitchedNotice("Close issue");
+            return;
+        }
         var ok = await RunGitHubOp(() => _gitHubService.CloseIssueAsync(slug, issue.Number), $"Close #{issue.Number}");
         if (ok)
         {
@@ -485,7 +489,11 @@ public partial class ProjectDetailViewModel
         if (slug.Length == 0 || pr is null || IsBusy) return;
         var gen = _generation;
         if (!await ConfirmAsync("Close pull request?", $"Close pull request #{pr.Number} — {pr.Title}?", "Close")) return;
-        if (!IsCurrent(gen)) return;
+        if (!IsCurrent(gen))
+        {
+            GitHubStatusText = ProjectSwitchedNotice("Close pull request");
+            return;
+        }
         var ok = await RunGitHubOp(() => _gitHubService.ClosePullRequestAsync(slug, pr.Number), $"Close #{pr.Number}");
         if (ok)
         {
@@ -514,7 +522,12 @@ public partial class ProjectDetailViewModel
         var confirmed = await ConfirmAsync("Merge pull request?",
             $"{strategy} pull request #{pr.Number}{branchNote} into the base branch?{deleteNote}\n\nThis pushes to the remote and cannot be undone here.",
             $"{strategy}");
-        if (!confirmed || !IsCurrent(gen)) return;
+        if (!confirmed) return;
+        if (!IsCurrent(gen))
+        {
+            GitHubStatusText = ProjectSwitchedNotice("Merge");
+            return;
+        }
 
         var ok = await RunGitHubOp(() => _gitHubService.MergePullRequestAsync(slug, pr.Number, token, deleteBranch),
             $"Merge #{pr.Number}");
@@ -539,7 +552,11 @@ public partial class ProjectDetailViewModel
                 $"Switch this working copy to {target} for pull request #{pr.Number}?\n\n" +
                 $"The current branch ({BranchLabel}) is left as it is.",
                 "Check out")) return;
-        if (!IsCurrent(gen)) return;
+        if (!IsCurrent(gen))
+        {
+            GitHubStatusText = ProjectSwitchedNotice("Checkout");
+            return;
+        }
 
         var ok = await RunGitHubOp(() => _gitHubService.CheckoutPullRequestAsync(repo, pr.Number),
             $"Checkout #{pr.Number} ({target})");
@@ -557,7 +574,11 @@ public partial class ProjectDetailViewModel
                 $"Mark pull request #{pr.Number} — {pr.Title} — ready for review?\n\n" +
                 "This starts the required checks and notifies the code owners. There is no convert-to-draft here.",
                 "Mark ready")) return;
-        if (!IsCurrent(gen)) return;
+        if (!IsCurrent(gen))
+        {
+            GitHubStatusText = ProjectSwitchedNotice("Mark ready");
+            return;
+        }
         var ok = await RunGitHubOp(() => _gitHubService.MarkPullRequestReadyAsync(slug, pr.Number),
             $"Mark #{pr.Number} ready");
         if (ok)
@@ -588,7 +609,13 @@ public partial class ProjectDetailViewModel
         if (action is ReviewAction.Approve or ReviewAction.RequestChanges
             && !await ConfirmAsync("Submit review?", ReviewConfirmMessage(action, pr.Number, body),
                 ReviewVerdictLabel(action))) return;
-        if (!IsCurrent(gen)) return;
+        // Only the confirmed verdicts await anything before this, so only they can
+        // arrive here on a moved generation.
+        if (!IsCurrent(gen))
+        {
+            GitHubStatusText = ProjectSwitchedNotice("Review");
+            return;
+        }
         // A caller can't approve their own PR; that returns a failed ProcessResult,
         // surfaced as a normal failure toast rather than a crash.
         var ok = await RunGitHubOp(() => _gitHubService.ReviewPullRequestAsync(slug, pr.Number, token, body),

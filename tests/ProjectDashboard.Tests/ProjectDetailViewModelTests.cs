@@ -288,11 +288,15 @@ public class ProjectDetailViewModelTests
         return vm;
     }
 
-    /// <summary>The switched-to project is left idle: no busy gate, no status, no retry offer.</summary>
-    private static void AssertNothingAttributed(ProjectDetailViewModel vm)
+    /// <summary>
+    /// The switched-to project is left idle — no busy gate, no retry offer — and the
+    /// dropped op says so rather than vanishing: the reader sanctioned a destructive
+    /// op and is owed the news that it did not run.
+    /// </summary>
+    private static void AssertSuppressedWithNotice(ProjectDetailViewModel vm, string notice)
     {
         Assert.False(vm.IsBusy);
-        Assert.Equal("", vm.SyncStatusText);
+        Assert.Equal(notice, vm.SyncStatusText);
         Assert.False(vm.StaleLockRetryVisible);
     }
 
@@ -312,7 +316,8 @@ public class ProjectDetailViewModelTests
         // suppressed: B keeps the edit it never offered up, and A keeps its own.
         Assert.Equal("b\nedited\n", repoB.ReadFile("shared.txt"));
         Assert.Equal("a\nedited\n", repoA.ReadFile("shared.txt"));
-        AssertNothingAttributed(vm);
+        AssertSuppressedWithNotice(vm,
+            "Discard cancelled — the project changed while the dialog was open.");
     }
 
     [Fact]
@@ -328,7 +333,8 @@ public class ProjectDetailViewModelTests
 
         Assert.Contains("feature", await repoB.GitAsync("branch", "--list", "feature"));
         Assert.Contains("feature", await repoA.GitAsync("branch", "--list", "feature"));
-        AssertNothingAttributed(vm);
+        AssertSuppressedWithNotice(vm,
+            "Branch delete cancelled — the project changed while the dialog was open.");
     }
 
     [Fact]
@@ -346,7 +352,8 @@ public class ProjectDetailViewModelTests
         var git = new GitService();
         Assert.Single(await git.GetStashesAsync(repoB.Path));
         Assert.Single(await git.GetStashesAsync(repoA.Path));
-        AssertNothingAttributed(vm);
+        AssertSuppressedWithNotice(vm,
+            "Stash drop cancelled — the project changed while the dialog was open.");
     }
 
     [Fact]

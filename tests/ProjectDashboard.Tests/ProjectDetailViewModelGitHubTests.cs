@@ -366,6 +366,42 @@ public class ProjectDetailViewModelGitHubTests
         }
     }
 
+    /// <summary>
+    /// Confirms, and switches project while the dialog is open — the interleave a
+    /// confirmed op has to survive, unreachable without a message pump. The canned
+    /// fetches keep the issue selection away from a gh process.
+    /// </summary>
+    private sealed class SwitchDuringConfirmViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    {
+        internal override Task<IssueDetail?> FetchIssueDetailAsync(string slug, int number)
+            => Task.FromResult<IssueDetail?>(new IssueDetail { Number = number, Title = "x", LabelNames = [] });
+
+        internal override Task<List<Label>?> FetchLabelsAsync(string slug) => Task.FromResult<List<Label>?>([]);
+
+        internal override async Task<bool> ConfirmAsync(string title, string message, string confirmText)
+        {
+            await SetProjectAsync(LocalProject());
+            return true;
+        }
+    }
+
+    [Fact]
+    public async Task CloseIssueMidConfirm_SwitchingProjects_SaysTheCloseWasDropped()
+    {
+        var vm = new SwitchDuringConfirmViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.SelectedIssue = new GitHubIssue { Number = 7, Title = "x" };
+
+        await vm.CloseIssueCommand.ExecuteAsync(null);
+
+        // The confirmation named a repository that has left the screen, so the close
+        // is suppressed — and the reader is told, rather than left with a dialog they
+        // answered and no outcome.
+        Assert.Equal("Close issue cancelled — the project changed while the dialog was open.",
+            vm.GitHubStatusText);
+        Assert.False(vm.IsBusy);
+    }
+
     [Fact]
     public async Task GitHubMutationGuards_NoOpWithoutRemoteOrSelection()
     {

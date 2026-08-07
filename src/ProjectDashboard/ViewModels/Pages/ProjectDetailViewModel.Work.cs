@@ -235,7 +235,12 @@ public partial class ProjectDetailViewModel
         var verb = file.IsUntracked ? "Delete untracked file" : "Discard changes to";
         var confirmed = await ConfirmAsync("Discard changes?",
             $"{verb} {file.Path}?\n\nThis cannot be undone.", "Discard");
-        if (!confirmed || !IsCurrent(gen)) return;
+        if (!confirmed) return;
+        if (!IsCurrent(gen))
+        {
+            SyncStatusText = ProjectSwitchedNotice("Discard");
+            return;
+        }
 
         await RunOp(repo => _gitService.DiscardAsync(repo, file), "Discard", confirmedRepo, gen);
     }
@@ -370,7 +375,12 @@ public partial class ProjectDetailViewModel
 
         var confirmed = await ConfirmAsync("Delete branch?",
             $"Delete local branch {branch.Name}?\n\nOnly fully merged branches can be deleted this way.", "Delete");
-        if (!confirmed || !IsCurrent(gen)) return;
+        if (!confirmed) return;
+        if (!IsCurrent(gen))
+        {
+            SyncStatusText = ProjectSwitchedNotice("Branch delete");
+            return;
+        }
 
         var ok = await RunOp(repo => _gitService.DeleteBranchAsync(repo, branch.Name), "Delete branch",
             confirmedRepo, gen);
@@ -424,7 +434,12 @@ public partial class ProjectDetailViewModel
 
         var confirmed = await ConfirmAsync("Drop stash?",
             $"Drop {stash.Ref} ({stash.Subject})?\n\nThis cannot be undone.", "Drop");
-        if (!confirmed || !IsCurrent(gen)) return;
+        if (!confirmed) return;
+        if (!IsCurrent(gen))
+        {
+            SyncStatusText = ProjectSwitchedNotice("Stash drop");
+            return;
+        }
 
         var ok = await RunOp(repo => _gitService.StashDropAsync(repo, stash.Ref), "Drop stash",
             confirmedRepo, gen);
@@ -505,6 +520,15 @@ public partial class ProjectDetailViewModel
     }
 
     // ── Shared plumbing ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Says that a sanctioned op was dropped because the project changed while its
+    /// dialog was open. The caller writes it AFTER the generation guard and never
+    /// inside the op: the switch that suppressed the op has already run ApplyProject,
+    /// which clears both status lines, so a notice written any earlier is wiped.
+    /// </summary>
+    internal static string ProjectSwitchedNotice(string op) =>
+        $"{op} cancelled — the project changed while the dialog was open.";
 
     /// <summary>
     /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.
