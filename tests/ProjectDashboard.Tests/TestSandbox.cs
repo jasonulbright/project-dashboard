@@ -15,13 +15,31 @@ internal static class TestSandbox
     /// <summary>
     /// Deletes every state file (not directories) so a test starts from an
     /// empty data dir. LocalDir == RoamingDir under the PD_DATA_DIR override,
-    /// so this clears the manifest index as well.
+    /// so this clears the manifest index as well. log.txt is exempt: it is not
+    /// state the sandboxed tests read, and tests OUTSIDE this serialized
+    /// collection append to it concurrently (File.AppendAllText opens without
+    /// FileShare.Delete), so deleting it here races them into IOException.
     /// </summary>
     internal static void ResetDataDir()
     {
         Directory.CreateDirectory(AppPaths.LocalDir);
         foreach (var file in Directory.GetFiles(AppPaths.LocalDir))
-            File.Delete(file);
+        {
+            if (string.Equals(file, AppPaths.LogFile, StringComparison.OrdinalIgnoreCase))
+                continue;
+            try
+            {
+                File.Delete(file);
+            }
+            catch (IOException)
+            {
+                // A short-lived handle (antivirus scan, indexer, straggling
+                // reader) makes the first delete transiently fail; one settled
+                // retry, then the failure surfaces as the test's own.
+                Thread.Sleep(100);
+                File.Delete(file);
+            }
+        }
     }
 }
 
