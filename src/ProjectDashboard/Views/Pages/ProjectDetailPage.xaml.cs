@@ -62,11 +62,10 @@ public partial class ProjectDetailPage
             IssueConversationRich.Document = new FlowDocument();
             return;
         }
-        var basePath = _viewModel.Project?.FullPath ?? "";
         try
         {
             IssueConversationRich.Document =
-                BuildConversationDocument(d.Author, d.CreatedAt, d.Body, d.Comments, basePath);
+                BuildConversationDocument(d.Author, d.CreatedAt, d.Body, d.Comments);
         }
         catch
         {
@@ -82,11 +81,10 @@ public partial class ProjectDetailPage
             PullRequestConversationRich.Document = new FlowDocument();
             return;
         }
-        var basePath = _viewModel.Project?.FullPath ?? "";
         try
         {
             PullRequestConversationRich.Document =
-                BuildConversationDocument(d.Author, d.CreatedAt, d.Body, d.Comments, basePath);
+                BuildConversationDocument(d.Author, d.CreatedAt, d.Body, d.Comments);
         }
         catch
         {
@@ -100,22 +98,23 @@ public partial class ProjectDetailPage
     /// ever concatenated into markup the parser reads as a neighbouring entry's header.
     /// </summary>
     private FlowDocument BuildConversationDocument(string author, DateTimeOffset created, string body,
-        IReadOnlyList<Models.IssueComment> comments, string basePath)
+        IReadOnlyList<Models.IssueComment> comments)
     {
         var doc = NewFlowDocument();
-        AppendConversationEntry(doc, ConversationHeader(author, created), body, basePath);
+        AppendConversationEntry(doc, ConversationHeader(author, created), body);
         foreach (var c in comments)
-            AppendConversationEntry(doc, ConversationHeader(c.Author, c.CreatedAt), c.Body, basePath);
+            AppendConversationEntry(doc, ConversationHeader(c.Author, c.CreatedAt), c.Body);
         return doc;
     }
 
     /// <summary>
     /// Appends one entry: an author header block followed by that entry's rendered body.
+    /// No image loads here, so the body carries no local base path to resolve against.
     /// </summary>
-    internal static void AppendConversationEntry(FlowDocument doc, string headerText, string body, string basePath)
+    internal static void AppendConversationEntry(FlowDocument doc, string headerText, string body)
     {
         doc.Blocks.Add(ConversationHeaderBlock(headerText));
-        AppendMarkdown(doc, string.IsNullOrWhiteSpace(body) ? "(no content)" : body, basePath);
+        AppendMarkdown(doc, string.IsNullOrWhiteSpace(body) ? "(no content)" : body, "", allowImages: false);
     }
 
     /// <summary>
@@ -287,7 +286,7 @@ public partial class ProjectDetailPage
     private static void RenderMarkdown(System.Windows.Controls.RichTextBox rtb, string markdown, string basePath)
     {
         var doc = NewFlowDocument();
-        AppendMarkdown(doc, markdown, basePath);
+        AppendMarkdown(doc, markdown, basePath, allowImages: true);
         rtb.Document = doc;
     }
 
@@ -302,9 +301,10 @@ public partial class ProjectDetailPage
     /// <summary>
     /// Appends one markdown fragment as its own run of blocks. Conversation rendering
     /// calls this once per entry so a body can never be concatenated into a
-    /// neighbouring entry's markup.
+    /// neighbouring entry's markup, and with <paramref name="allowImages"/>
+    /// false so a third-party body cannot make the app fetch anything.
     /// </summary>
-    private static void AppendMarkdown(FlowDocument doc, string markdown, string basePath)
+    private static void AppendMarkdown(FlowDocument doc, string markdown, string basePath, bool allowImages)
     {
         if (string.IsNullOrWhiteSpace(markdown))
         {
@@ -369,6 +369,18 @@ public partial class ProjectDetailPage
             if (imgMatch.Success)
             {
                 var imgSrc = imgMatch.Groups[2].Value;
+                if (!allowImages)
+                {
+                    // A fetch here would hand the body's author the reader's IP and a
+                    // read receipt for opening the thread, and any decode is attacker-
+                    // sized; third-party bodies get the alt text and no load at all.
+                    var alt = imgMatch.Groups[1].Value;
+                    doc.Blocks.Add(new Paragraph(
+                        new Run(alt.Length > 0 ? $"[image not loaded: {alt}]" : "[image not loaded]")
+                        { Foreground = Brushes.Gray, FontStyle = FontStyles.Italic }));
+                    currentParagraph = null;
+                    continue;
+                }
                 var rendered = false;
                 try
                 {
@@ -379,7 +391,10 @@ public partial class ProjectDetailPage
                         bitmap.BeginInit();
                         bitmap.UriSource = new Uri(imgSrc, UriKind.Absolute);
                         bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                        // Both axes are capped: a width-only cap lets a 1×100000 source
+                        // decode to an unbounded height. Aspect ratio is not preserved.
                         bitmap.DecodePixelWidth = 800;
+                        bitmap.DecodePixelHeight = 800;
                         bitmap.EndInit();
                     }
                     else

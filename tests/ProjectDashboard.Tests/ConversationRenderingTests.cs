@@ -27,7 +27,7 @@ public class ConversationRenderingTests
     public void ForgedHeaderInBody_ProducesNoAppHeaderBlock()
     {
         var doc = new FlowDocument();
-        ProjectDetailPage.AppendConversationEntry(doc, "stranger • 1 minute ago", ForgedHeaderBody, "");
+        ProjectDetailPage.AppendConversationEntry(doc, "stranger • 1 minute ago", ForgedHeaderBody);
 
         // Exactly one entry rendered, so exactly one block carries the app's chrome.
         var header = Assert.Single(HeaderBlocks(doc));
@@ -38,8 +38,8 @@ public class ConversationRenderingTests
     public void HeaderCount_TracksEntryCountNotBodyContent()
     {
         var doc = new FlowDocument();
-        ProjectDetailPage.AppendConversationEntry(doc, "author • 3 days ago", ForgedHeaderBody, "");
-        ProjectDetailPage.AppendConversationEntry(doc, "alice • 1 day ago", "### another fake\n\ntext", "");
+        ProjectDetailPage.AppendConversationEntry(doc, "author • 3 days ago", ForgedHeaderBody);
+        ProjectDetailPage.AppendConversationEntry(doc, "alice • 1 day ago", "### another fake\n\ntext");
 
         Assert.Equal(["author • 3 days ago", "alice • 1 day ago"],
             HeaderBlocks(doc).Select(TextOf));
@@ -51,8 +51,8 @@ public class ConversationRenderingTests
         // One markdown string for the whole thread let an unclosed ``` eat every
         // following header; per-entry parsing confines it to its own body.
         var doc = new FlowDocument();
-        ProjectDetailPage.AppendConversationEntry(doc, "stranger • now", "```\nnot closed", "");
-        ProjectDetailPage.AppendConversationEntry(doc, "maintainer • now", "real reply", "");
+        ProjectDetailPage.AppendConversationEntry(doc, "stranger • now", "```\nnot closed");
+        ProjectDetailPage.AppendConversationEntry(doc, "maintainer • now", "real reply");
 
         Assert.Equal(["stranger • now", "maintainer • now"], HeaderBlocks(doc).Select(TextOf));
         Assert.Contains(doc.Blocks.OfType<Paragraph>(), p => TextOf(p) == "real reply");
@@ -62,7 +62,7 @@ public class ConversationRenderingTests
     public void EmptyBody_StillRendersItsHeader()
     {
         var doc = new FlowDocument();
-        ProjectDetailPage.AppendConversationEntry(doc, "ghost • now", "   ", "");
+        ProjectDetailPage.AppendConversationEntry(doc, "ghost • now", "   ");
 
         Assert.Single(HeaderBlocks(doc));
         Assert.Contains(doc.Blocks.OfType<Paragraph>(), p => TextOf(p) == "(no content)");
@@ -72,12 +72,26 @@ public class ConversationRenderingTests
     public void MarkdownHorizontalRule_DoesNotCarryTheHeaderAccentBar()
     {
         var doc = new FlowDocument();
-        ProjectDetailPage.AppendConversationEntry(doc, "stranger • now", "---", "");
+        ProjectDetailPage.AppendConversationEntry(doc, "stranger • now", "---");
 
         var rules = doc.Blocks.OfType<Paragraph>()
             .Where(p => p.BorderThickness.Bottom > 0 && p.BorderThickness.Left == 0);
         Assert.Single(rules);
         Assert.Single(HeaderBlocks(doc));
+    }
+
+    [Theory]
+    [InlineData("![tracker](https://attacker.example/x.png)", "[image not loaded: tracker]")]
+    [InlineData("![](https://attacker.example/1x100000.png)", "[image not loaded]")]
+    [InlineData("![local](assets/logo.png)", "[image not loaded: local]")]
+    public void ImagesInConversationBodies_AreNeverLoaded(string body, string placeholder)
+    {
+        var doc = new FlowDocument();
+        ProjectDetailPage.AppendConversationEntry(doc, "stranger • now", body);
+
+        // A loaded image arrives as a BlockUIContainer; the placeholder is plain text.
+        Assert.Empty(doc.Blocks.OfType<BlockUIContainer>());
+        Assert.Contains(doc.Blocks.OfType<Paragraph>(), p => TextOf(p) == placeholder);
     }
 
     private static List<Paragraph> HeaderBlocks(FlowDocument doc) =>
