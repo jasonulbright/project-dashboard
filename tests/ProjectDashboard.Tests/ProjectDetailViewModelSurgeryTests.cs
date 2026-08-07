@@ -479,6 +479,29 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Null(vm.SurgeryBlockedReason);
     }
 
+    [Fact]
+    public async Task ARefusalNamingUnstagedChanges_DoesNotOfferTheStashThatWouldTakeTheFix()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        repo.Write("fix.txt", "the fix\n");
+        await repo.GitAsync("add", "-A");
+        var vm = await VmForAsync(repo);
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+        Assert.True(vm.AmendStagedIntoSelectedCommitCommand.CanExecute(null));
+
+        // Unstaged after the working state the command was enabled on was read.
+        repo.Write("alpha.txt", "uncommitted edit\n");
+        await vm.AmendStagedIntoSelectedCommitCommand.ExecuteAsync(null);
+
+        // The staged fix is this operation's input; the stash offer runs `stash push -u`, which
+        // would take it along and leave the amend nothing to fold. Staging is the way out here.
+        Assert.Contains("unstaged change(s)", vm.SurgeryFailureText);
+        Assert.False(vm.SurgeryStashOfferVisible);
+        Assert.Contains("A  fix.txt", await repo.StatusAsync());
+        Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
+    }
+
     // ── the two cases that drive a real rebase ─────────────────────────────
 
     [Fact]

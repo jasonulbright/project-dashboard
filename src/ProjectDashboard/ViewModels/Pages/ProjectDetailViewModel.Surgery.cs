@@ -796,13 +796,13 @@ public partial class ProjectDetailViewModel
             await RefreshWorkingStateAsync();
             await ReloadCommitsAsync();
 
-            // Only the tree gate is fixed by stashing. A busy registry and an unreadable
-            // repository refuse with the same shape — neither result, no undo — and a stash
-            // would change nothing. Decided against the freshly read state, because the state
-            // the gate refused may be newer than the one the command was enabled on.
+            // Only the clean-tree gate is fixed by stashing. The unstaged-changes gate guards an
+            // operation whose input is the staged changes, and the stash below takes those with
+            // it, so the offer there would remove what the operation runs on. Decided against the
+            // freshly read state, because the state the gate refused may be newer than the one
+            // the command was enabled on.
             SurgeryStashOfferVisible =
-                !result.Success && result.Rebase is null && result.Edit is null
-                && IsWorkingTreeRefusal(result.FailureReason) && WorkingState is { IsDirty: true };
+                result.Refusal == SurgeryRefusal.UncommittedChanges && WorkingState is { IsDirty: true };
             return result.Success;
         }
         catch (Exception ex)
@@ -820,16 +820,6 @@ public partial class ProjectDetailViewModel
             if (IsCurrent(gen)) IsBusy = false;
         }
     }
-
-    /// <summary>
-    /// Whether a pre-git refusal names the working tree, which is the only one a stash resolves.
-    /// The gate reports the offending files itself, so its wording is the discriminator this
-    /// layer has — <see cref="SurgeryResult"/> carries no code for which gate refused.
-    /// </summary>
-    private static bool IsWorkingTreeRefusal(string? reason) =>
-        reason is not null &&
-        (reason.Contains("uncommitted change(s)", StringComparison.Ordinal) ||
-         reason.Contains("unstaged change(s)", StringComparison.Ordinal));
 
     private void PublishSurgeryResult(
         string label,
