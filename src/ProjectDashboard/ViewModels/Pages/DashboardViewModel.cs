@@ -541,7 +541,9 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task RefreshSingle(ProjectInfo? project)
     {
-        if (project is null) return;
+        // A remote-only card has no repo to run git in; refreshing an empty path
+        // would spawn git in the process cwd and throw from the manifest lookup.
+        if (project is null || project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return;
         var refreshed = await _discoveryService.RefreshProjectAsync(project);
 
         var idx = Projects.IndexOf(project);

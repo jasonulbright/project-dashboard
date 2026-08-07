@@ -297,7 +297,17 @@
                                     </MenuItem>
                                     <MenuItem Header="Refresh Status"
                                               Command="{Binding Tag.RefreshSingleCommand}"
-                                              CommandParameter="{Binding DataContext}" />
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                     <Separator />
                                     <MenuItem Header="Open on GitHub"
                                               Command="{Binding Tag.OpenGitHubCommand}"
@@ -310,10 +320,30 @@
                                               CommandParameter="{Binding DataContext}" />
                                     <MenuItem Header="Open Folder"
                                               Command="{Binding Tag.OpenFolderCommand}"
-                                              CommandParameter="{Binding DataContext}" />
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                     <MenuItem Header="Open in Terminal"
                                               Command="{Binding Tag.OpenTerminalCommand}"
-                                              CommandParameter="{Binding DataContext}" />
+                                              CommandParameter="{Binding DataContext}">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </MenuItem.Style>
+                                    </MenuItem>
                                     <Separator />
                                     <MenuItem Header="Report a Bug"
                                               Command="{Binding Tag.ReportBugCommand}"
@@ -321,7 +351,20 @@
                                     <MenuItem Header="Request a Feature"
                                               Command="{Binding Tag.RequestFeatureCommand}"
                                               CommandParameter="{Binding DataContext}" />
-                                    <Separator />
+                                    <!-- Hide/Unhide work on the excluded-directories list, which cannot
+                                         apply to a repo with no local directory: collapse the whole
+                                         group (separator included) for remote-only cards. -->
+                                    <Separator>
+                                        <Separator.Style>
+                                            <Style TargetType="Separator">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Separator.Style>
+                                    </Separator>
                                     <MenuItem Header="Hide Project"
                                               Command="{Binding Tag.HideProjectCommand}"
                                               CommandParameter="{Binding DataContext}">
@@ -329,6 +372,9 @@
                                             <Style TargetType="MenuItem">
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding DataContext.IsHidden}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding DataContext.IsRemoteOnly}" Value="True">
                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                     </DataTrigger>
                                                 </Style.Triggers>

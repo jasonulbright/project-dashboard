@@ -81,6 +81,34 @@ public class ManifestStoreTests
         Assert.Equal("not json at all", File.ReadAllText(quarantined[0]));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void TryGet_NullEmptyOrWhitespacePath_ReturnsFalseWithoutThrowing(string? repoPath)
+    {
+        var found = new ManifestStore().TryGet(repoPath!, out var manifest);
+
+        Assert.False(found);
+        Assert.Null(manifest);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Save_NullEmptyOrWhitespacePath_IsIgnored(string? repoPath)
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "alpha desc" });
+
+        store.Save(repoPath!, new ProjectManifest { Description = "orphan" });
+
+        var reloaded = new ManifestStore();
+        Assert.True(reloaded.TryGet(AlphaPath, out _));
+        Assert.DoesNotContain("orphan", File.ReadAllText(IndexPath));
+    }
+
     [Fact]
     public void Save_KeepsPreviousVersionAsBackup()
     {

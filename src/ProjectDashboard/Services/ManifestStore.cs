@@ -138,6 +138,14 @@ public class ManifestStore
     /// </summary>
     public bool TryGet(string repoPath, out ProjectManifest? manifest)
     {
+        // Remote-only projects carry an empty FullPath; a lookup on one is a
+        // miss, not an exception (NormalizeKey throws on empty paths).
+        if (string.IsNullOrWhiteSpace(repoPath))
+        {
+            manifest = null;
+            return false;
+        }
+
         var index = Index();
         lock (_lock)
         {
@@ -154,6 +162,14 @@ public class ManifestStore
     /// <summary>Upserts the manifest for a repo path and persists the whole index.</summary>
     public void Save(string repoPath, ProjectManifest manifest)
     {
+        // An empty path cannot key the index; dropping the write beats poisoning
+        // the store with an unreachable "" entry, but it must not be silent.
+        if (string.IsNullOrWhiteSpace(repoPath))
+        {
+            Log.Warn("Manifest save ignored: empty repo path");
+            return;
+        }
+
         var index = Index();
         lock (_lock)
         {

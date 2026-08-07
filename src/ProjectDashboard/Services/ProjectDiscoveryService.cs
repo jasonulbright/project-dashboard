@@ -292,6 +292,11 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             // after the cache was written must not appear reverted on relaunch.
             foreach (var project in cache.Projects)
             {
+                // Remote-only entries have no local path, hence no manifest key;
+                // reconciling one would invalidate the whole cache on every load.
+                if (project.IsRemoteOnly || string.IsNullOrWhiteSpace(project.FullPath))
+                    continue;
+
                 if (manifestStore.TryGet(project.FullPath, out var stored) && stored is not null)
                 {
                     project.Manifest = stored;
