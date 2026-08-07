@@ -409,6 +409,10 @@ public partial class DashboardViewModel : ObservableObject
                 !p.GitStatus.IsDirty &&
                 !p.GitStatus.NeedsAttention &&
                 !p.GitStatus.IsDetached &&
+                // Remote-only cards have RemoteUrl but FullPath == ""; an empty
+                // path makes git run in the process cwd instead of the repo.
+                !p.IsRemoteOnly &&
+                !string.IsNullOrEmpty(p.FullPath) &&
                 !string.IsNullOrEmpty(p.GitStatus.RemoteUrl))
             .ToList();
         var skipped = Projects.Count - candidates.Count;
