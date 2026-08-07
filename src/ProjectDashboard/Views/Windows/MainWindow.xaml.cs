@@ -199,6 +199,14 @@ public partial class MainWindow : INavigationWindow
         return null;
     }
 
+    // Sidebar project items pooled by repo path and mutated in place. The navigation
+    // dictionaries key by per-instance item Id and only ever add entries, so fresh
+    // instances each refresh grow them without bound (each stale entry pins a full
+    // ProjectInfo graph), while removing stale entries breaks journal resolution for
+    // GoBack targets. Stable instances keep the dictionaries bounded by distinct
+    // projects seen, not by refresh count.
+    private readonly Dictionary<string, NavigationViewItem> _projectNavPool = new(StringComparer.OrdinalIgnoreCase);
+
     private void RefreshSidebarProjects(DashboardViewModel dashVm)
     {
         NavigationViewItem? projectsParent = null;
@@ -220,33 +228,38 @@ public partial class MainWindow : INavigationWindow
         // the edits vanish on restart. Cloud repos clone via the card or palette.
         foreach (var project in dashVm.Projects.Where(p => !p.IsRemoteOnly).OrderBy(p => p.DisplayName))
         {
-            var proj = project;
+            if (!_projectNavPool.TryGetValue(project.FullPath, out var navItem))
+            {
+                navItem = new NavigationViewItem { TargetPageType = typeof(ProjectDetailPage) };
+
+                // TargetPageType navigates AND selects this item (blue indicator + parent
+                // Projects highlight). Cache is Disabled, so a fresh ProjectDetailPage loads
+                // and reads SelectedProject. Tag is read at click time — the pooled item
+                // outlives any single ProjectInfo instance, so a captured one goes stale.
+                navItem.Click += (s, _) =>
+                {
+                    if (s is NavigationViewItem { Tag: Models.ProjectInfo p })
+                        DashboardViewModel.SelectedProject = p;
+                };
+                _projectNavPool[project.FullPath] = navItem;
+            }
+
+            navItem.Content = project.DisplayName;
             // Status glyph matches the card language (shape only — color in the nav is reserved
             // for selection): cloud-off (no remote) / edit (dirty) / check (synced).
-            var statusIcon = new SymbolIcon(
+            navItem.Icon = new SymbolIcon(
                 string.IsNullOrEmpty(project.GitStatus.RemoteUrl) ? SymbolRegular.CloudOff24
                 : project.GitStatus.IsDirty ? SymbolRegular.Edit24
                 : SymbolRegular.CheckmarkCircle24);
-
-            var navItem = new NavigationViewItem
-            {
-                Content = project.DisplayName,
-                Icon = statusIcon,
-                Tag = project,
-                TargetPageType = typeof(ProjectDetailPage)
-            };
-
-            // TargetPageType navigates AND selects this item (blue indicator + parent Projects
-            // highlight). Cache is Disabled, so a fresh ProjectDetailPage loads and reads
-            // SelectedProject, which we set here before the page loads.
-            navItem.Click += (_, _) => DashboardViewModel.SelectedProject = proj;
+            navItem.Tag = project;
 
             projectsParent.MenuItems.Add(navItem);
         }
 
-        // Register the new nested items with the navigation dictionaries — without
+        // Register the nested items with the navigation dictionaries — without
         // this, GoBack() to a project entry throws KeyNotFoundException (the library
-        // only rebuilds its lookup when the ROOT collection changes).
+        // only rebuilds its lookup when the ROOT collection changes). Pooled items
+        // re-register as no-ops, so the call stays idempotent across refreshes.
         RootNavigation.RegisterDynamicMenuItems();
         // Hidden / Private / Public / Dashboard are handled in OnNavigationSelectionChanged —
         // wiring them here would re-add a handler on every sidebar refresh (a leak).

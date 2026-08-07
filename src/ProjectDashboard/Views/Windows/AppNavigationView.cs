@@ -12,7 +12,13 @@ namespace ProjectDashboard.Views.Windows;
 /// </summary>
 public class AppNavigationView : NavigationView
 {
-    /// <summary>Call after mutating any nested MenuItems collection.</summary>
+    /// <summary>
+    /// Call after mutating any nested MenuItems collection. Registration is
+    /// additive-only and keyed by per-instance item Id, so it is only bounded
+    /// when callers reuse item instances across rebuilds: fresh instances per
+    /// rebuild grow the dictionaries monotonically, while removing stale
+    /// entries instead would break journal resolution for GoBack targets.
+    /// </summary>
     public void RegisterDynamicMenuItems()
     {
         AddItemsToDictionaries(MenuItems);
