@@ -20,3 +20,16 @@ TestResults/
 installer/payload/
 installer/*.exe
 branding/*.png
+
+# Local working state (never shipped)
+.claude/
+CLAUDE.md
+userinput.md
+
+# The *.local.* pattern requires a dot after "local"; directories need their own rule
+*.local/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
