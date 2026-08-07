@@ -1,6 +1,8 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
@@ -151,18 +153,12 @@ public partial class MainWindow : INavigationWindow
         var settingsService = _serviceProvider.GetRequiredService<SettingsService>();
         var settings = settingsService.Load();
         // -1/-1 is the never-saved default; geometry cannot distinguish it from
-        // a real position, so it short-circuits to OS placement, not the clamp.
-        if (!(settings.WindowLeft == -1 && settings.WindowTop == -1))
+        // a real position, so it short-circuits to OS placement.
+        if (!(settings.WindowLeft == -1 && settings.WindowTop == -1)
+            && double.IsFinite(settings.WindowLeft) && double.IsFinite(settings.WindowTop))
         {
-            var position = ClampToVirtualScreen(
-                settings.WindowLeft, settings.WindowTop, settings.WindowWidth, settings.WindowHeight,
-                SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
-                SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
-            if (position.HasValue)
-            {
-                Left = position.Value.Left;
-                Top = position.Value.Top;
-            }
+            Left = settings.WindowLeft;
+            Top = settings.WindowTop;
         }
         // Assigning a non-finite or non-positive length throws in WPF; a damaged
         // settings file must not take the window down at startup.
@@ -173,6 +169,10 @@ public partial class MainWindow : INavigationWindow
         if (settings.WindowMaximized)
             WindowState = WindowState.Maximized;
         RootNavigation.IsPaneOpen = settings.PaneOpen;
+
+        // Deferred: the assignments above reach the HWND during layout, and the
+        // correction reads the real window rect rather than the requested one.
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(EnsureRestoredPositionIsOnScreen));
 
         // Save on close
         Closing += (_, _) =>
@@ -193,39 +193,71 @@ public partial class MainWindow : INavigationWindow
         WireSidebarProjects();
     }
 
-    /// <summary>
-    /// Placement policy for a saved window position. Multi-monitor coordinates
-    /// are signed — a monitor left of or above the primary yields valid negative
-    /// positions, so no sign check can distinguish "off-screen". A position is
-    /// kept verbatim when at least 100×50 px of the window rect lies inside the
-    /// virtual screen (enough to grab with the mouse); otherwise each axis
-    /// clamps to the nearest value restoring that minimum, so a position saved
-    /// on a since-undocked monitor lands back in view. Null (non-finite input)
-    /// means do not restore; the caller keeps default placement.
-    /// </summary>
-    public static (double Left, double Top)? ClampToVirtualScreen(
-        double left, double top, double width, double height,
-        double screenLeft, double screenTop, double screenWidth, double screenHeight)
-    {
-        const double minVisibleWidth = 100;
-        const double minVisibleHeight = 50;
+    // ── Saved-position restore ───────────────────────────────────────────────
 
-        if (!double.IsFinite(left) || !double.IsFinite(top))
+    private const double MinVisibleWidth = 100;
+    private const double MinVisibleHeight = 50;
+
+    /// <summary>A screen rectangle in device pixels: a monitor work area or a window rect.</summary>
+    public readonly record struct ScreenRect(double Left, double Top, double Width, double Height);
+
+    /// <summary>
+    /// Placement policy for a saved window position, in device pixels against the
+    /// rectangles of real monitors. Multi-monitor coordinates are signed — a monitor
+    /// left of or above the primary yields valid negative positions, so no sign check
+    /// can distinguish "off-screen". A position is kept verbatim when at least 100×50 px
+    /// of the window rect lies inside SOME monitor (enough to grab with the mouse);
+    /// otherwise it moves to whichever monitor costs the least movement to restore that
+    /// minimum, so a position saved on a since-undocked monitor lands back in view.
+    /// Validating against the monitors rather than their bounding box is what excludes
+    /// the dead zones an L-shaped arrangement leaves inside that box. Null (non-finite
+    /// position, or no monitors) means do not move; the caller keeps what it has.
+    /// </summary>
+    public static (double Left, double Top)? ClampToMonitors(
+        double left, double top, double width, double height, IReadOnlyList<ScreenRect> screens)
+    {
+        if (!double.IsFinite(left) || !double.IsFinite(top) || screens.Count == 0)
             return null;
         // A degenerate size still yields a usable clamp: treat the window as
         // minimum-visibility sized, which forces it fully into view.
-        if (!double.IsFinite(width) || width < minVisibleWidth) width = minVisibleWidth;
-        if (!double.IsFinite(height) || height < minVisibleHeight) height = minVisibleHeight;
+        if (!double.IsFinite(width) || width < MinVisibleWidth) width = MinVisibleWidth;
+        if (!double.IsFinite(height) || height < MinVisibleHeight) height = MinVisibleHeight;
 
-        return (
-            ClampAxis(left, width, screenLeft, screenWidth, minVisibleWidth),
-            ClampAxis(top, height, screenTop, screenHeight, minVisibleHeight));
+        foreach (var screen in screens)
+            if (Overlap(left, width, screen.Left, screen.Width) >= MinVisibleWidth
+                && Overlap(top, height, screen.Top, screen.Height) >= MinVisibleHeight)
+                return (left, top);
+
+        (double Left, double Top)? nearest = null;
+        var shortestMove = double.PositiveInfinity;
+        foreach (var screen in screens)
+        {
+            var candidate = (
+                Left: ClampAxis(left, width, screen.Left, screen.Width, MinVisibleWidth),
+                Top: ClampAxis(top, height, screen.Top, screen.Height, MinVisibleHeight));
+            var dx = candidate.Left - left;
+            var dy = candidate.Top - top;
+            var move = dx * dx + dy * dy;
+            if (move < shortestMove) (shortestMove, nearest) = (move, candidate);
+        }
+        return nearest;
     }
+
+    /// <summary>Single-screen form: the virtual-screen bounding box as one rectangle.</summary>
+    public static (double Left, double Top)? ClampToVirtualScreen(
+        double left, double top, double width, double height,
+        double screenLeft, double screenTop, double screenWidth, double screenHeight)
+        => ClampToMonitors(left, top, width, height,
+            [new ScreenRect(screenLeft, screenTop, screenWidth, screenHeight)]);
+
+    /// <summary>Length shared by [start, start+size] and the screen's span; negative when disjoint.</summary>
+    private static double Overlap(double start, double size, double screenStart, double screenExtent) =>
+        Math.Min(start + size, screenStart + screenExtent) - Math.Max(start, screenStart);
 
     /// <summary>
     /// Positions already showing at least minVisible on the axis lie inside
     /// [min, max] and pass through unchanged; anything else moves to the nearer
-    /// bound. A virtual screen narrower than minVisible degenerates to its start.
+    /// bound. A screen narrower than minVisible degenerates to its start.
     /// </summary>
     private static double ClampAxis(double position, double size, double screenStart, double screenExtent, double minVisible)
     {
@@ -233,6 +265,95 @@ public partial class MainWindow : INavigationWindow
         var max = screenStart + screenExtent - minVisible;
         return min <= max ? Math.Clamp(position, min, max) : screenStart;
     }
+
+    /// <summary>
+    /// Corrects the restored position in DEVICE pixels against the live monitor work
+    /// areas. Window.Left/Top are per-monitor DIPs under this app's PerMonitorV2
+    /// manifest while SystemParameters.VirtualScreen* are system-DPI DIPs: on a 200%
+    /// primary beside a 100% secondary the virtual screen reads 2880 DIPs wide, and a
+    /// window saved on the secondary at 3840 clamps to 2780 and restores displaced.
+    /// Both sides of the comparison are device pixels here, so no scale enters it.
+    /// A non-Normal state is left alone — Windows owns the restore bounds of a
+    /// maximized window and sanitizes them itself.
+    /// </summary>
+    private void EnsureRestoredPositionIsOnScreen()
+    {
+        if (WindowState != WindowState.Normal) return;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return;
+
+        var placed = ClampToMonitors(
+            rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, WorkAreas());
+        if (placed is not { } position || (position.Left == rect.Left && position.Top == rect.Top))
+            return;
+
+        SetWindowPos(hwnd, IntPtr.Zero, (int)position.Left, (int)position.Top, 0, 0,
+            SwpNoSize | SwpNoZOrder | SwpNoActivate);
+    }
+
+    /// <summary>
+    /// Work area (taskbar excluded) of every attached monitor, in device pixels.
+    /// Falls back to the virtual-screen bounding box when enumeration yields nothing,
+    /// so a failure here is only as coarse as a bounding-box clamp, never a refusal
+    /// to place the window at all.
+    /// </summary>
+    private static IReadOnlyList<ScreenRect> WorkAreas()
+    {
+        var screens = new List<ScreenRect>();
+        MonitorEnumProc collect = (monitor, _, _, _) =>
+        {
+            var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+            if (GetMonitorInfoW(monitor, ref info))
+                screens.Add(new ScreenRect(info.rcWork.Left, info.rcWork.Top,
+                    info.rcWork.Right - info.rcWork.Left, info.rcWork.Bottom - info.rcWork.Top));
+            return true;
+        };
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, collect, IntPtr.Zero);
+        GC.KeepAlive(collect);
+        if (screens.Count > 0) return screens;
+
+        return [new ScreenRect(
+            GetSystemMetrics(SmXVirtualScreen), GetSystemMetrics(SmYVirtualScreen),
+            GetSystemMetrics(SmCxVirtualScreen), GetSystemMetrics(SmCyVirtualScreen))];
+    }
+
+    private const int SmXVirtualScreen = 76, SmYVirtualScreen = 77,
+                      SmCxVirtualScreen = 78, SmCyVirtualScreen = 79;
+    private const uint SwpNoSize = 0x0001, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32Rect { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int cbSize;
+        public Win32Rect rcMonitor;
+        public Win32Rect rcWork;
+        public uint dwFlags;
+    }
+
+    private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, IntPtr clip, IntPtr data);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hWnd, out Win32Rect rect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter,
+        int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
 
     private void WireSidebarProjects()
     {
