@@ -1,0 +1,134 @@
+using ProjectDashboard.Services.Rewrite;
+
+namespace ProjectDashboard.Services.Surgery;
+
+/// <summary>
+/// What to do when a rebase stops mid-flight (conflict, or a pick that would become
+/// empty). There is no in-app merge editor, so automatic resolution is never attempted.
+/// </summary>
+public enum RebaseConflictPolicy
+{
+    /// <summary>Run `git rebase --abort` and report which commit stopped it. The repository is left exactly as it was.</summary>
+    AbortAndReport,
+
+    /// <summary>Leave the rebase stopped so the user can finish it in a terminal. The repo stays mid-rebase and the state banner reports it.</summary>
+    LeaveStopped
+}
+
+/// <summary>How far back a reset moves the index and working tree.</summary>
+public enum ResetMode
+{
+    Soft,
+    Mixed,
+    Hard
+}
+
+/// <summary>What the clean-tree gate demands before a destructive operation runs.</summary>
+public enum TreeRequirement
+{
+    /// <summary>No index or working-tree changes at all. Rebase, hard reset, revert, cherry-pick.</summary>
+    Clean,
+
+    /// <summary>Staged changes are the operation's input; unstaged changes would make git refuse the follow-up rebase.</summary>
+    NoUnstagedChanges,
+
+    /// <summary>The operation is defined on a dirty tree. Soft and mixed reset.</summary>
+    Any
+}
+
+/// <summary>One commit as an interactive-rebase todo line source.</summary>
+public sealed record RebaseCommit(string Sha, string Subject);
+
+/// <summary>
+/// The commits an edit may rearrange, oldest first, plus the commit they replay onto.
+/// A null <see cref="BaseSha"/> means the range reaches the root commit and the rebase
+/// runs with `--root`.
+/// </summary>
+public sealed class RebaseScope
+{
+    public required string RepoPath { get; init; }
+
+    public string? BaseSha { get; init; }
+
+    public required IReadOnlyList<RebaseCommit> Commits { get; init; }
+
+    public bool IncludesRoot => BaseSha is null;
+
+    public bool Contains(string sha) => Commits.Any(c => string.Equals(c.Sha, sha, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// Outcome of one driven rebase. A failure is data: <see cref="ConflictCommit"/> names the
+/// commit that stopped the replay, and exactly one of <see cref="Aborted"/> (the repository
+/// is back to its pre-operation state) or <see cref="LeftStopped"/> (the repository is mid-rebase
+/// for the terminal) is set whenever the rebase stopped rather than failing to start.
+/// </summary>
+public sealed class RebaseRunResult
+{
+    public required bool Success { get; init; }
+
+    public string? FailureReason { get; init; }
+
+    public string? ConflictCommit { get; init; }
+
+    public string? ConflictSubject { get; init; }
+
+    public bool Aborted { get; init; }
+
+    public bool LeftStopped { get; init; }
+
+    /// <summary>True when the stop was a pick that would produce an empty commit, not a content conflict.</summary>
+    public bool StoppedEmpty { get; init; }
+
+    /// <summary>True when the rebase exceeded its timeout, was killed, and then aborted.</summary>
+    public bool TimedOut { get; init; }
+
+    public string HeadAfter { get; init; } = "";
+
+    /// <summary>The todo actually handed to git — the audit trail for what the driver asked for.</summary>
+    public IReadOnlyList<string> Todo { get; init; } = [];
+
+    internal static RebaseRunResult Failed(string reason) => new() { Success = false, FailureReason = reason };
+}
+
+/// <summary>
+/// Outcome of a reset, revert, or cherry-pick. <see cref="Conflicted"/> means the repository
+/// is deliberately left mid-operation with the conflicted paths listed: there is no in-app
+/// conflict editor, so the user finishes or aborts it from the terminal.
+/// </summary>
+public sealed class HistoryEditResult
+{
+    public required bool Success { get; init; }
+
+    public string? FailureReason { get; init; }
+
+    public bool Conflicted { get; init; }
+
+    public IReadOnlyList<string> ConflictPaths { get; init; } = [];
+
+    public string HeadAfter { get; init; } = "";
+
+    internal static HistoryEditResult Failed(string reason) => new() { Success = false, FailureReason = reason };
+}
+
+/// <summary>
+/// The result of a gated <see cref="SurgeryCoordinator"/> operation. <see cref="Undo"/> is
+/// present whenever a backup was taken — including on failure, so an operation that stopped
+/// part-way is still restorable. Exactly one of <see cref="Rebase"/> and <see cref="Edit"/>
+/// carries the underlying git-level detail.
+/// </summary>
+public sealed class SurgeryResult
+{
+    public required bool Success { get; init; }
+
+    public string? FailureReason { get; init; }
+
+    public UndoHandle? Undo { get; init; }
+
+    public RebaseRunResult? Rebase { get; init; }
+
+    public HistoryEditResult? Edit { get; init; }
+
+    internal static SurgeryResult Failed(string reason, UndoHandle? undo = null) =>
+        new() { Success = false, FailureReason = reason, Undo = undo };
+}
