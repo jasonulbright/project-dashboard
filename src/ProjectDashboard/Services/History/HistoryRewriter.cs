@@ -61,9 +61,8 @@ public sealed class HistoryRewriter
         request.Rewrite.Validate();
 
         var transformer = new BlobTransformer(request.Rewrite.ContentOps);
-        var binarySkips = new List<BinarySkip>();
-        var blobsChanged = 0;
-        long bytesDelta = 0;
+        var literalOps = request.Rewrite.ContentOps.OfType<LiteralReplace>().ToList();
+        var tally = new TransformTally();
 
         var pipeline = new HistoryPipeline(request.GitExecutable);
         var result = await pipeline.RunAsync(new HistoryPipelineOptions
@@ -77,12 +76,17 @@ public sealed class HistoryRewriter
             GitExecutable = request.GitExecutable,
             TransformAsync = (parsed, token) =>
             {
-                TransformBlobs(parsed, transformer, binarySkips, ref blobsChanged, ref bytesDelta, token);
+                TransformBlobs(parsed, transformer, literalOps, tally, token);
                 return Task.CompletedTask;
             }
         }, ct);
 
         var commitMap = BuildCommitMap(result);
+        var markToPath = BuildMarkToPath(result.Index);
+        var binarySkips = tally.Skips
+            .Select(s => new BinarySkip(s.Mark, s.Size, s.Mark is { } m ? markToPath.GetValueOrDefault(m) : null, s.Reason))
+            .ToList();
+        var paths = CollectPaths(result.Index);
         var changedTrees = await FindChangedTreesAsync(request, commitMap, ct);
 
         var fsck = await ProcessRunner.RunAsync(
@@ -92,15 +96,15 @@ public sealed class HistoryRewriter
             throw new HistoryPipelineException(
                 "verify", "fsck --strict failed on the rewrite target", fsck.ExitCode, fsck.StdErr + "\n" + fsck.StdOut);
 
-        var scrubChecks = await RunScrubChecksAsync(request, commitMap, changedTrees, ct);
+        var scrubChecks = await RunScrubChecksAsync(request, commitMap, binarySkips, tally.ByteSurvivors, paths, ct);
 
         var report = new RewriteReport
         {
             SourceRepository = request.SourceRepository,
             TargetBareRepository = request.TargetBareRepository,
             CommitCount = commitMap.Count,
-            BlobsChanged = blobsChanged,
-            BytesDelta = bytesDelta,
+            BlobsChanged = tally.BlobsChanged,
+            BytesDelta = tally.BytesDelta,
             BinarySkips = binarySkips,
             CommitMap = commitMap,
             CommitsWithChangedTrees = changedTrees,
@@ -112,6 +116,17 @@ public sealed class HistoryRewriter
         return report;
     }
 
+    /// <summary>Running counts and coverage material collected during the single transform pass.</summary>
+    private sealed class TransformTally
+    {
+        public int BlobsChanged;
+        public long BytesDelta;
+        public readonly List<(long? Mark, long Size, string Reason)> Skips = [];
+
+        /// <summary>Literal needles found verbatim inside a skipped (unscrubbable) blob's bytes — a definite survivor git grep -I cannot see.</summary>
+        public readonly List<(LiteralReplace Op, long? Mark, long Size)> ByteSurvivors = [];
+    }
+
     /// <summary>
     /// One pass over the parsed records: each blob payload is read from the spool,
     /// transformed, and materialized as inline bytes only when the bytes changed.
@@ -120,8 +135,8 @@ public sealed class HistoryRewriter
     /// the mandated export flags never produce those shapes.
     /// </summary>
     private static void TransformBlobs(
-        ParsedExport parsed, BlobTransformer transformer, List<BinarySkip> binarySkips,
-        ref int blobsChanged, ref long bytesDelta, CancellationToken ct)
+        ParsedExport parsed, BlobTransformer transformer, IReadOnlyList<LiteralReplace> literalOps,
+        TransformTally tally, CancellationToken ct)
     {
         using var spool = new FileStream(
             parsed.SpoolPath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan);
@@ -141,12 +156,17 @@ public sealed class HistoryRewriter
                     switch (outcome.Class)
                     {
                         case TransformClass.BinarySkipped:
-                            binarySkips.Add(new BinarySkip(blob.Mark, slice.Length));
+                            tally.Skips.Add((blob.Mark, slice.Length, "not valid UTF-8"));
+                            // The transform left these bytes untouched, so any literal
+                            // needle present survives where git grep -I cannot see it.
+                            foreach (var op in literalOps)
+                                if (payload.AsSpan().IndexOf(op.Find) >= 0)
+                                    tally.ByteSurvivors.Add((op, blob.Mark, slice.Length));
                             break;
                         case TransformClass.Changed:
                             blob.Data.InlineBytes = outcome.Bytes;
-                            bytesDelta += outcome.Bytes!.LongLength - slice.Length;
-                            blobsChanged++;
+                            tally.BytesDelta += outcome.Bytes!.LongLength - slice.Length;
+                            tally.BlobsChanged++;
                             break;
                     }
                     break;
@@ -201,6 +221,43 @@ public sealed class HistoryRewriter
         return map;
     }
 
+    /// <summary>Blob mark to one path whose file command references it, so a skipped blob can name where it lives.</summary>
+    private static Dictionary<long, string> BuildMarkToPath(FastExportIndex index)
+    {
+        var map = new Dictionary<long, string>();
+        foreach (var commit in index.Commits.Values)
+            foreach (var modify in commit.FileModifies)
+                if (modify.MarkRef is { } mark && !map.ContainsKey(mark))
+                    map[mark] = modify.Path.ToString();
+        return map;
+    }
+
+    /// <summary>
+    /// Every distinct path present in the target's file commands. Paths are never rewritten
+    /// by this stage, so a needle in a filename survives with no other signal — the scrub
+    /// scans these directly.
+    /// </summary>
+    private static List<(byte[] Bytes, string Text)> CollectPaths(FastExportIndex index)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var paths = new List<(byte[], string)>();
+        void Add(GitPath path)
+        {
+            if (seen.Add(path.ToString()))
+                paths.Add((path.PathBytes, path.ToString()));
+        }
+        foreach (var commit in index.Commits.Values)
+            foreach (var command in commit.Record.FileCommands)
+                switch (command)
+                {
+                    case FileModify modify: Add(modify.Path); break;
+                    case FileRename rename: Add(rename.Source); Add(rename.Destination); break;
+                    case FileCopy copy: Add(copy.Source); Add(copy.Destination); break;
+                    case FileDelete delete: Add(delete.Path); break;
+                }
+        return paths;
+    }
+
     /// <summary>
     /// A commit's root tree changes exactly when its snapshot references a transformed
     /// blob, so comparing old and new tree oids identifies content-touched commits
@@ -242,93 +299,128 @@ public sealed class HistoryRewriter
         return trees;
     }
 
+    /// <summary>
+    /// Verifies each op's needle against the full rewritten history. Coverage is honest by
+    /// construction: git grep runs over every commit in the map (a survivor rides a commit
+    /// whose tree did not change, so a tips-plus-changed candidate set would miss exactly
+    /// the survival case), the byte-level fallback catches literal needles inside skipped
+    /// blobs git grep -I cannot read, and paths are scanned for needles no content grep
+    /// sees. A check reports <see cref="ScrubCheckResult.Complete"/> only when nothing was
+    /// sampled, skipped, or grep-rejected. This method never throws — a completed rewrite
+    /// must always be reportable, so a failed check degrades to a note.
+    /// </summary>
     private async Task<List<ScrubCheckResult>> RunScrubChecksAsync(
         HistoryRewriteRequest request, Dictionary<string, string> commitMap,
-        List<string> changedTrees, CancellationToken ct)
+        IReadOnlyList<BinarySkip> binarySkips, IReadOnlyList<(LiteralReplace Op, long? Mark, long Size)> byteSurvivors,
+        IReadOnlyList<(byte[] Bytes, string Text)> paths, CancellationToken ct)
     {
-        var commits = await CollectScrubCommitsAsync(request, commitMap, changedTrees, ct);
-        var candidateCount = commits.Count;
-        string? sampleNote = null;
-        if (candidateCount > ScrubSampleCap)
+        var allCommits = commitMap.Values.Distinct().ToList();
+        var commits = allCommits;
+        var sampled = false;
+        if (allCommits.Count > ScrubSampleCap)
         {
-            commits = SampleEvenly(commits, ScrubSampleCap);
-            sampleNote = $"sampled {commits.Count} of {candidateCount} candidate commits";
+            commits = SampleEvenly(allCommits, ScrubSampleCap);
+            sampled = true;
         }
+        var hasSkips = binarySkips.Count > 0;
 
         var checks = new List<ScrubCheckResult>();
         foreach (var op in request.Rewrite.ContentOps)
         {
-            switch (op)
+            try
             {
-                case LiteralReplace literal:
-                    if (!TryDescribeNeedle(literal.Find, out var needle))
-                    {
-                        checks.Add(Skipped("literal", Convert.ToHexString(literal.Find),
-                            "needle is not expressible as a single-line UTF-8 grep argument"));
+                switch (op)
+                {
+                    case LiteralReplace literal:
+                        var literalExtras = paths
+                            .Where(p => p.Bytes.AsSpan().IndexOf(literal.Find) >= 0)
+                            .Select(p => $"path: {p.Text}")
+                            .Concat(byteSurvivors
+                                .Where(b => ReferenceEquals(b.Op, literal))
+                                .Select(b => $"binary-blob mark :{b.Mark?.ToString() ?? "?"}: {b.Size} byte(s) carry the needle"))
+                            .ToList();
+                        if (!TryDescribeNeedle(literal.Find, out var needle))
+                        {
+                            checks.Add(Make("literal", Convert.ToHexString(literal.Find),
+                                new GrepOutcome(false, [], "needle is not expressible as a single-line UTF-8 grep argument"),
+                                literalExtras));
+                            break;
+                        }
+                        checks.Add(Make("literal", needle,
+                            await GrepAsync(request, ["grep", "-I", "--fixed-strings", "-e", needle], commits, ct),
+                            literalExtras));
                         break;
-                    }
-                    checks.Add(await GrepAsync(request, "literal", needle,
-                        ["grep", "-I", "--fixed-strings", "-e", needle], commits, sampleNote, ct));
-                    break;
 
-                case RegexReplace regex:
-                    if (!IsEreExpressible(regex, out var flags, out var why))
-                    {
-                        checks.Add(Skipped("regex", regex.Pattern, why));
+                    case RegexReplace regex:
+                        var regexExtras = MatchPaths(paths, regex);
+                        if (!IsEreExpressible(regex, out var flags, out var why))
+                        {
+                            checks.Add(Make("regex", regex.Pattern, new GrepOutcome(false, [], why), regexExtras));
+                            break;
+                        }
+                        List<string> grepArgs = ["grep", "-I", "-E", .. flags, "-e", regex.Pattern];
+                        checks.Add(Make("regex", regex.Pattern, await GrepAsync(request, grepArgs, commits, ct), regexExtras));
                         break;
-                    }
-                    List<string> grepArgs = ["grep", "-I", "-E", .. flags, "-e", regex.Pattern];
-                    checks.Add(await GrepAsync(request, "regex", regex.Pattern, grepArgs, commits, sampleNote, ct));
-                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                var (kind, needle) = op is RegexReplace r
+                    ? ("regex", r.Pattern)
+                    : ("literal", Convert.ToHexString(((LiteralReplace)op).Find));
+                checks.Add(new ScrubCheckResult
+                {
+                    Kind = kind,
+                    Needle = needle,
+                    Performed = false,
+                    Complete = false,
+                    CommitsChecked = 0,
+                    Hits = [],
+                    Note = $"scrub check could not run: {ex.Message}"
+                });
             }
         }
         return checks;
 
-        static ScrubCheckResult Skipped(string kind, string needle, string why) => new()
+        ScrubCheckResult Make(string kind, string needle, GrepOutcome grep, IReadOnlyList<string> extraHits)
         {
-            Kind = kind,
-            Needle = needle,
-            Performed = false,
-            CommitsChecked = 0,
-            Hits = [],
-            Note = why
-        };
-    }
+            var hits = new List<string>(grep.Hits);
+            hits.AddRange(extraHits);
 
-    /// <summary>Every ref tip in the target (tags peeled to commits) plus the new oid of every content-changed commit.</summary>
-    private async Task<List<string>> CollectScrubCommitsAsync(
-        HistoryRewriteRequest request, Dictionary<string, string> commitMap,
-        List<string> changedTrees, CancellationToken ct)
-    {
-        var refs = await ProcessRunner.RunAsync(
-            _gitExe, ["for-each-ref", "--format=%(objecttype) %(objectname) %(*objecttype) %(*objectname)"],
-            request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
-        if (!refs.Success)
-            throw new HistoryPipelineException("verify", "for-each-ref failed on the rewrite target", refs.ExitCode, refs.StdErr);
+            var notes = new List<string>();
+            if (grep.Note is { } gn) notes.Add(gn);
+            if (grep.Performed && sampled)
+                notes.Add($"sampled {commits.Count} of {allCommits.Count} commit(s); unsampled commits were not grepped");
+            if (hasSkips)
+                notes.Add($"{binarySkips.Count} blob(s) the transform skipped are invisible to git grep");
 
-        var commits = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in SplitLines(refs.StdOut))
-        {
-            var fields = line.Split(' ');
-            var tip = fields[0] switch
+            return new ScrubCheckResult
             {
-                "commit" => fields[1],
-                "tag" when fields.Length >= 4 && fields[2] == "commit" => fields[3],
-                _ => null
+                Kind = kind,
+                Needle = needle,
+                Performed = grep.Performed,
+                Complete = grep.Performed && !sampled && !hasSkips,
+                CommitsChecked = grep.Performed ? commits.Count : 0,
+                Hits = hits,
+                Note = notes.Count > 0 ? string.Join("; ", notes) : null
             };
-            if (tip is not null && seen.Add(tip))
-                commits.Add(tip);
         }
-        foreach (var oldOid in changedTrees)
-            if (seen.Add(commitMap[oldOid]))
-                commits.Add(commitMap[oldOid]);
-        return commits;
     }
 
-    private async Task<ScrubCheckResult> GrepAsync(
-        HistoryRewriteRequest request, string kind, string needle, IReadOnlyList<string> grepArgs,
-        IReadOnlyList<string> commits, string? sampleNote, CancellationToken ct)
+    /// <summary>Decoded paths matching a regex op — a filename the pattern would hit, which content grep never sees.</summary>
+    private static List<string> MatchPaths(IReadOnlyList<(byte[] Bytes, string Text)> paths, RegexReplace regex)
+    {
+        var compiled = new System.Text.RegularExpressions.Regex(
+            regex.Pattern, regex.Options | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return paths.Where(p => compiled.IsMatch(p.Text)).Select(p => $"path: {p.Text}").ToList();
+    }
+
+    /// <summary>Result of one scrub grep. <see cref="Performed"/> is false when git grep could not run the pattern (rejected or timed out).</summary>
+    private readonly record struct GrepOutcome(bool Performed, List<string> Hits, string? Note);
+
+    private async Task<GrepOutcome> GrepAsync(
+        HistoryRewriteRequest request, IReadOnlyList<string> grepArgs,
+        IReadOnlyList<string> commits, CancellationToken ct)
     {
         var hits = new List<string>();
         var overflow = 0;
@@ -339,7 +431,10 @@ public sealed class HistoryRewriter
             args.AddRange(chunk);
             var result = await ProcessRunner.RunAsync(
                 _gitExe, args, request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
-            // git grep: 0 = matches found, 1 = no matches, anything else is a failure.
+            // git grep: 0 = matches found, 1 = no matches, anything else means the grep
+            // itself could not run (a pattern .NET accepts but ERE rejects, a timeout) —
+            // that is not a proof of clean, so the check is marked not-performed, never
+            // aborting a completed rewrite.
             if (result.ExitCode == 0)
             {
                 foreach (var line in SplitLines(result.StdOut))
@@ -350,22 +445,12 @@ public sealed class HistoryRewriter
             }
             else if (result.ExitCode != 1 || result.TimedOut)
             {
-                throw new HistoryPipelineException("verify", $"git grep failed during the scrub check", result.ExitCode, result.StdErr);
+                var reason = result.TimedOut ? "git grep timed out" : $"git grep exited {result.ExitCode}: {result.StdErr.Trim()}";
+                return new GrepOutcome(false, hits, reason);
             }
         }
 
-        var notes = new List<string>();
-        if (sampleNote is not null) notes.Add(sampleNote);
-        if (overflow > 0) notes.Add($"{overflow} further hit(s) not listed");
-        return new ScrubCheckResult
-        {
-            Kind = kind,
-            Needle = needle,
-            Performed = true,
-            CommitsChecked = commits.Count,
-            Hits = hits,
-            Note = notes.Count > 0 ? string.Join("; ", notes) : null
-        };
+        return new GrepOutcome(true, hits, overflow > 0 ? $"{overflow} further hit(s) not listed" : null);
     }
 
     private static bool TryDescribeNeedle(byte[] find, out string needle)

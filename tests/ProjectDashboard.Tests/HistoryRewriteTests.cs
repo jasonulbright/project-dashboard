@@ -334,9 +334,12 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         Assert.Contains(oldHead, report.CommitsWithChangedTrees);
         var scrub = Assert.Single(report.ScrubChecks);
         Assert.True(scrub.Performed);
+        // A genuine full scrub: every commit grepped, nothing skipped or sampled, so an
+        // empty hit list is a real clean bill, not silence.
+        Assert.True(scrub.Complete);
         Assert.Equal(Needle, scrub.Needle);
         Assert.Empty(scrub.Hits);
-        Assert.True(scrub.CommitsChecked > 0);
+        Assert.Equal(report.CommitMap.Count, scrub.CommitsChecked);
 
         // The written report round-trips through System.Text.Json.
         var roundTripped = JsonSerializer.Deserialize<RewriteReport>(await File.ReadAllTextAsync(reportPath));
@@ -347,7 +350,7 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task BinaryBlobWithNeedleBytesIsSkippedAndByteIdentical()
+    public async Task BinaryCarriedNeedleIsReportedNotClean()
     {
         using var f = Fixture();
         byte[] binary = [0x00, 0xFF, .. Encoding.ASCII.GetBytes(Needle), 0x80, 0xFE, 0x00];
@@ -363,8 +366,10 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         var skip = Assert.Single(report.BinarySkips);
         Assert.NotNull(skip.Mark);
         Assert.Equal(binary.Length, skip.Size);
+        // The skip names the path so the operator can act.
+        Assert.Equal("blob.bin", skip.Path);
 
-        // Same blob oid in the rewritten head means byte-identical binary content.
+        // The transform never corrupts binary content: same blob oid in the rewritten head.
         var newHead = report.CommitMap[oldHead];
         Assert.Equal(binaryOid,
             FixtureRepo.RunGit(f.TargetPath, ["rev-parse", $"{newHead}:blob.bin"], null, null).Trim());
@@ -374,11 +379,29 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         Assert.Contains(Redacted, plain);
         Assert.DoesNotContain(Needle, plain);
 
-        // git grep -I cannot see into the binary, so the scrub check stays clean.
+        // The needle survives inside the binary blob. git grep -I cannot see it, but the
+        // byte-level fallback must report it as a survivor — never a clean bill.
         var scrub = Assert.Single(report.ScrubChecks);
-        Assert.True(scrub.Performed);
-        Assert.Empty(scrub.Hits);
-        output.WriteLine($"binary skip: mark :{skip.Mark}, {skip.Size} bytes, blob oid unchanged ({binaryOid[..12]}…)");
+        Assert.False(scrub.Complete);
+        Assert.NotEmpty(scrub.Hits);
+        Assert.Contains(scrub.Hits, h => h.Contains("binary-blob"));
+        output.WriteLine($"binary-carried needle: mark :{skip.Mark} at {skip.Path}, {skip.Size} bytes; " +
+                         $"scrub Complete={scrub.Complete}, hits={scrub.Hits.Count} (survivor reported, not clean)");
+    }
+
+    [Fact]
+    public async Task NeedleInFilenameIsReportedAsSurviving()
+    {
+        using var f = Fixture();
+        // The needle lives in a path, and paths are never rewritten by this stage.
+        f.Write($"config-{Needle}.txt", "no secret in the body\n");
+        f.CommitAll("secret in a filename");
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.Contains(scrub.Hits, h => h.StartsWith("path:") && h.Contains(Needle));
+        output.WriteLine($"filename needle surfaced as: {scrub.Hits.First(h => h.StartsWith("path:"))}");
     }
 
     [Fact]

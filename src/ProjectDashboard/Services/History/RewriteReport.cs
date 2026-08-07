@@ -4,14 +4,20 @@ using System.Text.Json;
 namespace ProjectDashboard.Services.History;
 
 /// <summary>
-/// One payload the transform skipped as binary (not valid UTF-8). No path exists at this
-/// layer: a blob is content addressed by mark, and the same mark may sit at many paths.
-/// A null mark means an unmarked payload. Size is the payload's byte length when first
-/// classified.
+/// One blob the transform could not scrub: either not valid UTF-8, or larger than the
+/// regex payload limit. <see cref="Path"/> is one path whose file command referenced the
+/// blob's mark (a mark may sit at several paths); null when the blob is unmarked or no
+/// file command referenced it. Size is the payload's byte length. A non-empty skip list
+/// means the grep-based scrub cannot prove those bytes clean — see <see cref="Reason"/>.
 /// </summary>
-public sealed record BinarySkip(long? Mark, long Size);
+public sealed record BinarySkip(long? Mark, long Size, string? Path, string Reason);
 
-/// <summary>Outcome of one post-import scrub grep. Hits list `sha:path:content` lines; a non-empty list means the needle survives in the target.</summary>
+/// <summary>
+/// Outcome of one post-import scrub check. <see cref="Hits"/> lists `sha:path:content`
+/// grep lines plus synthetic `path:`/`binary-blob` markers from the byte- and path-level
+/// fallback scans; a non-empty list means the needle survives in the target. An empty
+/// list proves the needle is gone only when <see cref="Complete"/> is true.
+/// </summary>
 public sealed class ScrubCheckResult
 {
     /// <summary>"literal" or "regex".</summary>
@@ -20,8 +26,16 @@ public sealed class ScrubCheckResult
     /// <summary>The needle text or regex pattern the check grepped for.</summary>
     public required string Needle { get; init; }
 
-    /// <summary>False when the needle cannot be expressed as a git grep invocation; <see cref="Note"/> says why.</summary>
+    /// <summary>False when the needle cannot be expressed as a git grep invocation, or git grep rejected it; <see cref="Note"/> says why.</summary>
     public required bool Performed { get; init; }
+
+    /// <summary>
+    /// True only when this needle's verification covered everything: the grep ran over
+    /// every commit (no sampling), no blob was skipped (binary or over-limit), and paths
+    /// were scanned. When false, an empty <see cref="Hits"/> list does not prove the
+    /// needle is gone — <see cref="Note"/> names what was not covered.
+    /// </summary>
+    public required bool Complete { get; init; }
 
     public required int CommitsChecked { get; init; }
 
@@ -34,6 +48,11 @@ public sealed class ScrubCheckResult
 /// Everything a rewrite run proved about itself: what changed, what was skipped, how old
 /// commits map to new ones, and what the verification greps found. Serializable with
 /// System.Text.Json in both directions.
+/// Reading the scrub result: a non-empty <see cref="ScrubCheckResult.Hits"/> list means
+/// the needle survives in the target. An empty hit list proves the needle is gone only
+/// when that check's <see cref="ScrubCheckResult.Complete"/> is true; while any check is
+/// incomplete — a skipped blob, a sampled commit set, or a grep that could not run — an
+/// empty hit list is silence, not a clean bill.
 /// </summary>
 public sealed class RewriteReport
 {
