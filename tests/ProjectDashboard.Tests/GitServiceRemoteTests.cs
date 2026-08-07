@@ -150,6 +150,54 @@ public class GitServiceRemoteTests
     }
 
     [Fact]
+    public async Task Status_RenamedRemote_StillCarriesRemoteUrl()
+    {
+        using var origin = await Origin.CreateAsync();
+        using var clone = await TempRepo.CloneFromAsync(origin.Bare, "renamed");
+        await clone.GitAsync("remote", "rename", "origin", "github");
+
+        var status = await _git.GetStatusAsync(clone.Path);
+
+        Assert.False(status.HasError);
+        Assert.Equal(origin.Url, status.RemoteUrl);
+    }
+
+    [Fact]
+    public async Task Status_OriginPresent_ReadsOriginUrl()
+    {
+        using var origin = await Origin.CreateAsync();
+        using var clone = await TempRepo.CloneFromAsync(origin.Bare, "origin-url");
+
+        var status = await _git.GetStatusAsync(clone.Path);
+
+        Assert.Equal(origin.Url, status.RemoteUrl);
+    }
+
+    [Fact]
+    public async Task Status_MultipleRemotes_PrefersOrigin()
+    {
+        using var origin = await Origin.CreateAsync();
+        using var other = await Origin.CreateAsync();
+        using var clone = await TempRepo.CloneFromAsync(origin.Bare, "multi-remote");
+        await clone.GitAsync("remote", "add", "alpha", other.Url);
+
+        var status = await _git.GetStatusAsync(clone.Path);
+
+        Assert.Equal(origin.Url, status.RemoteUrl);
+    }
+
+    [Fact]
+    public async Task Status_NoRemote_LeavesRemoteUrlEmpty()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("no-remote");
+
+        var status = await _git.GetStatusAsync(repo.Path);
+
+        Assert.False(status.HasError);
+        Assert.Equal("", status.RemoteUrl);
+    }
+
+    [Fact]
     public async Task Push_NewBranchWithoutUpstream_SetsUpstreamOnOrigin()
     {
         using var origin = await Origin.CreateAsync();

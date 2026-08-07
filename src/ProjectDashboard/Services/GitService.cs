@@ -80,7 +80,20 @@ public class GitService
         catch { /* no commits yet */ }
 
         try { status.RemoteUrl = (await RunGitAsync(repoPath, ["config", "--get", "remote.origin.url"], ct)).Trim(); }
-        catch { /* no remote */ }
+        catch { /* origin absent — fall through to the resolved default remote */ }
+
+        // A repo whose only remote has a non-origin name (renamed, single "github"
+        // remote) must not read as local: an empty RemoteUrl means cloud-off UI,
+        // no gh enrichment, and Sync All skips the repo.
+        if (status.RemoteUrl.Length == 0)
+        {
+            var remote = await ResolveDefaultRemoteAsync(repoPath, ct);
+            if (remote is not null)
+            {
+                try { status.RemoteUrl = (await RunGitAsync(repoPath, ["remote", "get-url", remote], ct)).Trim(); }
+                catch { /* remote removed between listing and read */ }
+            }
+        }
 
         return status;
     }
@@ -352,8 +365,15 @@ public class GitService
         return await RunAsync(repoPath, ["push", "-u", remote, "HEAD"], ct, NetworkTimeout);
     }
 
-    /// <summary>The remote to push a new branch to: origin if present, else the only/first remote.</summary>
-    private async Task<string?> ResolveDefaultRemoteAsync(string repoPath, CancellationToken ct)
+    /// <summary>
+    /// The remote a repo's remote-dependent operations target: origin when
+    /// present, else the only/first listed remote; null when none exist. Single
+    /// authority for remote resolution — any operation needing a remote name
+    /// (status, push, and future remote-mutating commands) resolves through
+    /// here, because a second resolution site reintroduces origin-hardcoding
+    /// that misreads renamed-remote repos as local.
+    /// </summary>
+    public async Task<string?> ResolveDefaultRemoteAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["remote"], ct);
         if (!result.Success) return null;
