@@ -215,7 +215,10 @@ public partial class MainWindow : INavigationWindow
 
         projectsParent.MenuItems.Clear();
 
-        foreach (var project in dashVm.Projects.OrderBy(p => p.DisplayName))
+        // Local projects only: a remote-only card has no repo path, so the detail
+        // page this item targets would save its manifest under an empty key and
+        // the edits vanish on restart. Cloud repos clone via the card or palette.
+        foreach (var project in dashVm.Projects.Where(p => !p.IsRemoteOnly).OrderBy(p => p.DisplayName))
         {
             var proj = project;
             // Status glyph matches the card language (shape only — color in the nav is reserved
