@@ -33,7 +33,14 @@ public partial class SettingsViewModel : ObservableObject
         _ = CheckGitHubStatusAsync();
     }
 
-    private void LoadSettings()
+    /// <summary>
+    /// Re-snapshots persisted settings into the bound fields. Save writes every
+    /// bound field back to disk, so a snapshot older than an external write
+    /// (hide/unhide updating ExcludedDirectories) makes Save revert that write.
+    /// The page calls this on every navigation; any future bound setting is
+    /// covered by the same re-snapshot.
+    /// </summary>
+    public void LoadSettings()
     {
         var settings = _settingsService.Load();
         ProjectsRootPath = settings.ProjectsRootPath;
