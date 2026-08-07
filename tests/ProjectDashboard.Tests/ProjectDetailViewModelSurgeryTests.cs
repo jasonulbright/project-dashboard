@@ -355,13 +355,18 @@ public class ProjectDetailViewModelSurgeryTests
 
     /// <summary>
     /// The plan cases whose preview must survive a real rebase unchanged: one fold run, one
-    /// longer fold run, drops, and a pure reorder.
+    /// longer fold run, drops, a pure reorder, and the two that put the root commit itself in
+    /// play — a fixup whose anchor is the root, and a reorder that moves the root off the front.
+    /// The range reaches the root here, so every case replays with `--root` rather than onto a
+    /// base commit, and those last two are the ones with no parent behind the first todo line.
     /// </summary>
     [Theory]
     [InlineData("one-fold")]
     [InlineData("long-fold")]
     [InlineData("drops")]
     [InlineData("reorder")]
+    [InlineData("root-fold")]
+    [InlineData("root-reorder")]
     public async Task AnAppliedPlan_ProducesExactlyTheCommitsItsPreviewShowed(string plan)
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
@@ -384,6 +389,8 @@ public class ProjectDetailViewModelSurgeryTests
                     list[1].Drop = true;
                     list[3].Drop = true;
                     break;
+                case "root-fold": list[1].SquashIntoPrevious = true; break;
+                case "root-reorder": HistoryPlan.MoveDown(list, 0); break;
                 default: HistoryPlan.MoveUp(list, 4); break;
             }
             preview = HistoryPlan.Preview(list).ToList();
