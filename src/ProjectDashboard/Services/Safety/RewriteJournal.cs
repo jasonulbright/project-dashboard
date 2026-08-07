@@ -167,17 +167,22 @@ public sealed class RewriteJournal
         return file;
     }
 
+    /// <summary>
+    /// No .bak: a retained prior version names entries that have since completed, and a
+    /// crash-recovery read that falls back to it both surfaces them as pending and writes them
+    /// back as the live file, so the phantom persists. The .tmp swap still keeps the live file
+    /// from ever being torn. The journal answers only what is pending now.
+    /// </summary>
     private void WriteFile(RewriteJournalFile file)
     {
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
-        DurableJsonFile.Write(_path, JsonSerializer.Serialize(file, JsonOptions));
+        DurableJsonFile.Write(_path, JsonSerializer.Serialize(file, JsonOptions), keepBackup: false);
     }
 
     private void DeleteFile()
     {
         TryDelete(_path);
-        // The .bak is a prior journal version; leaving it would resurface as a phantom
-        // pending op on a later crash-recovery read that falls back to backup.
+        // A .bak from a build that retained one still resurfaces as a phantom pending op.
         TryDelete(_path + ".bak");
     }
 

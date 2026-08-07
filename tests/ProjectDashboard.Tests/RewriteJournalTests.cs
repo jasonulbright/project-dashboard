@@ -129,6 +129,49 @@ public class RewriteJournalTests
     }
 
     [Fact]
+    public async Task Complete_OneOfTwo_ThenCorruptJournal_DoesNotResurrectTheCompletedEntry()
+    {
+        // A retained prior version of the journal still names the completed repository. Recovery
+        // falling back to it would offer to restore an operation that finished, and accepting
+        // that restore resets the repository back over the completed work.
+        var path = TempJournalPath();
+        var journal = new RewriteJournal(path);
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\alpha", Phase = "rebase" });
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\beta", Phase = "swap" });
+
+        await journal.CompleteAsync(@"C:\projects\alpha");
+
+        File.WriteAllText(path, "}{ not json at all \0\0\0");
+
+        Assert.DoesNotContain(await new RewriteJournal(path).ReadAllPendingAsync(),
+            e => e.RepoPath == @"C:\projects\alpha");
+        // The recovered content is written back as the live file, so a second reader must agree.
+        Assert.DoesNotContain(await new RewriteJournal(path).ReadAllPendingAsync(),
+            e => e.RepoPath == @"C:\projects\alpha");
+        Assert.Null(await journal.ReadPendingAsync(@"C:\projects\alpha"));
+        Assert.False(File.Exists(path + ".bak"));
+    }
+
+    [Fact]
+    public async Task Write_InterruptedPredecessor_LeavesTheLiveFileIntact()
+    {
+        // The write lands in a sibling .tmp and is swapped in, so a crashed write leaves a stray
+        // .tmp and never a half-written journal; the next write reuses that path.
+        var path = TempJournalPath();
+        var journal = new RewriteJournal(path);
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\alpha", Phase = "rebase" });
+
+        File.WriteAllText(path + ".tmp", "}{ torn write \0\0\0");
+
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\beta", Phase = "swap" });
+
+        var pending = await new RewriteJournal(path).ReadAllPendingAsync();
+        Assert.Equal(2, pending.Count);
+        Assert.Contains(pending, e => e.RepoPath == @"C:\projects\alpha");
+        Assert.Contains(pending, e => e.RepoPath == @"C:\projects\beta");
+    }
+
+    [Fact]
     public async Task RecoveryService_Startup_SurfacesEveryPendingRepository()
     {
         var path = TempJournalPath();
