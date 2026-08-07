@@ -20,8 +20,11 @@ public sealed class IssueDetail
     public string Author { get; init; } = "";
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
-    /// <summary>Comma-joined label names ("" when none).</summary>
+    /// <summary>Comma-joined label names for display ("" when none). Not round-trippable:
+    /// a label name may itself contain a comma. Use <see cref="LabelNames"/> to act on labels.</summary>
     public string Labels { get; init; } = "";
+    /// <summary>Label names exactly as the API returned them, commas and all.</summary>
+    public IReadOnlyList<string> LabelNames { get; init; } = [];
     /// <summary>Comma-joined assignee logins ("" when none).</summary>
     public string Assignees { get; init; } = "";
     /// <summary>Milestone title, "" when none.</summary>

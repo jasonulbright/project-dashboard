@@ -59,6 +59,9 @@ public partial class ProjectDetailViewModel
 
     private string Slug => Project?.GitHubSlug ?? "";
 
+    /// <summary>Shown instead of a silent return when a command needs a slug and there is none.</summary>
+    private const string NoRemoteStatus = "This project has no GitHub remote.";
+
     /// <summary>Resets every interactive Issues/PR field so nothing leaks across a project switch.</summary>
     private void ResetGitHubState()
     {
@@ -124,7 +127,9 @@ public partial class ProjectDetailViewModel
                 return;
             }
             IssueDetail = detail;
-            IssueLabels = new ObservableCollection<string>(SplitLabels(detail.Labels));
+            // From the API list, not a re-split of the joined display string: a label
+            // name containing a comma would come back as two names that match nothing.
+            IssueLabels = new ObservableCollection<string>(detail.LabelNames);
         }
         finally
         {
@@ -183,11 +188,17 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var title = NewIssueTitle.Trim();
-        if (slug.Length == 0 || title.Length == 0 || IsBusy)
+        if (title.Length == 0)
         {
-            if (title.Length == 0) GitHubStatusText = "Enter an issue title first.";
+            GitHubStatusText = "Enter an issue title first.";
             return;
         }
+        if (slug.Length == 0)
+        {
+            GitHubStatusText = NoRemoteStatus;
+            return;
+        }
+        if (IsBusy) return;
         var body = NewIssueBody;
         var labels = SplitLabels(NewIssueLabels);
         var gen = _generation;
@@ -342,6 +353,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task ShowNewPr()
     {
+        if (Slug.Length == 0)
+        {
+            GitHubStatusText = NoRemoteStatus;
+            return;
+        }
         NewPrTitle = "";
         NewPrBody = "";
         NewPrBase = "";
@@ -366,11 +382,17 @@ public partial class ProjectDetailViewModel
     {
         var repo = RepoPath;
         var title = NewPrTitle.Trim();
-        if (repo.Length == 0 || title.Length == 0 || IsBusy)
+        if (title.Length == 0)
         {
-            if (title.Length == 0) GitHubStatusText = "Enter a pull request title first.";
+            GitHubStatusText = "Enter a pull request title first.";
             return;
         }
+        if (Slug.Length == 0)
+        {
+            GitHubStatusText = NoRemoteStatus;
+            return;
+        }
+        if (repo.Length == 0 || IsBusy) return;
         // Without an explicit head, gh reads the checkout at spawn time — which the
         // app's own Open in Terminal makes easy to change while the form is open.
         var head = ComposeHeadBranch;
@@ -439,15 +461,17 @@ public partial class ProjectDetailViewModel
 
         var strategy = SelectedMergeStrategy;
         var token = strategy.Token(); // enum → exact gh token; BuildMergeArgs can't see a bad value
+        // Read once: the confirm text and the command must describe the same merge even
+        // if the checkbox is toggled while the dialog is open.
+        var deleteBranch = MergeDeleteBranch;
         var branch = detail?.HeadRef ?? "";
         var branchNote = branch.Length > 0 ? $" ({branch})" : "";
-        var deleteNote = MergeDeleteBranch ? "\n\nThe head branch will be deleted." : "";
+        var deleteNote = deleteBranch ? "\n\nThe head branch will be deleted." : "";
         var confirmed = await ConfirmAsync("Merge pull request?",
             $"{strategy} pull request #{pr.Number}{branchNote} into the base branch?{deleteNote}\n\nThis pushes to the remote and cannot be undone here.",
             $"{strategy}");
         if (!confirmed) return;
 
-        var deleteBranch = MergeDeleteBranch;
         var ok = await RunGitHubOp(() => _gitHubService.MergePullRequestAsync(slug, pr.Number, token, deleteBranch),
             $"Merge #{pr.Number}");
         if (ok)

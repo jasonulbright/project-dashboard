@@ -30,7 +30,6 @@ public partial class ProjectDetailPage
 
         // Issue/PR bodies render natively into their FlowDocuments when the fetched
         // detail lands. Unloaded unsubscribes — this page is transient.
-        viewModel.PropertyChanged += OnViewModelPropertyChanged;
         Unloaded += (_, _) => viewModel.PropertyChanged -= OnViewModelPropertyChanged;
     }
 
@@ -141,6 +140,14 @@ public partial class ProjectDetailPage
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        // Paired with the Unloaded unsubscribe: a page re-shown after Unloaded must
+        // resubscribe, and the detail already on the view model must render now
+        // because no further change notification is coming for it.
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        RenderIssueConversation();
+        RenderPullRequestConversation();
+
         var project = DashboardViewModel.SelectedProject;
         if (project is null) return;
 

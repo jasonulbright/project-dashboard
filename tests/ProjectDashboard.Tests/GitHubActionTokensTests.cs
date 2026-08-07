@@ -4,8 +4,8 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// GH-1 closure: the UI derives the gh token from an enum, never free text, so the
-/// token reaching GitHubService.BuildMergeArgs / BuildReviewArgs is always mapped —
+/// The UI derives the gh token from an enum, never free text, so the token reaching
+/// GitHubService.BuildMergeArgs / BuildReviewArgs is always mapped —
 /// those methods' unmapped-token throw is unreachable from the UI. These assertions
 /// pin the exact strings the service's switch expects.
 /// </summary>

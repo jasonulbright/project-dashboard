@@ -310,6 +310,7 @@ public class GitHubService(SettingsService settingsService)
                 CreatedAt = Date(el, "createdAt") ?? default,
                 UpdatedAt = Date(el, "updatedAt") ?? default,
                 Labels = JoinNames(el, "labels", "name"),
+                LabelNames = ReadNames(el, "labels", "name"),
                 Assignees = JoinNames(el, "assignees", "login"),
                 Milestone = el.TryGetProperty("milestone", out var ms) && ms.ValueKind == JsonValueKind.Object
                     ? Str(ms, "title") : "",
@@ -648,11 +649,16 @@ public class GitHubService(SettingsService settingsService)
         el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Object ? Str(v, "login") : "";
 
     private static string JoinNames(JsonElement el, string arrayName, string field) =>
+        string.Join(", ", ReadNames(el, arrayName, field));
+
+    /// <summary>Names as the API returned them; a joined form cannot be split back apart
+    /// because a name may contain the separator.</summary>
+    private static List<string> ReadNames(JsonElement el, string arrayName, string field) =>
         el.TryGetProperty(arrayName, out var arr) && arr.ValueKind == JsonValueKind.Array
-            ? string.Join(", ", arr.EnumerateArray()
+            ? [.. arr.EnumerateArray()
                 .Select(x => x.ValueKind == JsonValueKind.Object ? Str(x, field) : "")
-                .Where(n => n.Length > 0))
-            : "";
+                .Where(n => n.Length > 0)]
+            : [];
 
     private static List<IssueComment> ParseComments(JsonElement el)
     {

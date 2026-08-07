@@ -64,10 +64,44 @@ public class ProjectDetailViewModelGitHubTests
     public async Task ShowAndCancelNewPr_TogglesCompose()
     {
         var vm = NewVm();
+        await vm.SetProjectAsync(RemoteProject());
         await vm.ShowNewPrCommand.ExecuteAsync(null);
         Assert.True(vm.PullRequestComposeVisible);
         vm.CancelNewPrCommand.Execute(null);
         Assert.False(vm.PullRequestComposeVisible);
+    }
+
+    [Fact]
+    public async Task ShowNewPr_WithoutRemote_SaysSoAndKeepsComposeClosed()
+    {
+        var vm = NewVm();
+        await vm.SetProjectAsync(LocalProject());
+        await vm.ShowNewPrCommand.ExecuteAsync(null);
+
+        Assert.False(vm.PullRequestComposeVisible);
+        Assert.Equal("This project has no GitHub remote.", vm.GitHubStatusText);
+    }
+
+    [Fact]
+    public async Task SubmitNewPr_WithoutRemote_SaysSoInsteadOfReturningSilently()
+    {
+        var vm = NewVm();
+        await vm.SetProjectAsync(LocalProject());
+        vm.NewPrTitle = "Add the thing";
+        await vm.SubmitNewPrCommand.ExecuteAsync(null);
+
+        Assert.Equal("This project has no GitHub remote.", vm.GitHubStatusText);
+    }
+
+    [Fact]
+    public async Task SubmitNewIssue_WithoutRemote_SaysSoInsteadOfReturningSilently()
+    {
+        var vm = NewVm();
+        await vm.SetProjectAsync(LocalProject());
+        vm.NewIssueTitle = "Crash on start";
+        await vm.SubmitNewIssueCommand.ExecuteAsync(null);
+
+        Assert.Equal("This project has no GitHub remote.", vm.GitHubStatusText);
     }
 
     [Fact]

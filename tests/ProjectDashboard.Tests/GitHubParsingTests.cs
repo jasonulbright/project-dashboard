@@ -5,6 +5,18 @@ namespace ProjectDashboard.Tests;
 public class GitHubIssueDetailParsingTests
 {
     [Fact]
+    public void CommaInLabelName_SurvivesOnLabelNamesButNotTheJoinedString()
+    {
+        var detail = GitHubService.ParseIssueDetail(
+            """{"number":1,"labels":[{"name":"needs docs, maybe"},{"name":"ui"}]}""");
+
+        Assert.NotNull(detail);
+        // The joined form is display only — splitting it back yields three names.
+        Assert.Equal("needs docs, maybe, ui", detail.Labels);
+        Assert.Equal(["needs docs, maybe", "ui"], detail.LabelNames);
+    }
+
+    [Fact]
     public void FullIssue_ParsesAllFields()
     {
         var detail = GitHubService.ParseIssueDetail("""
@@ -38,6 +50,7 @@ public class GitHubIssueDetailParsingTests
         Assert.Equal("jasonulbright", detail.Author);
         Assert.Equal(new DateTimeOffset(2026, 7, 30, 9, 15, 0, TimeSpan.Zero), detail.CreatedAt);
         Assert.Equal("bug, ui", detail.Labels);
+        Assert.Equal(["bug", "ui"], detail.LabelNames);
         Assert.Equal("jasonulbright, alice", detail.Assignees);
         Assert.Equal("v2.0", detail.Milestone);
         Assert.Equal("https://github.com/o/r/issues/41", detail.Url);
@@ -63,6 +76,7 @@ public class GitHubIssueDetailParsingTests
         Assert.Equal("", detail.Body);
         Assert.Equal("", detail.Author);
         Assert.Equal("", detail.Labels);
+        Assert.Empty(detail.LabelNames);
         Assert.Equal("", detail.Assignees);
         Assert.Equal("", detail.Milestone);
         Assert.Empty(detail.Comments);
