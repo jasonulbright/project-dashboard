@@ -342,8 +342,12 @@
                       HorizontalScrollBarVisibility="Disabled"
                       Visibility="{Binding ShowCards, Converter={StaticResource BooleanToVisibilityConverter}}"
                       PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+            <!-- TabNavigation Once: the card Border carries its own Local scope, so Tab
+                 walks the focused card's actions and then leaves the grid. Local here
+                 instead costs a stop per card plus three per card's buttons, which puts
+                 anything below a large grid out of reach. -->
             <ItemsControl ItemsSource="{Binding FilteredProjects}"
-                          KeyboardNavigation.TabNavigation="Local"
+                          KeyboardNavigation.TabNavigation="Once"
                           KeyboardNavigation.DirectionalNavigation="Cycle">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>

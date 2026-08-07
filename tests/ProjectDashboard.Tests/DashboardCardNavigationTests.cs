@@ -36,6 +36,22 @@ public class DashboardCardNavigationTests
         Assert.Equal("c2", down);
     }
 
+    [Fact]
+    public void Tab_LeavesTheGridAfterTheFocusedCardsOwnActions()
+    {
+        var path = "";
+        RunSta(() =>
+        {
+            using var probe = BuildProbe(cardCount: 4);
+            path = string.Join(">", TabWalk(probe, maxSteps: 20));
+        });
+
+        // One card's three quick actions, then out. Tab is how the keyboard crosses
+        // the grid, and a stop on every card and every card's buttons puts whatever
+        // follows a forty-project grid a hundred and sixty presses away.
+        Assert.Equal("fetch0>pull0>push0>afterGrid", path);
+    }
+
     // ── Probe ────────────────────────────────────────────────────────────────
 
     private sealed class Probe : IDisposable
@@ -123,6 +139,32 @@ public class DashboardCardNavigationTests
         SetFocus(source.Handle);
 
         return new Probe { Source = source, Cards = cards, AfterGrid = after };
+    }
+
+    /// <summary>Every element Tab reaches, starting from the first card, until it leaves the grid.</summary>
+    private static List<string> TabWalk(Probe probe, int maxSteps)
+    {
+        var visited = new List<string>();
+        Assert.True(probe.Cards[0].Focus(), "the probe's first card never took focus");
+
+        var cursor = (FrameworkElement)probe.Cards[0];
+        for (var step = 0; step < maxSteps; step++)
+        {
+            if (!cursor.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)))
+            {
+                visited.Add("(tab-refused)");
+                break;
+            }
+            if (Keyboard.FocusedElement is not FrameworkElement next)
+            {
+                visited.Add("(focus-lost)");
+                break;
+            }
+            visited.Add(Describe(next));
+            cursor = next;
+            if (ReferenceEquals(next, probe.AfterGrid)) break;
+        }
+        return visited;
     }
 
     private static XmlElement Element(XmlDocument markup, string xpath)

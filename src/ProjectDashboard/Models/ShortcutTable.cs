@@ -26,7 +26,7 @@ public static class ShortcutTable
 
         new(DashboardGroup, "Enter / Space", "Open the focused project, or activate the focused summary chip"),
         new(DashboardGroup, "Arrow keys", "Move between project cards"),
-        new(DashboardGroup, "Tab", "Reach the focused card's Fetch / Pull / Push actions"),
+        new(DashboardGroup, "Tab", "Reach the focused card's Fetch / Pull / Push actions, then leave the grid"),
 
         new(PaletteGroup, "Up / Down", "Move the selection"),
         new(PaletteGroup, "Enter", "Open the selected project, result, or action"),
