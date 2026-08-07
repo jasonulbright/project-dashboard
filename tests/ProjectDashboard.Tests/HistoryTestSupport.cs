@@ -60,7 +60,7 @@ public sealed class FixtureRepo : IDisposable
     public FixtureRepo(bool bareSource = false)
     {
         Root = Path.Combine(Path.GetTempPath(), "pd-fixtures",
-            "engine-" + Guid.NewGuid().ToString("N")[..8]);
+            "engine2-" + Guid.NewGuid().ToString("N")[..8]);
         SourcePath = Path.Combine(Root, "src");
         WorkDir = Path.Combine(Root, "work");
         TargetPath = Path.Combine(Root, "target.git");
