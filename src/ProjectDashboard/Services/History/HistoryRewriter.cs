@@ -158,7 +158,7 @@ public sealed class HistoryRewriter
             CommitsWithChangedTrees = changedTrees,
             FsckOutput = (fsck.StdErr + "\n" + fsck.StdOut).Trim(),
             ScrubChecks = scrubChecks,
-            ScopeDescription = $"files: {rewrite.FileScope.Describe()}; commits: {rewrite.CommitScope.Describe()}",
+            ScopeDescription = DescribeScope(rewrite),
             InScopeCommitCount = inScopeCommitOids?.Count ?? commitMap.Count,
             OutOfScopeCommitsWithChangedTrees = scope.OutOfScopeChangedTrees,
             MessagesChanged = scoped?.MessagesChanged ?? 0,
@@ -170,6 +170,18 @@ public sealed class HistoryRewriter
         if (request.ReportPath is { } reportPath)
             await report.WriteAsync(reportPath, ct);
         return report;
+    }
+
+    /// <summary>
+    /// The scope line the wizard shows. Message and identity ops follow the commit scope but
+    /// not the file scope, so they are named separately rather than read off the files clause.
+    /// </summary>
+    private static string DescribeScope(RewriteOptions rewrite)
+    {
+        var text = $"files: {rewrite.FileScope.Describe()}; commits: {rewrite.CommitScope.Describe()}";
+        if (rewrite.MessageOps.Count > 0 || rewrite.IdentityMappings.Count > 0)
+            text += $"; messages/identities: {rewrite.CommitScope.Describe()} (file scope does not apply)";
+        return text;
     }
 
     /// <summary>Resolves a commit scope to full source commit oids (lowercase). Null means all history.</summary>
@@ -553,8 +565,8 @@ public sealed class HistoryRewriter
             }
         }
 
-        checks.AddRange(await MessageScrubChecksAsync(request, ct));
-        checks.AddRange(await IdentityScrubChecksAsync(request, ct));
+        checks.AddRange(await MessageScrubChecksAsync(request, scope, ct));
+        checks.AddRange(await IdentityScrubChecksAsync(request, scope, ct));
         return checks;
 
         ScrubCheckResult Make(string kind, string needle, GrepOutcome grep, IReadOnlyList<string> extraHits)
@@ -605,11 +617,13 @@ public sealed class HistoryRewriter
     };
 
     /// <summary>
-    /// Verifies message ops in-process against every rewritten commit and tag message. The
+    /// Verifies message ops in-process against the rewritten messages the ops were allowed to
+    /// touch — all of them, or the commit scope's commits plus the tags riding them. The
     /// message corpus is small, so the real op (literal byte search or the actual .NET regex)
     /// is applied directly — more faithful than the git-grep ERE gate the tree scrub needs.
     /// </summary>
-    private async Task<List<ScrubCheckResult>> MessageScrubChecksAsync(HistoryRewriteRequest request, CancellationToken ct)
+    private async Task<List<ScrubCheckResult>> MessageScrubChecksAsync(
+        HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
     {
         var checks = new List<ScrubCheckResult>();
         if (request.Rewrite.MessageOps.Count == 0) return checks;
@@ -617,7 +631,7 @@ public sealed class HistoryRewriter
         string corpus;
         try
         {
-            corpus = await FetchMessageCorpusAsync(request, ct);
+            corpus = await FetchMessageCorpusAsync(request, scope, ct);
         }
         catch (Exception ex)
         {
@@ -634,17 +648,20 @@ public sealed class HistoryRewriter
                 Kind = OpKind(op, "message"),
                 Needle = OpNeedle(op),
                 Performed = true,
-                Complete = true,
-                WithinScopeOnly = false,
-                CommitsChecked = 0,
+                Complete = !scope.CommitScoped,
+                WithinScopeOnly = scope.CommitScoped,
+                CommitsChecked = scope.CommitScoped ? scope.InScopeCommits.Count : 0,
                 Hits = hits,
-                Note = "messages verified in-process across all commits and tags"
+                Note = scope.CommitScoped
+                    ? $"messages verified in-process across the {scope.InScopeCommits.Count} in-scope commit(s) and the tags on them; out-of-scope messages are untouched and unchecked"
+                    : "messages verified in-process across all commits and tags"
             });
         }
         return checks;
     }
 
-    private async Task<List<ScrubCheckResult>> IdentityScrubChecksAsync(HistoryRewriteRequest request, CancellationToken ct)
+    private async Task<List<ScrubCheckResult>> IdentityScrubChecksAsync(
+        HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
     {
         var checks = new List<ScrubCheckResult>();
         if (request.Rewrite.IdentityMappings.Count == 0) return checks;
@@ -652,7 +669,7 @@ public sealed class HistoryRewriter
         List<(string Name, string Email)> identities;
         try
         {
-            identities = await FetchIdentitiesAsync(request, ct);
+            identities = await FetchIdentitiesAsync(request, scope, ct);
         }
         catch (Exception ex)
         {
@@ -675,11 +692,13 @@ public sealed class HistoryRewriter
                 Kind = "identity",
                 Needle = DescribeMapping(mapping),
                 Performed = true,
-                Complete = true,
-                WithinScopeOnly = false,
-                CommitsChecked = 0,
+                Complete = !scope.CommitScoped,
+                WithinScopeOnly = scope.CommitScoped,
+                CommitsChecked = scope.CommitScoped ? scope.InScopeCommits.Count : 0,
                 Hits = hits,
-                Note = "author/committer/tagger identities verified in-process across all history"
+                Note = scope.CommitScoped
+                    ? $"author/committer/tagger identities verified in-process across the {scope.InScopeCommits.Count} in-scope commit(s) and the tags on them; out-of-scope identities are untouched and unchecked"
+                    : "author/committer/tagger identities verified in-process across all history"
             });
         }
         return checks;
@@ -716,29 +735,82 @@ public sealed class HistoryRewriter
         }
     }
 
-    private async Task<string> FetchMessageCorpusAsync(HistoryRewriteRequest request, CancellationToken ct)
+    /// <summary>
+    /// Commit log output for the messages/identities scrub: every commit, or exactly the
+    /// in-scope ones. <c>--no-walk</c> keeps a listed commit from dragging its ancestors in,
+    /// which would otherwise report out-of-scope messages the ops never touched.
+    /// </summary>
+    private async Task<string> FetchScrubLogAsync(
+        HistoryRewriteRequest request, ScrubScope scope, string format, string stage, CancellationToken ct)
     {
-        var commitMessages = await ProcessRunner.RunAsync(
-            _gitExe, ["log", "--all", "-z", "--format=%B"], request.TargetBareRepository,
-            request.VerificationTimeout, GitEnvironment, ct);
-        if (!commitMessages.Success)
-            throw new HistoryPipelineException("verify", "git log for message scrub failed", commitMessages.ExitCode, commitMessages.StdErr);
-        var tagMessages = await ProcessRunner.RunAsync(
-            _gitExe, ["for-each-ref", "refs/tags", "--format=%(contents)"], request.TargetBareRepository,
-            request.VerificationTimeout, GitEnvironment, ct);
-        return commitMessages.StdOut + "\n" + (tagMessages.Success ? tagMessages.StdOut : "");
+        if (!scope.CommitScoped)
+        {
+            var all = await ProcessRunner.RunAsync(
+                _gitExe, ["log", "--all", format], request.TargetBareRepository,
+                request.VerificationTimeout, GitEnvironment, ct);
+            if (!all.Success)
+                throw new HistoryPipelineException("verify", $"git log for {stage} scrub failed", all.ExitCode, all.StdErr);
+            return all.StdOut;
+        }
+
+        var text = new StringBuilder();
+        foreach (var chunk in Chunk(scope.InScopeCommits))
+        {
+            List<string> args = ["log", "--no-walk", format, .. chunk];
+            var result = await ProcessRunner.RunAsync(
+                _gitExe, args, request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
+            if (!result.Success)
+                throw new HistoryPipelineException("verify", $"git log for {stage} scrub failed", result.ExitCode, result.StdErr);
+            text.Append(result.StdOut).Append('\n');
+        }
+        return text.ToString();
     }
 
-    private async Task<List<(string Name, string Email)>> FetchIdentitiesAsync(HistoryRewriteRequest request, CancellationToken ct)
+    /// <summary>One annotated or lightweight tag in the target, with the commit it resolves to.</summary>
+    private readonly record struct TagFacts(string TargetOid, string TaggerName, string TaggerEmail, string Contents);
+
+    /// <summary>
+    /// Every tag in one call. The 0x1e record separator and 0x1f field separator survive
+    /// a multi-line <c>%(contents)</c>, which no line-oriented format does.
+    /// </summary>
+    private async Task<List<TagFacts>> FetchTagsAsync(HistoryRewriteRequest request, CancellationToken ct)
     {
-        var log = await ProcessRunner.RunAsync(
-            _gitExe, ["log", "--all", "--format=%an%x1f%ae%x1f%cn%x1f%ce"], request.TargetBareRepository,
-            request.VerificationTimeout, GitEnvironment, ct);
-        if (!log.Success)
-            throw new HistoryPipelineException("verify", "git log for identity scrub failed", log.ExitCode, log.StdErr);
+        var tags = new List<TagFacts>();
+        var result = await ProcessRunner.RunAsync(
+            _gitExe,
+            ["for-each-ref", "refs/tags", "--format=%(objectname)%1f%(*objectname)%1f%(taggername)%1f%(taggeremail)%1f%(contents)%1e"],
+            request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
+        if (!result.Success) return tags;
+
+        foreach (var raw in result.StdOut.Split('\x1e'))
+        {
+            var record = raw.Trim('\n', '\r');
+            if (record.Length == 0) continue;
+            var f = record.Split('\x1f');
+            if (f.Length != 5) continue;
+            // A lightweight tag has no peeled object; it names the commit directly.
+            tags.Add(new TagFacts(f[1].Length > 0 ? f[1] : f[0], f[2], f[3].Trim('<', '>'), f[4]));
+        }
+        return tags;
+    }
+
+    private async Task<string> FetchMessageCorpusAsync(HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
+    {
+        var corpus = new StringBuilder(await FetchScrubLogAsync(request, scope, "--format=%B", "message", ct));
+        var inScope = scope.CommitScoped ? new HashSet<string>(scope.InScopeCommits, StringComparer.Ordinal) : null;
+        foreach (var tag in await FetchTagsAsync(request, ct))
+            if (inScope is null || inScope.Contains(tag.TargetOid))
+                corpus.Append('\n').Append(tag.Contents);
+        return corpus.ToString();
+    }
+
+    private async Task<List<(string Name, string Email)>> FetchIdentitiesAsync(
+        HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
+    {
+        var log = await FetchScrubLogAsync(request, scope, "--format=%an%x1f%ae%x1f%cn%x1f%ce", "identity", ct);
 
         var identities = new List<(string, string)>();
-        foreach (var line in SplitLines(log.StdOut))
+        foreach (var line in SplitLines(log))
         {
             var f = line.Split('\x1f');
             if (f.Length == 4)
@@ -748,16 +820,10 @@ public sealed class HistoryRewriter
             }
         }
 
-        var taggers = await ProcessRunner.RunAsync(
-            _gitExe, ["for-each-ref", "refs/tags", "--format=%(taggername)%1f%(taggeremail)"],
-            request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
-        if (taggers.Success)
-            foreach (var line in SplitLines(taggers.StdOut))
-            {
-                var f = line.Split('\x1f');
-                if (f.Length == 2 && f[0].Length > 0)
-                    identities.Add((f[0], f[1].Trim('<', '>')));
-            }
+        var inScope = scope.CommitScoped ? new HashSet<string>(scope.InScopeCommits, StringComparer.Ordinal) : null;
+        foreach (var tag in await FetchTagsAsync(request, ct))
+            if (tag.TaggerName.Length > 0 && (inScope is null || inScope.Contains(tag.TargetOid)))
+                identities.Add((tag.TaggerName, tag.TaggerEmail));
         return identities;
     }
 

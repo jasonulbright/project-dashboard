@@ -116,9 +116,9 @@ public sealed class ExplicitPathsScope : FileScope
 }
 
 /// <summary>
-/// Selects which commits a content transform and purge touch. Resolution to concrete oids
-/// happens against the source repository before export. Default <see cref="AllHistoryScope"/>
-/// touches every commit.
+/// Selects which commits a content transform, purge, message op, and identity remap touch.
+/// Resolution to concrete oids happens against the source repository before export. Default
+/// <see cref="AllHistoryScope"/> touches every commit.
 /// </summary>
 public abstract class CommitScope
 {
@@ -195,12 +195,16 @@ public sealed class RewriteOptions
 
     /// <summary>
     /// Content transforms applied to commit and tag messages (literal/regex, same op types
-    /// as <see cref="ContentOps"/>). Empty leaves messages untouched. Applied across all
-    /// history, independent of <see cref="FileScope"/>/<see cref="CommitScope"/>.
+    /// as <see cref="ContentOps"/>). Empty leaves messages untouched. Restricted by
+    /// <see cref="CommitScope"/> — a tag is in scope when its target commit is.
+    /// <see cref="FileScope"/> does not apply: a message has no path.
     /// </summary>
     public IReadOnlyList<ContentOp> MessageOps { get; init; } = [];
 
-    /// <summary>Author/committer/tagger identity remaps, applied across all history.</summary>
+    /// <summary>
+    /// Author/committer/tagger identity remaps. Restricted by <see cref="CommitScope"/> on
+    /// the same terms as <see cref="MessageOps"/>.
+    /// </summary>
     public IReadOnlyList<IdentityMapping> IdentityMappings { get; init; } = [];
 
     /// <summary>Path/size purge. Null means no purge.</summary>
@@ -209,7 +213,7 @@ public sealed class RewriteOptions
     /// <summary>Restricts content transforms and purge to matching paths. Default: every path.</summary>
     public FileScope FileScope { get; init; } = new AllFilesScope();
 
-    /// <summary>Restricts content transforms and purge to matching commits. Default: all history.</summary>
+    /// <summary>Restricts content transforms, purge, message ops, and identity remaps to matching commits. Default: all history.</summary>
     public CommitScope CommitScope { get; init; } = new AllHistoryScope();
 
     /// <summary>Legacy commit-message flag, still refused; use <see cref="MessageOps"/> instead.</summary>

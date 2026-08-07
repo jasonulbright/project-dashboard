@@ -31,8 +31,9 @@ public sealed class ScopedRewriteOutcome
 /// through an in-scope (path ∩ commit) file command; a blob shared by in- and out-of-scope
 /// references is split — the original mark is left for out-of-scope refs, and a freshly minted
 /// mark (above <see cref="FastExportIndex.MaxMark"/>) carries the rewrite, with only the
-/// in-scope M-lines repointed. Message and identity rewrites run across all history. Purge
-/// drops matching file commands and prunes commits left empty where it is safe to rewire.
+/// in-scope M-lines repointed. Message and identity rewrites honour the commit scope (a tag
+/// rides its target commit) and ignore the file scope, which names paths they have none of.
+/// Purge drops matching file commands and prunes commits left empty where it is safe to rewire.
 /// </summary>
 public sealed class ScopedRewritePass
 {
@@ -82,10 +83,14 @@ public sealed class ScopedRewritePass
         RefuseUnscrubbableRefs();
         var blobRefs = ClassifyBlobReferences();
         TransformBlobs(blobRefs, outcome, ct);
-        if (_messageTransformer is not null)
-            RewriteMessages(outcome, ct);
-        if (_identityMappings.Count > 0)
-            RewriteIdentities(outcome, ct);
+        if (_messageTransformer is not null || _identityMappings.Count > 0)
+        {
+            var metadataRecords = ScopedMetadataRecords();
+            if (_messageTransformer is not null)
+                RewriteMessages(metadataRecords, outcome, ct);
+            if (_identityMappings.Count > 0)
+                RewriteIdentities(metadataRecords, outcome, ct);
+        }
         if (_purge is not null)
             ApplyPurge(outcome, ct);
 
@@ -232,9 +237,39 @@ public sealed class ScopedRewritePass
         _parsed.Records.AddRange(rebuilt);
     }
 
-    private void RewriteMessages(ScopedRewriteOutcome outcome, CancellationToken ct)
+    /// <summary>
+    /// Records whose message and identity headers the commit scope admits: the in-scope
+    /// commits, plus tags whose target commit is in scope. A tag reaching outside the stream
+    /// (a `from` that is not a mark) is treated as out of scope — an unresolvable target is
+    /// no licence to rewrite. An unscoped run admits every record.
+    /// </summary>
+    private IReadOnlyList<FastExportRecord> ScopedMetadataRecords()
     {
+        if (_inScopeCommitOids is null) return _parsed.Records;
+
+        var inScopeMarks = new HashSet<long>();
         foreach (var record in _parsed.Records)
+            if (record is CommitRecord { Mark: { } mark } commit && CommitInScope(commit))
+                inScopeMarks.Add(mark);
+
+        var selected = new List<FastExportRecord>();
+        foreach (var record in _parsed.Records)
+            switch (record)
+            {
+                case CommitRecord commit when CommitInScope(commit):
+                    selected.Add(commit);
+                    break;
+                case TagRecord { FromRef: { } from } tag
+                    when ParseMarkRef(from) is { } target && inScopeMarks.Contains(target):
+                    selected.Add(tag);
+                    break;
+            }
+        return selected;
+    }
+
+    private void RewriteMessages(IReadOnlyList<FastExportRecord> records, ScopedRewriteOutcome outcome, CancellationToken ct)
+    {
+        foreach (var record in records)
         {
             ct.ThrowIfCancellationRequested();
             DataBlock? message = record switch
@@ -253,9 +288,9 @@ public sealed class ScopedRewritePass
         }
     }
 
-    private void RewriteIdentities(ScopedRewriteOutcome outcome, CancellationToken ct)
+    private void RewriteIdentities(IReadOnlyList<FastExportRecord> records, ScopedRewriteOutcome outcome, CancellationToken ct)
     {
-        foreach (var record in _parsed.Records)
+        foreach (var record in records)
         {
             ct.ThrowIfCancellationRequested();
             List<byte[]>? headers = record switch

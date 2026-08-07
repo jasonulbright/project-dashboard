@@ -606,6 +606,58 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"message rewrite: {report.MessagesChanged} messages changed; commit+tag scrubbed clean");
     }
 
+    [Fact]
+    public async Task MessageAndIdentityOpsHonourTheCommitScope()
+    {
+        using var f = Fixture();
+        var oldEnv = new Dictionary<string, string>
+        {
+            ["GIT_AUTHOR_NAME"] = "Old Name",
+            ["GIT_AUTHOR_EMAIL"] = "old@example.com",
+            ["GIT_COMMITTER_NAME"] = "Old Name",
+            ["GIT_COMMITTER_EMAIL"] = "old@example.com"
+        };
+        f.Write("a.txt", "one\n");
+        f.CommitAll($"c1 keeps {Needle}", oldEnv);
+        var c1 = f.Git("rev-parse", "HEAD").Trim();
+        f.Write("b.txt", "two\n");
+        f.CommitAll($"c2 leaks {Needle}", oldEnv);
+        var c2 = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }],
+            IdentityMappings = [new IdentityMapping { OldEmail = "old@example.com", NewName = "New Person", NewEmail = "new@example.com" }],
+            CommitScope = new ExplicitCommitsScope { Commits = [c2] }
+        });
+
+        // Exactly the named commit is rewritten; the report's scope line is what happened.
+        var scopedMessage = FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%B", report.CommitMap[c2]], null, null);
+        Assert.Contains(Redacted, scopedMessage);
+        var untouchedMessage = FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%B", report.CommitMap[c1]], null, null);
+        Assert.Contains(Needle, untouchedMessage);
+        Assert.Equal(1, report.MessagesChanged);
+
+        Assert.Equal("New Person|new@example.com",
+            FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%an|%ae", report.CommitMap[c2]], null, null).Trim());
+        Assert.Equal("Old Name|old@example.com",
+            FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%an|%ae", report.CommitMap[c1]], null, null).Trim());
+
+        // The scrub reports scoped verification, never a global clean bill.
+        foreach (var check in report.ScrubChecks)
+        {
+            Assert.True(check.WithinScopeOnly);
+            Assert.False(check.Complete);
+            Assert.Empty(check.Hits);
+        }
+        Assert.Contains($"commits [{c2}]", report.ScopeDescription);
+        Assert.Contains("messages/identities:", report.ScopeDescription);
+        output.WriteLine($"commit-scoped metadata: {report.MessagesChanged} message(s) and " +
+                         $"{report.IdentitiesRewritten} identity header(s) rewritten, c1 untouched; " +
+                         $"scope='{report.ScopeDescription}'");
+    }
+
     // ---- Identity rewrite ----------------------------------------------------------------
 
     [Fact]
