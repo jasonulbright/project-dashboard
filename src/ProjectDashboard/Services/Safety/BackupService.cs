@@ -122,6 +122,13 @@ public sealed class BackupService
     /// failed verification aborts before any ref changes (never a partial restore). On
     /// success every ref is reconciled to the snapshot — refs the backup lacks are
     /// deleted, refs it has are set — HEAD is repositioned, and the working tree is reset.
+    ///
+    /// The final reset is --hard, so it discards every uncommitted change in the worktree,
+    /// including edits made after the backup was captured, which the bundle never held. A
+    /// caller MUST confirm with the user before invoking this against a dirty tree, and MUST
+    /// surface <see cref="RestoreResult.WorktreeWasDirty"/> and
+    /// <see cref="RestoreResult.DiscardedChangeCount"/> from the result, which report what the
+    /// reset threw away. Silently restoring is data loss the backup does not cover.
     /// </summary>
     public async Task<RestoreResult> RestoreAsync(BackupHandle handle, CancellationToken ct = default)
     {

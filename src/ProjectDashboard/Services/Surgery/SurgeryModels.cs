@@ -157,6 +157,13 @@ public sealed class SurgeryResult
 
     public string? FailureReason { get; init; }
 
+    /// <summary>
+    /// Restore to the pre-operation backup. A soft or mixed reset runs against a dirty tree by
+    /// design, and <see cref="UndoHandle.RestoreAsync"/> ends in reset --hard, so undoing one
+    /// discards uncommitted work the backup never captured. A caller MUST confirm before
+    /// restoring a dirty tree and MUST surface <see cref="Safety.RestoreResult.WorktreeWasDirty"/>
+    /// and <see cref="Safety.RestoreResult.DiscardedChangeCount"/> from the outcome.
+    /// </summary>
     public UndoHandle? Undo { get; init; }
 
     /// <summary>Set when the operation succeeded yet left work for the user to conclude — see <see cref="HistoryEditResult.LeftMidOperation"/>.</summary>
