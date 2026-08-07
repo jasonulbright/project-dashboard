@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Text.Json;
+using ProjectDashboard.Services;
 using ProjectDashboard.Services.History;
 using Xunit;
 using Xunit.Abstractions;
@@ -193,5 +195,346 @@ public class BlobTransformerTests
             new RegexReplace { Pattern = "token-[0-9]+", Replacement = "[GONE]" }
         ]);
         Assert.Equal(Bytes("a [GONE] b\n"), transformer.Transform(Bytes("a secret b\n")).Bytes);
+    }
+}
+
+public class HistoryRewriterTests(ITestOutputHelper output)
+{
+    private const string Needle = "SECRET-TOKEN-12345";
+    private const string Redacted = "[REDACTED-CREDENTIAL-MATERIAL]";
+
+    private static FixtureRepo Fixture(bool bareSource = false) => new(bareSource, prefix: "engine2a-");
+
+    private static RewriteOptions LiteralScrub(string find = Needle, string replace = Redacted) => new()
+    {
+        ContentOps = [new LiteralReplace
+        {
+            Find = Encoding.UTF8.GetBytes(find),
+            Replace = Encoding.UTF8.GetBytes(replace)
+        }]
+    };
+
+    private static Task<RewriteReport> RewriteAsync(FixtureRepo f, RewriteOptions rewrite, string? reportPath = null) =>
+        new HistoryRewriter(GitGuard.GitExe).RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = rewrite,
+            ReportPath = reportPath,
+            GitExecutable = GitGuard.GitExe
+        });
+
+    /// <summary>git run tolerating non-zero exits — git grep signals "no match" via exit 1.</summary>
+    private static (int ExitCode, string StdOut) GitExit(string workingDirectory, params string[] args)
+    {
+        var result = ProcessRunner.RunAsync(
+            GitGuard.GitExe, args, workingDirectory, TimeSpan.FromMinutes(2),
+            new Dictionary<string, string>
+            {
+                ["GIT_TERMINAL_PROMPT"] = "0",
+                ["GIT_CONFIG_GLOBAL"] = "NUL",
+                ["GIT_CONFIG_SYSTEM"] = "NUL",
+                ["GIT_CONFIG_NOSYSTEM"] = "1"
+            }).GetAwaiter().GetResult();
+        Assert.False(result.TimedOut);
+        return (result.ExitCode, result.StdOut);
+    }
+
+    private static List<string> AllCommits(string repository) =>
+        FixtureRepo.RunGit(repository, ["rev-list", "--all"], null, null)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).ToList();
+
+    /// <summary>Greps every given commit for the needle; returns total hits across all of them.</summary>
+    private int CountGrepHits(string repository, IReadOnlyList<string> commits, string needle, string label)
+    {
+        var hits = 0;
+        for (var i = 0; i < commits.Count; i += 100)
+        {
+            var chunk = commits.Skip(i).Take(100).ToList();
+            var (exitCode, stdOut) = GitExit(repository,
+                ["grep", "-I", "--fixed-strings", "-e", needle, .. chunk]);
+            Assert.True(exitCode is 0 or 1, $"git grep exited {exitCode}");
+            var chunkHits = stdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+            output.WriteLine($"  {label}: git grep -I -F -e <needle> over {chunk.Count} commit(s) => exit {exitCode}, {chunkHits} hit line(s)");
+            hits += chunkHits;
+        }
+        return hits;
+    }
+
+    [Fact]
+    public async Task ScrubRemovesNeedleFromEveryRewrittenCommit()
+    {
+        using var f = Fixture();
+        // Needle spread across multiple files, multiple historical versions, a merge
+        // commit's tree, and a tag-referenced commit.
+        f.Write("a.txt", $"line one {Needle}\n");
+        f.Write("docs/keys.md", $"key: {Needle}\n");
+        f.CommitAll("add secrets");
+        f.Write("a.txt", $"line one {Needle}\nline two {Needle}\n");
+        f.CommitAll("more secrets");
+        f.Git("switch", "-q", "-c", "side");
+        f.Write("side.txt", $"side {Needle}\n");
+        f.CommitAll("side secret");
+        f.Git("switch", "-q", "main");
+        f.Write("main.txt", "clean\n");
+        f.CommitAll("diverge");
+        f.Git("merge", "-q", "--no-ff", "side", "-m", "merge side");
+        f.Git("tag", "-a", "v-secret", "-m", "release tag");
+        f.Write("a.txt", "needle removed at tip\n");
+        f.CommitAll("tip cleanup");
+
+        var sourceRefsBefore = f.Git("for-each-ref", "--format=%(refname) %(objectname)");
+        var sourceCommits = AllCommits(f.SourcePath);
+        var sourceHits = CountGrepHits(f.SourcePath, sourceCommits, Needle, "source");
+        Assert.True(sourceHits >= 5, $"fixture must carry the needle across history, found {sourceHits} hits");
+
+        var reportPath = Path.Combine(f.Root, "rewrite-report.json");
+        var report = await RewriteAsync(f, LiteralScrub(), reportPath);
+
+        // The source repository's refs are never touched.
+        Assert.Equal(sourceRefsBefore, f.Git("for-each-ref", "--format=%(refname) %(objectname)"));
+
+        // Flagship proof: zero grep hits across every commit of the rewritten history.
+        var targetCommits = AllCommits(f.TargetPath);
+        Assert.Equal(sourceCommits.Count, targetCommits.Count);
+        output.WriteLine($"scrub evidence: {sourceHits} needle hit(s) across {sourceCommits.Count} source commits");
+        var targetHits = CountGrepHits(f.TargetPath, targetCommits, Needle, "target");
+        Assert.Equal(0, targetHits);
+        output.WriteLine($"scrub evidence: 0 needle hits across all {targetCommits.Count} rewritten commits");
+
+        // Old→new map: complete, and every rewritten commit differs from its original.
+        Assert.Equal(sourceCommits.Count, report.CommitMap.Count);
+        foreach (var oid in sourceCommits)
+            Assert.Contains(oid, report.CommitMap.Keys);
+        var oldHead = f.Git("rev-parse", "main").Trim();
+        var newHead = report.CommitMap[oldHead];
+        Assert.NotEqual(oldHead, newHead);
+        var rewrittenTip = FixtureRepo.RunGit(f.TargetPath, ["show", $"{newHead}:docs/keys.md"], null, null);
+        Assert.Contains(Redacted, rewrittenTip);
+        Assert.DoesNotContain(Needle, rewrittenTip);
+
+        // Merge topology survives; the annotated tag peels to the rewritten merge commit.
+        var mergeOid = f.Git("rev-parse", "v-secret^{commit}").Trim();
+        var targetParents = FixtureRepo.RunGit(f.TargetPath,
+            ["rev-list", "--parents", "-n", "1", report.CommitMap[mergeOid]], null, null).Trim().Split(' ');
+        Assert.Equal(3, targetParents.Length);
+        Assert.Equal(report.CommitMap[mergeOid],
+            FixtureRepo.RunGit(f.TargetPath, ["rev-parse", "v-secret^{commit}"], null, null).Trim());
+
+        // Report internals: replacement grew the payloads, and the scrub check ran clean.
+        Assert.True(report.BlobsChanged >= 4, $"expected several changed blobs, got {report.BlobsChanged}");
+        Assert.True(report.BytesDelta > 0, $"a growing replacement must yield a positive delta, got {report.BytesDelta}");
+        Assert.Empty(report.BinarySkips);
+        // The tip cleaned a.txt but its snapshot still carries docs/keys.md, so every
+        // commit in this fixture has a scrubbed snapshot and a changed tree.
+        Assert.Equal(sourceCommits.Count, report.CommitsWithChangedTrees.Count);
+        Assert.Contains(oldHead, report.CommitsWithChangedTrees);
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed);
+        Assert.Equal(Needle, scrub.Needle);
+        Assert.Empty(scrub.Hits);
+        Assert.True(scrub.CommitsChecked > 0);
+
+        // The written report round-trips through System.Text.Json.
+        var roundTripped = JsonSerializer.Deserialize<RewriteReport>(await File.ReadAllTextAsync(reportPath));
+        Assert.NotNull(roundTripped);
+        Assert.Equal(report.CommitMap.Count, roundTripped!.CommitMap.Count);
+        Assert.Equal(report.BlobsChanged, roundTripped.BlobsChanged);
+        Assert.Equal(newHead, roundTripped.CommitMap[oldHead]);
+    }
+
+    [Fact]
+    public async Task BinaryBlobWithNeedleBytesIsSkippedAndByteIdentical()
+    {
+        using var f = Fixture();
+        byte[] binary = [0x00, 0xFF, .. Encoding.ASCII.GetBytes(Needle), 0x80, 0xFE, 0x00];
+        f.WriteBytes("blob.bin", binary);
+        f.Write("plain.txt", $"text {Needle}\n");
+        f.CommitAll("mixed content");
+
+        var binaryOid = f.Git("rev-parse", "HEAD:blob.bin").Trim();
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        var skip = Assert.Single(report.BinarySkips);
+        Assert.NotNull(skip.Mark);
+        Assert.Equal(binary.Length, skip.Size);
+
+        // Same blob oid in the rewritten head means byte-identical binary content.
+        var newHead = report.CommitMap[oldHead];
+        Assert.Equal(binaryOid,
+            FixtureRepo.RunGit(f.TargetPath, ["rev-parse", $"{newHead}:blob.bin"], null, null).Trim());
+
+        // The text file in the same tree was still scrubbed.
+        var plain = FixtureRepo.RunGit(f.TargetPath, ["show", $"{newHead}:plain.txt"], null, null);
+        Assert.Contains(Redacted, plain);
+        Assert.DoesNotContain(Needle, plain);
+
+        // git grep -I cannot see into the binary, so the scrub check stays clean.
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed);
+        Assert.Empty(scrub.Hits);
+        output.WriteLine($"binary skip: mark :{skip.Mark}, {skip.Size} bytes, blob oid unchanged ({binaryOid[..12]}…)");
+    }
+
+    [Fact]
+    public async Task RegexRewriteOverUnicodeContent()
+    {
+        using var f = Fixture();
+        f.Write("uni.txt", "café token-42 日本 🚀\n");
+        f.CommitAll("v1");
+        f.Write("uni.txt", "café token-777 日本 🚀\nzweite Zeile töken\n");
+        f.CommitAll("v2");
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new RegexReplace { Pattern = "token-[0-9]+", Replacement = "token-X" }]
+        });
+
+        Assert.Equal(2, report.BlobsChanged);
+        var newHead = report.CommitMap[oldHead];
+        Assert.Equal("café token-X 日本 🚀\nzweite Zeile töken\n",
+            FixtureRepo.RunGit(f.TargetPath, ["show", $"{newHead}:uni.txt"], null, null));
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed);
+        Assert.Empty(scrub.Hits);
+    }
+
+    [Fact]
+    public async Task InexpressibleRegexSkipsScrubGrepWithNote()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "token-42\n");
+        f.CommitAll("one");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new RegexReplace { Pattern = @"token-\d+", Replacement = "token-X" }]
+        });
+
+        // The transform itself ran; only the grep-based verification is skipped.
+        Assert.Equal(1, report.BlobsChanged);
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.False(scrub.Performed);
+        Assert.Contains(@"\d", scrub.Note);
+    }
+
+    [Fact]
+    public async Task EmptyReplacementDeletesNeedleAcrossHistory()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", $"keep {Needle} keep\n");
+        f.CommitAll("v1");
+        f.Write("a.txt", $"{Needle}{Needle}\n");
+        f.CommitAll("v2");
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, LiteralScrub(replace: ""));
+
+        Assert.Equal(2, report.BlobsChanged);
+        Assert.True(report.BytesDelta < 0, $"deletion must shrink content, got {report.BytesDelta}");
+        var newHead = report.CommitMap[oldHead];
+        Assert.Equal("\n", FixtureRepo.RunGit(f.TargetPath, ["show", $"{newHead}:a.txt"], null, null));
+        Assert.Equal(0, CountGrepHits(f.TargetPath, AllCommits(f.TargetPath), Needle, "target"));
+    }
+
+    [Fact]
+    public async Task NoOpTransformReproducesIdenticalRefs()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "nothing secret here\n");
+        f.CommitAll("first");
+        f.Write("b.txt", "still clean\n");
+        f.CommitAll("second");
+        f.Git("tag", "-a", "v1", "-m", "clean tag");
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        Assert.Equal(0, report.BlobsChanged);
+        Assert.Equal(0, report.BytesDelta);
+        Assert.Empty(report.BinarySkips);
+        Assert.Empty(report.CommitsWithChangedTrees);
+        foreach (var (oldOid, newOid) in report.CommitMap)
+            Assert.Equal(oldOid, newOid);
+
+        // Untouched content must reproduce the source ref-for-ref, oid-for-oid.
+        var verify = await IdentityVerifier.VerifyAsync(
+            GitGuard.GitExe, f.SourcePath, f.TargetPath, TimeSpan.FromMinutes(1));
+        Assert.True(verify.Success, verify.Describe());
+        Assert.Equal(HistoryTestSupport.DescribeHead(f.SourcePath), HistoryTestSupport.DescribeHead(f.TargetPath));
+    }
+
+    [Fact]
+    public async Task OctopusTopologySurvivesTransform()
+    {
+        using var f = Fixture();
+        f.Write("base.txt", $"base {Needle}\n");
+        f.CommitAll("base");
+        f.Git("switch", "-q", "-c", "o1");
+        f.Write("o1.txt", "o1\n");
+        f.CommitAll("on o1");
+        f.Git("switch", "-q", "main");
+        f.Git("switch", "-q", "-c", "o2");
+        f.Write("o2.txt", $"o2 {Needle}\n");
+        f.CommitAll("on o2");
+        f.Git("switch", "-q", "main");
+        f.Write("main2.txt", "m2\n");
+        f.CommitAll("diverge");
+        f.Git("merge", "-q", "o1", "o2", "-m", "octopus");
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+        Assert.Equal(4, f.Git("rev-list", "--parents", "-n", "1", "HEAD").Trim().Split(' ').Length);
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        var newHead = report.CommitMap[oldHead];
+        var parents = FixtureRepo.RunGit(f.TargetPath, ["rev-list", "--parents", "-n", "1", newHead], null, null)
+            .Trim().Split(' ');
+        Assert.Equal(4, parents.Length);
+        Assert.Equal(0, CountGrepHits(f.TargetPath, AllCommits(f.TargetPath), Needle, "target"));
+    }
+
+    [Fact]
+    public async Task ThousandCommitRewriteCompletesQuickly()
+    {
+        using var f = Fixture(bareSource: true);
+        var stream = new StringBuilder();
+        for (var i = 1; i <= 1000; i++)
+        {
+            var blobMark = i * 2 - 1;
+            var commitMark = i * 2;
+            var content = i % 3 == 0 ? $"revision {i} holds {Needle}\n" : $"revision {i} is clean\n";
+            stream.Append($"blob\nmark :{blobMark}\ndata {Encoding.UTF8.GetByteCount(content)}\n{content}");
+            var message = $"commit {i}\n";
+            stream.Append($"commit refs/heads/main\nmark :{commitMark}\n");
+            stream.Append($"author Fixture <fixture@example.com> {1700000000 + i} +0000\n");
+            stream.Append($"committer Fixture <fixture@example.com> {1700000000 + i} +0000\n");
+            stream.Append($"data {message.Length}\n{message}");
+            if (i > 1) stream.Append($"from :{(i - 1) * 2}\n");
+            stream.Append($"M 100644 :{blobMark} file{i % 20}.txt\n");
+            stream.Append('\n');
+        }
+        f.GitWithStdin(Encoding.UTF8.GetBytes(stream.ToString()), "fast-import", "--quiet");
+
+        var stopwatch = Stopwatch.StartNew();
+        var report = await RewriteAsync(f, LiteralScrub());
+        stopwatch.Stop();
+
+        Assert.Equal(1000, report.CommitMap.Count);
+        Assert.Equal(333, report.BlobsChanged);
+        Assert.NotEmpty(report.CommitsWithChangedTrees);
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed);
+        Assert.Empty(scrub.Hits);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(120),
+            $"1000-commit rewrite took {stopwatch.Elapsed} — expected well under two minutes");
+        output.WriteLine($"1000-commit rewrite: {stopwatch.Elapsed.TotalSeconds:F2}s wall, " +
+                         $"{report.BlobsChanged} blobs changed, {report.CommitsWithChangedTrees.Count} trees changed, " +
+                         $"scrub over {scrub.CommitsChecked} commits clean");
     }
 }
