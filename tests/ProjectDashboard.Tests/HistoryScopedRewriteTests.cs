@@ -702,9 +702,10 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     /// <summary>
     /// A message op that could not run must leave a signal. Without one the report shows no
     /// change and no skip, and the check reads as having covered the message.
-    /// The fixture leaks through a tag: fast-export converts a commit message to UTF-8
-    /// whatever the reencode flag says, so a tag message is the only one that reaches the
-    /// transform still undecodable.
+    /// The fixture leaks through a tag because <c>git commit</c> re-encodes a non-UTF-8 message
+    /// at write time, so no message authored by this fixture's commits stays undecodable. The
+    /// commit branch is live all the same — see
+    /// <see cref="AnImportedCommitMessageThatIsNotUtf8IsReportedAsASkip"/>.
     /// </summary>
     [Fact]
     public async Task AMessageTheTransformCannotDecodeIsReportedAsASkip()
@@ -731,6 +732,49 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         Assert.False(check.Complete);
         Assert.Contains("1 message(s) are not valid UTF-8", check.Note);
         output.WriteLine($"undecodable tag message: skip reported ({skip.Size} bytes), Complete={check.Complete}; note='{check.Note}'");
+    }
+
+    /// <summary>
+    /// <c>fast-export --reencode=yes</c> re-encodes only what it can decode, so a commit message
+    /// that is not valid UTF-8 reaches the transform raw. History written by fast-import,
+    /// git-svn, git-p4, or a raw object writer carries such messages, so the commit branch of
+    /// the undecodable-message skip is reachable and owes the same incomplete check a tag does.
+    /// </summary>
+    [Fact]
+    public async Task AnImportedCommitMessageThatIsNotUtf8IsReportedAsASkip()
+    {
+        using var f = Fixture(bareSource: true);
+        var message = new List<byte>(Encoding.ASCII.GetBytes($"commit {Needle} "));
+        message.AddRange([0xFF, 0xFE, (byte)'\n']);
+        var feed = new List<byte>(Encoding.ASCII.GetBytes(
+            "blob\nmark :1\ndata 5\nbody\n\n" +
+            "commit refs/heads/main\nmark :2\n" +
+            "author Fixture <fixture@example.com> 1700000000 +0000\n" +
+            "committer Fixture <fixture@example.com> 1700000000 +0000\n" +
+            $"data {message.Count}\n"));
+        feed.AddRange(message);
+        feed.AddRange(Encoding.ASCII.GetBytes("M 100644 :1 a.txt\n\n"));
+        f.GitWithStdin([.. feed], "fast-import", "--quiet");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }]
+        });
+
+        var skip = Assert.Single(report.BinarySkips);
+        Assert.Equal("message is not valid UTF-8", skip.Reason);
+        Assert.Equal(message.Count, skip.Size);
+        Assert.Equal(0, report.MessagesChanged);
+        Assert.Contains(Needle,
+            FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%B", "refs/heads/main"], null, null));
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.NotEmpty(check.Hits);
+        Assert.False(check.Complete);
+        Assert.Contains("1 message(s) are not valid UTF-8", check.Note);
+        output.WriteLine($"undecodable imported commit message: skip reported ({skip.Size} bytes), " +
+                         $"needle survives in target, scrubHits={check.Hits.Count}, Complete={check.Complete}");
     }
 
     /// <summary>

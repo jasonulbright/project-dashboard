@@ -846,9 +846,12 @@ public sealed class HistoryRewriter
     /// The named tags' messages, concatenated with no record structure at all. Nothing is
     /// parsed out of this output, so no byte a tag message contains can remove a byte from
     /// the scrub corpus — the property a delimited <c>%(contents)</c> format cannot hold.
-    /// Ref names are literal patterns here: git forbids <c>*</c>, <c>?</c>, and <c>[</c> in a
-    /// ref name, and a directory/file conflict forbids a ref below another ref, so each
-    /// pattern selects exactly its own ref.
+    /// Each ref name is passed as its own pattern and selects exactly its own ref: for-each-ref
+    /// compares a pattern to a refname as a path before any wildcard matching, so an exact
+    /// string equal self-matches unconditionally, and a prefix matches only when the boundary
+    /// lands on <c>/</c> or the pattern's end — <c>refs/tags/a</c> cannot select
+    /// <c>refs/tags/ab</c>. A directory/file conflict forbids a ref below another ref, so no
+    /// prefix case selects a second tag either.
     /// </summary>
     private async Task<string> FetchTagMessagesAsync(
         HistoryRewriteRequest request, IReadOnlyList<string> refNames, CancellationToken ct)

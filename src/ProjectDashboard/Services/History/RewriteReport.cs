@@ -22,7 +22,10 @@ public sealed record BinarySkip(long? Mark, long Size, string? Path, string Reas
 /// </summary>
 public sealed class ScrubCheckResult
 {
-    /// <summary>"literal" or "regex".</summary>
+    /// <summary>
+    /// "literal" or "regex" for a tree scrub, "message-literal" or "message-regex" for a
+    /// message scrub, "identity" for an identity scrub.
+    /// </summary>
     public required string Kind { get; init; }
 
     /// <summary>The needle text or regex pattern the check grepped for.</summary>
