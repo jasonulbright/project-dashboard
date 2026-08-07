@@ -41,6 +41,14 @@ public sealed class ScrubCheckResult
 
     public required IReadOnlyList<string> Hits { get; init; }
 
+    /// <summary>
+    /// True when the check covered only a scope (a path/commit subset), so occurrences
+    /// outside the scope were deliberately left. An empty <see cref="Hits"/> list then proves
+    /// only "scrubbed within scope", never "scrubbed everywhere"; <see cref="Complete"/> is
+    /// always false while this is true.
+    /// </summary>
+    public bool WithinScopeOnly { get; init; }
+
     public string? Note { get; init; }
 }
 
@@ -81,6 +89,32 @@ public sealed class RewriteReport
     public required string FsckOutput { get; init; }
 
     public required IReadOnlyList<ScrubCheckResult> ScrubChecks { get; init; }
+
+    /// <summary>
+    /// Human-readable scope the run applied, e.g. "files: globs [src/**]; commits: range A..B".
+    /// Distinguishes a scoped scrub — see <see cref="ScrubCheckResult.WithinScopeOnly"/> — from
+    /// an all-files/all-history one so the wizard never presents "scrubbed within scope" as
+    /// "scrubbed everywhere".
+    /// </summary>
+    public string ScopeDescription { get; init; } = "files: all files; commits: all history";
+
+    /// <summary>Count of commits the scope selected for content transforms/purge (all history when unscoped).</summary>
+    public int InScopeCommitCount { get; init; }
+
+    /// <summary>Commit and tag messages whose bytes a message op changed.</summary>
+    public int MessagesChanged { get; init; }
+
+    /// <summary>Author/committer/tagger header lines an identity mapping rewrote.</summary>
+    public int IdentitiesRewritten { get; init; }
+
+    /// <summary>File commands (M/D/R/C) a purge dropped.</summary>
+    public int FileCommandsRemoved { get; init; }
+
+    /// <summary>Commits pruned after a purge left them empty.</summary>
+    public int CommitsPruned { get; init; }
+
+    /// <summary>Shared blobs split so an in-scope rewrite did not corrupt out-of-scope history.</summary>
+    public int BlobsSplit { get; init; }
 
     /// <summary>
     /// Writes the report as indented JSON to exactly <paramref name="reportPath"/>. The

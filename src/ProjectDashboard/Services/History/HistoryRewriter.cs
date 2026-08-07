@@ -72,11 +72,42 @@ public sealed class HistoryRewriter
 
     public async Task<RewriteReport> RunAsync(HistoryRewriteRequest request, CancellationToken ct = default)
     {
-        request.Rewrite.Validate();
+        var rewrite = request.Rewrite;
+        rewrite.Validate();
 
-        var transformer = new BlobTransformer(request.Rewrite.ContentOps, _regexPayloadLimit);
-        var literalOps = request.Rewrite.ContentOps.OfType<LiteralReplace>().ToList();
-        var tally = new TransformTally();
+        var transformer = new BlobTransformer(rewrite.ContentOps, _regexPayloadLimit);
+        var literalOps = rewrite.ContentOps.OfType<LiteralReplace>().ToList();
+        var messageTransformer = rewrite.MessageOps.Count > 0
+            ? new BlobTransformer(rewrite.MessageOps, _regexPayloadLimit)
+            : null;
+
+        // Resolve the commit scope against the source before any export work; a bad ref
+        // fails here for nothing rather than after a full export.
+        var inScopeCommitOids = await ResolveCommitScopeAsync(rewrite.CommitScope, request, ct);
+
+        TransformTally? legacyTally = null;
+        ScopedRewriteOutcome? scoped = null;
+
+        Func<ParsedExport, CancellationToken, Task> transform;
+        if (rewrite.IsLegacyAllFiles)
+        {
+            legacyTally = new TransformTally();
+            transform = (parsed, token) =>
+            {
+                TransformBlobs(parsed, transformer, literalOps, _changedPayloadCeiling, legacyTally, token);
+                return Task.CompletedTask;
+            };
+        }
+        else
+        {
+            transform = (parsed, token) =>
+            {
+                scoped = new ScopedRewritePass(
+                    parsed, transformer, literalOps, messageTransformer, rewrite.IdentityMappings,
+                    rewrite.FileScope, inScopeCommitOids, rewrite.Purge, _changedPayloadCeiling).Run(token);
+                return Task.CompletedTask;
+            };
+        }
 
         var pipeline = new HistoryPipeline(request.GitExecutable);
         var result = await pipeline.RunAsync(new HistoryPipelineOptions
@@ -88,16 +119,18 @@ public sealed class HistoryRewriter
             ImportTimeout = request.ImportTimeout,
             Progress = request.Progress,
             GitExecutable = request.GitExecutable,
-            TransformAsync = (parsed, token) =>
-            {
-                TransformBlobs(parsed, transformer, literalOps, _changedPayloadCeiling, tally, token);
-                return Task.CompletedTask;
-            }
+            TransformAsync = transform
         }, ct);
 
-        var commitMap = BuildCommitMap(result);
+        var blobsChanged = legacyTally?.BlobsChanged ?? scoped!.BlobsChanged;
+        var bytesDelta = legacyTally?.BytesDelta ?? scoped!.BytesDelta;
+        var skips = legacyTally?.Skips ?? scoped!.Skips;
+        var byteSurvivors = legacyTally?.ByteSurvivors ?? scoped!.ByteSurvivors;
+        var prunedMarks = scoped?.PrunedMarkToSurvivingMark ?? [];
+
+        var commitMap = BuildCommitMap(result, prunedMarks);
         var markToPath = BuildMarkToPath(result.Index);
-        var binarySkips = tally.Skips
+        var binarySkips = skips
             .Select(s => new BinarySkip(s.Mark, s.Size, s.Mark is { } m ? markToPath.GetValueOrDefault(m) : null, s.Reason))
             .ToList();
         var paths = CollectPaths(result.Index);
@@ -110,24 +143,75 @@ public sealed class HistoryRewriter
             throw new HistoryPipelineException(
                 "verify", "fsck --strict failed on the rewrite target", fsck.ExitCode, fsck.StdErr + "\n" + fsck.StdOut);
 
-        var scrubChecks = await RunScrubChecksAsync(request, commitMap, binarySkips, tally.ByteSurvivors, paths, ct);
+        var scope = new ScrubScope(rewrite, inScopeCommitOids, commitMap);
+        var scrubChecks = await RunScrubChecksAsync(request, commitMap, binarySkips, byteSurvivors, paths, scope, ct);
 
         var report = new RewriteReport
         {
             SourceRepository = request.SourceRepository,
             TargetBareRepository = request.TargetBareRepository,
             CommitCount = commitMap.Count,
-            BlobsChanged = tally.BlobsChanged,
-            BytesDelta = tally.BytesDelta,
+            BlobsChanged = blobsChanged,
+            BytesDelta = bytesDelta,
             BinarySkips = binarySkips,
             CommitMap = commitMap,
             CommitsWithChangedTrees = changedTrees,
             FsckOutput = (fsck.StdErr + "\n" + fsck.StdOut).Trim(),
-            ScrubChecks = scrubChecks
+            ScrubChecks = scrubChecks,
+            ScopeDescription = $"files: {rewrite.FileScope.Describe()}; commits: {rewrite.CommitScope.Describe()}",
+            InScopeCommitCount = inScopeCommitOids?.Count ?? commitMap.Count,
+            MessagesChanged = scoped?.MessagesChanged ?? 0,
+            IdentitiesRewritten = scoped?.IdentitiesRewritten ?? 0,
+            FileCommandsRemoved = scoped?.FileCommandsRemoved ?? 0,
+            CommitsPruned = prunedMarks.Count,
+            BlobsSplit = scoped?.Splits.Count ?? 0
         };
         if (request.ReportPath is { } reportPath)
             await report.WriteAsync(reportPath, ct);
         return report;
+    }
+
+    /// <summary>Resolves a commit scope to full source commit oids (lowercase). Null means all history.</summary>
+    private async Task<HashSet<string>?> ResolveCommitScopeAsync(
+        CommitScope scope, HistoryRewriteRequest request, CancellationToken ct)
+    {
+        switch (scope)
+        {
+            case AllHistoryScope:
+                return null;
+
+            case ExplicitCommitsScope explicitCommits:
+            {
+                var set = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var commitish in explicitCommits.Commits)
+                {
+                    var rev = await ProcessRunner.RunAsync(
+                        _gitExe, ["rev-parse", "--verify", "--quiet", commitish + "^{commit}"],
+                        request.SourceRepository, request.VerificationTimeout, GitEnvironment, ct);
+                    if (!rev.Success || rev.StdOut.Trim().Length == 0)
+                        throw new HistoryPipelineException("scope", $"commit '{commitish}' does not resolve in the source repository");
+                    set.Add(rev.StdOut.Trim().ToLowerInvariant());
+                }
+                return set;
+            }
+
+            case CommitRangeScope range:
+            {
+                var spec = range.FromRef is { } from ? $"{from}..{range.ToRef}" : range.ToRef;
+                var revList = await ProcessRunner.RunAsync(
+                    _gitExe, ["rev-list", spec], request.SourceRepository, request.VerificationTimeout, GitEnvironment, ct);
+                if (!revList.Success)
+                    throw new HistoryPipelineException("scope", $"commit range '{spec}' does not resolve in the source repository", revList.ExitCode, revList.StdErr);
+                var set = new HashSet<string>(
+                    SplitLines(revList.StdOut).Select(l => l.ToLowerInvariant()), StringComparer.Ordinal);
+                if (set.Count == 0)
+                    throw new HistoryPipelineException("scope", $"commit range '{spec}' selected no commits");
+                return set;
+            }
+
+            default:
+                throw new NotSupportedException($"commit scope {scope.GetType().Name} is not supported");
+        }
     }
 
     /// <summary>Running counts and coverage material collected during the single transform pass.</summary>
@@ -226,8 +310,14 @@ public sealed class HistoryRewriter
         return payload;
     }
 
-    /// <summary>Joins each commit's original oid (from --show-original-ids) with its imported oid (from --export-marks).</summary>
-    private static Dictionary<string, string> BuildCommitMap(HistoryPipelineResult result)
+    /// <summary>
+    /// Joins each commit's original oid (from --show-original-ids) with its imported oid
+    /// (from --export-marks). A pruned commit has no imported oid of its own; its original oid
+    /// maps to the imported oid of the surviving commit its children were rewired onto, so the
+    /// map still resolves every source commit.
+    /// </summary>
+    private static Dictionary<string, string> BuildCommitMap(
+        HistoryPipelineResult result, IReadOnlyDictionary<long, long> prunedMarkToSurvivingMark)
     {
         var marks = new Dictionary<long, string>();
         foreach (var raw in File.ReadLines(result.MarksPath))
@@ -246,7 +336,13 @@ public sealed class HistoryRewriter
         {
             if (commit.OriginalOid is not { } originalOid)
                 throw new HistoryPipelineException("verify", $"commit mark :{commit.Mark} has no original-oid — export ran without --show-original-ids");
-            if (!marks.TryGetValue(commit.Mark, out var importedOid))
+
+            var effectiveMark = commit.Mark;
+            // Follow a pruned commit to its surviving replacement (the chain is already flat).
+            if (prunedMarkToSurvivingMark.TryGetValue(effectiveMark, out var surviving))
+                effectiveMark = surviving;
+
+            if (!marks.TryGetValue(effectiveMark, out var importedOid))
                 throw new HistoryPipelineException("verify", $"commit mark :{commit.Mark} is missing from the import marks file");
             map[originalOid] = importedOid;
         }
@@ -332,21 +428,52 @@ public sealed class HistoryRewriter
     }
 
     /// <summary>
-    /// Verifies each op's needle against the full rewritten history. Coverage is honest by
-    /// construction: git grep runs over every commit in the map (a survivor rides a commit
-    /// whose tree did not change, so a tips-plus-changed candidate set would miss exactly
-    /// the survival case), the byte-level fallback catches literal needles inside skipped
-    /// blobs git grep -I cannot read, and paths are scanned for needles no content grep
-    /// sees. A check reports <see cref="ScrubCheckResult.Complete"/> only when nothing was
-    /// sampled, skipped, or grep-rejected. This method never throws — a completed rewrite
-    /// must always be reportable, so a failed check degrades to a note.
+    /// The in-scope commit set, path filter, and git-grep pathspecs a scoped scrub greps
+    /// within. A scoped scrub is honest about being partial: it greps only the in-scope
+    /// commits and paths, and every check it produces is flagged
+    /// <see cref="ScrubCheckResult.WithinScopeOnly"/> so an empty hit list can never be read
+    /// as a global clean bill.
+    /// </summary>
+    private sealed class ScrubScope
+    {
+        public bool ContentScoped { get; }
+        public List<string> InScopeCommits { get; }
+        public IReadOnlyList<string> PathSpecs { get; }
+        public Func<string, bool> PathInScope { get; }
+
+        public ScrubScope(RewriteOptions rewrite, HashSet<string>? inScopeCommitOids, Dictionary<string, string> commitMap)
+        {
+            ContentScoped = !rewrite.FileScope.IsAllFiles || inScopeCommitOids is not null;
+            InScopeCommits = inScopeCommitOids is null
+                ? commitMap.Values.Distinct().ToList()
+                : inScopeCommitOids.Where(commitMap.ContainsKey).Select(o => commitMap[o]).Distinct().ToList();
+            PathInScope = rewrite.FileScope.Matches;
+            PathSpecs = rewrite.FileScope switch
+            {
+                ExplicitPathsScope paths => paths.Paths.Select(PathGlob.Normalize).ToList(),
+                GlobScope globs => globs.Patterns.Select(p => $":(glob){p}").ToList(),
+                _ => []
+            };
+        }
+    }
+
+    /// <summary>
+    /// Verifies each op's needle against the rewritten history. Coverage is honest by
+    /// construction: git grep runs over every in-scope commit (a survivor rides a commit
+    /// whose tree did not change, so a tips-plus-changed candidate set would miss exactly the
+    /// survival case), the byte-level fallback catches literal needles inside skipped blobs
+    /// git grep -I cannot read, and paths are scanned for needles no content grep sees. A
+    /// check reports <see cref="ScrubCheckResult.Complete"/> only when nothing was sampled,
+    /// skipped, grep-rejected, or left outside a scope. Message and identity ops are verified
+    /// in-process against the rewritten messages/headers. This method never throws — a
+    /// completed rewrite must always be reportable, so a failed check degrades to a note.
     /// </summary>
     private async Task<List<ScrubCheckResult>> RunScrubChecksAsync(
         HistoryRewriteRequest request, Dictionary<string, string> commitMap,
         IReadOnlyList<BinarySkip> binarySkips, IReadOnlyList<(LiteralReplace Op, long? Mark, long Size)> byteSurvivors,
-        IReadOnlyList<(byte[] Bytes, string Text)> paths, CancellationToken ct)
+        IReadOnlyList<(byte[] Bytes, string Text)> paths, ScrubScope scope, CancellationToken ct)
     {
-        var allCommits = commitMap.Values.Distinct().ToList();
+        var allCommits = scope.InScopeCommits;
         var commits = allCommits;
         var sampled = false;
         if (allCommits.Count > ScrubSampleCap)
@@ -356,6 +483,10 @@ public sealed class HistoryRewriter
         }
         var hasSkips = binarySkips.Count > 0;
 
+        // Only in-scope paths belong in the content scrub — an out-of-scope path carrying the
+        // needle is a deliberate survivor, surfaced by the scope note, not a scrub failure.
+        var scopedPaths = paths.Where(p => scope.PathInScope(p.Text)).ToList();
+
         var checks = new List<ScrubCheckResult>();
         foreach (var op in request.Rewrite.ContentOps)
         {
@@ -364,7 +495,7 @@ public sealed class HistoryRewriter
                 switch (op)
                 {
                     case LiteralReplace literal:
-                        var literalExtras = paths
+                        var literalExtras = scopedPaths
                             .Where(p => p.Bytes.AsSpan().IndexOf(literal.Find) >= 0)
                             .Select(p => $"path: {p.Text}")
                             .Concat(byteSurvivors
@@ -379,19 +510,19 @@ public sealed class HistoryRewriter
                             break;
                         }
                         checks.Add(Make("literal", needle,
-                            await GrepAsync(request, ["grep", "-I", "--fixed-strings", "-e", needle], commits, ct),
+                            await GrepAsync(request, ["grep", "-I", "--fixed-strings", "-e", needle], commits, scope.PathSpecs, ct),
                             literalExtras));
                         break;
 
                     case RegexReplace regex:
-                        var regexExtras = MatchPaths(paths, regex);
+                        var regexExtras = MatchPaths(scopedPaths, regex);
                         if (!IsEreExpressible(regex, out var flags, out var why))
                         {
                             checks.Add(Make("regex", regex.Pattern, new GrepOutcome(false, [], why), regexExtras));
                             break;
                         }
                         List<string> grepArgs = ["grep", "-I", "-E", .. flags, "-e", regex.Pattern];
-                        checks.Add(Make("regex", regex.Pattern, await GrepAsync(request, grepArgs, commits, ct), regexExtras));
+                        checks.Add(Make("regex", regex.Pattern, await GrepAsync(request, grepArgs, commits, scope.PathSpecs, ct), regexExtras));
                         break;
                 }
             }
@@ -400,18 +531,12 @@ public sealed class HistoryRewriter
                 var (kind, needle) = op is RegexReplace r
                     ? ("regex", r.Pattern)
                     : ("literal", Convert.ToHexString(((LiteralReplace)op).Find));
-                checks.Add(new ScrubCheckResult
-                {
-                    Kind = kind,
-                    Needle = needle,
-                    Performed = false,
-                    Complete = false,
-                    CommitsChecked = 0,
-                    Hits = [],
-                    Note = $"scrub check could not run: {ex.Message}"
-                });
+                checks.Add(NoteOnly(kind, needle, $"scrub check could not run: {ex.Message}"));
             }
         }
+
+        checks.AddRange(await MessageScrubChecksAsync(request, ct));
+        checks.AddRange(await IdentityScrubChecksAsync(request, ct));
         return checks;
 
         ScrubCheckResult Make(string kind, string needle, GrepOutcome grep, IReadOnlyList<string> extraHits)
@@ -425,18 +550,190 @@ public sealed class HistoryRewriter
                 notes.Add($"sampled {commits.Count} of {allCommits.Count} commit(s); unsampled commits were not grepped");
             if (hasSkips)
                 notes.Add($"{binarySkips.Count} blob(s) the transform skipped are invisible to git grep");
+            if (scope.ContentScoped)
+                notes.Add($"scrubbed within scope only ({allCommits.Count} in-scope commit(s)); occurrences outside the scope are intentionally retained, not cleaned");
 
             return new ScrubCheckResult
             {
                 Kind = kind,
                 Needle = needle,
                 Performed = grep.Performed,
-                Complete = grep.Performed && !sampled && !hasSkips,
+                Complete = grep.Performed && !sampled && !hasSkips && !scope.ContentScoped,
+                WithinScopeOnly = scope.ContentScoped,
                 CommitsChecked = grep.Performed ? commits.Count : 0,
                 Hits = hits,
                 Note = notes.Count > 0 ? string.Join("; ", notes) : null
             };
         }
+    }
+
+    private static ScrubCheckResult NoteOnly(string kind, string needle, string note) => new()
+    {
+        Kind = kind,
+        Needle = needle,
+        Performed = false,
+        Complete = false,
+        WithinScopeOnly = false,
+        CommitsChecked = 0,
+        Hits = [],
+        Note = note
+    };
+
+    /// <summary>
+    /// Verifies message ops in-process against every rewritten commit and tag message. The
+    /// message corpus is small, so the real op (literal byte search or the actual .NET regex)
+    /// is applied directly — more faithful than the git-grep ERE gate the tree scrub needs.
+    /// </summary>
+    private async Task<List<ScrubCheckResult>> MessageScrubChecksAsync(HistoryRewriteRequest request, CancellationToken ct)
+    {
+        var checks = new List<ScrubCheckResult>();
+        if (request.Rewrite.MessageOps.Count == 0) return checks;
+
+        string corpus;
+        try
+        {
+            corpus = await FetchMessageCorpusAsync(request, ct);
+        }
+        catch (Exception ex)
+        {
+            foreach (var op in request.Rewrite.MessageOps)
+                checks.Add(NoteOnly(OpKind(op, "message"), OpNeedle(op), $"message scrub could not read the target: {ex.Message}"));
+            return checks;
+        }
+
+        foreach (var op in request.Rewrite.MessageOps)
+        {
+            var hits = SurvivorsIn(corpus, op, "message");
+            checks.Add(new ScrubCheckResult
+            {
+                Kind = OpKind(op, "message"),
+                Needle = OpNeedle(op),
+                Performed = true,
+                Complete = true,
+                WithinScopeOnly = false,
+                CommitsChecked = 0,
+                Hits = hits,
+                Note = "messages verified in-process across all commits and tags"
+            });
+        }
+        return checks;
+    }
+
+    private async Task<List<ScrubCheckResult>> IdentityScrubChecksAsync(HistoryRewriteRequest request, CancellationToken ct)
+    {
+        var checks = new List<ScrubCheckResult>();
+        if (request.Rewrite.IdentityMappings.Count == 0) return checks;
+
+        List<(string Name, string Email)> identities;
+        try
+        {
+            identities = await FetchIdentitiesAsync(request, ct);
+        }
+        catch (Exception ex)
+        {
+            foreach (var mapping in request.Rewrite.IdentityMappings)
+                checks.Add(NoteOnly("identity", DescribeMapping(mapping), $"identity scrub could not read the target: {ex.Message}"));
+            return checks;
+        }
+
+        foreach (var mapping in request.Rewrite.IdentityMappings)
+        {
+            var hits = identities
+                .Where(id => (mapping.OldName is null || mapping.OldName == id.Name)
+                          && (mapping.OldEmail is null || mapping.OldEmail == id.Email)
+                          && ((mapping.NewName is { } nn && nn != id.Name) || (mapping.NewEmail is { } ne && ne != id.Email)))
+                .Select(id => $"identity survives: {id.Name} <{id.Email}>")
+                .Distinct()
+                .ToList();
+            checks.Add(new ScrubCheckResult
+            {
+                Kind = "identity",
+                Needle = DescribeMapping(mapping),
+                Performed = true,
+                Complete = true,
+                WithinScopeOnly = false,
+                CommitsChecked = 0,
+                Hits = hits,
+                Note = "author/committer/tagger identities verified in-process across all history"
+            });
+        }
+        return checks;
+    }
+
+    private static string OpKind(ContentOp op, string prefix) => op is RegexReplace ? $"{prefix}-regex" : $"{prefix}-literal";
+
+    private static string OpNeedle(ContentOp op) => op switch
+    {
+        RegexReplace r => r.Pattern,
+        LiteralReplace l => System.Text.Unicode.Utf8.IsValid(l.Find) ? Encoding.UTF8.GetString(l.Find) : Convert.ToHexString(l.Find),
+        _ => "?"
+    };
+
+    private static string DescribeMapping(IdentityMapping m) =>
+        $"{m.OldName ?? "*"} <{m.OldEmail ?? "*"}> => {m.NewName ?? "(same)"} <{m.NewEmail ?? "(same)"}>";
+
+    private static List<string> SurvivorsIn(string corpus, ContentOp op, string label)
+    {
+        switch (op)
+        {
+            case LiteralReplace literal when System.Text.Unicode.Utf8.IsValid(literal.Find):
+                var needle = Encoding.UTF8.GetString(literal.Find);
+                return corpus.Contains(needle, StringComparison.Ordinal)
+                    ? [$"{label} carries the needle: {needle}"] : [];
+            case LiteralReplace:
+                return [];
+            case RegexReplace regex:
+                var compiled = new System.Text.RegularExpressions.Regex(
+                    regex.Pattern, regex.Options | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                return compiled.IsMatch(corpus) ? [$"{label} matches pattern: {regex.Pattern}"] : [];
+            default:
+                return [];
+        }
+    }
+
+    private async Task<string> FetchMessageCorpusAsync(HistoryRewriteRequest request, CancellationToken ct)
+    {
+        var commitMessages = await ProcessRunner.RunAsync(
+            _gitExe, ["log", "--all", "-z", "--format=%B"], request.TargetBareRepository,
+            request.VerificationTimeout, GitEnvironment, ct);
+        if (!commitMessages.Success)
+            throw new HistoryPipelineException("verify", "git log for message scrub failed", commitMessages.ExitCode, commitMessages.StdErr);
+        var tagMessages = await ProcessRunner.RunAsync(
+            _gitExe, ["for-each-ref", "refs/tags", "--format=%(contents)"], request.TargetBareRepository,
+            request.VerificationTimeout, GitEnvironment, ct);
+        return commitMessages.StdOut + "\n" + (tagMessages.Success ? tagMessages.StdOut : "");
+    }
+
+    private async Task<List<(string Name, string Email)>> FetchIdentitiesAsync(HistoryRewriteRequest request, CancellationToken ct)
+    {
+        var log = await ProcessRunner.RunAsync(
+            _gitExe, ["log", "--all", "--format=%an%x1f%ae%x1f%cn%x1f%ce"], request.TargetBareRepository,
+            request.VerificationTimeout, GitEnvironment, ct);
+        if (!log.Success)
+            throw new HistoryPipelineException("verify", "git log for identity scrub failed", log.ExitCode, log.StdErr);
+
+        var identities = new List<(string, string)>();
+        foreach (var line in SplitLines(log.StdOut))
+        {
+            var f = line.Split('\x1f');
+            if (f.Length == 4)
+            {
+                identities.Add((f[0], f[1]));
+                identities.Add((f[2], f[3]));
+            }
+        }
+
+        var taggers = await ProcessRunner.RunAsync(
+            _gitExe, ["for-each-ref", "refs/tags", "--format=%(taggername)%1f%(taggeremail)"],
+            request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
+        if (taggers.Success)
+            foreach (var line in SplitLines(taggers.StdOut))
+            {
+                var f = line.Split('\x1f');
+                if (f.Length == 2 && f[0].Length > 0)
+                    identities.Add((f[0], f[1].Trim('<', '>')));
+            }
+        return identities;
     }
 
     /// <summary>Decoded paths matching a regex op — a filename the pattern would hit, which content grep never sees.</summary>
@@ -452,15 +749,21 @@ public sealed class HistoryRewriter
 
     private async Task<GrepOutcome> GrepAsync(
         HistoryRewriteRequest request, IReadOnlyList<string> grepArgs,
-        IReadOnlyList<string> commits, CancellationToken ct)
+        IReadOnlyList<string> commits, IReadOnlyList<string> pathSpecs, CancellationToken ct)
     {
         var hits = new List<string>();
         var overflow = 0;
         foreach (var chunk in Chunk(commits))
         {
-            var args = new List<string>(grepArgs.Count + chunk.Count);
+            var args = new List<string>(grepArgs.Count + chunk.Count + pathSpecs.Count + 1);
             args.AddRange(grepArgs);
             args.AddRange(chunk);
+            // A pathspec after `--` narrows the grep to in-scope paths only.
+            if (pathSpecs.Count > 0)
+            {
+                args.Add("--");
+                args.AddRange(pathSpecs);
+            }
             var result = await ProcessRunner.RunAsync(
                 _gitExe, args, request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
             // git grep: 0 = matches found, 1 = no matches, anything else means the grep
