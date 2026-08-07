@@ -205,6 +205,83 @@ public class ProjectDetailViewModelGitHubTests
         Assert.Null(vm.SelectedPullRequest);
     }
 
+    /// <summary>
+    /// The detail pane's "Label to add" picker binds AvailableLabelNames, which a
+    /// project switch clears. Loading an issue detail must therefore fetch the repo's
+    /// labels — otherwise the picker is empty until the New Issue form is opened and
+    /// cancelled, and Add label has nothing to send.
+    /// </summary>
+    [Fact]
+    public async Task LoadingAnIssueDetail_PopulatesTheLabelPicker()
+    {
+        var vm = StubVm();
+        await vm.SetProjectAsync(RemoteProject());
+
+        vm.SelectedIssue = new GitHubIssue { Number = 7, Title = "x" };
+
+        Assert.NotNull(vm.IssueDetail);
+        Assert.Equal(1, vm.LabelFetches);
+        Assert.Equal(["bug", "p1"], vm.AvailableLabelNames);
+    }
+
+    [Fact]
+    public async Task LabelPicker_IsFetchedOncePerProjectAndRefetchedAfterASwitch()
+    {
+        var vm = StubVm();
+        await vm.SetProjectAsync(RemoteProject());
+
+        vm.SelectedIssue = new GitHubIssue { Number = 7, Title = "x" };
+        vm.SelectedIssue = new GitHubIssue { Number = 8, Title = "y" };
+        Assert.Equal(1, vm.LabelFetches);
+
+        await vm.SetProjectAsync(RemoteProject());
+        Assert.Empty(vm.AvailableLabelNames);
+
+        vm.SelectedIssue = new GitHubIssue { Number = 9, Title = "z" };
+        Assert.Equal(2, vm.LabelFetches);
+        Assert.Equal(["bug", "p1"], vm.AvailableLabelNames);
+    }
+
+    [Fact]
+    public async Task AddLabel_WithNothingPicked_SaysSoInsteadOfReturningSilently()
+    {
+        var vm = StubVm();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.SelectedIssue = new GitHubIssue { Number = 7, Title = "x" };
+        vm.SelectedLabelToAdd = null;
+
+        await vm.AddIssueLabelCommand.ExecuteAsync(null);
+
+        Assert.Equal("Pick a label to add first.", vm.GitHubStatusText);
+    }
+
+    private static LabelCountingViewModel StubVm() => new()
+    {
+        Detail = new IssueDetail { Number = 7, Title = "x", LabelNames = ["bug"] },
+        RepoLabels = [new Label { Name = "bug" }, new Label { Name = "p1" }]
+    };
+
+    /// <summary>
+    /// Serves canned issue details and repo labels so the pane's state transitions run
+    /// without a gh process. Both fetches complete synchronously, so the fire-and-forget
+    /// detail load has finished by the time the selection setter returns.
+    /// </summary>
+    private sealed class LabelCountingViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    {
+        public IssueDetail? Detail { get; init; }
+        public List<Label>? RepoLabels { get; init; }
+        public int LabelFetches { get; private set; }
+
+        internal override Task<IssueDetail?> FetchIssueDetailAsync(string slug, int number)
+            => Task.FromResult(Detail);
+
+        internal override Task<List<Label>?> FetchLabelsAsync(string slug)
+        {
+            LabelFetches++;
+            return Task.FromResult(RepoLabels);
+        }
+    }
+
     [Fact]
     public async Task GitHubMutationGuards_NoOpWithoutRemoteOrSelection()
     {

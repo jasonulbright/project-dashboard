@@ -117,7 +117,7 @@ public partial class ProjectDetailViewModel
         IssueDetailError = "";
         try
         {
-            var detail = await _gitHubService.GetIssueDetailAsync(slug, issue.Number);
+            var detail = await FetchIssueDetailAsync(slug, issue.Number);
             // Selection or project changed mid-await — drop this result.
             if (!IsCurrent(gen) || !ReferenceEquals(SelectedIssue, issue)) return;
             if (detail is null)
@@ -135,6 +135,12 @@ public partial class ProjectDetailViewModel
         {
             if (IsCurrent(gen)) IssueDetailLoading = false;
         }
+
+        // Reached only once a detail is on screen. The pane's label picker binds
+        // AvailableLabelNames and a project switch clears them, so without this the
+        // picker stays empty and Add label has nothing to send. Runs after the
+        // detail spinner is released — the body does not wait on the label list.
+        await EnsureLabelsLoadedAsync();
     }
 
     private async Task ReloadIssueDetailAsync()
@@ -162,11 +168,22 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         if (slug.Length == 0) return;
         var gen = _generation;
-        var labels = await _gitHubService.GetLabelsAsync(slug);
+        var labels = await FetchLabelsAsync(slug);
         if (!IsCurrent(gen) || labels is null) return; // null = fetch failed; retry next open
         AvailableLabelNames = new ObservableCollection<string>(labels.Select(l => l.Name));
         _labelsLoaded = true;
     }
+
+    /// <summary>
+    /// The two remote reads the issue detail pane depends on. Both go through the
+    /// service in the app; as overridable members the pane's state transitions can be
+    /// driven without spawning gh.
+    /// </summary>
+    internal virtual Task<IssueDetail?> FetchIssueDetailAsync(string slug, int number)
+        => _gitHubService.GetIssueDetailAsync(slug, number);
+
+    internal virtual Task<List<Label>?> FetchLabelsAsync(string slug)
+        => _gitHubService.GetLabelsAsync(slug);
 
     // ── Issue actions ───────────────────────────────────────────────────────────
 
@@ -265,7 +282,12 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var issue = SelectedIssue;
         var label = SelectedLabelToAdd;
-        if (slug.Length == 0 || issue is null || string.IsNullOrWhiteSpace(label) || IsBusy) return;
+        if (slug.Length == 0 || issue is null || IsBusy) return;
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            GitHubStatusText = "Pick a label to add first.";
+            return;
+        }
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.EditIssueLabelsAsync(slug, issue.Number, [label], []),
             $"Add label to #{issue.Number}");
