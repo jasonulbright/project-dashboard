@@ -309,6 +309,37 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task FailedImportDoesNotLeakScratchHeadRefIntoTarget()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("checkout", "-q", "--detach", "HEAD");
+        f.Write("detached.txt", "d\n");
+        f.CommitAll("reachable only from HEAD");
+
+        // A directory squatting on the marks path makes fast-import fail its marks dump,
+        // which runs after refs are written — the shape that leaks the scratch ref.
+        Directory.CreateDirectory(Path.Combine(f.WorkDir, "import.marks"));
+
+        var pipeline = new HistoryPipeline(GitGuard.GitExe);
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => pipeline.RunAsync(new HistoryPipelineOptions
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(1),
+            ImportTimeout = TimeSpan.FromMinutes(1)
+        }));
+        Assert.Equal("fast-import", ex.Phase);
+
+        // The import got far enough to write refs, and the scratch ref is not among them.
+        var refs = FixtureRepo.RunGit(f.TargetPath, ["for-each-ref"], null, null);
+        Assert.Contains("refs/heads/main", refs);
+        Assert.DoesNotContain("pd-import", refs);
+    }
+
+    [Fact]
     public async Task ReplacedCommitExportsOriginalHistoryAndReplaceRef()
     {
         using var f = new FixtureRepo();

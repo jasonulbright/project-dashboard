@@ -132,7 +132,25 @@ public sealed class HistoryPipeline
 
         await CreateFreshBareRepoAsync(options.TargetBareRepository, ct);
         var (importFeed, scratchHeadRef) = BuildImportFeed(records);
-        var emitted = await ImportAsync(importFeed, spoolPath, marksPath, options, ct);
+        long emitted;
+        try
+        {
+            emitted = await ImportAsync(importFeed, spoolPath, marksPath, options, ct);
+        }
+        catch when (scratchHeadRef is not null)
+        {
+            // fast-import can exit non-zero after its refs are already written (a failed
+            // marks dump, for one), so a failed import can still leave the scratch ref in
+            // the target. Best-effort delete: the import failure is the diagnostic that
+            // must propagate, and cancellation must not suppress the cleanup.
+            try
+            {
+                await ProcessRunner.RunAsync(_gitExe, ["update-ref", "-d", scratchHeadRef],
+                    options.TargetBareRepository, TimeSpan.FromSeconds(30), GitEnvironment, CancellationToken.None);
+            }
+            catch { /* target may be absent or unusable */ }
+            throw;
+        }
         if (scratchHeadRef is not null)
             await RunGitCheckedAsync(options.TargetBareRepository, ["update-ref", "-d", scratchHeadRef], "align-head", ct);
         await AlignTargetHeadAsync(options, ct);
