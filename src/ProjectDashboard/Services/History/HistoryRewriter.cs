@@ -247,10 +247,13 @@ public sealed class HistoryRewriter
         List<string> changedTrees, CancellationToken ct)
     {
         var commits = await CollectScrubCommitsAsync(request, commitMap, changedTrees, ct);
-        var sampled = commits.Count > ScrubSampleCap;
-        if (sampled)
+        var candidateCount = commits.Count;
+        string? sampleNote = null;
+        if (candidateCount > ScrubSampleCap)
+        {
             commits = SampleEvenly(commits, ScrubSampleCap);
-        var sampleNote = sampled ? $"sampled {commits.Count} commits above the {ScrubSampleCap} cap" : null;
+            sampleNote = $"sampled {commits.Count} of {candidateCount} candidate commits";
+        }
 
         var checks = new List<ScrubCheckResult>();
         foreach (var op in request.Rewrite.ContentOps)
