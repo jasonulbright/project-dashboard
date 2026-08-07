@@ -98,6 +98,7 @@ public class DashboardViewPreferencesTests
         var service = new SettingsService();
         service.Save(new AppSettings
         {
+            WindowDeviceRect = new SavedWindowRect(240, 128, 2800, 1800),
             WindowLeft = 120,
             WindowTop = 64,
             WindowWidth = 1400,
@@ -118,6 +119,7 @@ public class DashboardViewPreferencesTests
 
         var reloaded = service.Load();
 
+        Assert.Equal(new SavedWindowRect(240, 128, 2800, 1800), reloaded.WindowDeviceRect);
         Assert.Equal(120, reloaded.WindowLeft);
         Assert.Equal(64, reloaded.WindowTop);
         Assert.Equal(1400, reloaded.WindowWidth);
