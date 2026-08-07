@@ -2,11 +2,13 @@ namespace ProjectDashboard.Services.Surgery;
 
 /// <summary>
 /// Amends a fix into an older commit without an editor: the staged changes become a
-/// `fixup!` commit on the tip, then an autosquash rebase folds it back into its target.
+/// `fixup!` commit on the tip, then a prepared todo folds that one commit back into its target.
 ///
-/// The autosquash pass deliberately keeps git's generated todo — that arrangement of the
-/// `fixup!` commit against its target IS the instruction — so this is the one rebase the
-/// driver runs with a no-op sequence editor rather than a prepared todo.
+/// The todo is explicit — every commit from the target to the tip is picked in order and the
+/// new fixup line is placed directly after the target. `--autosquash` is not used: it would
+/// also rearrange and fold `fixup!`/`squash!` commits the user made themselves, and a `squash!`
+/// in the range would rewrite the target's message. Only the commit this call created is folded;
+/// any other `fixup!` in the range replays as an ordinary commit.
 ///
 /// The target's message and author are preserved: a `fixup!` commit contributes only its
 /// tree. Every commit after the target is replayed, so their hashes change while their
@@ -49,6 +51,16 @@ public sealed class CommitSurgery
         if (staged.ExitCode == 0)
             return RebaseRunResult.Failed("nothing is staged — stage the fix before injecting it into an older commit");
 
+        // Enforced here, not only at the coordinator's tree gate: a direct call over a tree with
+        // unstaged edits records a fixup holding half the intended change, and git then refuses
+        // to rebase over the rest.
+        var unstaged = await _git.RunAsync(repoPath, ["diff", "--quiet"], ct, ShortTimeout);
+        if (unstaged.TimedOut)
+            return RebaseRunResult.Failed("could not read the working tree: git timed out");
+        if (unstaged.ExitCode != 0)
+            return RebaseRunResult.Failed(
+                "the working tree has unstaged changes — stage or stash them before injecting a fix into an older commit");
+
         var ancestor = await _git.RunAsync(repoPath, ["merge-base", "--is-ancestor", target, "HEAD"], ct, ShortTimeout);
         if (ancestor.ExitCode != 0)
             return RebaseRunResult.Failed($"commit {Short(target)} is not an ancestor of HEAD — nothing would replay onto it");
@@ -60,8 +72,10 @@ public sealed class CommitSurgery
         if (parentIds.Count > 1)
             return RebaseRunResult.Failed($"commit {Short(target)} is a merge — a fix cannot be folded into it");
 
-        // A root commit has no parent to rebase onto, so the replay has to start at --root.
-        var baseSha = parentIds.Count == 1 ? parentIds[0] : null;
+        var ahead = await _git.RunAsync(repoPath, ["rev-list", "--count", target + "..HEAD"], ct, ShortTimeout);
+        if (!ahead.Success || !int.TryParse(ahead.StdOut.Trim(), out var commitsAfterTarget))
+            return RebaseRunResult.Failed(
+                $"could not measure the range {Short(target)}..HEAD: {ahead.FirstError}");
 
         var fixup = await _git.RunAsync(repoPath,
             ["commit", "--no-verify", $"--fixup={target}"], ct, CommitTimeout);
@@ -69,21 +83,38 @@ public sealed class CommitSurgery
             return RebaseRunResult.Failed($"could not record the fixup commit: {fixup.FirstError}");
 
         var fixupSha = await HeadShaAsync(repoPath, ct);
+        if (fixupSha.Length == 0)
+            return RebaseRunResult.Failed("the fixup commit was recorded but HEAD could not be read");
 
-        var result = await _driver.AutosquashAsync(repoPath, baseSha, policy, ct);
+        // The scope is the target, everything already replaying after it, and the fixup itself:
+        // the same span the fold rewrites. A root target yields a null base and a `--root` replay.
+        RebaseScope scope;
+        try
+        {
+            scope = await _driver.LoadScopeAsync(repoPath, commitsAfterTarget + 2, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var (unwoundScope, scopeNote) = await TryUnwindFixupAsync(repoPath, fixupSha, ct);
+            return new RebaseRunResult
+            {
+                Success = false,
+                FailureReason = $"the range is not editable: {ex.Message}" + scopeNote,
+                RepositoryUntouched = unwoundScope,
+                HeadAfter = await HeadShaAsync(repoPath, ct)
+            };
+        }
+
+        var result = await _driver.FoldFixupAsync(scope, target, fixupSha, policy, ct);
         if (result.Success) return result;
 
         // `rebase --abort` restores the pre-rebase tip, which still carries the fixup commit.
         // A soft reset off it puts the same changes back in the index, so a refused injection
-        // leaves refs, index, and worktree exactly as the caller had them.
+        // leaves refs, index, and tracked content exactly as the caller had them.
+        var unwound = false;
         var note = " — the fixup commit is still on the tip, unfolded";
-        if (result.Aborted && fixupSha.Length > 0 && await HeadShaAsync(repoPath, ct) == fixupSha)
-        {
-            var unwind = await _git.RunAsync(repoPath, ["reset", "--soft", fixupSha + "^"], ct, CommitTimeout);
-            note = unwind.Success
-                ? " — the fixup was unwound and the fix is staged again, as before"
-                : $" — and the fixup commit could not be unwound ({unwind.FirstError}); restore from the backup";
-        }
+        if (result.Aborted)
+            (unwound, note) = await TryUnwindFixupAsync(repoPath, fixupSha, ct);
 
         return new RebaseRunResult
         {
@@ -95,9 +126,28 @@ public sealed class CommitSurgery
             LeftStopped = result.LeftStopped,
             TimedOut = result.TimedOut,
             Aborted = result.Aborted,
+            UntrackedAdded = result.UntrackedAdded,
+            RepositoryUntouched = result.Aborted && unwound,
             HeadAfter = await HeadShaAsync(repoPath, ct),
             Todo = result.Todo
         };
+    }
+
+    /// <summary>
+    /// Drops the recorded fixup commit and leaves its content staged again. Only meaningful while
+    /// the fixup is still the tip: anything else means the history moved and the backup is the
+    /// way back.
+    /// </summary>
+    private async Task<(bool Unwound, string Note)> TryUnwindFixupAsync(
+        string repoPath, string fixupSha, CancellationToken ct)
+    {
+        if (await HeadShaAsync(repoPath, ct) != fixupSha)
+            return (false, " — the fixup commit is still on the tip, unfolded");
+
+        var unwind = await _git.RunAsync(repoPath, ["reset", "--soft", fixupSha + "^"], ct, CommitTimeout);
+        return unwind.Success
+            ? (true, " — the fixup was unwound and the fix is staged again, as before")
+            : (false, $" — and the fixup commit could not be unwound ({unwind.FirstError}); restore from the backup");
     }
 
     private async Task<string> HeadShaAsync(string repoPath, CancellationToken ct)

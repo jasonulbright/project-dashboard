@@ -25,11 +25,19 @@ namespace ProjectDashboard.Services.Surgery;
 ///
 /// A stopped rebase is never resolved automatically. Under
 /// <see cref="RebaseConflictPolicy.AbortAndReport"/> the driver runs `git rebase --abort`, which
-/// returns the repository to its exact pre-operation state, and reports the commit that stopped
-/// it. A rebase that exceeds its timeout is killed and aborted regardless of policy.
+/// returns refs, the index, and tracked content to their exact pre-operation state, and reports
+/// the commit that stopped it. Untracked files are outside that guarantee: git leaves behind
+/// whatever a hook wrote into the worktree during the replay, so the new ones are listed in
+/// <see cref="RebaseRunResult.UntrackedAdded"/> instead of being left for the next operation's
+/// tree gate to refuse as changes the user never made. A rebase that exceeds its timeout is
+/// killed and aborted regardless of policy.
 ///
-/// `--empty=stop` is explicit rather than inherited: a replayed commit that becomes empty is a
-/// stop the caller is told about, never a commit silently dropped from the history.
+/// `--empty` is explicit rather than inherited: a replayed commit that becomes empty is a stop
+/// the caller is told about, never a commit silently dropped from the history. Its value is
+/// version-dependent — `stop` exists only from Git 2.45, `ask` is the older spelling and is
+/// warned about on newer builds — so the git version is probed once and the accepted spelling
+/// used. Sending the wrong one either kills every rebase at startup or makes a deprecation
+/// warning the first line of every failure message.
 ///
 /// Commit signing is deliberately left alone — overriding it would strip signatures the user
 /// asked for. A repository configured to sign with a key whose passphrase is not cached will
@@ -63,9 +71,16 @@ public class RebaseDriver
 
     private static readonly Dictionary<string, string> EmptyMessages = new(StringComparer.Ordinal);
 
+    /// <summary>A scratch tree younger than this may belong to a rebase another process is still starting.</summary>
+    private static readonly TimeSpan ScratchGrace = TimeSpan.FromDays(1);
+
+    private const string OwnerFileName = "repo-path.txt";
+
     private readonly GitService _git;
     private readonly string _gitExe;
     private readonly string _workRoot;
+    private bool _swept;
+    private string? _emptyMode;
 
     public RebaseDriver(GitService git, string? gitExecutable = null, string? workRoot = null)
     {
@@ -235,54 +250,107 @@ public class RebaseDriver
     }
 
     /// <summary>
-    /// Runs `git rebase -i --autosquash` and KEEPS git's generated todo — the arrangement of
-    /// `fixup!`/`squash!` commits is exactly what this mode is for, so the sequence editor is a
-    /// no-op here instead of the usual overwrite. Backs <see cref="CommitSurgery"/>.
+    /// Folds <paramref name="fixupSha"/> into <paramref name="targetSha"/> through an explicit
+    /// todo: every commit in the scope is picked in its recorded order and the fixup is moved to
+    /// sit directly after its target. `--autosquash` is deliberately not used — it would also
+    /// rearrange and fold any `fixup!`/`squash!` commit the user made themselves, and a
+    /// `squash!` would rewrite the target's message.
     /// </summary>
-    public virtual Task<RebaseRunResult> AutosquashAsync(
-        string repoPath, string? baseSha,
+    public virtual Task<RebaseRunResult> FoldFixupAsync(
+        RebaseScope scope, string targetSha, string fixupSha,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
-        => RunAsync(repoPath, baseSha, todoLines: null, messageFiles: new Dictionary<string, string>(),
-                    autosquash: true, policy, ct);
+    {
+        var byId = Index(scope);
+        if (!byId.TryGetValue(targetSha, out var target))
+            return Refuse($"commit {Short(targetSha)} is not in the editable range");
+        if (!byId.TryGetValue(fixupSha, out var fixup))
+            return Refuse($"commit {Short(fixupSha)} is not in the editable range");
+        if (string.Equals(target.Sha, fixup.Sha, StringComparison.OrdinalIgnoreCase))
+            return Refuse("a commit cannot be folded into itself");
+
+        var todo = new List<string>();
+        foreach (var commit in scope.Commits)
+        {
+            // The fixup is emitted at its new home below, never at its recorded position.
+            if (string.Equals(commit.Sha, fixup.Sha, StringComparison.OrdinalIgnoreCase)) continue;
+            todo.Add(Pick(commit));
+            if (string.Equals(commit.Sha, target.Sha, StringComparison.OrdinalIgnoreCase))
+                todo.Add($"fixup {fixup.Sha} {fixup.Subject}".TrimEnd());
+        }
+
+        return RunTodoAsync(scope, todo, EmptyMessages, policy, ct);
+    }
 
     /// <summary>Runs an explicit todo against a scope. Public so the sequence-editor mechanism itself is directly testable.</summary>
     public virtual Task<RebaseRunResult> RunTodoAsync(
         RebaseScope scope, IReadOnlyList<string> todoLines, IReadOnlyDictionary<string, string> messageFiles,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
-        => RunAsync(scope.RepoPath, scope.BaseSha, todoLines, messageFiles, autosquash: false, policy, ct);
+        => RunAsync(scope.RepoPath, scope.BaseSha, todoLines, messageFiles, policy, ct);
+
+    /// <summary>The argument vector for one driven rebase, exposed so the flags themselves are assertable.</summary>
+    public static IReadOnlyList<string> BuildRebaseArgs(string? baseSha, string emptyMode)
+    {
+        var args = new List<string>(ConfigPins) { "rebase", "-i", "--empty=" + emptyMode };
+        if (baseSha is null) args.Add("--root");
+        else { args.Add("--onto"); args.Add(baseSha); args.Add(baseSha); }
+        return args;
+    }
+
+    /// <summary>
+    /// The `--empty` spelling a `git --version` line accepts: `stop` from 2.45, `ask` before it.
+    /// An unreadable version answers `ask`, which every version that has `--empty` accepts —
+    /// a deprecation warning on a new git costs a noisier message, an unknown value costs the
+    /// whole operation.
+    /// </summary>
+    public static string EmptyModeFor(string gitVersionOutput)
+    {
+        foreach (var token in gitVersionOutput.Split([' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
+                continue;
+            return major > 2 || (major == 2 && minor >= 45) ? "stop" : "ask";
+        }
+        return "ask";
+    }
+
+    private async Task<string> EmptyModeAsync(string repoPath, CancellationToken ct)
+    {
+        if (_emptyMode is not null) return _emptyMode;
+        var version = await _git.RunAsync(repoPath, ["--version"], ct, ShortTimeout);
+        return _emptyMode = EmptyModeFor(version.Success ? version.StdOut : "");
+    }
 
     private async Task<RebaseRunResult> RunAsync(
-        string repoPath, string? baseSha, IReadOnlyList<string>? todoLines,
-        IReadOnlyDictionary<string, string> messageFiles, bool autosquash,
+        string repoPath, string? baseSha, IReadOnlyList<string> todoLines,
+        IReadOnlyDictionary<string, string> messageFiles,
         RebaseConflictPolicy policy, CancellationToken ct)
     {
-        if (todoLines is { Count: 0 })
+        if (todoLines.Count == 0)
             return RebaseRunResult.Failed("the rebase todo is empty — nothing to do");
 
+        SweepStaleScratch();
         var scratch = Path.Combine(_workRoot, "rebase-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(scratch);
         var keepScratch = false;
         try
         {
+            WriteScratchOwner(scratch, repoPath);
+
             // Message files land in the scratch first: their absolute paths have to be known
             // before the exec lines that reference them are written.
-            var resolvedTodo = todoLines is null ? [] : MaterializeMessageFiles(todoLines, messageFiles, scratch);
+            var resolvedTodo = MaterializeMessageFiles(todoLines, messageFiles, scratch);
 
             var env = new Dictionary<string, string>
             {
                 ["GIT_TERMINAL_PROMPT"] = "0",
                 ["GIT_OPTIONAL_LOCKS"] = "0",
-                // Overwrite the generated todo, except in autosquash mode where git's own
-                // arrangement IS the instruction.
-                ["GIT_SEQUENCE_EDITOR"] = todoLines is null ? "true" : SequenceEditorFor(WriteTodo(resolvedTodo, scratch)),
+                ["GIT_SEQUENCE_EDITOR"] = SequenceEditorFor(WriteTodo(resolvedTodo, scratch)),
                 ["GIT_EDITOR"] = "true"
             };
 
-            var args = new List<string>(ConfigPins) { "rebase", "-i", "--empty=stop" };
-            if (autosquash) args.Add("--autosquash");
-            if (baseSha is null) args.Add("--root");
-            else { args.Add("--onto"); args.Add(baseSha); args.Add(baseSha); }
-
+            var untrackedBefore = await UntrackedAsync(repoPath, ct);
+            var args = BuildRebaseArgs(baseSha, await EmptyModeAsync(repoPath, ct));
             var run = await ProcessRunner.RunAsync(_gitExe, args, repoPath, DefaultTimeout, env, ct);
 
             if (run.Success && !await IsRebaseInProgressAsync(repoPath, ct))
@@ -293,7 +361,7 @@ public class RebaseDriver
                     Todo = resolvedTodo
                 };
 
-            var stopped = await HandleStopAsync(repoPath, run, resolvedTodo, policy, ct);
+            var stopped = await HandleStopAsync(repoPath, run, resolvedTodo, untrackedBefore, policy, ct);
             // A rebase left stopped for the terminal still has our todo in its state dir, and
             // its exec lines point at message files in this scratch: deleting them would make
             // `git rebase --continue` fail on a missing file.
@@ -312,7 +380,8 @@ public class RebaseDriver
     /// would strand the repository mid-rebase with nothing driving it.
     /// </summary>
     private async Task<RebaseRunResult> HandleStopAsync(
-        string repoPath, ProcessResult run, IReadOnlyList<string> todo, RebaseConflictPolicy policy, CancellationToken ct)
+        string repoPath, ProcessResult run, IReadOnlyList<string> todo, IReadOnlyList<string> untrackedBefore,
+        RebaseConflictPolicy policy, CancellationToken ct)
     {
         var inProgress = await IsRebaseInProgressAsync(repoPath, ct);
         var output = run.StdErr + "\n" + run.StdOut;
@@ -369,18 +438,52 @@ public class RebaseDriver
                 Todo = todo
             };
 
+        // The abort restores refs, index and tracked content; untracked files written during the
+        // replay (by a hook) are git's to leave behind, and the next gated operation refuses a
+        // tree carrying them, so they are named here rather than discovered later.
+        var added = await NewUntrackedAsync(repoPath, untrackedBefore, ct);
+        var untrackedNote = added.Count == 0
+            ? ""
+            : $" {added.Count} untracked file(s) written during the replay were left in the working tree: {Join(added)}.";
+
         return new RebaseRunResult
         {
             Success = false,
-            FailureReason = cause + " — the rebase was aborted and the repository is unchanged",
+            FailureReason = cause + " — the rebase was aborted; refs, index and tracked content are unchanged." + untrackedNote,
             ConflictCommit = sha,
             ConflictSubject = subject,
             StoppedEmpty = empty,
             TimedOut = run.TimedOut,
             Aborted = true,
+            RepositoryUntouched = true,
+            UntrackedAdded = added,
             HeadAfter = await HeadShaAsync(repoPath, ct),
             Todo = todo
         };
+    }
+
+    /// <summary>Untracked, non-ignored paths. Ignored files are excluded: the tree gate ignores them too.</summary>
+    private async Task<IReadOnlyList<string>> UntrackedAsync(string repoPath, CancellationToken ct)
+    {
+        var result = await _git.RunAsync(repoPath, ["ls-files", "--others", "--exclude-standard"], ct, ShortTimeout);
+        if (!result.Success) return [];
+        return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
+    }
+
+    private async Task<IReadOnlyList<string>> NewUntrackedAsync(
+        string repoPath, IReadOnlyList<string> before, CancellationToken ct)
+    {
+        var known = new HashSet<string>(before, StringComparer.Ordinal);
+        return (await UntrackedAsync(repoPath, ct)).Where(p => !known.Contains(p)).ToList();
+    }
+
+    private static string Join(IReadOnlyList<string> paths)
+    {
+        var named = paths.Take(10).ToList();
+        var listed = string.Join(", ", named);
+        if (paths.Count > named.Count) listed += $", … (+{paths.Count - named.Count} more)";
+        return listed;
     }
 
     /// <summary>
@@ -582,5 +685,91 @@ public class RebaseDriver
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
         catch (Exception ex) { Log.Warn($"could not delete surgery scratch tree {path}", ex); }
+    }
+
+    // ── scratch reclamation ───────────────────────────────────────────────
+
+    /// <summary>Records which repository a scratch tree serves, so the sweep can tell a live one from a leak.</summary>
+    private static void WriteScratchOwner(string scratch, string repoPath)
+    {
+        try { File.WriteAllText(Path.Combine(scratch, OwnerFileName), repoPath, Utf8NoBom); }
+        catch (Exception ex) { Log.Warn($"could not record the owner of surgery scratch {scratch}", ex); }
+    }
+
+    /// <summary>
+    /// Reclaims scratch trees the `finally` never reached — a crash or a kill during a rebase.
+    /// A tree is kept while its repository is still mid-rebase, because the stopped todo's exec
+    /// lines point at message files inside it and `git rebase --continue` would fail without
+    /// them. Runs once per driver instance, before the first rebase.
+    /// </summary>
+    private void SweepStaleScratch()
+    {
+        if (_swept) return;
+        _swept = true;
+        try
+        {
+            if (!Directory.Exists(_workRoot)) return;
+            var cutoff = DateTime.UtcNow - ScratchGrace;
+            foreach (var dir in Directory.GetDirectories(_workRoot))
+            {
+                if (Directory.GetLastWriteTimeUtc(dir) > cutoff) continue;
+                var owner = ReadScratchOwner(dir);
+                if (owner is not null && HasRebaseState(owner)) continue;
+                TryDeleteTree(dir);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not sweep the surgery scratch root {_workRoot}", ex);
+        }
+    }
+
+    private static string? ReadScratchOwner(string scratch)
+    {
+        try
+        {
+            var path = Path.Combine(scratch, OwnerFileName);
+            if (!File.Exists(path)) return null;
+            var text = File.ReadAllText(path).Trim();
+            return text.Length == 0 ? null : text;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not read the owner of surgery scratch {scratch}", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether a rebase state directory survives in that repository. Resolved from the filesystem
+    /// rather than from git so the sweep costs no process launches; a `.git` file is a linked
+    /// worktree and names its real git dir.
+    /// </summary>
+    private static bool HasRebaseState(string repoPath)
+    {
+        try
+        {
+            var dotGit = Path.Combine(repoPath, ".git");
+            string gitDir;
+            if (Directory.Exists(dotGit)) gitDir = dotGit;
+            else if (File.Exists(dotGit))
+            {
+                var line = File.ReadAllLines(dotGit).FirstOrDefault(l => l.StartsWith("gitdir:", StringComparison.Ordinal));
+                if (line is null) return false;
+                var target = line["gitdir:".Length..].Trim();
+                gitDir = Path.IsPathRooted(target) ? target : Path.Combine(repoPath, target);
+            }
+            else return false;
+
+            return Directory.Exists(Path.Combine(gitDir, "rebase-merge")) ||
+                   Directory.Exists(Path.Combine(gitDir, "rebase-apply"));
+        }
+        catch (Exception ex)
+        {
+            // An unreadable or vanished repository has no rebase to continue, so its scratch is
+            // reclaimable; the caller's age check is what keeps a transient error from mattering.
+            Log.Warn($"could not check the rebase state of {repoPath}", ex);
+            return false;
+        }
     }
 }

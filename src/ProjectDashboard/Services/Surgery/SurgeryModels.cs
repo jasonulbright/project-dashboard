@@ -59,9 +59,10 @@ public sealed class RebaseScope
 
 /// <summary>
 /// Outcome of one driven rebase. A failure is data: <see cref="ConflictCommit"/> names the
-/// commit that stopped the replay, and exactly one of <see cref="Aborted"/> (the repository
-/// is back to its pre-operation state) or <see cref="LeftStopped"/> (the repository is mid-rebase
-/// for the terminal) is set whenever the rebase stopped rather than failing to start.
+/// commit that stopped the replay, and exactly one of <see cref="Aborted"/> (refs, index and
+/// tracked content are back to their pre-operation state) or <see cref="LeftStopped"/> (the
+/// repository is mid-rebase for the terminal) is set whenever the rebase stopped rather than
+/// failing to start.
 /// </summary>
 public sealed class RebaseRunResult
 {
@@ -83,12 +84,28 @@ public sealed class RebaseRunResult
     /// <summary>True when the rebase exceeded its timeout, was killed, and then aborted.</summary>
     public bool TimedOut { get; init; }
 
+    /// <summary>
+    /// Untracked, non-ignored paths that appeared during a replay that was then aborted — a hook's
+    /// doing, which `git rebase --abort` does not undo. The tree gate refuses them on the next
+    /// operation, so they are reported rather than left to be discovered there.
+    /// </summary>
+    public IReadOnlyList<string> UntrackedAdded { get; init; } = [];
+
+    /// <summary>
+    /// True when no ref, index entry, or tracked file changed: a refusal made before git ran, or
+    /// a stop that was aborted all the way back. It is the signal that no recovery marker should
+    /// survive the call. <see cref="UntrackedAdded"/> is reported separately because git's abort
+    /// does not remove those.
+    /// </summary>
+    public bool RepositoryUntouched { get; init; }
+
     public string HeadAfter { get; init; } = "";
 
     /// <summary>The todo actually handed to git — the audit trail for what the driver asked for.</summary>
     public IReadOnlyList<string> Todo { get; init; } = [];
 
-    internal static RebaseRunResult Failed(string reason) => new() { Success = false, FailureReason = reason };
+    internal static RebaseRunResult Failed(string reason) =>
+        new() { Success = false, FailureReason = reason, RepositoryUntouched = true };
 }
 
 /// <summary>

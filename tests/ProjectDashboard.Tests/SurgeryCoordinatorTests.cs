@@ -238,12 +238,101 @@ public class SurgeryCoordinatorTests
         Assert.Equal(before, await repo.RefStateAsync());
     }
 
+    [Fact]
+    public async Task InjectStaged_WithTheUsersOwnFixupCommitInRange_FoldsOnlyItsOwn()
+    {
+        // A `fixup!` the user made and has not folded yet is theirs to fold when they choose.
+        // Only the commit this operation creates may be folded; the rest replay as ordinary
+        // commits, whatever their subjects say.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        repo.Write("extra.txt", "extra content\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("commit", "-q", "--no-verify", "-m", "fixup! alpha");
+        repo.Write("gamma.txt", "gamma content\n");
+        await repo.CommitAllAsync("gamma");
+
+        var shas = await repo.RangeShasAsync(5); // oldest first: seed, alpha, beta, fixup! alpha, gamma
+        var target = shas[1];
+        var countBefore = (await repo.ShasAsync()).Count;
+        Assert.Equal(5, countBefore);
+
+        repo.Write("alpha.txt", "alpha content\nthe fix\n");
+        await repo.GitAsync("add", "-A");
+
+        var result = await NewCoordinator().InjectStagedIntoAsync(repo.Path, target);
+
+        Assert.True(result.Success, result.FailureReason);
+        // The user's fixup! is still its own commit, in its own place.
+        Assert.Equal(["seed", "alpha", "beta", "fixup! alpha", "gamma"],
+            (await repo.SubjectsAsync()).AsEnumerable().Reverse());
+        Assert.Equal(countBefore, (await repo.ShasAsync()).Count);
+
+        var after = await repo.RangeShasAsync(5);
+        // The injection landed in alpha, whose message is untouched.
+        Assert.Equal("alpha content\nthe fix\n", await repo.ShowAsync(after[1], "alpha.txt"));
+        Assert.Equal("alpha", await repo.MessageAsync(after[1]));
+        // The user's fixup! still carries its own content, unfolded into anything.
+        Assert.Equal("extra content\n", await repo.ShowAsync(after[3], "extra.txt"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repo.ShowAsync(after[1], "extra.txt"));
+        _output.WriteLine($"injection with a pre-existing fixup! in range: {countBefore} commits before, " +
+                          $"{(await repo.ShasAsync()).Count} after; subjects {string.Join(" -> ", (await repo.SubjectsAsync()).AsEnumerable().Reverse())}");
+    }
+
+    [Fact]
+    public async Task InjectStaged_WithTheUsersOwnSquashCommitInRange_DoesNotRewriteTheTargetsMessage()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        repo.Write("extra.txt", "extra content\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("commit", "-q", "--no-verify", "-m", "squash! alpha\n\nbody the squash would graft on");
+
+        var shas = await repo.RangeShasAsync(4);
+        var target = shas[1];
+        var targetMessage = await repo.MessageAsync(target);
+
+        repo.Write("alpha.txt", "alpha content\nthe fix\n");
+        await repo.GitAsync("add", "-A");
+
+        var result = await NewCoordinator().InjectStagedIntoAsync(repo.Path, target);
+
+        Assert.True(result.Success, result.FailureReason);
+        var after = await repo.RangeShasAsync(4);
+        Assert.Equal(targetMessage, await repo.MessageAsync(after[1]));
+        Assert.DoesNotContain("body the squash would graft on", await repo.MessageAsync(after[1]));
+        Assert.Equal(["seed", "alpha", "beta", "squash! alpha"],
+            (await repo.SubjectsAsync()).AsEnumerable().Reverse());
+    }
+
+    [Fact]
+    public async Task InjectStaged_CalledDirectly_RefusesUnstagedChangesWithoutRecordingAFixup()
+    {
+        // The rule is documented on the method, so it is enforced by the method: a direct call
+        // must not record a fixup holding half the intended change.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha");
+        var shas = await repo.RangeShasAsync(2);
+        repo.Write("alpha.txt", "alpha content\nstaged fix\n");
+        await repo.GitAsync("add", "-A");
+        repo.Write("seed.txt", "seed content\nunstaged noise\n");
+        var before = await repo.FullStateAsync();
+
+        var git = new GitService();
+        var driver = new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var result = await new CommitSurgery(git, driver).InjectStagedIntoAsync(repo.Path, shas[0]);
+
+        Assert.False(result.Success);
+        Assert.Contains("unstaged", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.RepositoryUntouched);
+        Assert.Equal(before, await repo.FullStateAsync());
+        Assert.Equal(2, (await repo.ShasAsync()).Count);
+    }
+
     // ── reset ─────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task Reset_Soft_MovesHeadButKeepsIndexAndWorktree()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var before = await repo.RefStateAsync();
         var shas = await repo.RangeShasAsync(3);
 
         var result = await NewCoordinator().ResetAsync(repo.Path, shas[1], ResetMode.Soft);

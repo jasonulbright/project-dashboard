@@ -61,6 +61,37 @@ public class RebaseDriverTests
         _output.WriteLine("sequence editor applied a prepared todo git never generated; reword completed with a no-op GIT_EDITOR");
     }
 
+    [Theory]
+    // `--empty=stop` is only understood from Git 2.45. `ask` is the same behaviour under the
+    // older name: accepted everywhere, but deprecated loudly enough on a new git that the
+    // warning would become the first line of every rebase failure message.
+    [InlineData("git version 2.53.0.windows.1", "stop")]
+    [InlineData("git version 2.45.0", "stop")]
+    [InlineData("git version 3.0.1", "stop")]
+    [InlineData("git version 2.44.0.windows.1", "ask")]
+    [InlineData("git version 2.39.2", "ask")]
+    [InlineData("", "ask")]
+    [InlineData("not a version line", "ask")]
+    public void EmptyMode_FollowsTheGitVersion(string versionOutput, string expected) =>
+        Assert.Equal(expected, RebaseDriver.EmptyModeFor(versionOutput));
+
+    [Fact]
+    public void RebaseArgs_CarryTheEmptyStopAndNeverAutosquash()
+    {
+        var args = RebaseDriver.BuildRebaseArgs("deadbeef", RebaseDriver.EmptyModeFor("git version 2.53.0.windows.1"));
+
+        Assert.Equal(["rebase", "-i", "--empty=stop", "--onto", "deadbeef", "deadbeef"], args.Skip(args.Count - 6));
+        // `fixup!` subjects are never reinterpreted: the todo says what happens, nothing else.
+        Assert.DoesNotContain("--autosquash", args);
+        Assert.Contains("-c", args);
+        Assert.Contains("rebase.autoSquash=false", args);
+        // An older git gets the spelling it understands, and a range reaching the root replays
+        // with --root instead of an --onto pair.
+        Assert.Contains("--empty=ask", RebaseDriver.BuildRebaseArgs("deadbeef", RebaseDriver.EmptyModeFor("git version 2.39.2")));
+        Assert.Contains("--root", RebaseDriver.BuildRebaseArgs(null, "stop"));
+        _output.WriteLine("rebase args: " + string.Join(" ", args));
+    }
+
     [Fact]
     public async Task LoadScope_RangeContainsAMerge_RefusesRatherThanFlatteningIt()
     {
@@ -262,6 +293,90 @@ public class RebaseDriverTests
         Assert.Equal(ProjectDashboard.Models.RepoActivity.Rebasing, state!.Activity);
 
         await repo.GitAsync("rebase", "--abort");
+    }
+
+    [Fact]
+    public async Task Abort_ReportsTheUntrackedFilesTheReplayLeftBehind()
+    {
+        // `git rebase --abort` restores refs, index and tracked content, but not untracked files
+        // written during the replay. Unreported, they become a dirty tree the next operation
+        // refuses for changes the user never made.
+        using var repo = await SurgeryRepo.CreateAsync("seed");
+        repo.Write("shared.txt", "a\nSHARED-ONE\n");
+        await repo.CommitAllAsync("one");
+        repo.Write("shared.txt", "a\nSHARED-TWO\n");
+        await repo.CommitAllAsync("two");
+        repo.Write("three.txt", "three content\n");
+        await repo.CommitAllAsync("three");
+
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 3); // one, two, three
+        var refsBefore = await repo.RefStateAsync();
+
+        // "three" replays cleanly, the exec writes a file the way a hook would, then "two"
+        // replayed without "one" underneath it conflicts.
+        var todo = new List<string>
+        {
+            $"pick {scope.Commits[2].Sha} {scope.Commits[2].Subject}",
+            "exec echo hook-output > written-by-a-hook.txt",
+            $"pick {scope.Commits[1].Sha} {scope.Commits[1].Subject}",
+            $"pick {scope.Commits[0].Sha} {scope.Commits[0].Subject}"
+        };
+
+        var result = await driver.RunTodoAsync(scope, todo, new Dictionary<string, string>());
+
+        Assert.False(result.Success);
+        Assert.True(result.Aborted);
+        Assert.False(repo.RebaseInProgress);
+        // Refs and tracked content are exactly as before — the scoped guarantee holds.
+        Assert.Equal(refsBefore, await repo.RefStateAsync());
+        Assert.Equal("a\nSHARED-TWO\n", repo.Read("shared.txt"));
+
+        // The untracked leftover is named rather than left to be discovered by the next gate.
+        Assert.True(repo.Exists("written-by-a-hook.txt"));
+        Assert.Contains("written-by-a-hook.txt", result.UntrackedAdded);
+        Assert.Contains("written-by-a-hook.txt", result.FailureReason);
+        _output.WriteLine($"abort with a hook leftover: {result.FailureReason}");
+    }
+
+    [Fact]
+    public async Task Run_SweepsScratchTreesLeftByACrash_ButKeepsTheOneAStoppedRebaseNeeds()
+    {
+        using var stopped = await ConflictingRepoAsync();
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+
+        // A repository genuinely left mid-rebase: its scratch holds the message files the
+        // stopped todo points at, so reclaiming it would break `git rebase --continue`.
+        var stoppedDriver = new RebaseDriver(new GitService(), GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var stoppedScope = await stoppedDriver.LoadScopeAsync(stopped.Path, 2);
+        await stoppedDriver.ReorderAsync(
+            stoppedScope, [stoppedScope.Commits[1].Sha, stoppedScope.Commits[0].Sha], RebaseConflictPolicy.LeaveStopped);
+        Assert.True(stopped.RebaseInProgress);
+
+        var workRoot = Path.Combine(TestEnv.NewDir("surgery-work"), "work");
+        var leaked = NewScratch(workRoot, "rebase-leaked", repo.Path, DateTime.UtcNow.AddDays(-3));
+        var inUse = NewScratch(workRoot, "rebase-in-use", stopped.Path, DateTime.UtcNow.AddDays(-3));
+        var recent = NewScratch(workRoot, "rebase-recent", repo.Path, DateTime.UtcNow);
+
+        var driver = new RebaseDriver(new GitService(), GitGuard.GitExe, workRoot);
+        var scope = await driver.LoadScopeAsync(repo.Path, 2);
+        var result = await driver.ReorderAsync(scope, [scope.Commits[1].Sha, scope.Commits[0].Sha]);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.False(Directory.Exists(leaked), "a scratch whose repository is not mid-rebase was not reclaimed");
+        Assert.True(Directory.Exists(inUse), "the scratch a stopped rebase still points at was reclaimed");
+        Assert.True(Directory.Exists(recent), "a scratch younger than the grace period was reclaimed");
+
+        await stopped.GitAsync("rebase", "--abort");
+    }
+
+    private static string NewScratch(string workRoot, string name, string ownerRepo, DateTime lastWriteUtc)
+    {
+        var dir = Path.Combine(workRoot, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "repo-path.txt"), ownerRepo);
+        Directory.SetLastWriteTimeUtc(dir, lastWriteUtc);
+        return dir;
     }
 
     [Fact]
