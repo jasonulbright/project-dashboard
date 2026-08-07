@@ -90,6 +90,63 @@ public class BackupServiceTests
     }
 
     [Fact]
+    public async Task Restore_ReconciliationTransactionFails_LeavesEveryRefUnchanged()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        // Advance the repo and add a stray branch the backup never saw.
+        repo.Write("file.txt", "two\n");
+        await repo.CommitAllAsync("second");
+        await repo.GitAsync("branch", "stray");
+        var mutated = await repo.RefStateAsync();
+
+        // Poison the snapshot: add a ref pointing at an object that does not exist. The
+        // update-ref --stdin transaction must reject the whole script, so the stray branch is
+        // NOT deleted and main is NOT rewound — all-or-nothing.
+        var snapshot = System.Text.Json.JsonSerializer.Deserialize<RefsSnapshot>(
+            File.ReadAllText(handle.RefsSnapshotPath))!;
+        snapshot.Refs.Add(new RefEntry
+        {
+            Name = "refs/heads/phantom",
+            ObjectId = "0123456789abcdef0123456789abcdef01234567"
+        });
+        File.WriteAllText(handle.RefsSnapshotPath,
+            System.Text.Json.JsonSerializer.Serialize(snapshot,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+        var result = await service.RestoreAsync(handle);
+
+        Assert.False(result.Success);
+        Assert.Contains("reconciliation", result.Message, StringComparison.OrdinalIgnoreCase);
+        // Not one ref moved — the transaction rolled back entirely, and the phantom ref the
+        // failed script named was never created.
+        Assert.Equal(mutated, await repo.RefStateAsync());
+        Assert.DoesNotContain("refs/heads/phantom", await repo.RefStateAsync());
+    }
+
+    [Fact]
+    public async Task Restore_DirtyWorktree_ReportsDiscardedChangeCount()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        // A tracked edit plus a brand-new untracked file: two porcelain lines the reset discards.
+        repo.Write("file.txt", "dirty\n");
+        repo.Write("scratch.txt", "unstaged\n");
+
+        var result = await service.RestoreAsync(handle);
+
+        Assert.True(result.Success, result.Message);
+        Assert.True(result.WorktreeWasDirty);
+        Assert.Equal(2, result.DiscardedChangeCount);
+        // The reset actually ran — the dirty edit is gone.
+        Assert.Equal("one\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "file.txt")));
+    }
+
+    [Fact]
     public async Task Retention_PrunesToConfiguredCount_KeepingNewest()
     {
         using var repo = await RailsRepo.CreateAsync();

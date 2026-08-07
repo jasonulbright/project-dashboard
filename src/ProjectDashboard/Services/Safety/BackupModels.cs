@@ -38,5 +38,14 @@ public sealed class RefsSnapshot
     public List<RefEntry> Refs { get; set; } = [];
 }
 
-/// <summary>Outcome of a restore: never partial — either the refs were reconciled or nothing changed.</summary>
-public sealed record RestoreResult(bool Success, string Message);
+/// <summary>
+/// Outcome of a restore: never partial — either the refs were reconciled or nothing changed.
+/// A restore's working-tree reset discards uncommitted changes; <see cref="WorktreeWasDirty"/>
+/// and <see cref="DiscardedChangeCount"/> report what the reset threw away so a confirm UI can
+/// warn before the caller triggers one.
+/// </summary>
+public sealed record RestoreResult(
+    bool Success,
+    string Message,
+    bool WorktreeWasDirty = false,
+    int DiscardedChangeCount = 0);

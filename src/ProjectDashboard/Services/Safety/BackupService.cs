@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 
 namespace ProjectDashboard.Services.Safety;
@@ -11,7 +12,7 @@ public sealed class BackupException : Exception
 
 /// <summary>
 /// Captures and restores a repository's full object graph and ref layout before any
-/// history-altering operation (R-01). A backup is a `git bundle --all` plus a sidecar
+/// history-altering operation. A backup is a `git bundle --all` plus a sidecar
 /// refs snapshot; a restore verifies the bundle before touching the repo and either
 /// reconciles every ref back to the snapshot or leaves the repo untouched — never a
 /// partial restore. All backups live under AppPaths (never inside a repo), keyed by
@@ -56,6 +57,9 @@ public sealed class BackupService
         // state, and a bundle with no matching snapshot is useless for a targeted restore.
         var snapshot = await CaptureRefsAsync(repoPath, stamp, ct);
 
+        // `git bundle --all` captures every ref plus the top refs/stash entry, but no reflogs
+        // and no deeper stash-stack entries; those older stash states and reflog-only commits
+        // are unreachable in the bundle and are lost on restore.
         var bundle = await _git.RunAsync(repoPath, ["bundle", "create", bundlePath, "--all"], ct, BundleTimeout);
         if (!bundle.Success || !File.Exists(bundlePath))
             throw new BackupException($"git bundle create failed for '{repoPath}': {bundle.FirstError}");
@@ -142,22 +146,29 @@ public sealed class BackupService
         if (!unbundle.Success)
             return new RestoreResult(false, $"Unbundle failed: {unbundle.FirstError}");
 
-        // Reconcile to EXACTLY the snapshot: delete every current ref the snapshot lacks,
-        // then point each snapshot ref at its recorded object.
+        // Reconcile to EXACTLY the snapshot as ONE transaction: delete every current ref the
+        // snapshot lacks, then point each snapshot ref at its recorded object. `git update-ref
+        // --stdin` applies the whole script under a single lock and commits atomically, so a
+        // concurrent ref lock, an IO stall, or a target object that is absent aborts the entire
+        // reconciliation with NOTHING changed — never the partial, mislabeled-atomic restore
+        // this rail exists to prevent. `delete <ref>` removes even the checked-out branch, where
+        // `branch -d` would refuse.
         var desired = snapshot.Refs.ToDictionary(r => r.Name, r => r.ObjectId, StringComparer.Ordinal);
         var current = await ReadCurrentRefsAsync(handle.RepoPath, ct);
+
+        var script = new StringBuilder();
         foreach (var name in current.Keys)
             if (!desired.ContainsKey(name))
-            {
-                var del = await _git.RunAsync(handle.RepoPath, ["update-ref", "-d", name], ct, RefTimeout);
-                if (!del.Success)
-                    return new RestoreResult(false, $"Failed to remove ref {name}: {del.FirstError}");
-            }
+                script.Append("delete ").Append(name).Append('\n');
         foreach (var (name, oid) in desired)
+            script.Append("update ").Append(name).Append(' ').Append(oid).Append('\n');
+
+        if (script.Length > 0)
         {
-            var set = await _git.RunAsync(handle.RepoPath, ["update-ref", name, oid], ct, RefTimeout);
-            if (!set.Success)
-                return new RestoreResult(false, $"Failed to set ref {name}: {set.FirstError}");
+            var reconcile = await RunUpdateRefStdinAsync(handle.RepoPath, script.ToString(), ct);
+            if (!reconcile.Success)
+                return new RestoreResult(false,
+                    $"Ref reconciliation transaction failed — nothing changed: {reconcile.FirstError}");
         }
 
         // Reposition HEAD, then sync the working tree. --no-deref for a detached HEAD
@@ -167,14 +178,27 @@ public sealed class BackupService
         else if (snapshot.HeadObjectId.Length > 0)
             await _git.RunAsync(handle.RepoPath, ["update-ref", "--no-deref", "HEAD", snapshot.HeadObjectId], ct, RefTimeout);
 
+        var wasDirty = false;
+        var discardedCount = 0;
         if (snapshot.HeadObjectId.Length > 0 && !await IsBareAsync(handle.RepoPath, ct))
         {
+            // The reset is an explicit, backup-preceded recovery, but it silently discards any
+            // uncommitted work; count that first so a confirm UI can warn before it happens.
+            var dirty = await _git.RunAsync(handle.RepoPath, ["status", "--porcelain"], ct, RefTimeout);
+            if (dirty.Success)
+            {
+                discardedCount = dirty.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+                wasDirty = discardedCount > 0;
+            }
+
             var reset = await _git.RunAsync(handle.RepoPath, ["reset", "--hard", snapshot.HeadObjectId], ct, BundleTimeout);
             if (!reset.Success)
-                return new RestoreResult(false, $"Refs restored but working-tree reset failed: {reset.FirstError}");
+                return new RestoreResult(false, $"Refs restored but working-tree reset failed: {reset.FirstError}",
+                    wasDirty, discardedCount);
         }
 
-        return new RestoreResult(true, $"Restored {desired.Count} refs from {handle.UtcStamp}.");
+        return new RestoreResult(true, $"Restored {desired.Count} refs from {handle.UtcStamp}.",
+            wasDirty, discardedCount);
     }
 
     /// <summary>Removes a backup's bundle and sidecar (with its .bak). Best-effort; missing files are not an error.</summary>
@@ -248,6 +272,41 @@ public sealed class BackupService
     {
         var result = await _git.RunAsync(repoPath, ["rev-parse", "--is-bare-repository"], ct, RefTimeout);
         return result.Success && result.StdOut.Trim() == "true";
+    }
+
+    // Non-interactive git environment for the one call that bypasses GitService (its stdin
+    // path): never block a windowless app on a credential prompt, never take optional index
+    // locks mid-reconciliation.
+    private static readonly IReadOnlyDictionary<string, string> GitEnvironment = new Dictionary<string, string>
+    {
+        ["GIT_TERMINAL_PROMPT"] = "0",
+        ["GIT_OPTIONAL_LOCKS"] = "0"
+    };
+
+    /// <summary>
+    /// Feeds a reconciliation script to `git update-ref --stdin`, which applies every delete
+    /// and update as one atomic transaction. Goes straight to ProcessRunner because the payload
+    /// is stdin, not arguments.
+    /// </summary>
+    private static Task<ProcessResult> RunUpdateRefStdinAsync(string repoPath, string script, CancellationToken ct)
+        => ProcessRunner.RunWithInputAsync(
+            ResolveGitExe(),
+            ["-c", "core.quotepath=false", "update-ref", "--stdin"],
+            script, repoPath, RefTimeout, GitEnvironment, ct);
+
+    /// <summary>Resolve git: known install dirs first (survives a stale PATH), then PATH.</summary>
+    private static string ResolveGitExe()
+    {
+        string[] known =
+        [
+            Path.Combine(Environment.GetEnvironmentVariable("ProgramW6432") ?? @"C:\Program Files", "Git", "cmd", "git.exe"),
+            Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles") ?? @"C:\Program Files", "Git", "cmd", "git.exe"),
+            Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)") ?? @"C:\Program Files (x86)", "Git", "cmd", "git.exe"),
+            Path.Combine(Environment.GetEnvironmentVariable("LocalAppData") ?? "", "Programs", "Git", "cmd", "git.exe"),
+        ];
+        foreach (var p in known)
+            if (p.Length > 0 && File.Exists(p)) return p;
+        return "git";
     }
 
     private static RefsSnapshot? ReadSnapshot(string path)
