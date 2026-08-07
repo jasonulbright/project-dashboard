@@ -3,7 +3,7 @@ using System.IO;
 namespace ProjectDashboard.Services.Safety;
 
 /// <summary>
-/// App-wide record of repositories under a long, destructive operation (R-08). The
+/// App-wide record of repositories under a long, destructive operation. The
 /// watcher refresh, periodic timer, discovery, and Sync All consult it to skip a repo
 /// that a rewrite is actively touching, so a background read can never collide with an
 /// in-flight swap. One instance is shared as a singleton; all members are thread-safe.

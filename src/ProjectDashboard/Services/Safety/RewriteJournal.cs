@@ -21,7 +21,7 @@ public sealed class RewriteJournalEntry
 }
 
 /// <summary>
-/// Crash-visible marker for a history rewrite (R-06). <see cref="BeginAsync"/> writes
+/// Crash-visible marker for a history rewrite. <see cref="BeginAsync"/> writes
 /// the journal before a swap starts; <see cref="CompleteAsync"/> clears it after
 /// success. A process that dies mid-swap leaves the journal on disk, which
 /// <see cref="ReadPendingAsync"/> finds on the next launch. One entry at a time:

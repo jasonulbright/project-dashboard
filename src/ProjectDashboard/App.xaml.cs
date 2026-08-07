@@ -59,7 +59,7 @@ public partial class App : Application
                 services.AddSingleton<ProjectDiscoveryService>();
                 services.AddSingleton<ProjectWatcherService>();
 
-                // Safety rails (R-01/R-06/R-08): shared singletons for the destructive stages.
+                // Safety rails: shared singletons for the destructive stages.
                 services.AddSingleton<Services.Safety.RepoBusyRegistry>();
                 services.AddSingleton<Services.Safety.RewriteJournal>();
                 services.AddSingleton<Services.Safety.BackupService>();

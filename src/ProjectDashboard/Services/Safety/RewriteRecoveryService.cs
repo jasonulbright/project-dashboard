@@ -3,7 +3,7 @@ using Microsoft.Extensions.Hosting;
 namespace ProjectDashboard.Services.Safety;
 
 /// <summary>
-/// Startup detector for an interrupted history rewrite (R-06 recovery). Registered as
+/// Startup detector for an interrupted history rewrite. Registered as
 /// the FIRST hosted service so its StartAsync runs before ApplicationHostService shows
 /// the window: a pending journal entry must be observed before the UI becomes
 /// interactive, or a periodic refresh could read a repo mid-recovery. It only DETECTS —
