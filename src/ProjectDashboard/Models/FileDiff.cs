@@ -32,6 +32,12 @@ public sealed class FileDiff
         var files = new List<FileDiff>();
         FileDiff? current = null;
         int oldNo = 0, newNo = 0;
+        // ---/+++/index are headers only before the file's first @@. Past it, a
+        // deleted body line "-- x" arrives as "--- x" (marker + content) and an
+        // added "++ x" as "+++ x"; consuming those as headers drops the row and
+        // clobbers OldPath/Path. A Lines.Count gate cannot stand in for this
+        // flag: mode-change diffs add old/new mode rows before ---/+++.
+        var seenHunk = false;
 
         foreach (var raw in diffText.Split('\n'))
         {
@@ -44,6 +50,7 @@ public sealed class FileDiff
                 // Seed Path from the header so a mode-only change (no ---/+++ lines) still names the file.
                 current.Path = PathFromDiffGit(line);
                 oldNo = newNo = 0;
+                seenHunk = false;
                 continue;
             }
             if (line.StartsWith("diff --cc ", StringComparison.Ordinal) ||
@@ -55,6 +62,7 @@ public sealed class FileDiff
                 var sp = line.IndexOf(' ', 8);
                 current.Path = sp > 0 ? line[(sp + 1)..].Trim() : line["diff --cc ".Length..].Trim();
                 oldNo = newNo = 0;
+                seenHunk = false;
                 continue;
             }
             if (current is null) continue;
@@ -97,18 +105,20 @@ public sealed class FileDiff
                 continue;
             }
 
-            if (line.StartsWith("--- ", StringComparison.Ordinal))
+            if (!seenHunk && line.StartsWith("--- ", StringComparison.Ordinal))
             {
                 var p = line[4..];
                 if (p != "/dev/null") current.OldPath = StripPrefix(p);
                 continue;
             }
-            if (line.StartsWith("+++ ", StringComparison.Ordinal))
+            if (!seenHunk && line.StartsWith("+++ ", StringComparison.Ordinal))
             {
                 var p = line[4..];
                 current.Path = p == "/dev/null" ? current.OldPath ?? "" : StripPrefix(p);
                 continue;
             }
+            if (!seenHunk && line.StartsWith("index ", StringComparison.Ordinal))
+                continue;
             if (line.StartsWith("Binary files ", StringComparison.Ordinal) ||
                 line.StartsWith("GIT binary patch", StringComparison.Ordinal))
             {
@@ -121,6 +131,7 @@ public sealed class FileDiff
                 oldNo = at.oldStart;
                 newNo = at.newStart;
                 current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                seenHunk = true;
                 continue;
             }
             if (line.StartsWith("rename from ", StringComparison.Ordinal))

@@ -265,4 +265,118 @@ public class FileDiffTests
     {
         Assert.Empty(FileDiff.ParseUnified(""));
     }
+
+    [Fact]
+    public void DeletedBodyLineStartingWithTwoDashes_StaysARemovedRow()
+    {
+        // Deleting "-- old comment" arrives as "--- old comment": marker plus
+        // content, not a header — the row must render and OldPath must survive.
+        var diffs = FileDiff.ParseUnified(
+            "diff --git a/notes.txt b/notes.txt\n" +
+            "index 1111111..2222222 100644\n" +
+            "--- a/notes.txt\n" +
+            "+++ b/notes.txt\n" +
+            "@@ -1,3 +1,2 @@\n" +
+            " keep\n" +
+            "--- old comment\n" +
+            " tail\n");
+
+        var diff = Assert.Single(diffs);
+        Assert.Equal("notes.txt", diff.Path);
+        Assert.Equal("notes.txt", diff.OldPath);
+
+        Assert.Equal(4, diff.Lines.Count);
+        var removed = diff.Lines[2];
+        Assert.Equal(DiffLineKind.Removed, removed.Kind);
+        Assert.Equal("-- old comment", removed.Text);
+        Assert.Equal("2", removed.OldNumber);
+        Assert.Equal("", removed.NewNumber);
+
+        // The gutter numbering after the swallowed-row candidate stays aligned.
+        var tail = diff.Lines[3];
+        Assert.Equal("3", tail.OldNumber);
+        Assert.Equal("2", tail.NewNumber);
+    }
+
+    [Fact]
+    public void AddedBodyLineStartingWithTwoPluses_StaysAnAddedRow()
+    {
+        var diffs = FileDiff.ParseUnified(
+            "diff --git a/inc.txt b/inc.txt\n" +
+            "index 1111111..2222222 100644\n" +
+            "--- a/inc.txt\n" +
+            "+++ b/inc.txt\n" +
+            "@@ -1,1 +1,2 @@\n" +
+            " keep\n" +
+            "+++ x\n");
+
+        var diff = Assert.Single(diffs);
+        Assert.Equal("inc.txt", diff.Path);
+
+        var added = diff.Lines[2];
+        Assert.Equal(DiffLineKind.Added, added.Kind);
+        Assert.Equal("++ x", added.Text);
+        Assert.Equal("2", added.NewNumber);
+    }
+
+    [Fact]
+    public void ModeChangeWithContent_ParsesHeadersAfterModeRows()
+    {
+        // old/new mode rows land in Lines BEFORE ---/+++ arrive, so header
+        // recognition must key on not-yet-seen-@@, not on Lines being empty.
+        var diffs = FileDiff.ParseUnified(
+            "diff --git a/tool.sh b/tool.sh\n" +
+            "old mode 100644\n" +
+            "new mode 100755\n" +
+            "index 1111111..2222222\n" +
+            "--- a/tool.sh\n" +
+            "+++ b/tool.sh\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new\n");
+
+        var diff = Assert.Single(diffs);
+        Assert.Equal("tool.sh", diff.Path);
+        Assert.Equal("tool.sh", diff.OldPath);
+
+        Assert.Equal(5, diff.Lines.Count);
+        Assert.Equal("old mode 100644", diff.Lines[0].Text);
+        Assert.Equal("new mode 100755", diff.Lines[1].Text);
+        Assert.Equal(DiffLineKind.HunkHeader, diff.Lines[2].Kind);
+        Assert.Equal(DiffLineKind.Removed, diff.Lines[3].Kind);
+        Assert.Equal("1", diff.Lines[3].OldNumber);
+        Assert.Equal(DiffLineKind.Added, diff.Lines[4].Kind);
+        Assert.Equal("1", diff.Lines[4].NewNumber);
+        Assert.DoesNotContain(diff.Lines, l => l.Text.StartsWith("index ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SecondFileAfterAHunk_ParsesItsHeadersAgain()
+    {
+        // seenHunk is per-file: file two's ---/+++ must be headers even though
+        // file one already emitted a hunk.
+        var diffs = FileDiff.ParseUnified(
+            "diff --git a/one.txt b/one.txt\n" +
+            "index 1111111..2222222 100644\n" +
+            "--- a/one.txt\n" +
+            "+++ b/one.txt\n" +
+            "@@ -1 +1 @@\n" +
+            "--- dashes\n" +
+            "+++ pluses\n" +
+            "diff --git a/two.txt b/two.txt\n" +
+            "index 3333333..4444444 100644\n" +
+            "--- a/two.txt\n" +
+            "+++ b/two.txt\n" +
+            "@@ -1 +1 @@\n" +
+            "-a\n" +
+            "+b\n");
+
+        Assert.Equal(2, diffs.Count);
+        Assert.Equal("one.txt", diffs[0].Path);
+        Assert.Equal("-- dashes", diffs[0].Lines[1].Text);
+        Assert.Equal("++ pluses", diffs[0].Lines[2].Text);
+        Assert.Equal("two.txt", diffs[1].Path);
+        Assert.Equal("two.txt", diffs[1].OldPath);
+        Assert.Equal(3, diffs[1].Lines.Count);
+    }
 }
