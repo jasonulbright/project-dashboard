@@ -90,6 +90,23 @@ public class RewriteScrubVerdictTests
         Assert.Contains("7 commit(s)", line.Headline);
     }
 
+    /// <summary>
+    /// The count is carried only by a commit-scoped run, so the fully-clean unscoped message
+    /// and identity rewrites — the normal case — are exactly the ones that report zero.
+    /// </summary>
+    [Fact]
+    public void ACleanBillWithNoCommitCount_DoesNotPrintZeroCommitsChecked()
+    {
+        var line = RewriteScrubVerdict.Describe(
+            Check(0, performed: true, complete: true, withinScopeOnly: false,
+                kind: "message-literal", commitsChecked: 0), []);
+
+        Assert.Equal(ScrubVerdict.VerifiedClean, line.Verdict);
+        Assert.DoesNotContain("0 commit(s)", line.Headline);
+        Assert.Contains("is gone", line.Headline);
+        Assert.Contains("across the rewritten history", line.Headline);
+    }
+
     /// <summary>The dangerous case: an empty hit list from a check that did not cover everything.</summary>
     [Fact]
     public void NoHitsAndIncomplete_ReadsAsNotVerifiedNeverAsClean()

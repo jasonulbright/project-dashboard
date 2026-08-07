@@ -85,9 +85,14 @@ public static class RewriteScrubVerdict
                 "This is not a claim that the repository is clean everywhere.",
                 Join(NoteText(check), CoverageText(check, skips))),
 
+            // The count is carried only by a commit-scoped run; an unscoped message or identity
+            // rewrite verifies the whole history and reports zero, which under a clean label
+            // reads as "nothing was checked" — the opposite of what the check found.
             ScrubVerdict.VerifiedClean => new ScrubVerdictLine(
                 ScrubVerdict.VerifiedClean, CleanLabel,
-                $"{kind}: “{needle}” is gone — verified across {check.CommitsChecked} commit(s).",
+                check.CommitsChecked > 0
+                    ? $"{kind}: “{needle}” is gone — verified across {check.CommitsChecked} commit(s)."
+                    : $"{kind}: “{needle}” is gone — verified across the rewritten history.",
                 NoteText(check)),
 
             _ => new ScrubVerdictLine(
