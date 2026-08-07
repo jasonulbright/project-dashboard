@@ -406,7 +406,10 @@ public partial class ProjectDetailPage
                         var imgPath = Path.IsPathRooted(imgSrc) ? imgSrc : Path.Combine(basePath, imgSrc);
                         if (File.Exists(imgPath))
                         {
-                            using var data = new MemoryStream(File.ReadAllBytes(imgPath));
+                            // Streamed, not read into a byte array first: the pixel budget
+                            // is the bound on the decode, and nothing should have to hold a
+                            // whole file in memory to find out the source is too large.
+                            using var data = File.OpenRead(imgPath);
                             var bitmap = DecodeBounded(data);
                             doc.Blocks.Add(bitmap is null ? ImageUnavailable(alt) : ImageBlock(bitmap));
                             rendered = true;

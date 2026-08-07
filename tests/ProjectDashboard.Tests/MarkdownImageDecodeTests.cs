@@ -21,7 +21,7 @@ public class MarkdownImageDecodeTests
     public void SourceUnderTheCap_IsNotResizedAndIsNotUpscaled(int width, int height)
     {
         using var png = Png(width, height);
-        var decoded = ProjectDashboard.Views.Pages.ProjectDetailPage.DecodeBounded(png);
+        var decoded = ProjectDetailPage.DecodeBounded(png);
 
         Assert.NotNull(decoded);
         Assert.Equal(width, decoded.PixelWidth);
