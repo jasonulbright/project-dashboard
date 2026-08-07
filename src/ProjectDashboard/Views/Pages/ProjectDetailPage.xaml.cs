@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.IO;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -376,63 +378,41 @@ public partial class ProjectDetailPage
             if (imgMatch.Success)
             {
                 var imgSrc = imgMatch.Groups[2].Value;
+                var alt = imgMatch.Groups[1].Value;
                 if (!allowImages)
                 {
                     // A fetch here would hand the body's author the reader's IP and a
                     // read receipt for opening the thread, and any decode is attacker-
                     // sized; third-party bodies get the alt text and no load at all.
-                    var alt = imgMatch.Groups[1].Value;
-                    doc.Blocks.Add(new Paragraph(
-                        new Run(alt.Length > 0 ? $"[image not loaded: {alt}]" : "[image not loaded]")
-                        { Foreground = Brushes.Gray, FontStyle = FontStyles.Italic }));
+                    doc.Blocks.Add(ImageUnavailable(alt));
                     currentParagraph = null;
                     continue;
                 }
                 var rendered = false;
                 try
                 {
-                    BitmapImage? bitmap = null;
                     if (imgSrc.StartsWith("http://") || imgSrc.StartsWith("https://"))
                     {
-                        bitmap = new BitmapImage();
-                        bitmap.BeginInit();
-                        bitmap.UriSource = new Uri(imgSrc, UriKind.Absolute);
-                        bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                        // Both axes are capped: a width-only cap lets a 1×100000 source
-                        // decode to an unbounded height. Aspect ratio is not preserved.
-                        bitmap.DecodePixelWidth = 800;
-                        bitmap.DecodePixelHeight = 800;
-                        bitmap.EndInit();
+                        // The block goes in now and the bytes arrive later: a badge row
+                        // would otherwise stall the render thread one round trip per image.
+                        var block = ImageBlock(null);
+                        doc.Blocks.Add(block);
+                        _ = FillRemoteImageAsync(doc, block, imgSrc, alt);
+                        rendered = true;
                     }
                     else
                     {
                         var imgPath = Path.IsPathRooted(imgSrc) ? imgSrc : Path.Combine(basePath, imgSrc);
                         if (File.Exists(imgPath))
                         {
-                            bitmap = new BitmapImage();
-                            bitmap.BeginInit();
-                            bitmap.UriSource = new Uri(imgPath, UriKind.Absolute);
-                            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                            bitmap.DecodePixelWidth = 800;
-                            bitmap.EndInit();
-                            if (bitmap.CanFreeze) bitmap.Freeze();
+                            using var data = new MemoryStream(File.ReadAllBytes(imgPath));
+                            var bitmap = DecodeBounded(data);
+                            doc.Blocks.Add(bitmap is null ? ImageUnavailable(alt) : ImageBlock(bitmap));
+                            rendered = true;
                         }
                     }
 
-                    if (bitmap is not null)
-                    {
-                        if (bitmap.CanFreeze) bitmap.Freeze();
-                        var img = new System.Windows.Controls.Image
-                        {
-                            Source = bitmap,
-                            MaxWidth = 800,
-                            Stretch = Stretch.Uniform,
-                            Margin = new Thickness(0, 8, 0, 8)
-                        };
-                        doc.Blocks.Add(new BlockUIContainer(img));
-                        currentParagraph = null;
-                        rendered = true;
-                    }
+                    if (rendered) currentParagraph = null;
                 }
                 catch { }
                 if (rendered) continue;
@@ -562,6 +542,170 @@ public partial class ProjectDetailPage
             };
             doc.Blocks.Add(p);
         }
+    }
+
+    // ── Markdown images ─────────────────────────────────────────────────────────
+
+    /// <summary>Longest decoded edge, in pixels. The shorter edge follows the source ratio.</summary>
+    private const int MaxImageEdge = 800;
+
+    /// <summary>
+    /// Source pixel count refused outright. Decode allocates four bytes per source pixel
+    /// before any downscale, so a declared 40000×40000 must never reach the decoder.
+    /// </summary>
+    private const long MaxImagePixels = 50_000_000;
+
+    /// <summary>Bytes read from a remote image before the fetch is abandoned.</summary>
+    private const long MaxImageBytes = 8L * 1024 * 1024;
+
+    /// <summary>Remote images kept per session, and the count at which the set is dropped.</summary>
+    private const int MaxCachedRemoteImages = 64;
+
+    private static readonly HttpClient ImageClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+
+    /// <summary>
+    /// Decoded remote images by URL. A theme flip re-renders every open document, so
+    /// without this each flip re-fetches every badge in the README. Frozen bitmaps are
+    /// shared across documents; the whole set is dropped at the cap rather than evicted
+    /// entry by entry, which costs one refetch.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, BitmapImage> RemoteImages = new();
+
+    /// <summary>The alt-text line shown wherever an image is refused or fails to decode.</summary>
+    private static Paragraph ImageUnavailable(string alt) =>
+        new(new Run(alt.Length > 0 ? $"[image not loaded: {alt}]" : "[image not loaded]")
+        { Foreground = Brushes.Gray, FontStyle = FontStyles.Italic });
+
+    /// <summary>
+    /// Host block for a rendered image. DownOnly keeps a source smaller than the page at
+    /// its natural size — Uniform on its own stretches a 200×20 badge across the width.
+    /// </summary>
+    private static BlockUIContainer ImageBlock(ImageSource? source) =>
+        new(new System.Windows.Controls.Image
+        {
+            Source = source,
+            MaxWidth = MaxImageEdge,
+            Stretch = Stretch.Uniform,
+            StretchDirection = StretchDirection.DownOnly,
+            Margin = new Thickness(0, 8, 0, 8)
+        });
+
+    /// <summary>
+    /// Decodes image bytes with the LONGER edge capped and the source ratio preserved.
+    /// Capping both axes squares the image and decodes ~160× the pixels of an 800-wide
+    /// badge row; capping width alone lets a 1×2000 source decode to 800×1600000, which
+    /// throws or attempts a multi-gigabyte allocation. Returns null on anything the
+    /// caller must render as alt text instead.
+    /// </summary>
+    internal static BitmapImage? DecodeBounded(Stream data)
+    {
+        try
+        {
+            data.Position = 0;
+            var probe = BitmapFrame.Create(data, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            int w = probe.PixelWidth, h = probe.PixelHeight;
+            if (w <= 0 || h <= 0 || (long)w * h > MaxImagePixels) return null;
+
+            data.Position = 0;
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.StreamSource = data;
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            // Only the longer edge is set: WPF derives the other from the source ratio.
+            // Setting both makes it ignore the ratio, and a small source is not upscaled.
+            if (w >= h)
+            {
+                if (w > MaxImageEdge) bitmap.DecodePixelWidth = MaxImageEdge;
+            }
+            else if (h > MaxImageEdge)
+            {
+                bitmap.DecodePixelHeight = MaxImageEdge;
+            }
+            bitmap.EndInit();
+            if (bitmap.CanFreeze) bitmap.Freeze();
+            return bitmap;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Fills a README/CHANGELOG image block from the network. A failed fetch, an
+    /// oversized body, or an out-of-bounds decode swaps the block for the alt-text line
+    /// instead of leaving a gap. Runs only where images are allowed — issue and pull
+    /// request bodies never reach it.
+    /// </summary>
+    private static async Task FillRemoteImageAsync(FlowDocument doc, BlockUIContainer block, string url, string alt)
+    {
+        if (RemoteImages.TryGetValue(url, out var cached))
+        {
+            // Before the first await, so a cached badge is present on the first layout.
+            ApplyRemoteImage(doc, block, cached, alt);
+            return;
+        }
+
+        BitmapImage? bitmap = null;
+        try
+        {
+            using var data = await FetchBoundedAsync(url).ConfigureAwait(false);
+            if (data is not null) bitmap = DecodeBounded(data);
+        }
+        catch { }
+
+        if (bitmap is not null)
+        {
+            if (RemoteImages.Count >= MaxCachedRemoteImages) RemoteImages.Clear();
+            RemoteImages[url] = bitmap;
+        }
+
+        try
+        {
+            await doc.Dispatcher.InvokeAsync(() => ApplyRemoteImage(doc, block, bitmap, alt));
+        }
+        catch { }
+    }
+
+    private static void ApplyRemoteImage(FlowDocument doc, BlockUIContainer block, BitmapImage? bitmap, string alt)
+    {
+        if (bitmap is not null && block.Child is System.Windows.Controls.Image image)
+        {
+            image.Source = bitmap;
+            return;
+        }
+        // The document may have been re-rendered while the fetch was in flight.
+        if (!doc.Blocks.Contains(block)) return;
+        doc.Blocks.InsertAfter(block, ImageUnavailable(alt));
+        doc.Blocks.Remove(block);
+    }
+
+    /// <summary>
+    /// Reads a remote image into memory under a hard byte cap. A declared Content-Length
+    /// is checked first and the running total is checked again per chunk, because a
+    /// server can declare one length and send another.
+    /// </summary>
+    private static async Task<MemoryStream?> FetchBoundedAsync(string url)
+    {
+        using var response = await ImageClient
+            .GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) return null;
+        if (response.Content.Headers.ContentLength > MaxImageBytes) return null;
+
+        using var body = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await body.ReadAsync(chunk).ConfigureAwait(false)) > 0)
+        {
+            if (buffer.Length + read > MaxImageBytes)
+            {
+                buffer.Dispose();
+                return null;
+            }
+            buffer.Write(chunk, 0, read);
+        }
+        return buffer;
     }
 
     /// <summary>Theme-correct text brush at render time (hardcoded light gray was invisible in Light theme).</summary>
