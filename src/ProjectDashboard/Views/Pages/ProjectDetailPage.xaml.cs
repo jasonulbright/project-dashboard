@@ -877,4 +877,15 @@ public partial class ProjectDetailPage
         if (lastIndex < text.Length)
             inlines.Add(new Run(text[lastIndex..]));
     }
+
+    /// <summary>
+    /// Selects the commit under a right-click before its context menu opens. Every surgery
+    /// command acts on the selection, so without this the menu could name one commit and
+    /// operate on another.
+    /// </summary>
+    private void OnCommitListRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBox list || e.OriginalSource is not DependencyObject source) return;
+        if (ItemsControl.ContainerFromElement(list, source) is ListBoxItem item) item.IsSelected = true;
+    }
 }

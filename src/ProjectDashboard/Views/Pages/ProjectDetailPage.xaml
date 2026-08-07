@@ -590,12 +590,65 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="Commits" Style="{StaticResource PaneHeader}" />
                             <ListBox Grid.Row="1" ItemsSource="{Binding Commits}"
                                      SelectedItem="{Binding SelectedCommit}"
                                      Background="Transparent" BorderThickness="0"
+                                     PreviewMouseRightButtonDown="OnCommitListRightButtonDown"
                                      AutomationProperties.Name="Commit history">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu ToolTipService.ShowOnDisabled="True"
+                                                 AutomationProperties.Name="Commit actions">
+                                        <MenuItem Header="Reword…"
+                                                  Command="{Binding RewordSelectedCommitCommand}"
+                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  AutomationProperties.Name="Reword this commit" />
+                                        <MenuItem Header="Squash into previous…"
+                                                  Command="{Binding SquashSelectedIntoPreviousCommand}"
+                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  AutomationProperties.Name="Squash this commit into the previous one" />
+                                        <MenuItem Header="Drop…"
+                                                  Command="{Binding DropSelectedCommitCommand}"
+                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  AutomationProperties.Name="Drop this commit" />
+                                        <MenuItem Header="Amend staged changes into this commit…"
+                                                  Command="{Binding AmendStagedIntoSelectedCommitCommand}"
+                                                  ToolTip="{Binding AmendIntoCommitBlockedReason}"
+                                                  AutomationProperties.Name="Fold the staged changes into this commit" />
+                                        <Separator />
+                                        <MenuItem Header="Reset to here"
+                                                  AutomationProperties.Name="Reset this branch to this commit">
+                                            <MenuItem Header="Soft — keep the changes staged"
+                                                      Command="{Binding ResetSoftToSelectedCommitCommand}"
+                                                      ToolTip="{Binding ResetBlockedReason}"
+                                                      AutomationProperties.Name="Soft reset to this commit" />
+                                            <MenuItem Header="Mixed — keep the changes unstaged"
+                                                      Command="{Binding ResetMixedToSelectedCommitCommand}"
+                                                      ToolTip="{Binding ResetBlockedReason}"
+                                                      AutomationProperties.Name="Mixed reset to this commit" />
+                                            <MenuItem Header="Hard — discard the changes"
+                                                      Command="{Binding ResetHardToSelectedCommitCommand}"
+                                                      ToolTip="{Binding SurgeryBlockedReason}"
+                                                      AutomationProperties.Name="Hard reset to this commit" />
+                                        </MenuItem>
+                                        <Separator />
+                                        <MenuItem Header="Revert…"
+                                                  Command="{Binding RevertSelectedCommitCommand}"
+                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  AutomationProperties.Name="Revert this commit" />
+                                        <MenuItem Header="Cherry-pick onto current branch…"
+                                                  Command="{Binding CherryPickSelectedCommitCommand}"
+                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  AutomationProperties.Name="Cherry-pick this commit onto the current branch" />
+                                        <Separator />
+                                        <MenuItem Header="Plan a reorder from here…"
+                                                  Command="{Binding PlanHistoryEditCommand}"
+                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  AutomationProperties.Name="Plan a reorder, drop, or squash over this range" />
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:GitCommit}">
                                         <DockPanel>
@@ -614,6 +667,51 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
+
+                            <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                <ui:Button Content="Plan a reorder from the selected commit…" FontSize="11" Padding="8,3"
+                                           HorizontalAlignment="Left" Margin="0,0,0,6"
+                                           Command="{Binding PlanHistoryEditCommand}"
+                                           ToolTip="{Binding SurgeryBlockedReason}"
+                                           AutomationProperties.Name="Plan a reorder, drop, or squash over this range" />
+                                <TextBlock Text="{Binding SurgeryStatusText}" FontSize="11" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           AutomationProperties.Name="History edit status" />
+                                <TextBlock Text="{Binding SurgeryFailureText}" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                           AutomationProperties.Name="History edit failure detail">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SurgeryFailureText}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ui:Button Content="Retry and stop at the conflict for the terminal" FontSize="11" Padding="8,3"
+                                           HorizontalAlignment="Left" Margin="0,6,0,0"
+                                           Command="{Binding RetrySurgeryLeavingItStoppedCommand}"
+                                           Visibility="{Binding SurgeryLeaveStoppedOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           AutomationProperties.Name="Retry, leaving the rebase stopped at the conflict" />
+                                <ui:Button Content="Stash the uncommitted changes" FontSize="11" Padding="8,3"
+                                           HorizontalAlignment="Left" Margin="0,6,0,0"
+                                           Command="{Binding StashBeforeSurgeryCommand}"
+                                           Visibility="{Binding SurgeryStashOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           AutomationProperties.Name="Stash the uncommitted changes blocking this edit" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
+                                            Visibility="{Binding SurgeryUndoVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <ui:Button Content="{Binding SurgeryUndoLabel}" FontSize="11" Padding="10,3"
+                                               Appearance="Caution" Margin="0,0,6,0"
+                                               Command="{Binding UndoLastSurgeryCommand}"
+                                               AutomationProperties.Name="Restore the backup taken before the last history edit" />
+                                    <ui:Button Content="Dismiss" FontSize="11" Padding="8,3"
+                                               Command="{Binding DismissSurgeryUndoCommand}"
+                                               AutomationProperties.Name="Hide the undo offer" />
+                                </StackPanel>
+                            </StackPanel>
                         </Grid>
                     </Border>
 
