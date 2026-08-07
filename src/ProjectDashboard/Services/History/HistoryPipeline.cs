@@ -78,6 +78,10 @@ public sealed class HistoryPipeline
 
     private static readonly string[] FastExportArgs =
     [
+        // Global flag, before the subcommand: without it fast-export follows
+        // refs/replace/* and substitutes replacement objects into the walk, so the
+        // import reproduces the replacement history instead of the original commits.
+        "--no-replace-objects",
         "fast-export", "--all", "--show-original-ids", "--reencode=yes", "--mark-tags",
         "--signed-tags=strip", "--tag-of-filtered-object=rewrite", "--reference-excluded-parents"
     ];

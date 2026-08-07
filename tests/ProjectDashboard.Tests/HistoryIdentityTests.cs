@@ -205,6 +205,30 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task ReplacedCommitExportsOriginalHistoryAndReplaceRef()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("first");
+        f.Write("a.txt", "b\n");
+        f.CommitAll("second");
+
+        // A replacement for the root commit: same tree, different message. With the
+        // replace ref active, a plain fast-export walk substitutes it into main's
+        // history, so every descendant commit id changes on import.
+        var original = f.Git("rev-parse", "HEAD~1").Trim();
+        var tree = f.Git("rev-parse", "HEAD~1^{tree}").Trim();
+        var replacement = f.GitWithStdin(Encoding.ASCII.GetBytes("replacement first\n"), "commit-tree", tree).Trim();
+        f.Git("replace", original, replacement);
+        Assert.Contains(original, f.Git("replace", "-l"));
+
+        var (_, verify) = await HistoryTestSupport.RoundTripAsync(f);
+
+        Assert.Contains(verify.SourceRefLines, l => l.StartsWith($"refs/replace/{original} "));
+        Assert.Contains(verify.TargetRefLines, l => l.StartsWith($"refs/replace/{original} "));
+    }
+
+    [Fact]
     public async Task ThousandCommitSyntheticHistory()
     {
         using var f = new FixtureRepo(bareSource: true);
