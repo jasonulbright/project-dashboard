@@ -31,12 +31,17 @@ public sealed class HistoryRewriteRequest
 /// <summary>
 /// Content rewrite over full history: export, parse, transform every blob (all-files
 /// scope), import into a fresh bare target, then verify (fsck --strict, plus scrub greps
-/// for each op's needle across target tips and rewritten commits) and report. Changed
-/// payloads are held in memory until import, so peak memory is the sum of changed payload
-/// bytes plus one payload in flight; unchanged payloads stream from the spool untouched.
+/// for each op's needle across the full rewritten commit set, byte-scanning skipped blobs
+/// and scanning paths) and report. Changed payloads are held in memory until import, so
+/// peak memory is the sum of changed payload bytes plus one payload in flight; a
+/// configurable ceiling refuses the run before that sum can exhaust memory. Unchanged
+/// payloads stream from the spool untouched.
 /// </summary>
 public sealed class HistoryRewriter
 {
+    /// <summary>Default ceiling on the summed size of changed payloads held in memory before import.</summary>
+    public const long DefaultChangedPayloadCeiling = 1L * 1024 * 1024 * 1024;
+
     /// <summary>Shas per git invocation, kept far under the 32 KiB Windows command-line ceiling.</summary>
     private const int ShaChunk = 200;
 
@@ -53,11 +58,16 @@ public sealed class HistoryRewriter
 
     private readonly string _gitExe;
     private readonly long _regexPayloadLimit;
+    private readonly long _changedPayloadCeiling;
 
-    public HistoryRewriter(string? gitExecutable = null, long regexPayloadLimit = BlobTransformer.DefaultRegexPayloadLimit)
+    public HistoryRewriter(
+        string? gitExecutable = null,
+        long regexPayloadLimit = BlobTransformer.DefaultRegexPayloadLimit,
+        long changedPayloadCeiling = DefaultChangedPayloadCeiling)
     {
         _gitExe = gitExecutable ?? HistoryPipeline.ResolveGitExecutable();
         _regexPayloadLimit = regexPayloadLimit;
+        _changedPayloadCeiling = changedPayloadCeiling;
     }
 
     public async Task<RewriteReport> RunAsync(HistoryRewriteRequest request, CancellationToken ct = default)
@@ -80,7 +90,7 @@ public sealed class HistoryRewriter
             GitExecutable = request.GitExecutable,
             TransformAsync = (parsed, token) =>
             {
-                TransformBlobs(parsed, transformer, literalOps, tally, token);
+                TransformBlobs(parsed, transformer, literalOps, _changedPayloadCeiling, tally, token);
                 return Task.CompletedTask;
             }
         }, ct);
@@ -140,11 +150,12 @@ public sealed class HistoryRewriter
     /// </summary>
     private static void TransformBlobs(
         ParsedExport parsed, BlobTransformer transformer, IReadOnlyList<LiteralReplace> literalOps,
-        TransformTally tally, CancellationToken ct)
+        long changedPayloadCeiling, TransformTally tally, CancellationToken ct)
     {
         using var spool = new FileStream(
             parsed.SpoolPath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan);
 
+        long changedBytes = 0;
         foreach (var record in parsed.Records)
         {
             ct.ThrowIfCancellationRequested();
@@ -181,6 +192,13 @@ public sealed class HistoryRewriter
                             blob.Data.InlineBytes = outcome.Bytes;
                             tally.BytesDelta += outcome.Bytes!.LongLength - slice.Length;
                             tally.BlobsChanged++;
+                            // Changed payloads stay resident until import; refuse before
+                            // their running sum can exhaust memory.
+                            changedBytes += outcome.Bytes.LongLength;
+                            if (changedBytes > changedPayloadCeiling)
+                                throw new HistoryPipelineException(
+                                    "transform",
+                                    $"changed payloads reached {changedBytes} bytes, past the {changedPayloadCeiling}-byte ceiling — rewrite refused before exhausting memory");
                             break;
                     }
                     break;

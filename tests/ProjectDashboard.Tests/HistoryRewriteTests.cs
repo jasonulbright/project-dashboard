@@ -578,6 +578,35 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task ChangedPayloadCeilingTripsBeforeMemoryExhaustion()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", $"{Needle}\n");
+        f.CommitAll("v1");
+        f.Write("a.txt", $"{Needle} and {Needle}\n");
+        f.CommitAll("v2");
+
+        // A 16-byte ceiling: the first scrubbed payload alone (the redacted replacement)
+        // is larger, so the run refuses in the transform phase before import.
+        var rewriter = new HistoryRewriter(GitGuard.GitExe, changedPayloadCeiling: 16);
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => rewriter.RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = LiteralScrub(),
+            GitExecutable = GitGuard.GitExe
+        }));
+
+        Assert.Equal("transform", ex.Phase);
+        Assert.Contains("ceiling", ex.Message);
+        // The refusal precedes import: no target was created.
+        Assert.False(Directory.Exists(f.TargetPath));
+    }
+
+    [Fact]
     public async Task EmptyReplacementDeletesNeedleAcrossHistory()
     {
         using var f = Fixture();
