@@ -1,6 +1,47 @@
+using ProjectDashboard.Models;
 using ProjectDashboard.Views.Windows;
+using Wpf.Ui.Controls;
 
 namespace ProjectDashboard.Tests;
+
+/// <summary>
+/// Precedence of the project status glyph. A repo can be dirty AND remoteless, and
+/// ordering the two the wrong way hides the state the reader can act on.
+/// </summary>
+public class ProjectStatusGlyphTests
+{
+    [Fact]
+    public void DirtyWithNoRemote_ShowsTheDirtyGlyph()
+    {
+        var glyph = MainWindow.StatusGlyph(new GitStatus { IsDirty = true, RemoteUrl = "" });
+
+        Assert.Equal(SymbolRegular.Edit24, glyph);
+    }
+
+    [Fact]
+    public void CleanWithNoRemote_StillReportsTheMissingRemote()
+    {
+        var glyph = MainWindow.StatusGlyph(new GitStatus { IsDirty = false, RemoteUrl = "" });
+
+        Assert.Equal(SymbolRegular.CloudOff24, glyph);
+    }
+
+    [Fact]
+    public void DirtyWithARemote_ShowsTheDirtyGlyph()
+    {
+        var glyph = MainWindow.StatusGlyph(new GitStatus { IsDirty = true, RemoteUrl = "https://example.test/r.git" });
+
+        Assert.Equal(SymbolRegular.Edit24, glyph);
+    }
+
+    [Fact]
+    public void CleanWithARemote_ShowsSynced()
+    {
+        var glyph = MainWindow.StatusGlyph(new GitStatus { RemoteUrl = "https://example.test/r.git" });
+
+        Assert.Equal(SymbolRegular.CheckmarkCircle24, glyph);
+    }
+}
 
 /// <summary>
 /// Pure-geometry checks for the saved-position clamp. The virtual screen is

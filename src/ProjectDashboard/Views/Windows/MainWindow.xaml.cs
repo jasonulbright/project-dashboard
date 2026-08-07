@@ -449,12 +449,7 @@ public partial class MainWindow : INavigationWindow
             }
 
             navItem.Content = project.DisplayName;
-            // Status glyph matches the card language (shape only — color in the nav is reserved
-            // for selection): cloud-off (no remote) / edit (dirty) / check (synced).
-            navItem.Icon = new SymbolIcon(
-                string.IsNullOrEmpty(project.GitStatus.RemoteUrl) ? SymbolRegular.CloudOff24
-                : project.GitStatus.IsDirty ? SymbolRegular.Edit24
-                : SymbolRegular.CheckmarkCircle24);
+            navItem.Icon = new SymbolIcon(StatusGlyph(project.GitStatus));
             navItem.Tag = project;
 
             projectsParent.MenuItems.Add(navItem);
@@ -468,6 +463,16 @@ public partial class MainWindow : INavigationWindow
         // Hidden / Private / Public / Dashboard are handled in OnNavigationSelectionChanged —
         // wiring them here would re-add a handler on every sidebar refresh (a leak).
     }
+
+    /// <summary>
+    /// Sidebar status glyph, in the card's shape language (shape only — color in the nav
+    /// is reserved for selection). Uncommitted work outranks a missing remote: the dirty
+    /// state is the one the reader can act on, and a repo can be both.
+    /// </summary>
+    public static SymbolRegular StatusGlyph(Models.GitStatus status) =>
+        status.IsDirty ? SymbolRegular.Edit24
+        : string.IsNullOrEmpty(status.RemoteUrl) ? SymbolRegular.CloudOff24
+        : SymbolRegular.CheckmarkCircle24;
 
     /// <summary>
     /// Wire the static top-level items via Click. Click fires reliably; SelectionChanged does NOT

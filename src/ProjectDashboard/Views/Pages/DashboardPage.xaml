@@ -684,14 +684,16 @@
                                                 <Style TargetType="ui:SymbolIcon">
                                                     <Setter Property="Symbol" Value="CheckmarkCircle24" />
                                                     <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                    <!-- Later triggers win: uncommitted work is the actionable
+                                                         state and must not be masked by a missing remote. -->
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
-                                                            <Setter Property="Symbol" Value="Edit24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
-                                                        </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
                                                             <Setter Property="Symbol" Value="CloudOff24" />
                                                             <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
+                                                            <Setter Property="Symbol" Value="Edit24" />
+                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.NeedsAttention}" Value="True">
                                                             <Setter Property="Symbol" Value="Warning24" />
@@ -721,14 +723,24 @@
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="Synced" />
+                                                    <!-- Later triggers win. A dirty repo with no remote reports
+                                                         both; "No remote" alone hid the uncommitted count. -->
                                                     <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
+                                                            <Setter Property="Text" Value="No remote" />
+                                                        </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
                                                             <Setter Property="Text"
                                                                     Value="{Binding GitStatus.TotalChanges, StringFormat='{}{0} uncommitted'}" />
                                                         </DataTrigger>
-                                                        <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
-                                                            <Setter Property="Text" Value="No remote" />
-                                                        </DataTrigger>
+                                                        <MultiDataTrigger>
+                                                            <MultiDataTrigger.Conditions>
+                                                                <Condition Binding="{Binding GitStatus.IsDirty}" Value="True" />
+                                                                <Condition Binding="{Binding GitStatus.RemoteUrl}" Value="" />
+                                                            </MultiDataTrigger.Conditions>
+                                                            <Setter Property="Text"
+                                                                    Value="{Binding GitStatus.TotalChanges, StringFormat='{}{0} uncommitted · no remote'}" />
+                                                        </MultiDataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.NeedsAttention}" Value="True">
                                                             <Setter Property="Text" Value="{Binding GitStatus.AttentionLabel}" />
                                                             <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
