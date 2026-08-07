@@ -17,16 +17,14 @@ public class SettingsService
 
     public AppSettings Load()
     {
-        if (!File.Exists(SettingsPath))
-            return new AppSettings();
-
         try
         {
-            var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            // Corrupt-file handling (quarantine + .bak recovery) lives in DurableJsonFile.Read.
+            return DurableJsonFile.Read<AppSettings>(SettingsPath, JsonOptions) ?? new AppSettings();
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warn($"Failed to read settings at {SettingsPath} — using defaults", ex);
             return new AppSettings();
         }
     }
@@ -34,7 +32,6 @@ public class SettingsService
     public void Save(AppSettings settings)
     {
         Directory.CreateDirectory(SettingsDir);
-        var json = JsonSerializer.Serialize(settings, JsonOptions);
-        File.WriteAllText(SettingsPath, json);
+        DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
     }
 }
