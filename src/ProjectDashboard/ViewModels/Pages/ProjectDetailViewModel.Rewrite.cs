@@ -551,6 +551,9 @@ public partial class ProjectDetailViewModel
 
             if (outcome.Report is null)
             {
+                // A re-run can be refused with the inputs untouched, so an earlier run's report
+                // and the Execute it armed can outlive the refusal that contradicts them.
+                InvalidateRewritePreview();
                 RewriteErrorText = RewriteScrubVerdict.DescribeRefusal(outcome.FailureReason);
                 RewriteStatusText = "Dry run refused — nothing was changed.";
                 return;
@@ -899,6 +902,9 @@ public partial class ProjectDetailViewModel
             Log.Warn($"{label} failed for {RepoPath}", ex);
             if (IsCurrent(gen))
             {
+                // Where the throw left the step is unknown, so nothing derived from a report
+                // may stay on screen and no Execute may stay armed behind the failure.
+                InvalidateRewritePreview();
                 RewriteErrorText = RewriteScrubVerdict.DescribeRefusal(ex.Message);
                 RewriteStatusText = $"{label} failed.";
             }

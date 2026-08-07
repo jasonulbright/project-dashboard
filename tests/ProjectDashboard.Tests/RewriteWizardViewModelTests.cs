@@ -26,6 +26,7 @@ public class RewriteWizardViewModelTests
         public int UndoCount { get; private set; }
 
         public RewritePreviewOutcome PreviewResult { get; set; } = new(NewReport(), null);
+        public Exception? PreviewThrows { get; set; }
         public RewriteExecutionResult ExecuteResult { get; set; } = new() { Success = true, Report = NewReport() };
         public RestoreResult RestoreResult { get; set; } = new(true, "restored 3 refs");
         public bool CanUndo { get; set; }
@@ -35,6 +36,7 @@ public class RewriteWizardViewModelTests
         {
             LastRequest = request;
             PreviewCount++;
+            if (PreviewThrows is { } ex) throw ex;
             return Task.FromResult(PreviewResult);
         }
 
@@ -185,6 +187,64 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.ExecuteRewriteCommand.CanExecute(null));
         Assert.True(vm.RewriteStepIsPreview);
         Assert.Empty(vm.RewriteFacts);
+    }
+
+    /// <summary>
+    /// A re-run can be refused with the inputs untouched — the working tree goes dirty, another
+    /// operation takes the repository lock. The refusal contradicts the report beside it, so
+    /// the report has to go, and with it the armed Execute the held dry run was standing for.
+    /// </summary>
+    [Fact]
+    public async Task RefusedRerun_ClearsTheContradictedReportAndDisarmsExecute()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-refused-rerun");
+        using var _ = repo;
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        Assert.True(vm.ExecuteRewriteCommand.CanExecute(null));
+
+        session.PreviewResult = new RewritePreviewOutcome(null,
+            "working tree has 1 uncommitted change(s) — refusing the rewrite (stash or commit first): a.txt");
+        await vm.RunRewritePreviewCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RewritePreviewAvailable);
+        Assert.False(vm.RewriteShowExecute);
+        Assert.False(vm.ExecuteRewriteCommand.CanExecute(null));
+        Assert.False(vm.RewriteHasReport);
+        Assert.Empty(vm.RewriteFacts);
+        Assert.Empty(vm.RewriteScrubLines);
+        Assert.Null(vm.RewriteOverallVerdict);
+        Assert.True(vm.RewriteStepIsPreview);
+        Assert.Contains("Commit or stash", vm.RewriteErrorText);
+
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        Assert.Equal(0, session.ExecuteCount);
+    }
+
+    [Fact]
+    public async Task ADryRunThatThrows_AlsoClearsTheReportAndDisarmsExecute()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-threw-rerun");
+        using var _ = repo;
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        Assert.True(vm.ExecuteRewriteCommand.CanExecute(null));
+
+        session.PreviewThrows = new IOException("the scratch directory could not be created");
+        await vm.RunRewritePreviewCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RewritePreviewAvailable);
+        Assert.False(vm.RewriteShowExecute);
+        Assert.False(vm.RewriteHasReport);
+        Assert.Null(vm.RewriteOverallVerdict);
+        Assert.Contains("scratch directory", vm.RewriteErrorText);
+
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        Assert.Equal(0, session.ExecuteCount);
     }
 
     // ── R-05: typed confirmation ─────────────────────────────────────────────
