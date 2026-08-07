@@ -383,23 +383,66 @@ public class SurgeryCoordinatorTests
         // beta.txt is still on disk and still staged.
         Assert.Equal("beta content\n", repo.Read("beta.txt"));
         Assert.Contains("A  beta.txt", await repo.StatusAsync());
-        // Soft reset is not destructive, so no backup is taken.
-        Assert.Empty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+        // The commit left the branch, so the rails applied: a backup and a working undo.
+        Assert.NotEmpty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+        Assert.NotNull(result.Undo);
+        var restore = await result.Undo!.RestoreAsync();
+        Assert.True(restore.Success, restore.Message);
+        Assert.Equal(before, await repo.RefStateAsync());
     }
 
     [Fact]
-    public async Task Reset_Mixed_MovesHeadAndClearsTheIndexButKeepsTheFile()
+    public async Task Reset_Mixed_ToAnEarlierCommit_BacksUpAndUndoRestoresTheDroppedCommits()
     {
+        // A mixed reset moves the branch off commits exactly as a hard one does; only the index
+        // and worktree differ. Without a backup those commits would be reachable through the
+        // reflog alone, which nothing in the app surfaces.
         using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var before = await repo.RefStateAsync();
+        var subjectsBefore = await repo.SubjectsAsync();
         var shas = await repo.RangeShasAsync(3);
 
-        var result = await NewCoordinator().ResetAsync(repo.Path, shas[1], ResetMode.Mixed);
+        var result = await NewCoordinator().ResetAsync(repo.Path, shas[0], ResetMode.Mixed);
 
         Assert.True(result.Success, result.FailureReason);
-        Assert.Equal(shas[1], await repo.HeadAsync());
+        Assert.Equal(shas[0], await repo.HeadAsync());
+        Assert.Equal(["seed"], await repo.SubjectsAsync());
         Assert.Equal("beta content\n", repo.Read("beta.txt"));
         Assert.Contains("?? beta.txt", await repo.StatusAsync());
-        Assert.Empty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+
+        Assert.NotEmpty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+        Assert.NotNull(result.Undo);
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+
+        var restore = await result.Undo!.RestoreAsync();
+        Assert.True(restore.Success, restore.Message);
+        Assert.Equal(before, await repo.RefStateAsync());
+        Assert.Equal(subjectsBefore, await repo.SubjectsAsync());
+        _output.WriteLine($"mixed reset round-trip: {subjectsBefore.Count} commit(s) restored, refs byte-identical after undo\n{before}");
+    }
+
+    [Fact]
+    public async Task Reset_Mixed_ToASiblingBranchTip_IsAlsoBackedUp()
+    {
+        // The target is an arbitrary revision, so a reset can replace history wholesale rather
+        // than only rewind it.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha");
+        await repo.GitAsync("switch", "-q", "-c", "sideline", "HEAD~1");
+        repo.Write("side.txt", "side content\n");
+        await repo.CommitAllAsync("side-work");
+        var sideline = await repo.HeadAsync();
+        await repo.GitAsync("switch", "-q", "main");
+        var before = await repo.RefStateAsync();
+
+        var result = await NewCoordinator().ResetAsync(repo.Path, sideline, ResetMode.Mixed);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(["side-work", "seed"], await repo.SubjectsAsync());
+        Assert.NotNull(result.Undo);
+
+        var restore = await result.Undo!.RestoreAsync();
+        Assert.True(restore.Success, restore.Message);
+        Assert.Equal(before, await repo.RefStateAsync());
     }
 
     [Fact]

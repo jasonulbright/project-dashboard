@@ -25,8 +25,8 @@ public sealed class HistoryEdits
 
     /// <summary>
     /// Moves the current branch to <paramref name="target"/>. Soft keeps index and worktree,
-    /// mixed resets the index, hard discards uncommitted work as well — which is why a hard
-    /// reset only ever runs behind a backup.
+    /// mixed resets the index, hard discards uncommitted work as well. Every mode drops whatever
+    /// commits lay between the target and the old tip, so all three run behind a backup.
     /// </summary>
     public async Task<HistoryEditResult> ResetAsync(
         string repoPath, string target, ResetMode mode, CancellationToken ct = default)

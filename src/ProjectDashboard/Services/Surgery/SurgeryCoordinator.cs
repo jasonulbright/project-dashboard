@@ -7,16 +7,16 @@ namespace ProjectDashboard.Services.Surgery;
 /// The gated entry point for history editing and commit surgery, on the same rails as the
 /// rewrite engine: acquire the busy lease, refuse a tree the operation cannot run against,
 /// take a verified backup, journal the in-flight operation, operate, then clear the journal.
-/// The lease is released in a finally; nothing is ever pushed.
+/// The lease is released in a finally; nothing is ever pushed. Every operation here can move a
+/// branch off commits, including a soft or mixed reset to an earlier revision, so every one of
+/// them takes a backup and hands back an undo.
 ///
-/// A failure leaves the journal AND the backup on disk on purpose, so undo and next-launch
-/// recovery both still work. That includes a revert or cherry-pick that stops on a conflict:
-/// the coordinator does not abort it — leaving it mid-operation is the documented behaviour,
-/// and the pending journal is what makes it recoverable.
-///
-/// Soft and mixed resets are the exception to the backup rule: they move a ref and the index
-/// without discarding committed work or worktree content, so they take the lease only. A hard
-/// reset destroys uncommitted work and goes through the full rails like any rewrite.
+/// The journal is the next-launch recovery marker, so it survives only outcomes that may have
+/// left the repository altered: a rebase stopped for the terminal, a conflicted revert or
+/// cherry-pick, and any failure the coordinator cannot classify. An outcome that proves nothing
+/// moved — a driver refusal, an aborted rebase — clears it, because a marker for an operation
+/// that never ran trains the user to dismiss the prompt that matters. The backup stays on disk
+/// either way, so undo still works after a refusal.
 /// </summary>
 public sealed class SurgeryCoordinator
 {
@@ -84,12 +84,17 @@ public sealed class SurgeryCoordinator
             return (run.Success, run.FailureReason, run, null);
         }, ct);
 
-    /// <summary>Moves the branch. A hard reset takes the full rails; soft and mixed take the lease only.</summary>
+    /// <summary>
+    /// Moves the branch. Every mode takes the full rails: the target is an arbitrary revision, so
+    /// a soft or mixed reset drops commits from the branch exactly as a hard one does — only the
+    /// index and worktree are treated differently. A hard reset additionally discards uncommitted
+    /// work, which is why only it demands a clean tree.
+    /// </summary>
     public Task<SurgeryResult> ResetAsync(
         string repoPath, string target, ResetMode mode, CancellationToken ct = default) =>
         RunGatedAsync(repoPath,
             mode == ResetMode.Hard ? TreeRequirement.Clean : TreeRequirement.Any,
-            backup: mode == ResetMode.Hard, "reset", async token =>
+            backup: true, "reset", async token =>
         {
             var edit = await _edits.ResetAsync(repoPath, target, mode, token);
             return (edit.Success, edit.FailureReason, null, edit);
