@@ -203,7 +203,24 @@ public static class HistoryTestSupport
         var verify = await IdentityVerifier.VerifyAsync(
             GitGuard.GitExe, fixture.SourcePath, fixture.TargetPath, TimeSpan.FromMinutes(1));
         Assert.True(verify.Success, verify.Describe());
+
+        // for-each-ref excludes HEAD, so ref-set equality alone cannot prove the target
+        // HEAD matches the source (attached or detached).
+        Assert.Equal(DescribeHead(fixture.SourcePath), DescribeHead(fixture.TargetPath));
         return (result, verify);
+    }
+
+    /// <summary>HEAD as `ref &lt;branch&gt;` when attached, `detached &lt;sha&gt;` otherwise.</summary>
+    public static string DescribeHead(string repository)
+    {
+        try
+        {
+            return "ref " + FixtureRepo.RunGit(repository, ["symbolic-ref", "HEAD"], null, null).Trim();
+        }
+        catch (InvalidOperationException)
+        {
+            return "detached " + FixtureRepo.RunGit(repository, ["rev-parse", "--verify", "HEAD"], null, null).Trim();
+        }
     }
 
     public static void AssertFilesByteIdentical(string expectedPath, string actualPath)

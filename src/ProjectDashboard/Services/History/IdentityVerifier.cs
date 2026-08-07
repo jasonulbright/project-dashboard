@@ -53,6 +53,9 @@ public static class IdentityVerifier
         var sourceRefs = await ReadRefsAsync(gitExecutable, sourceRepository, timeout, ct);
         var targetRefs = await ReadRefsAsync(gitExecutable, targetRepository, timeout, ct);
 
+        // for-each-ref excludes HEAD on both sides, so commits reachable only from a
+        // detached HEAD are exported yet invisible to this comparison; the pipeline's
+        // explicit HEAD alignment is what covers them.
         var differences = new List<RefDifference>();
         foreach (var (name, sourceId) in sourceRefs)
         {

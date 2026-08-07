@@ -130,7 +130,11 @@ public sealed class HistoryPipeline
         options.Progress?.Invoke(new HistoryProgress("parse", bytesSpooled, records.Count));
 
         await CreateFreshBareRepoAsync(options.TargetBareRepository, ct);
-        var emitted = await ImportAsync(records, spoolPath, marksPath, options, ct);
+        var (importFeed, scratchHeadRef) = BuildImportFeed(records);
+        var emitted = await ImportAsync(importFeed, spoolPath, marksPath, options, ct);
+        if (scratchHeadRef is not null)
+            await RunGitCheckedAsync(options.TargetBareRepository, ["update-ref", "-d", scratchHeadRef], "align-head", ct);
+        await AlignTargetHeadAsync(options, ct);
 
         return new HistoryPipelineResult
         {
@@ -141,6 +145,100 @@ public sealed class HistoryPipeline
             BytesSpooled = bytesSpooled,
             RecordsEmitted = emitted
         };
+    }
+
+    /// <summary>
+    /// The stream fed to fast-import must not update a ref literally named HEAD: the
+    /// fresh bare target holds a default HEAD symref, so fast-import dereferences it and
+    /// creates or moves whichever branch init.defaultBranch names. A detached source HEAD
+    /// exports as `reset HEAD` (tip already on a branch) or as `commit HEAD` records
+    /// (commits reachable only from HEAD). Resets carry no objects and are dropped —
+    /// HEAD is aligned explicitly after import; commits are re-addressed to a scratch
+    /// ref deleted after import. The parsed record list is not mutated, so re-emission
+    /// stays byte-identical to the spool.
+    /// </summary>
+    private static (IReadOnlyList<FastExportRecord> Feed, string? ScratchHeadRef) BuildImportFeed(
+        IReadOnlyList<FastExportRecord> records)
+    {
+        var scratch = "refs/pd-import/head";
+        while (records.Any(r => r is CommitRecord c && c.RefName == scratch
+                             || r is ResetRecord s && s.RefName == scratch))
+            scratch += "-x";
+
+        string? used = null;
+        var feed = new List<FastExportRecord>(records.Count);
+        for (var i = 0; i < records.Count; i++)
+        {
+            switch (records[i])
+            {
+                case ResetRecord { RefName: "HEAD" }:
+                    // The separator after the dropped reset must go with it: a blank
+                    // line where fast-import expects a command is a fatal parse error.
+                    if (i + 1 < records.Count && records[i + 1] is BlankRecord)
+                        i++;
+                    break;
+                case CommitRecord { RefName: "HEAD" } commit:
+                    used = scratch;
+                    feed.Add(CloneUnderRef(commit, scratch));
+                    break;
+                default:
+                    feed.Add(records[i]);
+                    break;
+            }
+        }
+        return (feed, used);
+    }
+
+    private static CommitRecord CloneUnderRef(CommitRecord commit, string refName)
+    {
+        var clone = new CommitRecord
+        {
+            ByteOffset = commit.ByteOffset,
+            RefNameBytes = Encoding.ASCII.GetBytes(refName),
+            Mark = commit.Mark,
+            OriginalOid = commit.OriginalOid,
+            Message = commit.Message
+        };
+        clone.HeaderLines.AddRange(commit.HeaderLines);
+        clone.Parents.AddRange(commit.Parents);
+        clone.FileCommands.AddRange(commit.FileCommands);
+        return clone;
+    }
+
+    /// <summary>
+    /// Points target HEAD where source HEAD points. The import feed carries no HEAD
+    /// record (see <see cref="BuildImportFeed"/>), so without this the target keeps
+    /// whatever symref `git init` chose — possibly naming a branch that does not exist.
+    /// </summary>
+    private async Task AlignTargetHeadAsync(HistoryPipelineOptions options, CancellationToken ct)
+    {
+        var symref = await ProcessRunner.RunAsync(
+            _gitExe, ["symbolic-ref", "-q", "HEAD"], options.SourceRepository,
+            TimeSpan.FromSeconds(30), GitEnvironment, ct);
+        if (symref.Success)
+        {
+            await RunGitCheckedAsync(options.TargetBareRepository,
+                ["symbolic-ref", "HEAD", symref.StdOut.Trim()], "align-head", ct);
+            return;
+        }
+
+        // Detached: --no-deref writes HEAD itself; a plain update-ref would follow the
+        // target's default symref and recreate the phantom branch.
+        var sha = (await RunGitCheckedAsync(options.SourceRepository,
+            ["rev-parse", "--verify", "HEAD"], "align-head", ct)).StdOut.Trim();
+        await RunGitCheckedAsync(options.TargetBareRepository,
+            ["update-ref", "--no-deref", "HEAD", sha], "align-head", ct);
+    }
+
+    private async Task<ProcessResult> RunGitCheckedAsync(
+        string repository, string[] args, string phase, CancellationToken ct)
+    {
+        var result = await ProcessRunner.RunAsync(
+            _gitExe, args, repository, TimeSpan.FromSeconds(30), GitEnvironment, ct);
+        if (!result.Success)
+            throw new HistoryPipelineException(
+                phase, $"git {string.Join(' ', args)} failed in '{repository}'", result.ExitCode, result.StdErr);
+        return result;
     }
 
     /// <summary>Re-emits records to any destination. Pass B uses this against fast-import's stdin; tests use it for byte-level identity checks.</summary>

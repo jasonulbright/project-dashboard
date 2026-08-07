@@ -205,6 +205,37 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task DetachedHeadWithUniqueCommitRoundTrips()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("checkout", "-q", "--detach", "HEAD");
+        f.Write("detached.txt", "d\n");
+        f.CommitAll("reachable only from HEAD");
+
+        // fast-export emits the second commit as `commit HEAD`; identity requires the
+        // target to gain no branch for it and HEAD to land on the same detached sha.
+        await HistoryTestSupport.RoundTripAsync(f);
+
+        Assert.StartsWith("detached ", HistoryTestSupport.DescribeHead(f.TargetPath));
+        Assert.DoesNotContain("pd-import", FixtureRepo.RunGit(f.TargetPath, ["for-each-ref"], null, null));
+    }
+
+    [Fact]
+    public async Task DetachedHeadAtBranchTipRoundTrips()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("checkout", "-q", "--detach", "HEAD");
+
+        // This HEAD shape exports as `reset HEAD` + `from :N` instead of `commit HEAD`.
+        await HistoryTestSupport.RoundTripAsync(f);
+        Assert.StartsWith("detached ", HistoryTestSupport.DescribeHead(f.TargetPath));
+    }
+
+    [Fact]
     public async Task ReplacedCommitExportsOriginalHistoryAndReplaceRef()
     {
         using var f = new FixtureRepo();
