@@ -814,9 +814,10 @@ public sealed class HistoryRewriter
     /// deliberately absent from this record: <c>%(contents)</c> is arbitrary bytes, so a
     /// message holding the separator would drop or truncate its own record. Messages come
     /// from <see cref="FetchTagMessagesAsync"/> instead.
-    /// A line that does not parse into five fields is never skipped — dropping a tag would
-    /// remove its message and tagger from the scrub corpus while the check still read as
-    /// having covered them.
+    /// A failed enumeration and a line that does not parse into five fields both throw, so
+    /// the caller degrades the check to a note. Returning an empty or partial tag list
+    /// instead would drop messages and taggers from the scrub corpus while the check still
+    /// read as having covered them.
     /// </summary>
     private async Task<List<TagFacts>> FetchTagRefsAsync(HistoryRewriteRequest request, CancellationToken ct)
     {
@@ -825,7 +826,9 @@ public sealed class HistoryRewriter
             _gitExe,
             ["for-each-ref", "refs/tags", "--format=%(refname)%1f%(objectname)%1f%(*objectname)%1f%(taggername)%1f%(taggeremail)"],
             request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
-        if (!result.Success) return tags;
+        if (!result.Success)
+            throw new HistoryPipelineException(
+                "verify", "for-each-ref over refs/tags failed", result.ExitCode, result.StdErr);
 
         foreach (var line in SplitLines(result.StdOut))
         {
@@ -856,7 +859,9 @@ public sealed class HistoryRewriter
             List<string> args = ["for-each-ref", "--format=%(contents)", .. chunk];
             var result = await ProcessRunner.RunAsync(
                 _gitExe, args, request.TargetBareRepository, request.VerificationTimeout, GitEnvironment, ct);
-            if (!result.Success) break;
+            if (!result.Success)
+                throw new HistoryPipelineException(
+                    "verify", "for-each-ref over the tag messages failed", result.ExitCode, result.StdErr);
             text.Append(result.StdOut).Append('\n');
         }
         return text.ToString();

@@ -773,6 +773,47 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"pruned in-scope commit: c2 maps to out-of-scope c1, scrub hits={check.Hits.Count}; note='{check.Note}'");
     }
 
+    /// <summary>
+    /// The tag corpus feeds both metadata checks. A tag read the scrub cannot trust — a
+    /// failed enumeration, or a record that does not parse — must degrade those checks to a
+    /// note; returning an empty tag list would let them report coverage of tags nothing
+    /// looked at.
+    /// </summary>
+    [Fact]
+    public async Task ATagRecordTheScrubCannotParseDegradesTheMetadataChecks()
+    {
+        using var f = Fixture(bareSource: true);
+        // A tagger name holding the field separator gives for-each-ref a six-field record.
+        // fast-import accepts the ident and fsck --strict passes the object, so the scrub is
+        // the only layer that can react to it.
+        var feed =
+            "blob\nmark :1\ndata 5\nbody\n\n" +
+            "commit refs/heads/main\nmark :2\n" +
+            "author Fixture <fixture@example.com> 1700000000 +0000\n" +
+            "committer Fixture <fixture@example.com> 1700000000 +0000\n" +
+            "data 3\nc1\nM 100644 :1 a.txt\n\n" +
+            "tag weird\nfrom :2\ntagger Fix\x1fture <fixture@example.com> 1700000000 +0000\ndata 5\nmsg1\n\n";
+        f.GitWithStdin(Encoding.ASCII.GetBytes(feed), "fast-import", "--quiet");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }],
+            IdentityMappings = [new IdentityMapping { OldEmail = "fixture@example.com", NewEmail = "new@example.com" }]
+        });
+
+        Assert.Equal(2, report.ScrubChecks.Count);
+        foreach (var check in report.ScrubChecks)
+        {
+            Assert.False(check.Performed);
+            Assert.False(check.Complete);
+            Assert.Empty(check.Hits);
+            Assert.Contains("could not read the target", check.Note);
+            Assert.Contains("cannot parse", check.Note);
+        }
+        output.WriteLine($"unparseable tag record: both metadata checks degraded; note='{report.ScrubChecks[0].Note}'");
+    }
+
     // ---- Identity rewrite ----------------------------------------------------------------
 
     [Fact]
