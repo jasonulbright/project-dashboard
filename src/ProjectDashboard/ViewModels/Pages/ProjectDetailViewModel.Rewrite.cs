@@ -161,9 +161,10 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _rewriteWizardVisible;
 
     /// <summary>
-    /// Bound to the IsEnabled of the surface the wizard's scrim covers. The scrim stops the
-    /// mouse only; without this, Tab and a screen reader still reach the discard, stage, and
-    /// branch-delete controls behind it.
+    /// Bound to the IsEnabled of every surface the wizard's scrim covers: the work-area tabs,
+    /// the state banner, and the branch bar. The scrim stops the mouse only; without this, a
+    /// keystroke and a screen reader still reach the discard, stage, branch-delete, and Pull
+    /// controls behind it — and a Pull merges the un-rewritten remote history back in.
     /// </summary>
     public bool RewriteWizardHidden => !RewriteWizardVisible;
 
