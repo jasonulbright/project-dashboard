@@ -1,30 +1,26 @@
-using System;
 using System.IO;
-using System.Runtime.CompilerServices;
+using ProjectDashboard.Services;
 using Xunit;
 
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Points PD_DATA_DIR at a per-run temp sandbox before anything touches
-/// AppPaths, whose directories freeze at type initialization. Every test that
-/// reads or writes the shared state files (settings.json, manifests.json,
-/// discovery-cache.json) must join the "app-data-sandbox" collection: the files
-/// are process-wide singletons, so those tests have to run serially.
+/// Every test that reads or writes the shared state files (settings.json,
+/// manifests.json, discovery-cache.json) must join the "app-data-sandbox"
+/// collection: the files are process-wide singletons, so those tests have to
+/// run serially.
 /// </summary>
 internal static class TestSandbox
 {
-    internal static readonly string Root =
-        Path.Combine(Path.GetTempPath(), "pd-fixtures", "tests-" + Guid.NewGuid().ToString("N"));
-
-    [ModuleInitializer]
-    internal static void Init() => Environment.SetEnvironmentVariable("PD_DATA_DIR", Root);
-
-    /// <summary>Deletes every state file (not directories) so a test starts from an empty data dir.</summary>
+    /// <summary>
+    /// Deletes every state file (not directories) so a test starts from an
+    /// empty data dir. LocalDir == RoamingDir under the PD_DATA_DIR override,
+    /// so this clears the manifest index as well.
+    /// </summary>
     internal static void ResetDataDir()
     {
-        Directory.CreateDirectory(Root);
-        foreach (var file in Directory.GetFiles(Root))
+        Directory.CreateDirectory(AppPaths.LocalDir);
+        foreach (var file in Directory.GetFiles(AppPaths.LocalDir))
             File.Delete(file);
     }
 }

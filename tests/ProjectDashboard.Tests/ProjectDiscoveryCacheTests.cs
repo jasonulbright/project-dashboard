@@ -27,7 +27,7 @@ public class ProjectDiscoveryCacheTests
         });
     }
 
-    private static string EmptyRoot => Path.Combine(TestSandbox.Root, "empty-root");
+    private static string EmptyRoot => Path.Combine(TestEnv.Root, "empty-root");
 
     private static ProjectDiscoveryService NewService(ManifestStore store)
     {
@@ -68,7 +68,7 @@ public class ProjectDiscoveryCacheTests
     [Fact]
     public async Task DiscoverAll_CachedLocalEntry_StillReconciledFromManifestStore()
     {
-        var localPath = Path.Combine(TestSandbox.Root, "local-repo");
+        var localPath = Path.Combine(TestEnv.Root, "local-repo");
         var store = new ManifestStore();
         store.Save(localPath, new ProjectManifest { Description = "from-store" });
 
