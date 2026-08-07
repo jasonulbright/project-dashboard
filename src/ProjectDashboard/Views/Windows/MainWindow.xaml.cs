@@ -714,7 +714,13 @@ public partial class MainWindow : INavigationWindow
         ShortcutCloseButton.Focus();
     }
 
-    private void CloseShortcuts() => ShortcutOverlay.Visibility = Visibility.Collapsed;
+    private void CloseShortcuts()
+    {
+        ShortcutOverlay.Visibility = Visibility.Collapsed;
+        // Focus stays on the now-hidden Close button otherwise, and the next Enter or
+        // Space re-fires it.
+        RootNavigation.Focus();
+    }
 
     private void ShortcutClose_Click(object sender, RoutedEventArgs e) => CloseShortcuts();
 
