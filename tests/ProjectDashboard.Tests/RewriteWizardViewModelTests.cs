@@ -343,6 +343,37 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.RewriteUndoAvailable);
     }
 
+    /// <summary>
+    /// The restore puts the pre-rewrite refs back, so whatever the rewrite removed is present
+    /// again. The executed run's verification block describes the history the restore just
+    /// threw away, and the in-progress status label is not an outcome.
+    /// </summary>
+    [Fact]
+    public async Task SuccessfulUndo_ClearsTheVerificationBlockAndReportsACompletedRestore()
+    {
+        var (repo, vm, _) = await OpenWizardAsync("rw-undo-report");
+        using var __ = repo;
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        Assert.True(vm.RewriteHasReport);
+        Assert.True(vm.RewriteOverallVerdict!.ClaimsClean);
+
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RewriteHasReport);
+        Assert.Empty(vm.RewriteFacts);
+        Assert.Empty(vm.RewriteScrubLines);
+        Assert.Empty(vm.RewriteSkipLines);
+        Assert.Null(vm.RewriteOverallVerdict);
+        // Not the in-progress label the step set on entry.
+        Assert.DoesNotContain("Undo…", vm.RewriteStatusText);
+        Assert.Contains("restored", vm.RewriteStatusText);
+    }
+
     [Fact]
     public async Task Undo_DeclinedAtTheConfirm_DoesNotRestore()
     {

@@ -672,9 +672,17 @@ public partial class ProjectDetailViewModel
             var restore = await session.UndoAsync();
             if (!IsCurrent(gen)) return;
             RewriteUndoText = DescribeRestore(restore);
-            if (!restore.Success) return;
+            if (!restore.Success)
+            {
+                RewriteStatusText = "Undo failed. The repository was left as the rewrite made it.";
+                return;
+            }
             RewriteUndoAvailable = false;
             RewriteResultSucceeded = false;
+            // The refs are back where they were before the rewrite, so whatever it removed is
+            // present again and the executed run's verification describes discarded history.
+            ClearRewriteReport();
+            RewriteStatusText = "History restored. The rewrite was undone.";
             await ReloadCommitsAsync();
             await SafeRefreshWorkingStateAsync();
         });
