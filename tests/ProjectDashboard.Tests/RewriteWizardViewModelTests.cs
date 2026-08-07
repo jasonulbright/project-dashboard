@@ -449,6 +449,64 @@ public class RewriteWizardViewModelTests
         Assert.Contains("restored", vm.RewriteStatusText);
     }
 
+    /// <summary>
+    /// The restore's ref transaction commits before its working-tree reset, so a reset failure
+    /// returns unsuccessful with the pre-rewrite refs already back. The removed content is in
+    /// the repository again, and the failure branch cannot tell that case from "nothing moved",
+    /// so the executed run's verification block may not survive an attempted undo either way.
+    /// </summary>
+    [Fact]
+    public async Task UndoThatRestoredTheRefsButFailedTheReset_DropsTheCleanBillAndSaysWhatMoved()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-undo-halfway");
+        using var _ = repo;
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        session.RestoreResult = new RestoreResult(
+            false, "Refs restored but working-tree reset failed: a.txt is locked",
+            WorktreeWasDirty: false, DiscardedChangeCount: 0, RefsRestored: true);
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        Assert.True(vm.RewriteOverallVerdict!.ClaimsClean);
+
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RewriteHasReport);
+        Assert.Empty(vm.RewriteScrubLines);
+        Assert.Null(vm.RewriteOverallVerdict);
+        // Neither line may say the rewrite's history is still in place.
+        Assert.DoesNotContain("left as the rewrite made it", vm.RewriteStatusText);
+        Assert.DoesNotContain("was not changed", vm.RewriteUndoText);
+        Assert.Contains("refs", vm.RewriteUndoText, StringComparison.OrdinalIgnoreCase);
+        // A half-done restore is not a success banner.
+        Assert.False(vm.RewriteResultSucceeded);
+    }
+
+    /// <summary>A restore that reached nothing must still say plainly that nothing moved.</summary>
+    [Fact]
+    public async Task UndoThatChangedNothing_StillClearsTheCleanBillAndSaysNothingMoved()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-undo-nothing");
+        using var _ = repo;
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        session.RestoreResult = new RestoreResult(false, "Bundle missing: C:\\backups\\x.bundle");
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+
+        // An attempted undo always retires the report: the failure branch cannot prove the
+        // verification still describes what is on disk.
+        Assert.False(vm.RewriteHasReport);
+        Assert.Contains("was not changed", vm.RewriteUndoText);
+        Assert.Contains("left as the rewrite made it", vm.RewriteStatusText);
+    }
+
     [Fact]
     public async Task Undo_DeclinedAtTheConfirm_DoesNotRestore()
     {
@@ -497,6 +555,12 @@ public class RewriteWizardViewModelTests
             ProjectDetailViewModel.DescribeRestore(new RestoreResult(true, "ok", true, 2)));
         Assert.Contains("was not changed",
             ProjectDetailViewModel.DescribeRestore(new RestoreResult(false, "bundle missing")));
+
+        // A failure past the ref transaction is not an untouched repository.
+        var halfway = ProjectDetailViewModel.DescribeRestore(
+            new RestoreResult(false, "reset failed", RefsRestored: true));
+        Assert.DoesNotContain("was not changed", halfway);
+        Assert.Contains("pre-rewrite refs are back", halfway);
     }
 
     // ── Result honesty ───────────────────────────────────────────────────────

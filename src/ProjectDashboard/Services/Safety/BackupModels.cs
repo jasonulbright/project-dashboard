@@ -39,7 +39,11 @@ public sealed class RefsSnapshot
 }
 
 /// <summary>
-/// Outcome of a restore: never partial — either the refs were reconciled or nothing changed.
+/// Outcome of a restore. The ref reconciliation is all-or-nothing, but the steps after it —
+/// the HEAD reposition and the working-tree reset — can fail with the refs already back, so
+/// <see cref="Success"/> false does not mean the repository is untouched.
+/// <see cref="RefsRestored"/> is the flag that separates the two: true whenever the ref
+/// transaction committed, so a caller never reports an unchanged repository over restored refs.
 /// A restore's working-tree reset discards uncommitted changes; <see cref="WorktreeWasDirty"/>
 /// and <see cref="DiscardedChangeCount"/> report what the reset threw away so a confirm UI can
 /// warn before the caller triggers one.
@@ -48,4 +52,5 @@ public sealed record RestoreResult(
     bool Success,
     string Message,
     bool WorktreeWasDirty = false,
-    int DiscardedChangeCount = 0);
+    int DiscardedChangeCount = 0,
+    bool RefsRestored = false);

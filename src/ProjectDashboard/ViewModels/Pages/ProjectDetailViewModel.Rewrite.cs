@@ -731,28 +731,46 @@ public partial class ProjectDetailViewModel
         {
             var restore = await session.UndoAsync();
             if (!IsCurrent(gen)) return;
-            RewriteUndoText = DescribeRestore(restore);
-            if (!restore.Success)
-            {
-                RewriteStatusText = "Undo failed. The repository was left as the rewrite made it.";
-                return;
-            }
-            RewriteUndoAvailable = false;
-            RewriteResultSucceeded = false;
-            // The refs are back where they were before the rewrite, so whatever it removed is
-            // present again and the executed run's verification describes discarded history.
+
+            // Retired before the outcome is read, for every outcome: a restore that put the
+            // refs back makes the executed run's verification describe discarded history, and
+            // an unsuccessful restore cannot tell that case from one that moved nothing.
             ClearRewriteReport();
-            RewriteStatusText = "History restored. The rewrite was undone.";
-            await ReloadCommitsAsync();
-            await SafeRefreshWorkingStateAsync();
+            RewriteUndoText = DescribeRestore(restore);
+            if (restore.Success)
+            {
+                RewriteUndoAvailable = false;
+                RewriteStatusText = "History restored. The rewrite was undone.";
+            }
+            else
+            {
+                RewriteStatusText = restore.RefsRestored
+                    ? "Undo did not finish: the pre-rewrite refs are back, but the working tree was not reset to them."
+                    : "Undo failed. The repository was left as the rewrite made it.";
+            }
+            // The banner styles the rewrite's own outcome; once an undo has been attempted the
+            // rewrite's history is no longer what this repository is known to hold.
+            RewriteResultSucceeded = false;
+            if (restore.Success || restore.RefsRestored)
+            {
+                await ReloadCommitsAsync();
+                await SafeRefreshWorkingStateAsync();
+            }
         });
     }
 
-    /// <summary>Names what the restore's reset threw away; a clean tree is stated too, so silence never stands in for it.</summary>
+    /// <summary>
+    /// Names what the restore's reset threw away; a clean tree is stated too, so silence never
+    /// stands in for it. "Not changed" is claimed only for a failure that never reached the ref
+    /// transaction, because a later failure leaves the pre-rewrite refs in place.
+    /// </summary>
     internal static string DescribeRestore(RestoreResult restore)
     {
         if (!restore.Success)
-            return $"Restore failed — the repository was not changed. {restore.Message}";
+            return restore.RefsRestored
+                ? "Restore did not finish — the pre-rewrite refs are back, but the working tree was " +
+                  $"not reset to them. {restore.Message}"
+                : $"Restore failed — the repository was not changed. {restore.Message}";
         var discarded = restore.WorktreeWasDirty
             ? $"The working tree was dirty: {restore.DiscardedChangeCount} uncommitted change(s) were discarded by the reset."
             : "The working tree was clean, so no uncommitted work was discarded.";

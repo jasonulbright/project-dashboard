@@ -13,10 +13,12 @@ public sealed class BackupException : Exception
 /// <summary>
 /// Captures and restores a repository's full object graph and ref layout before any
 /// history-altering operation. A backup is a `git bundle --all` plus a sidecar
-/// refs snapshot; a restore verifies the bundle before touching the repo and either
-/// reconciles every ref back to the snapshot or leaves the repo untouched — never a
-/// partial restore. All backups live under AppPaths (never inside a repo), keyed by
-/// <see cref="RepoKey"/>, retained newest-N per repo.
+/// refs snapshot; a restore verifies the bundle before touching the repo, and its ref
+/// reconciliation either applies in full or changes nothing — never a partial ref state.
+/// The HEAD reposition and working-tree reset run after that transaction commits, so a
+/// failure there leaves the refs restored and reports
+/// <see cref="RestoreResult.RefsRestored"/> true. All backups live under AppPaths (never
+/// inside a repo), keyed by <see cref="RepoKey"/>, retained newest-N per repo.
 /// </summary>
 public sealed class BackupService
 {
@@ -119,9 +121,14 @@ public sealed class BackupService
 
     /// <summary>
     /// Restores the repo to the backup's ref state. The bundle is verified first; a
-    /// failed verification aborts before any ref changes (never a partial restore). On
-    /// success every ref is reconciled to the snapshot — refs the backup lacks are
-    /// deleted, refs it has are set — HEAD is repositioned, and the working tree is reset.
+    /// failed verification aborts before any ref changes. Every ref is then reconciled to
+    /// the snapshot in one transaction — refs the backup lacks are deleted, refs it has are
+    /// set — after which HEAD is repositioned and the working tree is reset.
+    ///
+    /// A failure in either step after that transaction returns <see cref="RestoreResult.Success"/>
+    /// false with <see cref="RestoreResult.RefsRestored"/> true: the pre-rewrite content is
+    /// back in the repository even though the restore did not finish. A caller MUST NOT report
+    /// an unsuccessful restore as an unchanged repository without reading that flag.
     ///
     /// The final reset is --hard, so it discards every uncommitted change in the worktree,
     /// including edits made after the backup was captured, which the bundle never held. A
@@ -178,12 +185,20 @@ public sealed class BackupService
                     $"Ref reconciliation transaction failed — nothing changed: {reconcile.FirstError}");
         }
 
+        // Past this line the refs hold the backup's objects again, so every remaining failure
+        // is a partly-restored repository, never an untouched one.
+
         // Reposition HEAD, then sync the working tree. --no-deref for a detached HEAD
         // writes HEAD itself; a plain update-ref would follow the symref and move a branch.
-        if (snapshot.HeadRef.Length > 0)
-            await _git.RunAsync(handle.RepoPath, ["symbolic-ref", "HEAD", snapshot.HeadRef], ct, RefTimeout);
-        else if (snapshot.HeadObjectId.Length > 0)
-            await _git.RunAsync(handle.RepoPath, ["update-ref", "--no-deref", "HEAD", snapshot.HeadObjectId], ct, RefTimeout);
+        var head = snapshot.HeadRef.Length > 0
+            ? await _git.RunAsync(handle.RepoPath, ["symbolic-ref", "HEAD", snapshot.HeadRef], ct, RefTimeout)
+            : snapshot.HeadObjectId.Length > 0
+                ? await _git.RunAsync(handle.RepoPath, ["update-ref", "--no-deref", "HEAD", snapshot.HeadObjectId], ct, RefTimeout)
+                : null;
+        if (head is { Success: false })
+            return new RestoreResult(false,
+                $"Refs restored but HEAD could not be repositioned: {head.FirstError}",
+                RefsRestored: true);
 
         var wasDirty = false;
         var discardedCount = 0;
@@ -201,11 +216,11 @@ public sealed class BackupService
             var reset = await _git.RunAsync(handle.RepoPath, ["reset", "--hard", snapshot.HeadObjectId], ct, BundleTimeout);
             if (!reset.Success)
                 return new RestoreResult(false, $"Refs restored but working-tree reset failed: {reset.FirstError}",
-                    wasDirty, discardedCount);
+                    wasDirty, discardedCount, RefsRestored: true);
         }
 
         return new RestoreResult(true, $"Restored {desired.Count} refs from {handle.UtcStamp}.",
-            wasDirty, discardedCount);
+            wasDirty, discardedCount, RefsRestored: true);
     }
 
     /// <summary>Removes a backup's bundle and sidecar (with its .bak). Best-effort; missing files are not an error.</summary>
