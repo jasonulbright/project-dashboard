@@ -596,7 +596,10 @@ public partial class ProjectDetailViewModel
 
         await RunRewriteStepAsync("Dry run", async gen =>
         {
-            _rewriteSession?.Dispose();
+            // Off-thread for the same reason a detach is: the superseded session's disposal
+            // deletes its scratch tree, with a sleeping retry while handles are still held.
+            if (_rewriteSession is { } superseded)
+                RewriteSessionDisposal = Task.Run(superseded.Dispose);
             var session = factory.Create();
             _rewriteSession = session;
             var outcome = await session.PreviewAsync(request);
