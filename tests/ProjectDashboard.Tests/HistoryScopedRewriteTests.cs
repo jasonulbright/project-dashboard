@@ -58,6 +58,45 @@ public class PathGlobTests
         Assert.True(new PathGlob("**").IsMatch("x"));
     }
 
+    // A newline is a legal byte in a git path, so the anchors must be \A/\z and the
+    // wildcards must span it.
+    [Fact]
+    public void TrailingNewlineIsNotSwallowedByTheEndAnchor()
+    {
+        Assert.False(new PathGlob("secret.txt").IsMatch("secret.txt\n"));
+        Assert.False(new PathGlob("*.txt").IsMatch("secret.txt\n"));
+        Assert.True(new PathGlob("secret.txt\n").IsMatch("secret.txt\n"));
+    }
+
+    [Fact]
+    public void WildcardsSpanAnEmbeddedNewline()
+    {
+        Assert.True(new PathGlob("**").IsMatch("a\nb"));
+        Assert.True(new PathGlob("**").IsMatch("dir/a\nb.txt"));
+        // '*' and '**' agree: neither stops at a newline, only at '/'.
+        Assert.True(new PathGlob("a*").IsMatch("a\nb"));
+        Assert.True(new PathGlob("**/*.txt").IsMatch("dir/a\nb.txt"));
+        Assert.False(new PathGlob("*").IsMatch("dir/a\nb"));
+    }
+
+    [Fact]
+    public void ScopesAgreeWithTheMatcherOnNewlinePaths()
+    {
+        Assert.True(new GlobScope { Patterns = ["**"] }.Matches("a\nb.txt"));
+        Assert.False(new GlobScope { Patterns = ["secret.txt"] }.Matches("secret.txt\n"));
+        Assert.True(new ExplicitPathsScope { Paths = ["a\nb.txt"] }.Matches("a\nb.txt"));
+        Assert.False(new ExplicitPathsScope { Paths = ["a.txt"] }.Matches("a.txt\n"));
+    }
+
+    /// <summary>The scrub filters collected paths through <see cref="FileScope.Matches"/>; a path it drops is a blind spot.</summary>
+    [Fact]
+    public void ScrubPathFilterKeepsNewlinePathsInScope()
+    {
+        FileScope scope = new GlobScope { Patterns = ["**"] };
+        string[] collected = ["clean.txt", "dir/a\nb.txt", "deep/dir/c\nd.bin"];
+        Assert.Equal(collected, collected.Where(p => scope.Matches(p)).ToArray());
+    }
+
     [Fact]
     public void ExplicitPathScopeMatchesExactAndSubtree()
     {

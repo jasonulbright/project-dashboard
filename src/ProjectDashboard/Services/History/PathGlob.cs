@@ -13,7 +13,9 @@ namespace ProjectDashboard.Services.History;
 /// A pattern carrying none of these wildcards matches its path exactly. Unsupported and
 /// documented as such: character classes <c>[...]</c>, negation <c>!</c>, and brace
 /// expansion <c>{a,b}</c> — those characters are treated literally, never as operators.
-/// Matching is anchored at both ends; a leading '/' is stripped (paths are already
+/// Matching is anchored at the true start and end of the path — a path ending in a newline
+/// is not matched by a pattern naming it without one, and wildcards span newlines, both of
+/// which are legal bytes in a git path. A leading '/' is stripped (paths are already
 /// root-relative). Input paths are normalized: backslashes become '/', a leading './' or
 /// '/' is dropped.
 /// </summary>
@@ -26,7 +28,9 @@ public sealed class PathGlob
     public PathGlob(string pattern)
     {
         Pattern = pattern;
-        _regex = new Regex(Compile(pattern), RegexOptions.CultureInvariant);
+        // Singleline so '.' spans an LF, which is a legal byte in a git path. Without it
+        // '**' stops at the newline and an in-scope path is silently missed.
+        _regex = new Regex(Compile(pattern), RegexOptions.CultureInvariant | RegexOptions.Singleline);
     }
 
     public bool IsMatch(string path) => _regex.IsMatch(Normalize(path));
@@ -47,7 +51,9 @@ public sealed class PathGlob
         // A trailing slash means "everything under this directory".
         if (glob.EndsWith('/')) glob += "**";
 
-        var sb = new StringBuilder("^");
+        // \A and \z, never ^ and $: '$' also matches before a trailing LF, so a path ending
+        // in a newline would match a pattern that does not name it.
+        var sb = new StringBuilder(@"\A");
         var i = 0;
         while (i < glob.Length)
         {
@@ -85,7 +91,7 @@ public sealed class PathGlob
                 i++;
             }
         }
-        sb.Append('$');
+        sb.Append(@"\z");
         return sb.ToString();
     }
 }
