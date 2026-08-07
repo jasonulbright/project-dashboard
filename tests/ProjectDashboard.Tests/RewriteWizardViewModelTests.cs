@@ -152,6 +152,13 @@ public class RewriteWizardViewModelTests
         var (repo, vm, _) = await OpenWizardAsync("rw-open");
         using var __ = repo;
 
+        // The surface the scrim covers is disabled, so no keystroke reaches it.
+        Assert.True(vm.RewriteWizardVisible);
+        Assert.False(vm.RewriteWizardHidden);
+        vm.CloseRewriteWizardCommand.Execute(null);
+        Assert.True(vm.RewriteWizardHidden);
+        vm.OpenRewriteWizardCommand.Execute(null);
+
         Assert.True(vm.RewriteStepIsOperation);
         Assert.Contains("Step 1 of 4", vm.RewriteStepTitle);
         Assert.True(vm.RewriteShowNext);

@@ -199,6 +199,7 @@
 
         <!-- ═══ WORK AREA TABS ═══ -->
         <TabControl Grid.Row="3" x:Name="WorkTabs" Background="Transparent" BorderThickness="0"
+                    IsEnabled="{Binding RewriteWizardHidden}"
                     SelectionChanged="WorkTabs_SelectionChanged">
 
             <!-- ── OVERVIEW ── -->

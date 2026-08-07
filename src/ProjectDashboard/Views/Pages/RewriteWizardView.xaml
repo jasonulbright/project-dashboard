@@ -137,7 +137,12 @@
 
     <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
     <Grid Background="#B0000000">
+        <!-- The scrim stops the mouse but not the Tab key. Cycling both navigation modes keeps
+             focus inside the pane, so no keystroke reaches a destructive control the scrim
+             hides and no screen reader walks out of the surface it is announcing. -->
         <Border MaxWidth="1040" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
                 BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">

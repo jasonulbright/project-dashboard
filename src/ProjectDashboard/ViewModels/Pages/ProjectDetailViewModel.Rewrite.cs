@@ -154,6 +154,15 @@ public partial class ProjectDetailViewModel
     // ── Wizard shell ────────────────────────────────────────────────────────────
 
     [ObservableProperty] private bool _rewriteWizardVisible;
+
+    /// <summary>
+    /// Bound to the IsEnabled of the surface the wizard's scrim covers. The scrim stops the
+    /// mouse only; without this, Tab and a screen reader still reach the discard, stage, and
+    /// branch-delete controls behind it.
+    /// </summary>
+    public bool RewriteWizardHidden => !RewriteWizardVisible;
+
+    partial void OnRewriteWizardVisibleChanged(bool value) => OnPropertyChanged(nameof(RewriteWizardHidden));
     [ObservableProperty] private RewriteWizardStep _rewriteStep;
     [ObservableProperty] private bool _rewriteStepIsOperation = true;
     [ObservableProperty] private bool _rewriteStepIsScope;
