@@ -99,6 +99,11 @@ public class MarkdownLinkSafetyTests
     [InlineData("https://example.com:8443/a", "https://example.com:8443/a")]
     // Userinfo is what makes the host easy to miss, so it stays in the disclosure.
     [InlineData("https://github.com@evil.example/x", "https://github.com@evil.example/x")]
+    // An IPv6 literal keeps its brackets: unbracketed, the address colons run into the
+    // port and the disclosed string is not a URL.
+    [InlineData("https://[::1]:8080/x", "https://[::1]:8080/x")]
+    [InlineData("https://[2001:db8::1]:8443/x", "https://[2001:db8::1]:8443/x")]
+    [InlineData("http://[2001:db8::1]/x", "http://[2001:db8::1]/x")]
     public void AsciiHost_IsDisclosedUnchanged(string url, string expected)
     {
         Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var uri));

@@ -787,7 +787,10 @@ public partial class ProjectDetailPage
     {
         var userInfo = uri.UserInfo.Length > 0 ? uri.UserInfo + "@" : "";
         var port = uri.IsDefaultPort ? "" : ":" + uri.Port;
-        return $"{uri.Scheme}://{userInfo}{uri.IdnHost}{port}{uri.PathAndQuery}{uri.Fragment}";
+        // IdnHost strips the brackets an IPv6 literal needs: without them the colons of
+        // the address run into the port and the disclosure is not a URL at all.
+        var host = uri.HostNameType == UriHostNameType.IPv6 ? $"[{uri.IdnHost}]" : uri.IdnHost;
+        return $"{uri.Scheme}://{userInfo}{host}{port}{uri.PathAndQuery}{uri.Fragment}";
     }
 
     /// <summary>
