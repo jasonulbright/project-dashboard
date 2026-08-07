@@ -50,8 +50,13 @@ public sealed class HistoryPipelineOptions
     public Func<ParsedExport, CancellationToken, Task>? TransformAsync { get; init; }
 }
 
-/// <summary>Parsed stream handed to a transform. Spool slices in the records stay valid only while <see cref="SpoolPath"/> exists.</summary>
-public sealed record ParsedExport(IReadOnlyList<FastExportRecord> Records, FastExportIndex Index, string SpoolPath);
+/// <summary>
+/// Parsed stream handed to a transform. Spool slices in the records stay valid only while
+/// <see cref="SpoolPath"/> exists. <see cref="Records"/> is mutable: a transform may edit
+/// records in place, insert freshly minted blobs, or drop pruned commits — the same list
+/// object is what the import pass re-emits.
+/// </summary>
+public sealed record ParsedExport(List<FastExportRecord> Records, FastExportIndex Index, string SpoolPath);
 
 public sealed class HistoryPipelineResult
 {
