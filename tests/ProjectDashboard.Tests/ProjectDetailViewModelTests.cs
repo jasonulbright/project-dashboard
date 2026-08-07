@@ -25,14 +25,19 @@ public class ProjectDetailViewModelTests
         return new ProjectInfo { DirectoryName = name, DisplayName = name, FullPath = repo.Path };
     }
 
-    /// <summary>Blocks `git commit` in the pre-commit hook until the sentinel file exists (self-caps at ~20 s).</summary>
+    /// <summary>
+    /// Blocks `git commit` in the pre-commit hook until the sentinel file exists.
+    /// The iteration cap only breaks a hang in an already-broken test — it is not a
+    /// budget the passing path spends, so it sits far above any load-induced delay.
+    /// </summary>
     private static void InstallBlockingPreCommitHook(TempRepo repo, string sentinelPath)
     {
+        const int hangBreakerTenths = 3000; // 5 minutes
         var hookDir = System.IO.Path.Combine(repo.Path, ".git", "hooks");
         Directory.CreateDirectory(hookDir);
         var sentinel = sentinelPath.Replace('\\', '/');
         File.WriteAllText(System.IO.Path.Combine(hookDir, "pre-commit"),
-            $"#!/bin/sh\nn=0\nwhile [ ! -f '{sentinel}' ]; do\n  n=$((n+1))\n  [ $n -gt 200 ] && exit 1\n  sleep 0.1\ndone\nexit 0\n");
+            $"#!/bin/sh\nn=0\nwhile [ ! -f '{sentinel}' ]; do\n  n=$((n+1))\n  [ $n -gt {hangBreakerTenths} ] && exit 1\n  sleep 0.1\ndone\nexit 0\n");
     }
 
     private static async Task<TempRepo> RepoWithStagedChangeAsync(string prefix, string file, string content)
@@ -154,14 +159,6 @@ public class ProjectDetailViewModelTests
         Assert.Contains(state!.Staged, f => f.Path == "new.txt");
     }
 
-    /// <summary>Bounded wait for an async UI write to land; fails loudly instead of hanging.</summary>
-    private static async Task WaitForAsync(Func<bool> condition)
-    {
-        for (var i = 0; i < 200 && !condition(); i++)
-            await Task.Delay(25);
-        Assert.True(condition(), "condition not reached within the wait cap");
-    }
-
     [Fact]
     public async Task SwitchAwayAndBack_StaleCompletionRefreshesTheRepoItMutated()
     {
@@ -179,11 +176,12 @@ public class ProjectDetailViewModelTests
         Assert.True(vm.IsBusy);
 
         // Away and back while the commit is blocked in the hook. The switch-back
-        // refresh reads the mid-commit state; wait for it to land so the stale
-        // completion's refresh is provably the last writer.
+        // refresh reads the mid-commit state; awaiting that refresh itself — not a
+        // timed poll for what it writes — is what makes the stale completion's own
+        // refresh provably the last writer.
         await vm.SetProjectAsync(ProjectFor(repoB));
         await vm.SetProjectAsync(ProjectFor(repoA));
-        await WaitForAsync(() => vm.WorkingState is not null);
+        await vm.WorkingStateRefresh;
         Assert.Contains(vm.StagedFiles, f => f.Path == "a.txt");
 
         File.WriteAllText(sentinelA, "go");

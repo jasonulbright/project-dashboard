@@ -85,6 +85,13 @@ public partial class ProjectDetailViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The working-state refresh <see cref="ApplyProject"/> starts and does not await.
+    /// Held so a caller can await that refresh itself; polling for the properties it
+    /// writes makes the wait a wall-clock guess, and the guess is what goes flaky.
+    /// </summary>
+    internal Task WorkingStateRefresh { get; private set; } = Task.CompletedTask;
+
     private async Task SafeRefreshWorkingStateAsync()
     {
         try { await RefreshWorkingStateAsync(); }
@@ -149,7 +156,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         StateBannerText = "";
         ResetGitHubState();
 
-        _ = SafeRefreshWorkingStateAsync();
+        WorkingStateRefresh = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
         Commits = new ObservableCollection<GitCommit>(p.RecentCommits ?? []);
