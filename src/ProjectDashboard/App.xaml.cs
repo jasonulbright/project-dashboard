@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Surgery;
 using ProjectDashboard.ViewModels.Pages;
 using ProjectDashboard.ViewModels.Windows;
 using ProjectDashboard.Views.Pages;
@@ -79,6 +80,9 @@ public partial class App : Application
                 services.AddSingleton<IRewriteSessionFactory>(sp =>
                     new CoordinatorRewriteSessionFactory(sp.GetRequiredService<Services.Rewrite.RewriteCoordinator>()));
 
+                // Commit surgery, over the rails registered above.
+                services.AddCommitSurgery();
+
                 // Windows
                 services.AddSingleton<MainWindow>();
                 services.AddSingleton<MainWindowViewModel>();
@@ -87,7 +91,13 @@ public partial class App : Application
                 services.AddSingleton<DashboardPage>();
                 services.AddSingleton<DashboardViewModel>();
                 services.AddTransient<ProjectDetailPage>();
-                services.AddSingleton<ProjectDetailViewModel>();
+                services.AddSingleton<ProjectDetailViewModel>(sp => new ProjectDetailViewModel(
+                    sp.GetRequiredService<ProjectDiscoveryService>(),
+                    sp.GetRequiredService<GitService>(),
+                    sp.GetRequiredService<GitHubService>())
+                {
+                    Surgery = sp.GetRequiredService<SurgeryCoordinator>()
+                });
                 services.AddSingleton<SettingsPage>();
                 services.AddSingleton<SettingsViewModel>();
 
