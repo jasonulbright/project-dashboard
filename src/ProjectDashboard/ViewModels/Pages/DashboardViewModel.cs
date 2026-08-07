@@ -265,17 +265,15 @@ public partial class DashboardViewModel : ObservableObject
 
         var key = DashboardOrdering.RepoKey(project.FullPath);
         var settings = _settingsService.Load();
-        var pinned = settings.PinnedProjectPaths.ToList();
 
         if (_pinnedKeys.Remove(key))
-            pinned.RemoveAll(p => DashboardOrdering.RepoKey(p) == key);
+            settings.PinnedProjectPaths = DashboardOrdering.WithoutPin(settings.PinnedProjectPaths, project.FullPath);
         else
         {
             _pinnedKeys.Add(key);
-            pinned.Add(project.FullPath);
+            settings.PinnedProjectPaths = DashboardOrdering.WithPin(settings.PinnedProjectPaths, project.FullPath);
         }
 
-        settings.PinnedProjectPaths = [.. pinned];
         _settingsService.Save(settings);
 
         ApplyPinnedFlags();
@@ -1341,6 +1339,23 @@ public static class DashboardOrdering
 
     public static bool IsPinned(ProjectInfo project, ISet<string> pinnedKeys) =>
         !string.IsNullOrEmpty(project.FullPath) && pinnedKeys.Contains(RepoKey(project.FullPath));
+
+    /// <summary>
+    /// Pin bookkeeping over the stored path list, keyed case-insensitively like the
+    /// in-memory set. Ordinal equality here leaves a differently-cased spelling of the
+    /// same repository behind on unpin — the glyph clears, the entry survives the
+    /// restart, and every later pin appends another entry that can never be removed.
+    /// </summary>
+    public static string[] WithPin(IEnumerable<string> paths, string path) =>
+        [.. Without(paths, path), path];
+
+    public static string[] WithoutPin(IEnumerable<string> paths, string path) => [.. Without(paths, path)];
+
+    private static IEnumerable<string> Without(IEnumerable<string> paths, string path)
+    {
+        var key = RepoKey(path);
+        return paths.Where(p => !string.Equals(RepoKey(p), key, StringComparison.OrdinalIgnoreCase));
+    }
 
     public static HashSet<string> KeySet(IEnumerable<string> paths)
     {

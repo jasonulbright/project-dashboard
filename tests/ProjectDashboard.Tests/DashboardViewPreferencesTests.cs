@@ -59,6 +59,40 @@ public class DashboardViewPreferencesTests
     }
 
     [Fact]
+    public void Unpinning_RemovesAPathStoredWithDifferentCasing()
+    {
+        string[] stored = [@"C:\projects\Foo", @"C:\projects\bar"];
+
+        var remaining = DashboardOrdering.WithoutPin(stored, @"c:\PROJECTS\foo");
+
+        Assert.Equal([@"C:\projects\bar"], remaining);
+    }
+
+    [Fact]
+    public void PinUnpinCycles_LeaveNoResidueBehind()
+    {
+        string[] pinned = [];
+        var spellings = new[] { @"C:\projects\Foo", @"c:\projects\foo\", @"C:\PROJECTS\FOO" };
+
+        foreach (var spelling in spellings)
+        {
+            pinned = DashboardOrdering.WithPin(pinned, spelling);
+            Assert.Single(pinned);
+            pinned = DashboardOrdering.WithoutPin(pinned, spelling);
+            Assert.Empty(pinned);
+        }
+    }
+
+    [Fact]
+    public void PinningAnAlreadyPinnedRepo_DoesNotAppendASecondEntry()
+    {
+        var pinned = DashboardOrdering.WithPin([@"C:\projects\Foo"], @"c:\projects\foo");
+
+        Assert.Single(pinned);
+        Assert.Contains(DashboardOrdering.RepoKey(@"C:\projects\FOO"), DashboardOrdering.KeySet(pinned));
+    }
+
+    [Fact]
     public void SavingAPin_PreservesWindowStateAndEveryOtherKey()
     {
         var service = new SettingsService();
