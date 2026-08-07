@@ -276,6 +276,40 @@ public class RewriteWizardViewModelTests
         Assert.Contains("a.txt, b.txt", vm.RewriteErrorText);
     }
 
+    /// <summary>
+    /// A post-backup failure hands back the PREVIEW's report, which describes history that was
+    /// never applied. Left on screen it sits under the failure banner reading as a description
+    /// of the repository — while the content the rewrite was asked to remove is still there.
+    /// </summary>
+    [Fact]
+    public async Task FailedExecute_LeavesNoVerificationBlockDescribingTheRepository()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-failed-report");
+        using var _ = repo;
+        session.ExecuteResult = new RewriteExecutionResult
+        {
+            Success = false,
+            FailureReason = "swap failed: fetch into the source repository failed",
+            Report = NewReport(), // the dry run's report, echoed back by the coordinator
+        };
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        Assert.True(vm.RewriteHasReport);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.False(vm.RewriteResultSucceeded);
+        Assert.False(vm.RewriteHasReport);
+        Assert.Empty(vm.RewriteFacts);
+        Assert.Empty(vm.RewriteScrubLines);
+        Assert.Empty(vm.RewriteSkipLines);
+        Assert.Null(vm.RewriteOverallVerdict);
+        Assert.Contains("did not complete", vm.RewriteStatusText);
+        Assert.Contains("fetch into the source repository failed", vm.RewriteErrorText);
+    }
+
     // ── Undo ─────────────────────────────────────────────────────────────────
 
     [Fact]

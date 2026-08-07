@@ -421,16 +421,26 @@ public partial class ProjectDetailViewModel
     {
         if (!RewritePreviewAvailable && RewriteFacts.Count == 0) return;
         RewritePreviewAvailable = false;
+        ClearRewriteReport();
+        RewriteConfirmInput = "";
+        RewriteConfirmMessage = "";
+        if (RewriteStep == RewriteWizardStep.Confirm)
+            RewriteStep = RewriteWizardStep.Preview;
+    }
+
+    /// <summary>
+    /// Drops the report and every row derived from it. A report describes one history at one
+    /// moment; the moment it stops describing the repository on screen it has to leave the
+    /// screen, because the reader has no way to tell a stale verification from a live one.
+    /// </summary>
+    private void ClearRewriteReport()
+    {
         _rewriteReport = null;
         RewriteHasReport = false;
         RewriteFacts = [];
         RewriteScrubLines = [];
         RewriteSkipLines = [];
         RewriteOverallVerdict = null;
-        RewriteConfirmInput = "";
-        RewriteConfirmMessage = "";
-        if (RewriteStep == RewriteWizardStep.Confirm)
-            RewriteStep = RewriteWizardStep.Preview;
     }
 
     private string RepoDisplayName()
@@ -613,17 +623,24 @@ public partial class ProjectDetailViewModel
 
             RewriteResultSucceeded = result.Success;
             RewriteUndoAvailable = session.CanUndo;
-            if (result.Report is not null)
-                ShowReport(result.Report);
-            RewriteErrorText = result.Success ? "" : RewriteScrubVerdict.DescribeRefusal(result.FailureReason);
-            RewriteStatusText = result.Success
-                ? "History rewritten. The remote still holds the old history."
-                : "The rewrite did not complete.";
 
             if (result.Success)
             {
+                if (result.Report is not null)
+                    ShowReport(result.Report);
+                RewriteErrorText = "";
+                RewriteStatusText = "History rewritten. The remote still holds the old history.";
                 await ReloadCommitsAsync();
                 await SafeRefreshWorkingStateAsync();
+            }
+            else
+            {
+                // A failure after the backup hands back the dry run's report, which describes
+                // history that was never applied. Beside a failure banner it would read as a
+                // description of this repository, whose content the rewrite did not touch.
+                ClearRewriteReport();
+                RewriteErrorText = RewriteScrubVerdict.DescribeRefusal(result.FailureReason);
+                RewriteStatusText = "The rewrite did not complete.";
             }
         });
 
