@@ -47,7 +47,7 @@ public partial class ProjectDetailPage
         // Project switched while a lazy tab was active: its data was reset, reload it.
         LoadDataForActiveTab();
 
-        // Take keyboard focus so the tab hotkeys (Ctrl+1..7) and page key handling work
+        // Take keyboard focus so the tab hotkeys (Ctrl+digit) and page key handling work
         // immediately — navigation from a card, the sidebar, or the palette leaves focus
         // on the nav item, outside this page's tunnel.
         _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () => Focus());
@@ -90,11 +90,11 @@ public partial class ProjectDetailPage
     // row's existing left-click command (open on GitHub) without a mouse.
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // Ctrl+1..7 jumps between work-area tabs.
-        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is >= Key.D1 and <= Key.D7)
+        // Ctrl+1..9,0 jumps between work-area tabs (D0 = 10th). Digits past the live
+        // tab count are inert, so this scales as tabs are added without renumbering.
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is >= Key.D0 and <= Key.D9)
         {
-            var index = e.Key - Key.D1;
-            if (index < WorkTabs.Items.Count)
+            if (ProjectDetailTabs.TabIndexForDigit(e.Key, WorkTabs.Items.Count) is { } index)
             {
                 WorkTabs.SelectedIndex = index;
                 if (WorkTabs.SelectedItem is TabItem tab) tab.Focus();
@@ -123,16 +123,18 @@ public partial class ProjectDetailPage
 
     private void LoadDataForActiveTab()
     {
-        if (WorkTabs.SelectedItem is not TabItem tab) return;
-        switch (tab.Header as string)
+        if (WorkTabs.SelectedItem is not TabItem { Tag: Models.DetailTab tab }) return;
+        var load = ProjectDetailTabs.LoadForTab(
+            tab, _viewModel.Branches.Count > 0, _viewModel.StashesLoaded, _viewModel.PullRequestsLoaded);
+        switch (load)
         {
-            case "Branches" when _viewModel.Branches.Count == 0:
+            case DetailTabLoad.Branches:
                 _viewModel.LoadBranchesCommand.Execute(null);
                 break;
-            case "Stashes" when !_viewModel.StashesLoaded:
+            case DetailTabLoad.Stashes:
                 _viewModel.LoadStashesCommand.Execute(null);
                 break;
-            case "Pull Requests" when !_viewModel.PullRequestsLoaded:
+            case DetailTabLoad.PullRequests:
                 _viewModel.LoadPullRequestsCommand.Execute(null);
                 break;
         }
