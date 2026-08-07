@@ -463,8 +463,16 @@ public partial class ProjectDetailViewModel
         var repo = RepoPath;
         var pr = SelectedPullRequest;
         if (repo.Length == 0 || pr is null || IsBusy) return;
+
+        var head = PullRequestDetail?.HeadRef ?? "";
+        var target = head.Length > 0 ? head : "the pull request's head branch";
+        if (!await ConfirmAsync("Check out pull request?",
+                $"Switch this working copy to {target} for pull request #{pr.Number}?\n\n" +
+                $"The current branch ({BranchLabel}) is left as it is.",
+                "Check out")) return;
+
         var ok = await RunGitHubOp(() => _gitHubService.CheckoutPullRequestAsync(repo, pr.Number),
-            $"Checkout #{pr.Number}");
+            $"Checkout #{pr.Number} ({target})");
         if (ok) await SafeRefreshWorkingStateAsync();
     }
 
@@ -474,6 +482,10 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var pr = SelectedPullRequest;
         if (slug.Length == 0 || pr is null || IsBusy) return;
+        if (!await ConfirmAsync("Mark ready for review?",
+                $"Mark pull request #{pr.Number} — {pr.Title} — ready for review?\n\n" +
+                "This starts the required checks and notifies the code owners. There is no convert-to-draft here.",
+                "Mark ready")) return;
         var ok = await RunGitHubOp(() => _gitHubService.MarkPullRequestReadyAsync(slug, pr.Number),
             $"Mark #{pr.Number} ready");
         if (ok)
@@ -498,6 +510,11 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = "Request changes needs a comment explaining what to change.";
             return;
         }
+        // Approve and request-changes are public, permanently attributed verdicts with
+        // no un-review here, and one body box feeds all three — confirm names both.
+        if (action is ReviewAction.Approve or ReviewAction.RequestChanges
+            && !await ConfirmAsync("Submit review?", ReviewConfirmMessage(action, pr.Number, body),
+                ReviewVerdictLabel(action))) return;
         var gen = _generation;
         // A caller can't approve their own PR; that returns a failed ProcessResult,
         // surfaced as a normal failure toast rather than a crash.
@@ -508,6 +525,42 @@ public partial class ProjectDetailViewModel
             ReviewBody = "";
             await ReloadPullRequestDetailAsync();
         }
+    }
+
+    /// <summary>Confirm-button wording for a review verdict.</summary>
+    internal static string ReviewVerdictLabel(ReviewAction action) => action switch
+    {
+        ReviewAction.Approve => "Approve",
+        ReviewAction.RequestChanges => "Request changes",
+        _ => "Comment",
+    };
+
+    /// <summary>
+    /// Names the verdict and the body it will carry. One body box serves all three
+    /// verdicts, so text typed for a comment must not reach GitHub as an approval
+    /// without the reader having seen both together.
+    /// </summary>
+    internal static string ReviewConfirmMessage(ReviewAction action, int number, string body)
+    {
+        var verdict = action switch
+        {
+            ReviewAction.Approve => $"Approve pull request #{number}",
+            ReviewAction.RequestChanges => $"Request changes on pull request #{number}",
+            _ => $"Comment on pull request #{number}",
+        };
+        var bodyNote = body.Length == 0
+            ? "The review comment box is empty; the verdict is submitted on its own."
+            : $"It will carry this comment: “{Excerpt(body)}”";
+        return $"{verdict}?\n\n{bodyNote}\n\n" +
+               "The review is posted publicly under your account and cannot be withdrawn from here.";
+    }
+
+    /// <summary>First line, truncated: the confirm names the body without becoming a wall of text.</summary>
+    private static string Excerpt(string text)
+    {
+        var firstLine = text.ReplaceLineEndings("\n").Split('\n')[0].Trim();
+        var multiline = firstLine.Length < text.Trim().Length;
+        return firstLine.Length > 100 ? firstLine[..100] + "…" : multiline ? firstLine + " …" : firstLine;
     }
 
     // ── Shared plumbing ─────────────────────────────────────────────────────────

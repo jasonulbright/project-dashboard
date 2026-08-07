@@ -84,6 +84,53 @@ public class ProjectDetailViewModelGitHubTests
         Assert.Equal("Check out a branch before opening a pull request.", vm.GitHubStatusText);
     }
 
+    [Theory]
+    [InlineData(ReviewAction.Approve, "Approve pull request #12?")]
+    [InlineData(ReviewAction.RequestChanges, "Request changes on pull request #12?")]
+    [InlineData(ReviewAction.Comment, "Comment on pull request #12?")]
+    public void ReviewConfirm_NamesTheVerdictAndThePrNumber(ReviewAction action, string expected)
+        => Assert.StartsWith(expected, ProjectDetailViewModel.ReviewConfirmMessage(action, 12, "looks good"));
+
+    [Fact]
+    public void ReviewConfirm_QuotesTheBodyThatWillBeSubmitted()
+    {
+        // The body box is shared across verdicts; the confirm must show which text
+        // is about to be attached so a comment draft can't land as an approval.
+        var message = ProjectDetailViewModel.ReviewConfirmMessage(ReviewAction.Approve, 3, "Not sure about the lock.");
+        Assert.Contains("Not sure about the lock.", message);
+    }
+
+    [Fact]
+    public void ReviewConfirm_EmptyBody_SaysSo()
+    {
+        var message = ProjectDetailViewModel.ReviewConfirmMessage(ReviewAction.Approve, 3, "");
+        Assert.Contains("empty", message);
+    }
+
+    [Fact]
+    public void ReviewConfirm_LongBody_IsTruncatedAndMarked()
+    {
+        var message = ProjectDetailViewModel.ReviewConfirmMessage(ReviewAction.Approve, 3, new string('x', 400));
+        Assert.Contains("…", message);
+        Assert.DoesNotContain(new string('x', 200), message);
+    }
+
+    [Fact]
+    public void ReviewConfirm_MultilineBody_ShowsTheFirstLineOnly()
+    {
+        var message = ProjectDetailViewModel.ReviewConfirmMessage(
+            ReviewAction.Approve, 3, "Ship it.\nBut see the note about the migration.");
+        Assert.Contains("Ship it. …", message);
+        Assert.DoesNotContain("migration", message);
+    }
+
+    [Theory]
+    [InlineData(ReviewAction.Approve, "Approve")]
+    [InlineData(ReviewAction.RequestChanges, "Request changes")]
+    [InlineData(ReviewAction.Comment, "Comment")]
+    public void ReviewVerdictLabel_MatchesTheVerdict(ReviewAction action, string label)
+        => Assert.Equal(label, ProjectDetailViewModel.ReviewVerdictLabel(action));
+
     [Fact]
     public async Task SelectingIssue_WithoutRemote_LeavesDetailNullAndDoesNotThrow()
     {
