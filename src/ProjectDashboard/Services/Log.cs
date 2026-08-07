@@ -27,7 +27,14 @@ public static class Log
             lock (Gate)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-                File.AppendAllText(LogPath, line + Environment.NewLine);
+                // FileShare.ReadWrite | Delete so a concurrent reader or a delete/rotate of
+                // log.txt cannot make the append throw: parallel test collections append here
+                // while another path may remove the file.
+                using var stream = new FileStream(
+                    LogPath, FileMode.Append, FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var writer = new StreamWriter(stream);
+                writer.Write(line + Environment.NewLine);
             }
         }
         catch
