@@ -32,12 +32,20 @@ public class RewriteWizardViewModelTests
         public bool CanUndo { get; set; }
         public bool Disposed { get; private set; }
 
-        public Task<RewritePreviewOutcome> PreviewAsync(RewriteRequest request, CancellationToken ct = default)
+        /// <summary>Held open, this stands in for the engine still reading the scratch bare.</summary>
+        public Task? PreviewGate { get; set; }
+
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task PreviewEntered => _entered.Task;
+
+        public async Task<RewritePreviewOutcome> PreviewAsync(RewriteRequest request, CancellationToken ct = default)
         {
             LastRequest = request;
             PreviewCount++;
+            _entered.TrySetResult();
+            if (PreviewGate is { } gate) await gate;
             if (PreviewThrows is { } ex) throw ex;
-            return Task.FromResult(PreviewResult);
+            return PreviewResult;
         }
 
         public Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default)
@@ -645,5 +653,41 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.RewritePreviewAvailable);
         Assert.False(vm.ExecuteRewriteCommand.CanExecute(null));
         Assert.Equal("", vm.RewriteConfirmInput);
+    }
+
+    /// <summary>
+    /// Disposing a session deletes its scratch bare, which the swap reads across several git
+    /// invocations. A switch that disposed it under a run either failed the fetch with nobody
+    /// told, or applied the swap with nobody told and the one-click undo handle already gone.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingProjectMidRun_DisposesTheSessionOnlyAfterTheStepReturns()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-inflight-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-inflight-b");
+        using var __ = repoB;
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { PreviewGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        var pending = vm.RewriteNextCommand.ExecuteAsync(null);
+        await session.PreviewEntered;
+        Assert.True(vm.RewriteRunning);
+
+        await vm.SetProjectAsync(ProjectFor(repoB));
+
+        Assert.False(session.Disposed);
+
+        gate.SetResult();
+        await pending;
+        await vm.RewriteSessionDisposal;
+
+        Assert.True(session.Disposed);
     }
 }

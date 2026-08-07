@@ -136,6 +136,12 @@ public partial class ProjectDetailViewModel
     /// <summary>The report the wizard is currently displaying: the dry run's, then the execution's.</summary>
     private RewriteReport? _rewriteReport;
 
+    /// <summary>Completes when the step in flight returns. A session detached mid-run waits on it before disposal.</summary>
+    private Task _rewriteStepInFlight = Task.CompletedTask;
+
+    /// <summary>The deferred disposal of a session detached mid-run; held so a headless test can await it.</summary>
+    internal Task RewriteSessionDisposal { get; private set; } = Task.CompletedTask;
+
     /// <summary>Null when the host did not supply an engine; the wizard then refuses instead of pretending to work.</summary>
     private readonly IRewriteSessionFactory? _rewriteSessions;
 
@@ -357,8 +363,9 @@ public partial class ProjectDetailViewModel
     /// <summary>Drops every wizard field and the held preview. Called on open, on close, and on a project switch.</summary>
     private void ResetRewriteState()
     {
-        _rewriteSession?.Dispose();
-        _rewriteSession = null;
+        // Before RewriteRunning is cleared below: the detach reads it to decide whether the
+        // session is still in use.
+        DetachRewriteSession();
         _rewriteReport = null;
 
         RewriteWizardVisible = false;
@@ -414,6 +421,37 @@ public partial class ProjectDetailViewModel
         RewriteUndoText = "";
 
         ApplyRewriteStep(RewriteStep);
+    }
+
+    /// <summary>
+    /// Gives up the session without ending the step that is using it. Disposing a session
+    /// deletes its scratch bare, which the swap reads across several git invocations, so a
+    /// session detached mid-run is disposed only after the step in flight has returned.
+    /// </summary>
+    private void DetachRewriteSession()
+    {
+        var session = _rewriteSession;
+        _rewriteSession = null;
+        if (session is null) return;
+        if (!RewriteRunning)
+        {
+            session.Dispose();
+            return;
+        }
+        var pending = _rewriteStepInFlight;
+        RewriteSessionDisposal = DisposeAfterAsync(pending, session);
+    }
+
+    private static async Task DisposeAfterAsync(Task pending, IRewriteSession session)
+    {
+        try
+        {
+            await pending;
+        }
+        finally
+        {
+            session.Dispose();
+        }
     }
 
     /// <summary>Clears the dry run so the Execute affordance disappears the moment the inputs stop matching it.</summary>
@@ -893,6 +931,8 @@ public partial class ProjectDetailViewModel
         RewriteRunning = true;
         RewriteStatusText = $"{label}…";
         RewriteErrorText = "";
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _rewriteStepInFlight = done.Task;
         try
         {
             await body(gen);
@@ -916,6 +956,7 @@ public partial class ProjectDetailViewModel
                 IsBusy = false;
                 RewriteRunning = false;
             }
+            done.SetResult();
         }
     }
 }
