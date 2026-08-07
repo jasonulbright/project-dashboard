@@ -177,6 +177,10 @@
                                      Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     <TextBlock Text="{Binding SyncStatusText}" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <ui:Button Content="Remove stale lock and retry" FontSize="12" Padding="10,4" Margin="10,0,0,0"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding StaleLockRetryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               Command="{Binding RemoveStaleLockAndRetryCommand}" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                     <ui:Button Content="Fetch" FontSize="12" Padding="10,4" Margin="0,0,6,0"

@@ -148,14 +148,20 @@ public class GitService
         return state;
     }
 
-    private async Task<RepoActivity> DetectActivityAsync(string repoPath, CancellationToken ct)
+    /// <summary>Real git dir for a checkout — a linked worktree's .git is a file pointing elsewhere. Null when git can't read the repo.</summary>
+    private async Task<string?> ResolveGitDirAsync(string repoPath, CancellationToken ct)
     {
-        // Resolve the real git dir — a linked worktree's .git is a file pointing elsewhere.
         var result = await RunAsync(repoPath, ["rev-parse", "--git-dir"], ct);
-        if (!result.Success) return RepoActivity.None;
+        if (!result.Success) return null;
 
         var gitDir = result.StdOut.Trim();
-        if (!Path.IsPathRooted(gitDir)) gitDir = Path.Combine(repoPath, gitDir);
+        return Path.IsPathRooted(gitDir) ? gitDir : Path.Combine(repoPath, gitDir);
+    }
+
+    private async Task<RepoActivity> DetectActivityAsync(string repoPath, CancellationToken ct)
+    {
+        var gitDir = await ResolveGitDirAsync(repoPath, ct);
+        if (gitDir is null) return RepoActivity.None;
 
         // Rebase first: a rebase stopped on a conflict has no MERGE_HEAD but does
         // have the rebase state dir, and "rebasing" is the more precise banner.
@@ -286,6 +292,60 @@ public class GitService
     {
         var result = await RunAsync(repoPath, ["log", "-1", "--format=%B"], ct);
         return result.Success ? result.StdOut.TrimEnd() : "";
+    }
+
+    /// <summary>Matches git's "Unable to create '…/index.lock': File exists" failure shape.</summary>
+    public static bool IsIndexLockConflict(ProcessResult result) =>
+        !result.Success
+        && (result.StdErr + "\n" + result.StdOut) is var text
+        && text.Contains("index.lock", StringComparison.OrdinalIgnoreCase)
+        && text.Contains("File exists", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Removes an orphaned index.lock left behind by a killed git process, which
+    /// otherwise blocks every later stage/unstage/commit. git never cleans it up
+    /// itself. Heuristic, not proof — process enumeration is unreliable (another
+    /// process's CWD/args are not dependably readable), so staleness is judged by
+    /// age plus a re-check: the lock must be older than <paramref name="minAge"/>
+    /// (default 2 minutes) and still present with identical creation/write stamps
+    /// and length after <paramref name="recheckDelay"/> (default 500 ms), proving
+    /// no live git replaced it in the window. False-positive bound: only a single
+    /// live git operation holding one lock file continuously past the age
+    /// threshold can be misjudged; index writes complete in seconds even on very
+    /// large repositories, and the worst case is that op failing its final
+    /// rename — an error, not repository corruption. Returns true only when a
+    /// lock file was deleted.
+    /// </summary>
+    public async Task<bool> TryCleanStaleLockAsync(string repoPath, TimeSpan? minAge = null,
+        TimeSpan? recheckDelay = null, CancellationToken ct = default)
+    {
+        var gitDir = await ResolveGitDirAsync(repoPath, ct);
+        if (gitDir is null) return false;
+
+        var lockPath = Path.Combine(gitDir, "index.lock");
+        try
+        {
+            var info = new FileInfo(lockPath);
+            if (!info.Exists) return false;
+            var seen = (info.CreationTimeUtc, info.LastWriteTimeUtc, info.Length);
+            if (DateTime.UtcNow - info.CreationTimeUtc < (minAge ?? TimeSpan.FromMinutes(2)))
+                return false;
+
+            await Task.Delay(recheckDelay ?? TimeSpan.FromMilliseconds(500), ct);
+
+            info.Refresh();
+            if (!info.Exists || (info.CreationTimeUtc, info.LastWriteTimeUtc, info.Length) != seen)
+                return false;
+
+            File.Delete(lockPath);
+            Log.Warn($"Removed stale index.lock in {gitDir}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"stale-lock cleanup failed for {repoPath}", ex);
+            return false;
+        }
     }
 
     // ── Branches ────────────────────────────────────────────────────────────
@@ -455,11 +515,70 @@ public class GitService
     // ── Clone ───────────────────────────────────────────────────────────────
 
     /// <summary>Clones into targetParentDir/<name>. Returns null on success, else a short error.</summary>
-    public async Task<string?> CloneAsync(string url, string targetParentDir, CancellationToken ct = default)
+    public async Task<string?> CloneAsync(string url, string targetParentDir, CancellationToken ct = default,
+        TimeSpan? timeout = null)
     {
+        var repoName = GitRemote.RepoNameFromUrl(url);
+        var target = repoName.Length > 0 ? Path.Combine(targetParentDir, repoName) : null;
+        var existedBefore = target is not null && Directory.Exists(target);
+
         var result = await ProcessRunner.RunAsync(ResolveGitExe(),
-            ["clone", "--", url], targetParentDir, TimeSpan.FromMinutes(15), GitEnvironment, ct);
-        return result.Success ? null : result.FirstError;
+            ["clone", "--", url], targetParentDir, timeout ?? TimeSpan.FromMinutes(15), GitEnvironment, ct);
+        if (result.Success) return null;
+
+        // A failed or timeout-killed clone can leave a partial target directory:
+        // the next attempt then dies on the exists-guard and discovery reads the
+        // remnant as a broken repo. Remove it only when this clone created it —
+        // a pre-existing directory is never deleted.
+        if (target is not null && !existedBefore && Directory.Exists(target)
+            && IsSafeCloneCleanupTarget(target, targetParentDir, existedBefore))
+        {
+            try
+            {
+                ForceDeleteDirectory(target);
+                return $"{result.FirstError} — removed the partial clone at {target}";
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"could not remove partial clone at {target}", ex);
+                return $"{result.FirstError} — a partial clone remains at {target}; delete it before retrying";
+            }
+        }
+        return result.FirstError;
+    }
+
+    /// <summary>
+    /// True only when a failed clone's target directory may be deleted: the clone
+    /// itself created it (it did not exist beforehand) and it normalizes to a
+    /// DIRECT child of the parent directory the clone ran in. Anything else — a
+    /// pre-existing directory, the parent itself, a traversal that escapes it —
+    /// is kept.
+    /// </summary>
+    public static bool IsSafeCloneCleanupTarget(string targetDir, string parentDir, bool existedBeforeClone)
+    {
+        if (existedBeforeClone) return false;
+        if (string.IsNullOrWhiteSpace(targetDir) || string.IsNullOrWhiteSpace(parentDir)) return false;
+        try
+        {
+            var target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(targetDir));
+            var parent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(parentDir));
+            var targetParent = Path.GetDirectoryName(target);
+            return targetParent is not null
+                && string.Equals(targetParent, parent, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(target, parent, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Recursive delete that first clears the read-only bit git sets on object files (Directory.Delete refuses read-only entries).</summary>
+    private static void ForceDeleteDirectory(string dir)
+    {
+        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(dir, recursive: true);
     }
 
     /// <summary>Resolve git: known install dirs first (survives a stale Start-Menu PATH), then PATH.</summary>

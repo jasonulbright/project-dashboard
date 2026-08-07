@@ -27,6 +27,12 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _syncStatusText = "";
 
+    // Stale index.lock recovery: shows a one-click "remove lock and retry" for the
+    // op that failed on an orphaned lock (killed git never deletes its own lock).
+    [ObservableProperty] private bool _staleLockRetryVisible;
+    private Func<Task<ProcessResult>>? _staleLockRetryOp;
+    private string _staleLockRetryLabel = "";
+
     // State banner
     [ObservableProperty] private bool _stateBannerVisible;
     [ObservableProperty] private string _stateBannerText = "";
@@ -493,11 +499,19 @@ public partial class ProjectDetailViewModel
         var repo = RepoPath;
         IsBusy = true;
         SyncStatusText = $"{label}…";
+        StaleLockRetryVisible = false;
+        _staleLockRetryOp = null;
         try
         {
             var result = await op();
             if (!IsCurrent(gen)) return false;
             SyncStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
+            if (GitService.IsIndexLockConflict(result))
+            {
+                _staleLockRetryOp = op;
+                _staleLockRetryLabel = label;
+                StaleLockRetryVisible = true;
+            }
             await RefreshWorkingStateAsync();
             return result.Success;
         }
@@ -511,6 +525,26 @@ public partial class ProjectDetailViewModel
         {
             if (IsCurrent(gen)) IsBusy = false;
         }
+    }
+
+    [RelayCommand]
+    private async Task RemoveStaleLockAndRetry()
+    {
+        var op = _staleLockRetryOp;
+        var label = _staleLockRetryLabel;
+        _staleLockRetryOp = null;
+        StaleLockRetryVisible = false;
+        if (op is null || IsBusy) return;
+
+        // One busy-gated unit: another op must not slip in between the lock
+        // removal and the retry and recreate the contention being cleared.
+        await RunOp(async () =>
+        {
+            var removed = await _gitService.TryCleanStaleLockAsync(RepoPath);
+            if (!removed)
+                return new ProcessResult(-1, "", "no stale lock found — a git process may still be running", TimedOut: false);
+            return await op();
+        }, label);
     }
 
     private async Task ReloadCommitsAsync()

@@ -124,6 +124,37 @@ public class ProjectDetailViewModelTests
     }
 
     [Fact]
+    public async Task StaleLockRetry_RemovesTheLockAndRerunsTheFailedOp()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("lock-retry");
+        repo.WriteFile("new.txt", "x\n");
+
+        var vm = NewVm();
+        await vm.SetProjectAsync(ProjectFor(repo));
+
+        var lockPath = System.IO.Path.Combine(repo.Path, ".git", "index.lock");
+        File.WriteAllText(lockPath, "");
+
+        await vm.StageAllCommand.ExecuteAsync(null);
+        Assert.True(vm.StaleLockRetryVisible);
+        Assert.StartsWith("Stage all failed:", vm.SyncStatusText);
+        Assert.False(vm.IsBusy);
+
+        // Age the lock past the staleness threshold, then retry via the offer.
+        var old = DateTime.UtcNow.AddMinutes(-10);
+        File.SetCreationTimeUtc(lockPath, old);
+        File.SetLastWriteTimeUtc(lockPath, old);
+
+        await vm.RemoveStaleLockAndRetryCommand.ExecuteAsync(null);
+
+        Assert.False(File.Exists(lockPath));
+        Assert.False(vm.StaleLockRetryVisible);
+        Assert.Equal("Stage all done.", vm.SyncStatusText);
+        var state = await new GitService().GetWorkingStateAsync(repo.Path);
+        Assert.Contains(state!.Staged, f => f.Path == "new.txt");
+    }
+
+    [Fact]
     public async Task Commit_WithoutSwitch_ClearsMessageAndReloadsCommits()
     {
         using var repo = await RepoWithStagedChangeAsync("plain", "work.txt", "work\n");

@@ -129,6 +129,10 @@ public partial class ProjectDetailViewModel : ObservableObject
         AmendMode = false;
         IsBusy = false;
         SyncStatusText = "";
+        // The stashed retry op reads RepoPath live — run after a switch it would
+        // target the new repo with the old file arguments.
+        StaleLockRetryVisible = false;
+        _staleLockRetryOp = null;
         BranchLabel = "";
         AheadBehindLabel = "";
         Branches = [];
