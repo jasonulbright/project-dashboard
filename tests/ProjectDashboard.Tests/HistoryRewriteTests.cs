@@ -494,6 +494,32 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task ErePatternGitRejectsYieldsReportNotAbortedRun()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "nothing to match here\n");
+        f.CommitAll("one");
+
+        // `SECRET{2` is legal .NET (a literal brace) but git grep -E rejects the interval.
+        // The completed rewrite must still return a report, not throw after fsck passed.
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new RegexReplace { Pattern = "SECRET{2", Replacement = "X" }]
+        });
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.False(scrub.Performed);
+        Assert.False(scrub.Complete);
+        Assert.Contains("git grep", scrub.Note);
+
+        // The target is intact and reportable.
+        Assert.NotEmpty(report.CommitMap);
+        var head = f.Git("rev-parse", "HEAD").Trim();
+        Assert.Equal("nothing to match here\n",
+            FixtureRepo.RunGit(f.TargetPath, ["show", $"{report.CommitMap[head]}:a.txt"], null, null));
+    }
+
+    [Fact]
     public async Task EmptyReplacementDeletesNeedleAcrossHistory()
     {
         using var f = Fixture();
