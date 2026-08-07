@@ -240,9 +240,11 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        var gen = _generation;
         var result = await RunOp(() => _gitService.CommitAsync(RepoPath, CommitMessage.Trim(), AmendMode),
             AmendMode ? "Amend" : "Commit");
-        if (result)
+        // A stale success must not clear a draft typed on the project switched to.
+        if (result && IsCurrent(gen))
         {
             CommitMessage = "";
             AmendMode = false;
@@ -313,8 +315,10 @@ public partial class ProjectDetailViewModel
     {
         var name = NewBranchName.Trim();
         if (name.Length == 0 || IsBusy) return;
+        var gen = _generation;
         var ok = await RunOp(() => _gitService.CreateBranchAsync(RepoPath, name), "Create branch");
-        if (ok)
+        // A stale success must not blank a branch name typed on the project switched to.
+        if (ok && IsCurrent(gen))
         {
             NewBranchName = "";
             await LoadBranches();
@@ -432,10 +436,11 @@ public partial class ProjectDetailViewModel
 
     private async Task LoadCommitDiffAsync(GitCommit commit, CommitFile file)
     {
+        var gen = _generation;
         try
         {
             var diff = await _gitService.GetCommitFileDiffAsync(RepoPath, commit.ShortHash, file.Path);
-            if (ReferenceEquals(SelectedCommitFile, file))
+            if (IsCurrent(gen) && ReferenceEquals(SelectedCommitFile, file))
                 CommitDiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
         }
         catch (Exception ex)
@@ -471,33 +476,48 @@ public partial class ProjectDetailViewModel
 
     // ── Shared plumbing ─────────────────────────────────────────────────────
 
-    /// <summary>Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.</summary>
+    /// <summary>
+    /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.
+    /// The busy gate is generation-owned: only the generation that acquired it may
+    /// release it, so a stale release is impossible, not merely unlikely. A project
+    /// switch resets IsBusy and bumps the generation; an old op's finally observing a
+    /// different generation is a no-op. An unconditional release would reopen the gate
+    /// while the new project's op is mid-flight, letting two mutating git ops overlap
+    /// on one repository (index.lock / FETCH_HEAD.lock collisions). A stale op also
+    /// returns false and writes no status, so caller continuations are skipped.
+    /// </summary>
     private async Task<bool> RunOp(Func<Task<ProcessResult>> op, string label)
     {
+        if (IsBusy) return false;
+        var gen = _generation;
+        var repo = RepoPath;
         IsBusy = true;
         SyncStatusText = $"{label}…";
         try
         {
             var result = await op();
+            if (!IsCurrent(gen)) return false;
             SyncStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
             await RefreshWorkingStateAsync();
             return result.Success;
         }
         catch (Exception ex)
         {
-            Log.Warn($"{label} failed for {RepoPath}", ex);
-            SyncStatusText = $"{label} failed: {ex.Message}";
+            Log.Warn($"{label} failed for {repo}", ex);
+            if (IsCurrent(gen)) SyncStatusText = $"{label} failed: {ex.Message}";
             return false;
         }
         finally
         {
-            IsBusy = false;
+            if (IsCurrent(gen)) IsBusy = false;
         }
     }
 
     private async Task ReloadCommitsAsync()
     {
+        var gen = _generation;
         var commits = await _gitService.GetRecentCommitsAsync(RepoPath, 50);
+        if (!IsCurrent(gen)) return;
         Commits = new ObservableCollection<GitCommit>(commits);
         if (Project is not null) Project.RecentCommits = commits;
     }
