@@ -20,6 +20,14 @@ public class ProjectDetailViewModelGitHubTests
         return new ProjectInfo { DirectoryName = "gh-vm", DisplayName = "gh-vm", FullPath = dir };
     }
 
+    /// <summary>A project with a slug but no repo: guards past the slug check, no gh spawn.</summary>
+    private static ProjectInfo RemoteProject()
+    {
+        var project = LocalProject();
+        project.GitStatus.RemoteUrl = "https://github.com/o/r.git";
+        return project;
+    }
+
     [Fact]
     public void SplitLabels_TrimsAndDropsEmpty()
     {
@@ -53,13 +61,27 @@ public class ProjectDetailViewModelGitHubTests
     }
 
     [Fact]
-    public void ShowAndCancelNewPr_TogglesCompose()
+    public async Task ShowAndCancelNewPr_TogglesCompose()
     {
         var vm = NewVm();
-        vm.ShowNewPrCommand.Execute(null);
+        await vm.ShowNewPrCommand.ExecuteAsync(null);
         Assert.True(vm.PullRequestComposeVisible);
         vm.CancelNewPrCommand.Execute(null);
         Assert.False(vm.PullRequestComposeVisible);
+    }
+
+    [Fact]
+    public async Task SubmitNewPr_WithoutACheckedOutBranch_RefusesBeforeSpawningGh()
+    {
+        // A slugged project on a directory that is not a repo: no working state, so no
+        // branch to pin. The refusal lands before the (null) service is reached.
+        var vm = NewVm();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.NewPrTitle = "Add the thing";
+
+        await vm.SubmitNewPrCommand.ExecuteAsync(null);
+
+        Assert.Equal("Check out a branch before opening a pull request.", vm.GitHubStatusText);
     }
 
     [Fact]

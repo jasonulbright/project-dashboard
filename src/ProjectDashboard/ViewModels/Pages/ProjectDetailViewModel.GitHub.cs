@@ -340,14 +340,23 @@ public partial class ProjectDetailViewModel
     // ── Pull request actions ────────────────────────────────────────────────────
 
     [RelayCommand]
-    private void ShowNewPr()
+    private async Task ShowNewPr()
     {
         NewPrTitle = "";
         NewPrBody = "";
         NewPrBase = "";
         NewPrDraft = false;
         PullRequestComposeVisible = true;
+        // The form names the head branch, and submit pins that branch — refresh it so
+        // a checkout made since the page loaded is what the reader sees.
+        await SafeRefreshWorkingStateAsync();
     }
+
+    /// <summary>
+    /// The branch the compose form displays, or "" on a detached HEAD (no branch to
+    /// open a pull request from). <see cref="BranchLabel"/> is this value's display form.
+    /// </summary>
+    private string ComposeHeadBranch => WorkingState is { Detached: false } state ? state.Branch : "";
 
     [RelayCommand]
     private void CancelNewPr() => PullRequestComposeVisible = false;
@@ -362,12 +371,21 @@ public partial class ProjectDetailViewModel
             if (title.Length == 0) GitHubStatusText = "Enter a pull request title first.";
             return;
         }
+        // Without an explicit head, gh reads the checkout at spawn time — which the
+        // app's own Open in Terminal makes easy to change while the form is open.
+        var head = ComposeHeadBranch;
+        if (head.Length == 0)
+        {
+            GitHubStatusText = "Check out a branch before opening a pull request.";
+            return;
+        }
         var body = NewPrBody;
         var baseBranch = string.IsNullOrWhiteSpace(NewPrBase) ? null : NewPrBase.Trim();
         var draft = NewPrDraft;
         var gen = _generation;
-        var ok = await RunGitHubOp(() => _gitHubService.CreatePullRequestAsync(repo, title, body, baseBranch, draft),
-            "Create pull request");
+        var ok = await RunGitHubOp(
+            () => _gitHubService.CreatePullRequestAsync(repo, title, body, baseBranch, draft, head),
+            $"Create pull request from {head}");
         if (ok && IsCurrent(gen))
         {
             PullRequestComposeVisible = false;

@@ -731,19 +731,29 @@ public class GitHubService(SettingsService settingsService)
         => RunMutationAsync($"gh issue edit #{number} assign ({repoSlug})",
             ["issue", "edit", number.ToString(), "--repo", repoSlug, "--add-assignee", assignee], ct: ct);
 
-    /// <summary>Runs in the repo directory so gh resolves the head branch from the checkout.</summary>
+    /// <summary>
+    /// Runs in the repo directory. Pass <paramref name="headBranch"/> to pin the source
+    /// branch: without it gh reads whatever is checked out when the process spawns, which
+    /// need not be the branch the caller showed the user.
+    /// </summary>
     public Task<ProcessResult> CreatePullRequestAsync(string repoPath, string title, string body,
-        string? baseBranch = null, bool draft = false, CancellationToken ct = default)
+        string? baseBranch = null, bool draft = false, string? headBranch = null, CancellationToken ct = default)
         => RunMutationAsync("gh pr create",
-            BuildCreatePullRequestArgs(title, body, baseBranch, draft), repoPath, ct: ct);
+            BuildCreatePullRequestArgs(title, body, baseBranch, draft, headBranch), repoPath, ct: ct);
 
-    internal static List<string> BuildCreatePullRequestArgs(string title, string body, string? baseBranch, bool draft)
+    internal static List<string> BuildCreatePullRequestArgs(string title, string body, string? baseBranch,
+        bool draft, string? headBranch = null)
     {
         var args = new List<string> { "pr", "create", "--title", title, "--body", body };
         if (!string.IsNullOrWhiteSpace(baseBranch))
         {
             args.Add("--base");
             args.Add(baseBranch);
+        }
+        if (!string.IsNullOrWhiteSpace(headBranch))
+        {
+            args.Add("--head");
+            args.Add(headBranch);
         }
         if (draft) args.Add("--draft");
         return args;

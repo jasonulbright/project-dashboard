@@ -92,6 +92,27 @@ public class GitHubArgBuilderTests
     }
 
     [Fact]
+    public void CreatePullRequest_HeadPinsTheSourceBranch()
+    {
+        // Without --head gh reads whatever is checked out when it spawns, which need
+        // not be the branch the compose form named.
+        Assert.Equal(
+            ["pr", "create", "--title", "t", "--body", "b", "--base", "main", "--head", "feature/x", "--draft"],
+            GitHubService.BuildCreatePullRequestArgs("t", "b", "main", draft: true, headBranch: "feature/x"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreatePullRequest_HeadOmittedWhenBlank(string? head)
+    {
+        Assert.Equal(
+            ["pr", "create", "--title", "t", "--body", "b"],
+            GitHubService.BuildCreatePullRequestArgs("t", "b", null, draft: false, headBranch: head));
+    }
+
+    [Fact]
     public void ReleaseCreate_NotesFileAndFlags()
     {
         Assert.Equal(
