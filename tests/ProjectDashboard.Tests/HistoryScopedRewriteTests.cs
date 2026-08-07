@@ -733,6 +733,46 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"undecodable tag message: skip reported ({skip.Size} bytes), Complete={check.Complete}; note='{check.Note}'");
     }
 
+    /// <summary>
+    /// A pruned commit's map entry points at the survivor its children were rewired onto.
+    /// When that survivor is out of scope, reading it on the pruned commit's behalf reports a
+    /// hit on a message the run was never allowed to touch.
+    /// </summary>
+    [Fact]
+    public async Task APrunedInScopeCommitDoesNotDragAnOutOfScopeMessageIntoTheScrub()
+    {
+        using var f = Fixture();
+        f.Write("keep.txt", "keep\n");
+        f.CommitAll($"c1 leaks {Needle}");
+        var c1 = f.Git("rev-parse", "HEAD").Trim();
+        f.Write("junk.txt", "junk\n");
+        f.CommitAll("c2 adds junk only");
+        var c2 = f.Git("rev-parse", "HEAD").Trim();
+        f.Write("keep.txt", "keep two\n");
+        f.CommitAll("c3 edits keep");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }],
+            CommitScope = new ExplicitCommitsScope { Commits = [c2] },
+            Purge = new PurgeSpec { Paths = new ExplicitPathsScope { Paths = ["junk.txt"] } }
+        });
+
+        // The purge emptied the one in-scope commit, so its oid now resolves to out-of-scope c1.
+        Assert.Equal(1, report.CommitsPruned);
+        Assert.Equal(report.CommitMap[c1], report.CommitMap[c2]);
+        Assert.Contains(Needle,
+            FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%B", report.CommitMap[c1]], null, null));
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.Empty(check.Hits);
+        Assert.True(check.WithinScopeOnly);
+        Assert.False(check.Complete);
+        Assert.Contains("out-of-scope messages are untouched and unchecked", check.Note);
+        output.WriteLine($"pruned in-scope commit: c2 maps to out-of-scope c1, scrub hits={check.Hits.Count}; note='{check.Note}'");
+    }
+
     // ---- Identity rewrite ----------------------------------------------------------------
 
     [Fact]

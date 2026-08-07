@@ -143,7 +143,8 @@ public sealed class HistoryRewriter
             throw new HistoryPipelineException(
                 "verify", "fsck --strict failed on the rewrite target", fsck.ExitCode, fsck.StdErr + "\n" + fsck.StdOut);
 
-        var scope = new ScrubScope(rewrite, inScopeCommitOids, commitMap, changedTrees);
+        var scope = new ScrubScope(
+            rewrite, inScopeCommitOids, commitMap, changedTrees, PrunedSourceOids(result.Index, prunedMarks));
         var scrubChecks = await RunScrubChecksAsync(request, commitMap, binarySkips, byteSurvivors, paths, scope, ct);
 
         var report = new RewriteReport
@@ -362,6 +363,22 @@ public sealed class HistoryRewriter
         return map;
     }
 
+    /// <summary>
+    /// Source oids of the commits a purge pruned, lowercase. Their commit-map entry resolves
+    /// to a surviving replacement that the run may never have been allowed to touch, so a
+    /// scoped scrub must not read that survivor on a pruned commit's behalf.
+    /// </summary>
+    private static HashSet<string> PrunedSourceOids(
+        FastExportIndex index, IReadOnlyDictionary<long, long> prunedMarkToSurvivingMark)
+    {
+        var oids = new HashSet<string>(StringComparer.Ordinal);
+        if (prunedMarkToSurvivingMark.Count == 0) return oids;
+        foreach (var commit in index.CommitsInOrder)
+            if (prunedMarkToSurvivingMark.ContainsKey(commit.Mark) && commit.OriginalOid is { } oid)
+                oids.Add(oid.ToLowerInvariant());
+        return oids;
+    }
+
     /// <summary>Blob mark to one path whose file command references it, so a skipped blob can name where it lives.</summary>
     private static Dictionary<long, string> BuildMarkToPath(FastExportIndex index)
     {
@@ -460,13 +477,20 @@ public sealed class HistoryRewriter
         /// </summary>
         public int OutOfScopeChangedTrees { get; }
 
+        /// <summary>
+        /// Target oids the scoped scrub greps. A pruned commit is left out: its map entry
+        /// points at the survivor its children were rewired onto, and that survivor can be
+        /// out of scope — grepping it would report a hit on a message the run was never
+        /// allowed to touch, contradicting the note that says so.
+        /// </summary>
         public List<string> InScopeCommits { get; }
         public IReadOnlyList<string> PathSpecs { get; }
         public Func<string, bool> PathInScope { get; }
 
         public ScrubScope(
             RewriteOptions rewrite, HashSet<string>? inScopeCommitOids,
-            Dictionary<string, string> commitMap, IReadOnlyList<string> changedTreeOids)
+            Dictionary<string, string> commitMap, IReadOnlyList<string> changedTreeOids,
+            IReadOnlySet<string> prunedSourceOids)
         {
             PathScoped = !rewrite.FileScope.IsAllFiles;
             CommitScoped = inScopeCommitOids is not null;
@@ -476,7 +500,9 @@ public sealed class HistoryRewriter
                 : changedTreeOids.Count(oid => !inScopeCommitOids.Contains(oid.ToLowerInvariant()));
             InScopeCommits = inScopeCommitOids is null
                 ? commitMap.Values.Distinct().ToList()
-                : inScopeCommitOids.Where(commitMap.ContainsKey).Select(o => commitMap[o]).Distinct().ToList();
+                : inScopeCommitOids
+                    .Where(oid => !prunedSourceOids.Contains(oid) && commitMap.ContainsKey(oid))
+                    .Select(oid => commitMap[oid]).Distinct().ToList();
             PathInScope = rewrite.FileScope.Matches;
             PathSpecs = rewrite.FileScope switch
             {
