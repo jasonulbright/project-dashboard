@@ -57,7 +57,9 @@ public static class ProcessRunner
     /// back up the pipes or kill the child — lines queue between the pipe reader and the
     /// callback, and the process result is never held hostage to delivery; CR, LF, and CRLF
     /// each terminate a callback line (git progress redraws lines with bare CR); timeout,
-    /// cancellation, and kill semantics are identical to RunAsync.
+    /// cancellation, and kill semantics are identical to RunAsync. Memory is O(total output):
+    /// the full capture accrues alongside any queued undelivered lines, so per-line callbacks
+    /// suit progress- and log-scale output, not bulk data transfer.
     /// </summary>
     public static Task<ProcessResult> RunStreamingAsync(
         string fileName,
@@ -136,22 +138,30 @@ public static class ProcessRunner
         // escaped the kill snapshot can keep the handles open. Bound the drain so a runaway
         // grandchild can never wedge a discovery slot; whatever was read so far is returned.
         string stdOut = "", stdErr = "";
+        var drained = false;
         try
         {
             await Task.WhenAll(stdOutTask, stdErrTask).WaitAsync(TimeSpan.FromSeconds(timedOut ? 5 : 30));
             stdOut = stdOutTask.Result;
             stdErr = stdErrTask.Result;
+            drained = true;
         }
         catch (TimeoutException)
         {
             timedOut = true;
-            Log.Warn($"Abandoned pipe drain for {fileName} — a descendant process is holding the output handles");
+            Log.Warn($"Abandoned pipe drain for {fileName} — a descendant process is holding the output handles" +
+                     (stdOutDelivery is not null || stdErrDelivery is not null
+                         ? "; queued line delivery cannot complete until it exits"
+                         : ""));
         }
 
         // Line delivery is decoupled from the pipes; a bounded wait lets callers normally
         // observe every line before the result, while a stalled callback cannot hold the
-        // result hostage — its remaining lines deliver in the background.
-        if (stdOutDelivery is not null || stdErrDelivery is not null)
+        // result hostage — its remaining lines deliver in the background. The wait only
+        // runs after a completed drain: the line channels complete when the pipes close,
+        // so with the drain abandoned the wait can never succeed and a timeout here would
+        // misattribute the pipe stall to the callback.
+        if (drained && (stdOutDelivery is not null || stdErrDelivery is not null))
         {
             try
             {

@@ -15,11 +15,11 @@ public sealed class ProcessRunnerStreamingTests
     static ProcessRunnerStreamingTests()
     {
         // Log writes route into a disposable sandbox; without it, launch-failure and
-        // callback-failure paths append to the real profile log.
+        // callback-failure paths append to the real profile log. The fallback lives
+        // under the per-run fixture root so process-exit cleanup removes it.
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("PD_DATA_DIR")))
             Environment.SetEnvironmentVariable(
-                "PD_DATA_DIR",
-                Path.Combine(Path.GetTempPath(), "pd-tests-" + Guid.NewGuid().ToString("N")));
+                "PD_DATA_DIR", Path.Combine(TestEnv.Root, "app-data"));
     }
 
     private const string Pwsh = "powershell.exe";
@@ -50,6 +50,30 @@ public sealed class ProcessRunnerStreamingTests
         Assert.Contains("out 40", result.StdOut);
         Assert.Contains("err 1", result.StdErr);
         Assert.Contains("err 40", result.StdErr);
+    }
+
+    [Fact]
+    public async Task BareCrSplitCrlfAndUnterminatedTail_ScanAsLines_CaptureStaysRaw()
+    {
+        var received = new ConcurrentQueue<string>();
+
+        var result = await ProcessRunner.RunStreamingAsync(
+            Pwsh,
+            Ps("[Console]::Out.Write(\"p1`rp2`rp3`r`ndone`ntail\")"),
+            workingDirectory: null,
+            timeout: TimeSpan.FromSeconds(60),
+            environment: null,
+            onStdOutLine: received.Enqueue,
+            onStdErrLine: null);
+
+        Assert.True(result.Success, result.FirstError);
+
+        // A bare CR terminates a line, the LF of a CRLF pair does not fire a second
+        // empty line, and the unterminated tail still flushes at end of stream.
+        Assert.Equal(new[] { "p1", "p2", "p3", "done", "tail" }, received.ToArray());
+
+        // The capture is the raw stream, line endings untouched.
+        Assert.Equal("p1\rp2\rp3\r\ndone\ntail", result.StdOut);
     }
 
     [Fact]
