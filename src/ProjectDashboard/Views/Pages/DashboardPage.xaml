@@ -1031,9 +1031,13 @@
 
                                 <!-- Quick actions: revealed on hover, and again whenever one of them
                                      takes keyboard focus — Opacity 0 keeps them in the card's tab
-                                     order, where Visibility Collapsed would remove them from it. -->
+                                     order, where Visibility Collapsed would remove them from it.
+                                     DirectionalNavigation None keeps these buttons out of the grid's
+                                     arrow-key scope, where they would be the nearest target in every
+                                     direction and card-to-card arrows would never fire. -->
                                 <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,8,0,0"
-                                            HorizontalAlignment="Left">
+                                            HorizontalAlignment="Left"
+                                            KeyboardNavigation.DirectionalNavigation="None">
                                     <StackPanel.Style>
                                         <Style TargetType="StackPanel">
                                             <Setter Property="Opacity" Value="0" />
