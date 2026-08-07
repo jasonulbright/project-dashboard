@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using ProjectDashboard.Services.Safety;
 
@@ -128,6 +129,11 @@ public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry bu
             else suppressed++;
         }
 
+        // One budget spans both invocations. A timeout each makes the real per-repo
+        // ceiling twice PerRepoTimeout, and the fan-out's worst case twice what the
+        // concurrency cap implies.
+        var budget = Stopwatch.StartNew();
+
         // Filename matches lead: a path hit names the thing the user is looking for,
         // where a content hit is one line out of a file.
         var files = await gitService.RunAsync(target.Path, ["ls-files", "-z"], ct, PerRepoTimeout);
@@ -138,13 +144,16 @@ public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry bu
                     Add(new RepoSearchHit(target.Name, target.Path, path, 0, path));
         }
 
+        var remaining = PerRepoTimeout - budget.Elapsed;
+        if (remaining <= TimeSpan.Zero) return new RepoMatches(hits, suppressed);
+
         // -m 1 caps git's own work at one line per file; -I skips binaries. Exit 1 means
         // "no matches", which is an outcome, not a failure.
         var grep = await gitService.RunAsync(
             target.Path,
             ["grep", "--no-color", "-I", "-n", "-i", "-F", "-m", "1", "-e", term],
             ct,
-            PerRepoTimeout);
+            remaining);
 
         if (grep.ExitCode == 0 && !grep.TimedOut)
         {

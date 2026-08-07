@@ -195,7 +195,8 @@ public class RepoSearchServiceTests
     public async Task PerRepoTimeoutIsBounded()
     {
         // The budget is what stops one pathological repo from stalling the whole
-        // fan-out; a healthy repo must finish far inside it.
+        // fan-out. It covers the repo, not each git invocation inside it: a healthy
+        // repo must finish inside one budget, not two.
         using var repo = await RepoWithAsync(("a.txt", "needle\n"));
 
         var watch = Stopwatch.StartNew();
@@ -203,8 +204,8 @@ public class RepoSearchServiceTests
         watch.Stop();
 
         Assert.NotEmpty(result.Hits);
-        Assert.True(watch.Elapsed < RepoSearchService.PerRepoTimeout * 2,
-            $"one repo took {watch.Elapsed}, past twice its own budget");
+        Assert.True(watch.Elapsed < RepoSearchService.PerRepoTimeout,
+            $"one repo took {watch.Elapsed}, past its own budget");
         Assert.True(RepoSearchService.PerRepoTimeout > TimeSpan.Zero);
         Assert.True(RepoSearchService.MaxConcurrency > 0);
     }
