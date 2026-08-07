@@ -413,6 +413,9 @@ public partial class MainWindow : INavigationWindow
 
         _paletteItems = BuildPaletteItems();
         PaletteSearch.Text = "";
+        // A fresh palette opens on its first row; the re-filter below otherwise carries
+        // the previous session's highlight forward.
+        PaletteList.SelectedItem = null;
         ApplyPaletteFilter("");
         PaletteOverlay.Visibility = Visibility.Visible;
         PaletteSearch.Focus();
@@ -540,10 +543,13 @@ public partial class MainWindow : INavigationWindow
         // group keeps its own relevance order.
         matches = [.. matches.OrderBy(item => GroupRank(item.Group))];
 
+        var selected = PaletteSelection.AfterRefilter(PaletteList.SelectedItem as Models.PaletteItem, matches);
+
         var view = new ListCollectionView(matches);
         view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Models.PaletteItem.Group)));
         PaletteList.ItemsSource = view;
-        if (matches.Count > 0) PaletteList.SelectedIndex = 0;
+        PaletteList.SelectedItem = selected;
+        if (selected is not null) PaletteList.ScrollIntoView(selected);
     }
 
     private void PaletteSearch_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -782,5 +788,21 @@ public partial class MainWindow : INavigationWindow
     public void SetServiceProvider(IServiceProvider serviceProvider)
     {
         RootNavigation.SetServiceProvider(serviceProvider);
+    }
+}
+
+/// <summary>
+/// Which row a re-filtered palette lands on. The repository fan-out behind the palette
+/// returns long after the keystroke that started it and rebuilds the list under a user
+/// who may have arrowed down since: re-selecting the top row every time means Enter
+/// opens a row nobody chose. A highlighted row that survives the re-filter keeps the
+/// selection.
+/// </summary>
+public static class PaletteSelection
+{
+    public static PaletteItem? AfterRefilter(PaletteItem? highlighted, IReadOnlyList<PaletteItem> matches)
+    {
+        if (matches.Count == 0) return null;
+        return highlighted is not null && matches.Contains(highlighted) ? highlighted : matches[0];
     }
 }
