@@ -607,7 +607,7 @@
                                                   AutomationProperties.Name="Reword this commit" />
                                         <MenuItem Header="Squash into previous…"
                                                   Command="{Binding SquashSelectedIntoPreviousCommand}"
-                                                  ToolTip="{Binding SurgeryBlockedReason}"
+                                                  ToolTip="{Binding SquashIntoPreviousBlockedReason}"
                                                   AutomationProperties.Name="Squash this commit into the previous one" />
                                         <MenuItem Header="Drop…"
                                                   Command="{Binding DropSelectedCommitCommand}"

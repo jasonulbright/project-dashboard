@@ -155,16 +155,23 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     [Fact]
-    public async Task SquashIntoPrevious_IsDisabledOnTheOldestLoadedCommit()
+    public async Task SquashIntoPrevious_IsDisabledOnTheOldestLoadedCommitWithItsOwnReason()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "alpha");
         var vm = await VmForAsync(repo);
 
         vm.SelectedCommit = vm.Commits[0];
         Assert.True(vm.SquashSelectedIntoPreviousCommand.CanExecute(null));
+        Assert.Null(vm.SquashIntoPreviousBlockedReason);
 
         vm.SelectedCommit = vm.Commits[^1];
+
+        // Nothing else about the repository blocks a rebase here, so the shared reason is null:
+        // without a dedicated one the bound tooltip would be absent on a disabled menu item.
         Assert.False(vm.SquashSelectedIntoPreviousCommand.CanExecute(null));
+        Assert.Null(vm.SurgeryBlockedReason);
+        Assert.Equal("Only the loaded history can be squashed — this is the oldest commit shown.",
+            vm.SquashIntoPreviousBlockedReason);
     }
 
     // ── confirmations name the target ──────────────────────────────────────

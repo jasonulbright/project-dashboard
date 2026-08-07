@@ -291,6 +291,17 @@ public partial class ProjectDetailViewModel
             : $"{WorkingState!.Files.Count} uncommitted change(s) block a rebase: {SurgeryDirtyFileList}. " +
               "Stash or commit them first.");
 
+    /// <summary>
+    /// Why squashing the selection into the commit before it is unavailable, or null. The list
+    /// is a truncated read of the branch, so its last row has no loaded predecessor to fold into
+    /// even where the branch carries more history behind it.
+    /// </summary>
+    public string? SquashIntoPreviousBlockedReason =>
+        SurgeryBlockedReason
+        ?? (SelectedCommitIndex + 1 >= Commits.Count
+            ? "Only the loaded history can be squashed — this is the oldest commit shown."
+            : null);
+
     /// <summary>Why folding the staged changes into a commit is unavailable, or null when it is not.</summary>
     public string? AmendIntoCommitBlockedReason =>
         ResetBlockedReason
@@ -349,6 +360,7 @@ public partial class ProjectDetailViewModel
         StashBeforeSurgeryCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(ResetBlockedReason));
         OnPropertyChanged(nameof(SurgeryBlockedReason));
+        OnPropertyChanged(nameof(SquashIntoPreviousBlockedReason));
         OnPropertyChanged(nameof(AmendIntoCommitBlockedReason));
     }
 
