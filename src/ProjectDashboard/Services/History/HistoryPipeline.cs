@@ -108,6 +108,7 @@ public sealed class HistoryPipeline
 
     public async Task<HistoryPipelineResult> RunAsync(HistoryPipelineOptions options, CancellationToken ct = default)
     {
+        await RefuseNestedTagsAsync(options.SourceRepository, ct);
         Directory.CreateDirectory(options.WorkingDirectory);
         var spoolPath = Path.Combine(options.WorkingDirectory, "export.spool");
         var marksPath = Path.Combine(options.WorkingDirectory, "import.marks");
@@ -360,6 +361,32 @@ public sealed class HistoryPipeline
         if (emitted != records.Count)
             throw new HistoryPipelineException("fast-import", $"stream ended early: {emitted} of {records.Count} records written", process.ExitCode, stderr);
         return emitted;
+    }
+
+    /// <summary>
+    /// Refuses a source holding a tag object that points at another tag object:
+    /// fast-export re-emits the inner tag under the outer ref name, so nested tags can
+    /// never round-trip, and failing here beats a corrupt target plus a post-import ref
+    /// diff. Detection reads each annotated tag's own `type` header via %(type) —
+    /// %(*objecttype) is unusable for this because it peels recursively to the final
+    /// non-tag object. Tags of blobs or trees round-trip and pass.
+    /// </summary>
+    private async Task RefuseNestedTagsAsync(string sourceRepository, CancellationToken ct)
+    {
+        var result = await RunGitCheckedAsync(sourceRepository,
+            ["for-each-ref", "refs/tags", "--format=%(refname) %(objecttype) %(type)"], "preflight", ct);
+
+        var nested = new List<string>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // Ref names cannot contain SP, so the two type fields are the last tokens.
+            var fields = raw.TrimEnd('\r').Split(' ');
+            if (fields.Length == 3 && fields[1] == "tag" && fields[2] == "tag")
+                nested.Add(fields[0]);
+        }
+        if (nested.Count > 0)
+            throw new HistoryPipelineException(
+                "preflight", $"nested tags are unsupported — {string.Join(", ", nested)} point(s) at another tag object");
     }
 
     private async Task CreateFreshBareRepoAsync(string targetPath, CancellationToken ct)

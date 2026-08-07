@@ -205,6 +205,48 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task NestedTagIsRefusedBeforeExport()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("tag", "-a", "inner", "-m", "inner tag");
+        f.Git("-c", "advice.nestedTag=false", "tag", "-a", "outer", "-m", "tag of tag", "inner");
+
+        var pipeline = new HistoryPipeline(GitGuard.GitExe);
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => pipeline.RunAsync(new HistoryPipelineOptions
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(1),
+            ImportTimeout = TimeSpan.FromMinutes(1)
+        }));
+
+        Assert.Equal("preflight", ex.Phase);
+        Assert.Contains("nested tags are unsupported", ex.Message);
+        Assert.Contains("refs/tags/outer", ex.Message);
+        Assert.DoesNotContain("refs/tags/inner", ex.Message);
+        // The refusal must precede export: nothing spooled, no target created.
+        Assert.False(File.Exists(Path.Combine(f.WorkDir, "export.spool")));
+        Assert.False(Directory.Exists(f.TargetPath));
+    }
+
+    [Fact]
+    public async Task TagOfBlobRoundTrips()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        var blob = f.GitWithStdin(Encoding.ASCII.GetBytes("tagged blob\n"), "hash-object", "-w", "--stdin").Trim();
+        f.Git("tag", "-a", "blobtag", "-m", "tag of blob", blob);
+
+        var (_, verify) = await HistoryTestSupport.RoundTripAsync(f);
+        Assert.Contains(verify.SourceRefLines, l => l.StartsWith("refs/tags/blobtag "));
+        Assert.Contains(verify.TargetRefLines, l => l.StartsWith("refs/tags/blobtag "));
+    }
+
+    [Fact]
     public async Task DetachedHeadWithUniqueCommitRoundTrips()
     {
         using var f = new FixtureRepo();
