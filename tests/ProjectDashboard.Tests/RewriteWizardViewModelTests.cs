@@ -469,6 +469,26 @@ public class RewriteWizardViewModelTests
     }
 
     [Fact]
+    public async Task Undo_WhileTheRepositoryIsBusy_SaysSoInsteadOfDoingNothing()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-undo-busy");
+        using var _ = repo;
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        Assert.True(vm.RewriteUndoAvailable);
+
+        vm.IsBusy = true;
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, session.UndoCount);
+        Assert.Contains("Another operation is running", vm.RewriteStatusText);
+    }
+
+    [Fact]
     public void DescribeRestore_StatesACleanTreeRatherThanStayingSilent()
     {
         Assert.Contains("no uncommitted work was discarded",

@@ -99,10 +99,15 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
 
     public async Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default)
     {
-        if (_preview is null)
+        var preview = _preview;
+        if (preview is null)
             return new RewriteExecutionResult { Success = false, FailureReason = "no preview has been run for this rewrite" };
-        var result = await coordinator.ExecuteAsync(_preview, ct);
+        var result = await coordinator.ExecuteAsync(preview, ct);
         _undo ??= result.Undo;
+        // The handle is spent either way — the wizard requires a fresh dry run before any
+        // further execute — so holding it only keeps its scratch tree alive.
+        preview.Dispose();
+        _preview = null;
         return result;
     }
 
@@ -707,7 +712,12 @@ public partial class ProjectDetailViewModel
     private async Task UndoRewrite()
     {
         var session = _rewriteSession;
-        if (session is null || !session.CanUndo || RewriteRunning || IsBusy) return;
+        if (session is null || !session.CanUndo || RewriteRunning) return;
+        if (IsBusy)
+        {
+            RewriteStatusText = "Another operation is running on this repository — wait for it to finish, then undo.";
+            return;
+        }
 
         var confirmed = await ConfirmPrompt(
             "Restore the pre-rewrite backup?",
