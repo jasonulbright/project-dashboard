@@ -565,7 +565,10 @@ public partial class ProjectDetailPage
     /// <summary>Remote images kept per session, and the count at which the set is dropped.</summary>
     private const int MaxCachedRemoteImages = 64;
 
-    private static readonly HttpClient ImageClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+    /// <summary>Wall-clock budget for one remote image fetch, headers and body together.</summary>
+    private static readonly TimeSpan ImageFetchTimeout = TimeSpan.FromSeconds(15);
+
+    private static readonly HttpClient ImageClient = new() { Timeout = ImageFetchTimeout };
 
     /// <summary>
     /// Decoded remote images by URL. A theme flip re-renders every open document, so
@@ -636,12 +639,13 @@ public partial class ProjectDetailPage
     }
 
     /// <summary>
-    /// Fills a README/CHANGELOG image block from the network. A failed fetch, an
-    /// oversized body, or an out-of-bounds decode swaps the block for the alt-text line
-    /// instead of leaving a gap. Runs only where images are allowed — issue and pull
+    /// Fills a README/CHANGELOG image block from the network. A failed fetch, one
+    /// abandoned at the time budget, an oversized body, or an out-of-bounds decode swaps
+    /// the block for the alt-text line instead of leaving a gap. Runs only where images are allowed — issue and pull
     /// request bodies never reach it.
     /// </summary>
-    private static async Task FillRemoteImageAsync(FlowDocument doc, BlockUIContainer block, string url, string alt)
+    internal static async Task FillRemoteImageAsync(
+        FlowDocument doc, BlockUIContainer block, string url, string alt, TimeSpan? timeout = null)
     {
         if (RemoteImages.TryGetValue(url, out var cached))
         {
@@ -653,7 +657,7 @@ public partial class ProjectDetailPage
         BitmapImage? bitmap = null;
         try
         {
-            using var data = await FetchBoundedAsync(url).ConfigureAwait(false);
+            using var data = await FetchBoundedAsync(url, timeout).ConfigureAwait(false);
             if (data is not null) bitmap = DecodeBounded(data);
         }
         catch { }
@@ -685,22 +689,27 @@ public partial class ProjectDetailPage
     }
 
     /// <summary>
-    /// Reads a remote image into memory under a hard byte cap. A declared Content-Length
-    /// is checked first and the running total is checked again per chunk, because a
-    /// server can declare one length and send another.
+    /// Reads a remote image into memory under a hard byte cap and a hard time budget. A
+    /// declared Content-Length is checked first and the running total is checked again
+    /// per chunk, because a server can declare one length and send another. The budget
+    /// is a token threaded through every await, not HttpClient.Timeout: under
+    /// ResponseHeadersRead that timeout ends at the response headers, so a server that
+    /// answers 200 and then stalls mid-body — or dribbles bytes under the cap forever —
+    /// pins a socket and a buffer for the life of the process.
     /// </summary>
-    private static async Task<MemoryStream?> FetchBoundedAsync(string url)
+    internal static async Task<MemoryStream?> FetchBoundedAsync(string url, TimeSpan? timeout = null)
     {
+        using var cts = new CancellationTokenSource(timeout ?? ImageFetchTimeout);
         using var response = await ImageClient
-            .GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) return null;
         if (response.Content.Headers.ContentLength > MaxImageBytes) return null;
 
-        using var body = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        using var body = await response.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
         var buffer = new MemoryStream();
         var chunk = new byte[81920];
         int read;
-        while ((read = await body.ReadAsync(chunk).ConfigureAwait(false)) > 0)
+        while ((read = await body.ReadAsync(chunk, cts.Token).ConfigureAwait(false)) > 0)
         {
             if (buffer.Length + read > MaxImageBytes)
             {
