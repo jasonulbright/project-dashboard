@@ -15,12 +15,21 @@ public class SettingsService
         WriteIndented = true
     };
 
+    // Serializes settings-file access across instances: concurrent writers collide
+    // on the shared .tmp path, and a read during the swap can throw and fall back
+    // to defaults, which the next Save would then persist as a settings wipe.
+    // Load takes it too because a corrupt-file read writes the recovered backup.
+    private static readonly object FileLock = new();
+
     public AppSettings Load()
     {
         try
         {
-            // Corrupt-file handling (quarantine + .bak recovery) lives in DurableJsonFile.Read.
-            return DurableJsonFile.Read<AppSettings>(SettingsPath, JsonOptions) ?? new AppSettings();
+            lock (FileLock)
+            {
+                // Corrupt-file handling (quarantine + .bak recovery) lives in DurableJsonFile.Read.
+                return DurableJsonFile.Read<AppSettings>(SettingsPath, JsonOptions) ?? new AppSettings();
+            }
         }
         catch (Exception ex)
         {
@@ -31,7 +40,10 @@ public class SettingsService
 
     public void Save(AppSettings settings)
     {
-        Directory.CreateDirectory(SettingsDir);
-        DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+        lock (FileLock)
+        {
+            Directory.CreateDirectory(SettingsDir);
+            DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+        }
     }
 }

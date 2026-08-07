@@ -115,6 +115,7 @@ public partial class DashboardViewModel : ObservableObject
                 {
                     // Local-only refresh — the watcher fires on every save; no gh/network here.
                     var refreshed = await _discoveryService.RefreshProjectLocalAsync(project.FullPath);
+                    if (refreshed is null) continue;
 
                     // Carry forward GitHub-derived data a local refresh can't know, so the card
                     // doesn't flip to "local"/no-issues and drop out of a filtered view.
@@ -549,6 +550,7 @@ public partial class DashboardViewModel : ObservableObject
         // would spawn git in the process cwd and throw from the manifest lookup.
         if (project is null || project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return;
         var refreshed = await _discoveryService.RefreshProjectAsync(project);
+        if (refreshed is null) return;
 
         var idx = Projects.IndexOf(project);
         if (idx >= 0)
@@ -678,6 +680,7 @@ public partial class DashboardViewModel : ObservableObject
             var dirName = Path.GetFileName(dir);
             var stub = new ProjectInfo { DirectoryName = dirName, FullPath = dir, DisplayName = dirName };
             var full = await _discoveryService.RefreshProjectAsync(stub);
+            if (full is null) continue;
             // Flag, don't mutate the manifest — Status must never be overwritten by view state.
             full.IsHidden = true;
             hiddenList.Add(full);

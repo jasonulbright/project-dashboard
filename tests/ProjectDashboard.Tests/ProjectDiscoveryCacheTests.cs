@@ -66,6 +66,16 @@ public class ProjectDiscoveryCacheTests
     }
 
     [Fact]
+    public async Task Refresh_EmptyPath_ReturnsNullInsteadOfRunningGitInCwd()
+    {
+        var service = NewService(new ManifestStore());
+
+        Assert.Null(await service.RefreshProjectLocalAsync(""));
+        Assert.Null(await service.RefreshProjectLocalAsync("   "));
+        Assert.Null(await service.RefreshProjectAsync(new ProjectInfo { FullPath = "" }));
+    }
+
+    [Fact]
     public async Task SaveCache_SwapsAtomically_LeavesNoTmpAndNoBak()
     {
         var service = NewService(new ManifestStore());

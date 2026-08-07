@@ -51,7 +51,14 @@ internal static class DurableJsonFile
             var quarantine = $"{path}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
             Log.Error($"Corrupt JSON in {path} — quarantining as {Path.GetFileName(quarantine)}, trying .bak", ex);
             try { File.Move(path, quarantine); }
-            catch (Exception moveEx) { Log.Error($"Failed to quarantine {path}", moveEx); }
+            catch (Exception moveEx)
+            {
+                // With the corrupt file still live, the next write to this path
+                // (including the backup restore below) rotates the corrupt content
+                // into .bak — the pre-corruption data then survives only in the
+                // restored live file, not the backup.
+                Log.Error($"Failed to quarantine {path} — corrupt file stays live; the next write rotates it into .bak", moveEx);
+            }
 
             var bak = path + ".bak";
             if (File.Exists(bak))

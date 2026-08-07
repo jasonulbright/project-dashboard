@@ -46,9 +46,11 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         return results;
     }
 
-    public async Task<ProjectInfo> RefreshProjectAsync(ProjectInfo project, CancellationToken ct = default)
+    /// <summary>Null when the project carries no usable path (remote-only stubs).</summary>
+    public async Task<ProjectInfo?> RefreshProjectAsync(ProjectInfo project, CancellationToken ct = default)
     {
         var refreshed = await BuildProjectInfoAsync(project.FullPath, ct);
+        if (refreshed is null) return null;
         if (await gitHubService.IsAvailableAsync(ct))
             await ApplyRemoteDataAsync([refreshed], ct);
         return refreshed;
@@ -57,8 +59,9 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// <summary>
     /// Cheap local-only refresh of one repo (git status + commits, no gh) — used by the
     /// file watcher, which fires on every save and must not spawn network calls.
+    /// Null when the path is empty.
     /// </summary>
-    public Task<ProjectInfo> RefreshProjectLocalAsync(string repoPath, CancellationToken ct = default)
+    public Task<ProjectInfo?> RefreshProjectLocalAsync(string repoPath, CancellationToken ct = default)
         => BuildProjectInfoAsync(repoPath, ct);
 
     public Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
@@ -100,6 +103,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         });
 
         var results = (await Task.WhenAll(tasks))
+            .OfType<ProjectInfo>() // scan paths are never empty; keeps the guard's contract explicit
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -192,8 +196,16 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         }
     }
 
-    private async Task<ProjectInfo> BuildProjectInfoAsync(string dirPath, CancellationToken ct)
+    private async Task<ProjectInfo?> BuildProjectInfoAsync(string dirPath, CancellationToken ct)
     {
+        // An empty path would run every git call in the process cwd and key the
+        // manifest lookup on "": refuse it here rather than trusting each caller.
+        if (string.IsNullOrWhiteSpace(dirPath))
+        {
+            Log.Warn("project refresh skipped: empty repo path");
+            return null;
+        }
+
         var dirName = Path.GetFileName(dirPath);
         var readmePath = Path.Combine(dirPath, "README.md");
         var changelogPath = Path.Combine(dirPath, "CHANGELOG.md");
