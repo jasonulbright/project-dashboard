@@ -31,6 +31,7 @@ public class RewriteWizardViewModelTests
         public RestoreResult RestoreResult { get; set; } = new(true, "restored 3 refs");
         public bool CanUndo { get; set; }
         public bool Disposed { get; private set; }
+        public int DisposedOnThreadId { get; private set; }
 
         /// <summary>Held open, this stands in for the engine still reading the scratch bare.</summary>
         public Task? PreviewGate { get; set; }
@@ -61,7 +62,11 @@ public class RewriteWizardViewModelTests
             return Task.FromResult(RestoreResult);
         }
 
-        public void Dispose() => Disposed = true;
+        public void Dispose()
+        {
+            DisposedOnThreadId = Environment.CurrentManagedThreadId;
+            Disposed = true;
+        }
     }
 
     private sealed class StubFactory(StubSession session) : IRewriteSessionFactory
@@ -717,7 +722,30 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.RewriteWizardVisible);
         Assert.False(vm.RewritePreviewAvailable);
         Assert.Equal("", vm.RewriteFindText);
+        // Off the calling thread: the disposal walks and deletes the scratch tree.
+        await vm.RewriteSessionDisposal;
         Assert.True(session.Disposed);
+    }
+
+    /// <summary>
+    /// Disposing a session deletes its scratch bare — an enumeration of every file, an attribute
+    /// write per file, a recursive delete, and a sleeping retry when a handle is still held. On
+    /// the dispatcher that is a frozen window, and the common case is closing the wizard after a
+    /// dry run of a large repository.
+    /// </summary>
+    [Fact]
+    public async Task ClosingTheWizard_DisposesTheSessionOffTheCallingThread()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-close-thread");
+        using var _ = repo;
+        await AdvanceToPreviewAsync(vm);
+
+        var caller = Environment.CurrentManagedThreadId;
+        vm.CloseRewriteWizardCommand.Execute(null);
+        await vm.RewriteSessionDisposal;
+
+        Assert.True(session.Disposed);
+        Assert.NotEqual(caller, session.DisposedOnThreadId);
     }
 
     [Fact]

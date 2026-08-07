@@ -144,7 +144,7 @@ public partial class ProjectDetailViewModel
     /// <summary>Completes when the step in flight returns. A session detached mid-run waits on it before disposal.</summary>
     private Task _rewriteStepInFlight = Task.CompletedTask;
 
-    /// <summary>The deferred disposal of a session detached mid-run; held so a headless test can await it.</summary>
+    /// <summary>The off-thread disposal of the last detached session; held so a headless test can await it.</summary>
     internal Task RewriteSessionDisposal { get; private set; } = Task.CompletedTask;
 
     /// <summary>Null when the host did not supply an engine; the wizard then refuses instead of pretending to work.</summary>
@@ -441,6 +441,9 @@ public partial class ProjectDetailViewModel
     /// Gives up the session without ending the step that is using it. Disposing a session
     /// deletes its scratch bare, which the swap reads across several git invocations, so a
     /// session detached mid-run is disposed only after the step in flight has returned.
+    /// Every detach runs on the UI thread and the deletion walks the whole scratch tree,
+    /// clearing attributes and sleeping between retries while a just-exited git or a scanner
+    /// still holds handles, so the disposal itself never runs on the dispatcher.
     /// </summary>
     private void DetachRewriteSession()
     {
@@ -449,7 +452,7 @@ public partial class ProjectDetailViewModel
         if (session is null) return;
         if (!RewriteRunning)
         {
-            session.Dispose();
+            RewriteSessionDisposal = Task.Run(session.Dispose);
             return;
         }
         var pending = _rewriteStepInFlight;
@@ -460,7 +463,8 @@ public partial class ProjectDetailViewModel
     {
         try
         {
-            await pending;
+            // Without this the continuation posts back to the dispatcher the detach came from.
+            await pending.ConfigureAwait(false);
         }
         finally
         {
