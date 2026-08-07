@@ -2,6 +2,7 @@
 bin/
 obj/
 publish/
+TestResults/
 *.pdb
 
 # Editor state
