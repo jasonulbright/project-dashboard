@@ -59,6 +59,13 @@ public sealed class RewriteJournal
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    // Serializes the whole read-modify-write across instances. Two repositories rewriting at
+    // once otherwise interleave read and write, so one Begin drops the other's entry and
+    // orphans its backup, and both writers collide on the shared .tmp, which throws out of
+    // Begin after a backup was taken and out of Complete after the operation succeeded.
+    // Every file path is held synchronously under the lock; nothing here awaits.
+    private static readonly object FileLock = new();
+
     private readonly string _path;
 
     public RewriteJournal() : this(SafetyPaths.JournalFile) { }
@@ -70,41 +77,58 @@ public sealed class RewriteJournal
 
     public Task BeginAsync(RewriteJournalEntry entry, CancellationToken ct = default)
     {
-        var file = ReadFile();
-        file.Entries[KeyFor(entry.RepoPath)] = entry;
-        WriteFile(file);
+        lock (FileLock)
+        {
+            var file = ReadFile();
+            file.Entries[KeyFor(entry.RepoPath)] = entry;
+            WriteFile(file);
+        }
         return Task.CompletedTask;
     }
 
     /// <summary>Clears one repository's entry. Other repositories' pending entries survive.</summary>
     public Task CompleteAsync(string repoPath, CancellationToken ct = default)
     {
-        var file = ReadFile();
-        if (!file.Entries.Remove(KeyFor(repoPath))) return Task.CompletedTask;
+        lock (FileLock)
+        {
+            var file = ReadFile();
+            if (!file.Entries.Remove(KeyFor(repoPath))) return Task.CompletedTask;
 
-        if (file.Entries.Count == 0) DeleteFile();
-        else WriteFile(file);
+            if (file.Entries.Count == 0) DeleteFile();
+            else WriteFile(file);
+        }
         return Task.CompletedTask;
     }
 
     /// <summary>Drops every entry. For a caller that has decided nothing on disk is worth recovering.</summary>
     public Task ClearAllAsync(CancellationToken ct = default)
     {
-        DeleteFile();
+        lock (FileLock) DeleteFile();
         return Task.CompletedTask;
     }
 
     /// <summary>Every interrupted operation on disk, in no particular order.</summary>
-    public Task<IReadOnlyList<RewriteJournalEntry>> ReadAllPendingAsync(CancellationToken ct = default) =>
-        Task.FromResult<IReadOnlyList<RewriteJournalEntry>>(ReadFile().Entries.Values.ToList());
+    public Task<IReadOnlyList<RewriteJournalEntry>> ReadAllPendingAsync(CancellationToken ct = default)
+    {
+        // A read takes the lock too: a read racing the swap can fail, and recovering a corrupt
+        // file writes the recovered content back.
+        lock (FileLock)
+            return Task.FromResult<IReadOnlyList<RewriteJournalEntry>>(ReadFile().Entries.Values.ToList());
+    }
 
     /// <summary>That repository's interrupted operation, or null when it has none.</summary>
-    public Task<RewriteJournalEntry?> ReadPendingAsync(string repoPath, CancellationToken ct = default) =>
-        Task.FromResult(ReadFile().Entries.TryGetValue(KeyFor(repoPath), out var entry) ? entry : null);
+    public Task<RewriteJournalEntry?> ReadPendingAsync(string repoPath, CancellationToken ct = default)
+    {
+        lock (FileLock)
+            return Task.FromResult(ReadFile().Entries.TryGetValue(KeyFor(repoPath), out var entry) ? entry : null);
+    }
 
     /// <summary>One pending entry, for a caller that only needs to know whether anything is pending.</summary>
-    public Task<RewriteJournalEntry?> ReadPendingAsync(CancellationToken ct = default) =>
-        Task.FromResult(ReadFile().Entries.Values.FirstOrDefault());
+    public Task<RewriteJournalEntry?> ReadPendingAsync(CancellationToken ct = default)
+    {
+        lock (FileLock)
+            return Task.FromResult(ReadFile().Entries.Values.FirstOrDefault());
+    }
 
     /// <summary>
     /// A path that no longer resolves (a legacy entry written with none) still has to key

@@ -67,6 +67,68 @@ public class RewriteJournalTests
     }
 
     [Fact]
+    public async Task Begin_TwoRepositoriesConcurrently_KeepsBothEntries()
+    {
+        // Two repositories rewrite at once: RepoBusyRegistry serializes within one repository,
+        // never across several. Unserialized read-modify-write both loses an entry and collides
+        // on the shared .tmp, which throws out of Begin after a backup was already taken.
+        for (var round = 0; round < 25; round++)
+        {
+            var path = TempJournalPath();
+            var journal = new RewriteJournal(path);
+            using var gate = new ManualResetEventSlim(false);
+
+            var alpha = Task.Run(() =>
+            {
+                gate.Wait();
+                return journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\alpha", Phase = "rebase" });
+            });
+            var beta = Task.Run(() =>
+            {
+                gate.Wait();
+                return journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\beta", Phase = "swap" });
+            });
+
+            gate.Set();
+            await Task.WhenAll(alpha, beta);
+
+            var pending = await new RewriteJournal(path).ReadAllPendingAsync();
+            Assert.Equal(2, pending.Count);
+            Assert.Contains(pending, e => e.RepoPath == @"C:\projects\alpha");
+            Assert.Contains(pending, e => e.RepoPath == @"C:\projects\beta");
+        }
+    }
+
+    [Fact]
+    public async Task Complete_RacingABeginForAnotherRepository_LeavesExactlyTheBegunEntry()
+    {
+        // Either interleaving is legitimate; both must end with alpha cleared and beta pending.
+        // A lost update leaves alpha resurrected or beta missing, and the .tmp collision throws
+        // out of Complete, which would strand a finished operation as permanently pending.
+        for (var round = 0; round < 25; round++)
+        {
+            var path = TempJournalPath();
+            var journal = new RewriteJournal(path);
+            await journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\alpha", Phase = "rebase" });
+            using var gate = new ManualResetEventSlim(false);
+
+            var complete = Task.Run(() => { gate.Wait(); return journal.CompleteAsync(@"C:\projects\alpha"); });
+            var begin = Task.Run(() =>
+            {
+                gate.Wait();
+                return journal.BeginAsync(new RewriteJournalEntry { RepoPath = @"C:\projects\beta", Phase = "swap" });
+            });
+
+            gate.Set();
+            await Task.WhenAll(complete, begin);
+
+            var pending = await new RewriteJournal(path).ReadAllPendingAsync();
+            var remaining = Assert.Single(pending);
+            Assert.Equal(@"C:\projects\beta", remaining.RepoPath);
+        }
+    }
+
+    [Fact]
     public async Task RecoveryService_Startup_SurfacesEveryPendingRepository()
     {
         var path = TempJournalPath();
