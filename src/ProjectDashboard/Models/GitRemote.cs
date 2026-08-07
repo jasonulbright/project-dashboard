@@ -7,16 +7,6 @@ public sealed record GitRemote(string Host, string Owner, string Repo)
                          || Host.Equals("www.github.com", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Parses the remote URL shapes git actually produces:
-    ///   https://github.com/owner/repo(.git)      http variant too
-    ///   git@github.com:owner/repo(.git)          scp-like
-    ///   ssh://git@github.com(:port)/owner/repo(.git)
-    ///   git://github.com/owner/repo(.git)
-    /// Local paths (C:\..., file://) and anything unparseable return null.
-    /// ".git" is stripped only as a SUFFIX — never from inside a name
-    /// (e.g. "user.github.io" must survive intact).
-    /// </summary>
-    /// <summary>
     /// Repository folder name from any clone URL — https/ssh/git/scp AND file:// and
     /// local paths — for choosing a clone target directory. "" if none can be derived.
     /// Broader than Parse (which is GitHub-scoped); this only needs the last segment.
@@ -34,6 +24,16 @@ public sealed record GitRemote(string Host, string Owner, string Repo)
         return name.Trim();
     }
 
+    /// <summary>
+    /// Parses the remote URL shapes git actually produces:
+    ///   https://github.com/owner/repo(.git)      http variant too
+    ///   git@github.com:owner/repo(.git)          scp-like
+    ///   ssh://git@github.com(:port)/owner/repo(.git)
+    ///   git://github.com/owner/repo(.git)
+    /// Local paths (C:\..., file://) and anything unparseable return null.
+    /// ".git" is stripped only as a SUFFIX — never from inside a name
+    /// (e.g. "user.github.io" must survive intact).
+    /// </summary>
     public static GitRemote? Parse(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return null;
