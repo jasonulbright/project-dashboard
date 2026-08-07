@@ -137,8 +137,8 @@ public static class ProcessRunner
         // Kill closes the pipes, so these normally complete promptly — but a descendant that
         // escaped the kill snapshot can keep the handles open. Bound the drain so a runaway
         // grandchild can never wedge a discovery slot. An abandoned drain returns empty
-        // stdout/stderr with TimedOut set: the partial capture lives inside the still-running
-        // read task and is not retrievable.
+        // stdout/stderr with TimedOut set: neither capture is read on this path, so even a
+        // pipe whose read completed reports empty.
         string stdOut = "", stdErr = "";
         var drained = false;
         try
