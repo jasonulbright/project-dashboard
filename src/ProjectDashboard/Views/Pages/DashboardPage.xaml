@@ -723,8 +723,8 @@
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="Synced" />
-                                                    <!-- Later triggers win. A dirty repo with no remote reports
-                                                         both; "No remote" alone hid the uncommitted count. -->
+                                                    <!-- Later triggers win. A dirty repo with no remote matches
+                                                         both, so the uncommitted count is what shows. -->
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
                                                             <Setter Property="Text" Value="No remote" />
