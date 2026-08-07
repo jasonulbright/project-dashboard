@@ -367,6 +367,36 @@ public class SurgeryCoordinatorTests
         Assert.Equal(2, (await repo.ShasAsync()).Count);
     }
 
+    [Fact]
+    public async Task InjectStaged_WithAMergeInTheReplayRange_RefusesAndUnwindsTheFixup()
+    {
+        // Replaying a merge without --rebase-merges would flatten it. The refusal comes after the
+        // fixup commit exists, so the fix has to end up staged again exactly as it was.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha");
+        var target = await repo.HeadAsync();
+        await repo.GitAsync("switch", "-q", "-c", "side");
+        repo.Write("side.txt", "side content\n");
+        await repo.CommitAllAsync("side-one");
+        await repo.GitAsync("switch", "-q", "main");
+        repo.Write("main.txt", "main content\n");
+        await repo.CommitAllAsync("main-two");
+        await repo.GitAsync("merge", "-q", "--no-ff", "side", "-m", "merge side");
+
+        var countBefore = (await repo.ShasAsync()).Count;
+        repo.Write("alpha.txt", "alpha content\nthe fix\n");
+        await repo.GitAsync("add", "-A");
+        var statusBefore = await repo.StatusAsync();
+
+        var result = await NewCoordinator().InjectStagedIntoAsync(repo.Path, target);
+
+        Assert.False(result.Success);
+        Assert.Contains("merge", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        // No fixup commit survives, and the fix is staged again as the caller had it.
+        Assert.Equal(countBefore, (await repo.ShasAsync()).Count);
+        Assert.Equal(statusBefore, await repo.StatusAsync());
+        Assert.Equal("alpha content\nthe fix\n", repo.Read("alpha.txt"));
+    }
+
     // ── reset ─────────────────────────────────────────────────────────────
 
     [Fact]
