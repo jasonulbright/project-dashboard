@@ -209,10 +209,14 @@ public class GitHubSmokeTests(ITestOutputHelper output)
                 "Draft notes line one.\n\n- bullet with unicode 项目\n", draft: true);
             Check("CreateReleaseAsync draft (gh release create --draft --notes-file)", draftRelease.Success, draftRelease.FirstError);
 
-            var releases = await svc.GetReleasesAsync(slug);
-            Check("GetReleasesAsync (draft visible via REST)",
-                releases is not null && releases.Any(r => r.Name == "Smoke draft" && r.IsDraft),
-                $"count={releases?.Count}");
+            // The releases list lags a freshly created release by a few seconds.
+            List<Models.Release>? releases = null;
+            var releaseSeen = await Eventually(async () =>
+            {
+                releases = await svc.GetReleasesAsync(slug);
+                return releases is not null && releases.Any(r => r.Name == "Smoke draft" && r.IsDraft);
+            });
+            Check("GetReleasesAsync (draft visible via REST)", releaseSeen, $"count={releases?.Count}");
 
             var deleteDraft = await svc.DeleteReleaseAsync(slug, FindTag(releases, "Smoke draft") ?? "v0.0.1-smoke");
             Check("DeleteReleaseAsync on draft (guard allows)", deleteDraft.Success, deleteDraft.FirstError);
@@ -248,14 +252,21 @@ public class GitHubSmokeTests(ITestOutputHelper output)
 
             var toPublic = await svc.SetRepoVisibilityAsync(slug, "public");
             Check("SetRepoVisibilityAsync public (--accept-visibility-change-consequences)", toPublic.Success, toPublic.FirstError);
-            var toPrivate = await svc.SetRepoVisibilityAsync(slug, "private");
+
+            // A visibility change holds a repo-level lock for several seconds; a second
+            // change inside that window is refused with HTTP 422, and a delete with 409.
+            var toPrivate = await Retry(() => svc.SetRepoVisibilityAsync(slug!, "private"), attempts: 10);
             Check("SetRepoVisibilityAsync private", toPrivate.Success, toPrivate.FirstError);
 
             var rename = await svc.RenameRepoAsync(slug, $"{repoName}-rn");
             Check("RenameRepoAsync (gh repo rename --yes)", rename.Success, rename.FirstError);
             slug = $"{owner}/{repoName}-rn";
-            settings = await svc.GetRepoSettingsAsync(slug);
-            Check("RenameRepoAsync read-back", settings?.Name == $"{repoName}-rn", settings?.Name ?? "null");
+            var renameSeen = await Eventually(async () =>
+            {
+                settings = await svc.GetRepoSettingsAsync(slug);
+                return settings?.Name == $"{repoName}-rn";
+            });
+            Check("RenameRepoAsync read-back", renameSeen, settings?.Name ?? "null");
 
             var archive = await svc.ArchiveRepoAsync(slug);
             Check("ArchiveRepoAsync (gh repo archive --yes)", archive.Success, archive.FirstError);
@@ -279,14 +290,18 @@ public class GitHubSmokeTests(ITestOutputHelper output)
         }
         finally
         {
+            // Deleting retries: an in-flight visibility change refuses the delete with
+            // HTTP 409, which otherwise leaks the scratch repo when a step above failed.
             if (slug is not null && slug.Contains("/pd-scratch-"))
             {
-                var del = await svc.RunAsync(["repo", "delete", slug, "--yes"], timeout: TimeSpan.FromSeconds(30));
+                var del = await Retry(() => svc.RunAsync(["repo", "delete", slug!, "--yes"],
+                    timeout: TimeSpan.FromSeconds(30)), attempts: 10);
                 Info($"cleanup: gh repo delete {slug} --yes", del.Success ? "deleted" : del.FirstError);
             }
             if (forkSlug is not null && forkSlug.Contains("/pd-scratch-fork-"))
             {
-                var del = await svc.RunAsync(["repo", "delete", forkSlug, "--yes"], timeout: TimeSpan.FromSeconds(30));
+                var del = await Retry(() => svc.RunAsync(["repo", "delete", forkSlug!, "--yes"],
+                    timeout: TimeSpan.FromSeconds(30)), attempts: 10);
                 Info($"cleanup: gh repo delete {forkSlug} --yes", del.Success ? "deleted" : del.FirstError);
             }
             Environment.SetEnvironmentVariable("GH_CONFIG_DIR", null);
@@ -322,10 +337,22 @@ public class GitHubSmokeTests(ITestOutputHelper output)
     private static string? FindTag(List<Models.Release>? releases, string name) =>
         releases?.FirstOrDefault(r => r.Name == name)?.TagName;
 
-    private static async Task<ProcessResult> Retry(Func<Task<ProcessResult>> op)
+    /// <summary>Polls a read-back until true, for reads that lag a just-completed mutation.</summary>
+    private static async Task<bool> Eventually(Func<Task<bool>> probe, int seconds = 30)
+    {
+        var deadline = DateTimeOffset.Now.AddSeconds(seconds);
+        while (true)
+        {
+            if (await probe()) return true;
+            if (DateTimeOffset.Now >= deadline) return false;
+            await Task.Delay(3000);
+        }
+    }
+
+    private static async Task<ProcessResult> Retry(Func<Task<ProcessResult>> op, int attempts = 3)
     {
         ProcessResult result = new(-1, "", "not run", false);
-        for (var attempt = 0; attempt < 3; attempt++)
+        for (var attempt = 0; attempt < attempts; attempt++)
         {
             result = await op();
             if (result.Success) return result;
