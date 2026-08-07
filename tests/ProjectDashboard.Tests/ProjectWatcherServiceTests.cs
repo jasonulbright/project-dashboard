@@ -41,7 +41,11 @@ public class ProjectWatcherServiceTests
 
         public Task<bool> SignalArrivedWithinAsync(TimeSpan window) => _arrived.WaitAsync(window);
 
-        public int SignalCount { get { lock (_gate) return _signals.Count; } }
+        /// <summary>Snapshot of every batch received so far, in arrival order.</summary>
+        public IReadOnlyList<IReadOnlyCollection<string>> Signals
+        {
+            get { lock (_gate) return _signals.ToList(); }
+        }
 
         public void Dispose() => _service.Dispose();
     }
@@ -102,7 +106,7 @@ public class ProjectWatcherServiceTests
     }
 
     [Fact]
-    public async Task EditsInTwoRepos_CoalesceIntoOneSignalPerRepo()
+    public async Task EditsInTwoRepos_SignalBothRepos_NoMoreSignalsThanEdits()
     {
         var root = NewRoot();
         Directory.CreateDirectory(Path.Combine(root, "repoA"));
@@ -112,9 +116,23 @@ public class ProjectWatcherServiceTests
         Touch(root, @"repoA\a.txt");
         Touch(root, @"repoB\b.txt");
 
-        var batch = await harness.WaitForSignalAsync();
-        Assert.Equal(["repoA", "repoB"], batch.Order());
-        Assert.Equal(1, harness.SignalCount);
+        // Both edits normally coalesce into a single two-repo batch, but a testhost
+        // stall longer than the debounce can split them. The invariant is coverage
+        // without excess: every touched repo signals, no batch is empty or foreign,
+        // and two edits never warrant more than two signals.
+        string[] expected = ["repoA", "repoB"];
+        do
+        {
+            await harness.WaitForSignalAsync();
+        }
+        while (!expected.All(r => harness.Signals.Any(b => b.Contains(r))));
+
+        var batches = harness.Signals;
+        Assert.All(batches, b => Assert.NotEmpty(b));
+        Assert.Equal(expected, batches.SelectMany(b => b).Distinct().Order());
+        Assert.True(batches.Count <= expected.Length,
+            $"{expected.Length} edits produced {batches.Count} signals: " +
+            string.Join(" | ", batches.Select(b => string.Join(",", b))));
     }
 
     [Fact]

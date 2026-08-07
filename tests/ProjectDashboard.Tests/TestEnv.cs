@@ -4,11 +4,13 @@ namespace ProjectDashboard.Tests;
 
 /// <summary>
 /// Process-wide sandbox for the test run. PD_DATA_DIR redirects all app state
-/// (log, settings, cache) away from the real profile, and GIT_CONFIG_GLOBAL +
+/// (log, settings, cache) away from the real profile; GIT_CONFIG_GLOBAL +
 /// GIT_CONFIG_NOSYSTEM pin git to a private config so machine settings
-/// (default branch, autocrlf, commit signing) cannot change test outcomes.
-/// Both must be set before any test code touches AppPaths or spawns git;
-/// the module initializer runs before any test in this assembly.
+/// (default branch, autocrlf, commit signing) cannot change test outcomes;
+/// LC_ALL=C keeps git messages English for assertions that match them; and a
+/// sandboxed XDG_CONFIG_HOME keeps a machine-global ignore or attributes file
+/// out of status output. All must be set before any test code touches AppPaths
+/// or spawns git; the module initializer runs before any test in this assembly.
 /// </summary>
 internal static class TestEnv
 {
@@ -43,6 +45,15 @@ internal static class TestEnv
         Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", gitConfig);
         Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         Environment.SetEnvironmentVariable("GIT_TERMINAL_PROMPT", "0");
+        // Assertions match English git messages ("not fully merged"); a localized
+        // machine otherwise fails them.
+        Environment.SetEnvironmentVariable("LC_ALL", "C");
+        // GIT_CONFIG_GLOBAL replaces the config file but not $XDG_CONFIG_HOME/git/ignore
+        // or /attributes; an empty sandboxed XDG home keeps a machine-global ignore or
+        // attributes file from flipping untracked-file assertions.
+        var xdgHome = Path.Combine(Root, "xdg-config");
+        Directory.CreateDirectory(xdgHome);
+        Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", xdgHome);
 
         AppDomain.CurrentDomain.ProcessExit += (_, _) => TryDeleteTree(Root);
     }
