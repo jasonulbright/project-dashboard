@@ -46,6 +46,11 @@ public sealed class BlobTransformer
                 _compiled[regex] = new Regex(regex.Pattern, regex.Options | RegexOptions.CultureInvariant, RegexMatchTimeout);
     }
 
+    public long RegexPayloadLimit => _regexPayloadLimit;
+
+    /// <summary>True when at least one op is a regex, so the payload limit can gate before a blob is materialized.</summary>
+    public bool HasRegexOp => _compiled.Count > 0;
+
     public TransformResult Transform(byte[] payload)
     {
         if (!Utf8.IsValid(payload))

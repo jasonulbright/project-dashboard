@@ -542,6 +542,42 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task OverLimitRegexBlobIsSkippedAndReportedNotAborted()
+    {
+        using var f = Fixture();
+        f.WriteBytes("big.txt", Encoding.ASCII.GetBytes(new string('a', 40) + "\n"));
+        f.Write("small.txt", "token-4\n");
+        f.CommitAll("mixed sizes");
+        var oldHead = f.Git("rev-parse", "HEAD").Trim();
+
+        // A 32-byte regex payload limit: big.txt (41 bytes) is over and must be skipped
+        // before it is read; small.txt (8 bytes) still rewrites.
+        var report = await new HistoryRewriter(GitGuard.GitExe, regexPayloadLimit: 32).RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = new RewriteOptions { ContentOps = [new RegexReplace { Pattern = "token-[0-9]+", Replacement = "token-X" }] },
+            GitExecutable = GitGuard.GitExe
+        });
+
+        var skip = Assert.Single(report.BinarySkips);
+        Assert.Equal("big.txt", skip.Path);
+        Assert.Equal(41, skip.Size);
+        Assert.Contains("regex transform limit", skip.Reason);
+
+        // The rest of the repository rewrote, and the skip leaves the scrub incomplete.
+        Assert.Equal(1, report.BlobsChanged);
+        var newHead = report.CommitMap[oldHead];
+        Assert.Equal("token-X\n", FixtureRepo.RunGit(f.TargetPath, ["show", $"{newHead}:small.txt"], null, null));
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed);
+        Assert.False(scrub.Complete);
+    }
+
+    [Fact]
     public async Task EmptyReplacementDeletesNeedleAcrossHistory()
     {
         using var f = Fixture();

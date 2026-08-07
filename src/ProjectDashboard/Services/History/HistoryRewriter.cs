@@ -52,15 +52,19 @@ public sealed class HistoryRewriter
     };
 
     private readonly string _gitExe;
+    private readonly long _regexPayloadLimit;
 
-    public HistoryRewriter(string? gitExecutable = null) =>
+    public HistoryRewriter(string? gitExecutable = null, long regexPayloadLimit = BlobTransformer.DefaultRegexPayloadLimit)
+    {
         _gitExe = gitExecutable ?? HistoryPipeline.ResolveGitExecutable();
+        _regexPayloadLimit = regexPayloadLimit;
+    }
 
     public async Task<RewriteReport> RunAsync(HistoryRewriteRequest request, CancellationToken ct = default)
     {
         request.Rewrite.Validate();
 
-        var transformer = new BlobTransformer(request.Rewrite.ContentOps);
+        var transformer = new BlobTransformer(request.Rewrite.ContentOps, _regexPayloadLimit);
         var literalOps = request.Rewrite.ContentOps.OfType<LiteralReplace>().ToList();
         var tally = new TransformTally();
 
@@ -151,6 +155,16 @@ public sealed class HistoryRewriter
                     if (slice.Length > int.MaxValue)
                         throw new NotSupportedException(
                             $"a {slice.Length}-byte blob cannot be materialized for transformation (2 GiB payload ceiling)");
+                    // Gate the regex payload limit against the slice length before reading
+                    // it, so an over-limit blob is a reported skip (feeding scrub
+                    // incompleteness) rather than a materialized allocation or a run-
+                    // aborting throw. The rest of the repository still rewrites.
+                    if (transformer.HasRegexOp && slice.Length > transformer.RegexPayloadLimit)
+                    {
+                        tally.Skips.Add((blob.Mark, slice.Length,
+                            $"exceeds the {transformer.RegexPayloadLimit}-byte regex transform limit"));
+                        break;
+                    }
                     var payload = ReadSlice(spool, slice);
                     var outcome = transformer.Transform(payload);
                     switch (outcome.Class)
