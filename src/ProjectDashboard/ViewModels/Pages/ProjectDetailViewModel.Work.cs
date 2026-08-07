@@ -447,13 +447,13 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
         try
         {
-            var files = await _gitService.GetCommitFilesAsync(RepoPath, commit.ShortHash);
+            var files = await _gitService.GetCommitFilesAsync(RepoPath, commit.Ref);
             if (IsCurrent(gen) && ReferenceEquals(SelectedCommit, commit))
                 CommitFiles = new ObservableCollection<CommitFile>(files);
         }
         catch (Exception ex)
         {
-            Log.Warn($"commit files failed for {commit.ShortHash}", ex);
+            Log.Warn($"commit files failed for {commit.Ref}", ex);
         }
     }
 
@@ -469,13 +469,13 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
         try
         {
-            var diff = await _gitService.GetCommitFileDiffAsync(RepoPath, commit.ShortHash, file.Path);
+            var diff = await _gitService.GetCommitFileDiffAsync(RepoPath, commit.Ref, file.Path);
             if (IsCurrent(gen) && ReferenceEquals(SelectedCommitFile, file))
                 CommitDiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
         }
         catch (Exception ex)
         {
-            Log.Warn($"commit diff failed for {commit.ShortHash} {file.Path}", ex);
+            Log.Warn($"commit diff failed for {commit.Ref} {file.Path}", ex);
         }
     }
 

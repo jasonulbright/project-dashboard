@@ -31,6 +31,40 @@ public class GitServiceFileHistoryTests
     }
 
     [Fact]
+    public async Task CommitReads_CarryTheFullShaAlongsideTheAbbreviation()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("sha");
+        repo.WriteFile("f.txt", "v2\n");
+        await repo.CommitAllAsync("second|with a pipe in the subject");
+        var head = await repo.HeadShaAsync();
+
+        // Every read path shares one format, so all three must produce the same identity.
+        var recent = (await _git.GetRecentCommitsAsync(repo.Path)).First();
+        var paged = (await _git.GetCommitsPagedAsync(repo.Path, 0, 5)).Commits.First();
+        var history = (await _git.GetFileHistoryAsync(repo.Path, "f.txt")).First();
+
+        foreach (var commit in new[] { recent, paged, history })
+        {
+            Assert.Equal(head, commit.Hash);
+            Assert.Equal(head, commit.Ref);
+            Assert.Equal(40, commit.Hash.Length);
+            // The abbreviation stays a prefix of the full sha, and stays what lists show.
+            Assert.StartsWith(commit.ShortHash, commit.Hash, StringComparison.Ordinal);
+            Assert.True(commit.ShortHash.Length < 40);
+            // A '|' in the subject must not be eaten by the field split.
+            Assert.Equal("second|with a pipe in the subject", commit.Message);
+        }
+    }
+
+    [Fact]
+    public void CommitWithoutFullSha_FallsBackToTheAbbreviation()
+    {
+        // Nothing hands git an empty revision when only the display form is set.
+        var commit = new GitCommit { ShortHash = "abc1234" };
+        Assert.Equal("abc1234", commit.Ref);
+    }
+
+    [Fact]
     public async Task GetFileHistory_HonorsLimit()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("hist-limit");

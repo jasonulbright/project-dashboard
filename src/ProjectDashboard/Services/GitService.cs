@@ -108,21 +108,9 @@ public class GitService
 
         try
         {
-            var output = await RunGitAsync(repoPath, ["log", $"--format=%h|%an|%aI|%s", "-n", count.ToString()], ct);
+            var output = await RunGitAsync(repoPath, ["log", CommitLogFormat, "-n", count.ToString()], ct);
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var parts = line.Split('|', 4);
-                if (parts.Length < 4) continue;
-
-                commits.Add(new GitCommit
-                {
-                    ShortHash = parts[0],
-                    Author = parts[1],
-                    Date = DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out var d) ? d : default,
-                    Message = parts[3]
-                });
-            }
+                if (ParseCommitLine(line) is { } commit) commits.Add(commit);
         }
         catch (Exception ex)
         {
@@ -666,18 +654,14 @@ public class GitService
     {
         var commits = new List<GitCommit>();
         var result = await RunAsync(repoPath,
-            ["log", "--follow", "--format=%h|%an|%aI|%s", "-n", limit.ToString(), "--", filePath], ct);
+            ["log", "--follow", CommitLogFormat, "-n", limit.ToString(), "--", filePath], ct);
         if (!result.Success)
         {
             Log.Warn($"git log --follow failed for {filePath} in {repoPath}: {result.FirstError}");
             return commits;
         }
         foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = line.Split('|', 4);
-            if (parts.Length < 4) continue;
-            commits.Add(ParseCommitLine(parts));
-        }
+            if (ParseCommitLine(line) is { } commit) commits.Add(commit);
         return commits;
     }
 
@@ -779,14 +763,28 @@ public class GitService
         return true;
     }
 
-    private static GitCommit ParseCommitLine(string[] parts) => new()
+    /// <summary>
+    /// The one log format behind every <see cref="GitCommit"/>. The full sha leads and
+    /// the abbreviation follows it, so a commit carries an unambiguous revision as well
+    /// as the short form the lists display. Subject is last because it may contain '|'.
+    /// </summary>
+    private const string CommitLogFormat = "--format=%H|%h|%an|%aI|%s";
+
+    /// <summary>Null when a line carries fewer fields than the format emits.</summary>
+    private static GitCommit? ParseCommitLine(string line)
     {
-        ShortHash = parts[0],
-        Author = parts[1],
-        Date = DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.None, out var d) ? d : default,
-        Message = parts[3]
-    };
+        var parts = line.Split('|', 5);
+        if (parts.Length < 5) return null;
+        return new GitCommit
+        {
+            Hash = parts[0],
+            ShortHash = parts[1],
+            Author = parts[2],
+            Date = DateTimeOffset.TryParse(parts[3], System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var d) ? d : default,
+            Message = parts[4]
+        };
+    }
 
     // ── Paged history & search (L-05) ────────────────────────────────────────────
 
@@ -798,7 +796,7 @@ public class GitService
     public async Task<CommitPage> GetCommitsPagedAsync(string repoPath, int skip, int count,
         CommitFilter? filter = null, CancellationToken ct = default)
     {
-        var args = new List<string> { "log", "--format=%h|%an|%aI|%s", $"--skip={skip}", $"-n{count + 1}" };
+        var args = new List<string> { "log", CommitLogFormat, $"--skip={skip}", $"-n{count + 1}" };
         string? path = null;
         if (filter is not null)
         {
@@ -819,11 +817,7 @@ public class GitService
 
         var all = new List<GitCommit>();
         foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = line.Split('|', 4);
-            if (parts.Length < 4) continue;
-            all.Add(ParseCommitLine(parts));
-        }
+            if (ParseCommitLine(line) is { } commit) all.Add(commit);
 
         var hasMore = all.Count > count;
         return new CommitPage

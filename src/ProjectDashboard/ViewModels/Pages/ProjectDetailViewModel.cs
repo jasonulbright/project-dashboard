@@ -50,7 +50,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     private void OpenCommit(GitCommit? commit)
     {
         if (commit is null || Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
-        var url = $"https://github.com/{Project.GitHubSlug}/commit/{commit.ShortHash}";
+        var url = $"https://github.com/{Project.GitHubSlug}/commit/{commit.Ref}";
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
