@@ -73,6 +73,28 @@ public class RewriteJournalTests
     }
 
     [Fact]
+    public async Task RecoveryService_Startup_CorruptJournal_DegradesGracefully()
+    {
+        // A journal.json of garbage bytes (a torn write, disk corruption) must not throw out
+        // of startup: DurableJsonFile quarantines it and the read returns null, so the app
+        // launches with nothing pending rather than crashing before the window shows.
+        var path = TempJournalPath();
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "}{ not json at all \0\0\0");
+
+        var service = new RewriteRecoveryService(new RewriteJournal(path));
+
+        await service.StartAsync(CancellationToken.None); // must not throw
+
+        Assert.True(service.DetectionComplete);
+        Assert.Null(service.Pending);
+        // The corrupt file is quarantined, not left live to re-break the next launch.
+        Assert.False(File.Exists(path));
+        var dir = System.IO.Path.GetDirectoryName(path)!;
+        Assert.NotEmpty(Directory.GetFiles(dir, "rewrite-journal.json.corrupt-*"));
+    }
+
+    [Fact]
     public async Task RecoveryService_Startup_CleanShutdown_NothingPending()
     {
         var service = new RewriteRecoveryService(new RewriteJournal(TempJournalPath()));
