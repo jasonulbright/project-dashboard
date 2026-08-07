@@ -321,6 +321,50 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task PurgeKeepsCommitsItDidNotEmpty()
+    {
+        using var f = Fixture();
+        f.Write("keep.txt", "keep\n");
+        f.CommitAll("c1 base");
+        var c1 = f.Git("rev-parse", "HEAD").Trim();
+        f.Git("commit", "-q", "--allow-empty", "-m", "ci trigger");
+        var marker = f.Git("rev-parse", "HEAD").Trim();
+        f.Write("junk.txt", $"{Needle}\n");
+        f.CommitAll("c3 adds junk only");
+        var c3 = f.Git("rev-parse", "HEAD").Trim();
+        f.Write("keep.txt", "keep two\n");
+        f.CommitAll("c4 edits keep");
+        var c4 = f.Git("rev-parse", "HEAD").Trim();
+        Assert.Equal("4", f.Git("rev-list", "--count", "--all").Trim());
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            Purge = new PurgeSpec { Paths = new ExplicitPathsScope { Paths = ["junk.txt"] } }
+        });
+
+        // Only c3 — the commit the purge emptied — is pruned.
+        Assert.Equal(1, report.CommitsPruned);
+        var after = FixtureRepo.RunGit(f.TargetPath, ["rev-list", "--count", "--all"], null, null).Trim();
+        Assert.Equal("3", after);
+
+        // The pre-existing empty commit survives as itself, not folded into its parent.
+        var newMarker = report.CommitMap[marker];
+        Assert.NotEqual(report.CommitMap[c1], newMarker);
+        Assert.Equal("ci trigger",
+            FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%s", newMarker], null, null).Trim());
+        Assert.Equal(report.CommitMap[c1],
+            FixtureRepo.RunGit(f.TargetPath, ["rev-parse", newMarker + "^"], null, null).Trim());
+
+        // The commit the purge emptied is gone, and its oid resolves to its parent.
+        Assert.Equal(newMarker, report.CommitMap[c3]);
+        var tree = FixtureRepo.RunGit(f.TargetPath, ["ls-tree", "-r", "--name-only", report.CommitMap[c4]], null, null);
+        Assert.DoesNotContain("junk.txt", tree);
+        output.WriteLine($"purge prune gate: before=4 after={after} pruned={report.CommitsPruned}; " +
+                         $"'ci trigger' survives as {newMarker[..10]}, purged c3 maps to it");
+    }
+
+    [Fact]
     public async Task PurgePreservesMergeTopology()
     {
         using var f = Fixture();

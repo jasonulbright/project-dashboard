@@ -284,6 +284,9 @@ public sealed class ScopedRewritePass
     private void ApplyPurge(ScopedRewriteOutcome outcome, CancellationToken ct)
     {
         var blobs = _parsed.Index.Blobs;
+        // Only commits this purge stripped are prune candidates; a commit that was already
+        // empty is a marker the caller never asked to remove.
+        var emptiedByPurge = new HashSet<long>();
         foreach (var record in _parsed.Records)
         {
             ct.ThrowIfCancellationRequested();
@@ -306,20 +309,23 @@ public sealed class ScopedRewritePass
                 }
             });
             outcome.FileCommandsRemoved += removed;
+            if (removed > 0 && commit.Mark is { } mark) emptiedByPurge.Add(mark);
         }
 
-        PruneEmptyCommits(outcome, ct);
+        PruneEmptyCommits(outcome, emptiedByPurge, ct);
     }
 
     /// <summary>
-    /// Prunes commits left with no file commands, but only where rewiring is unambiguous: a
+    /// Prunes commits the purge itself emptied, and only where rewiring is unambiguous: a
     /// non-merge commit with a single mark parent, referenced only as a commit parent (never
-    /// by a tag or reset), and not a branch tip (it has at least one child). Children are
-    /// rewired to the pruned commit's parent, transitively; merge parents that collapse to a
-    /// duplicate are de-duplicated. Tips, roots, merges, and tag/reset targets are left as
-    /// valid empty commits rather than risk a broken ref graph.
+    /// by a tag or reset), and not the last record for its ref. Children are rewired to the
+    /// pruned commit's parent, transitively; merge parents that collapse to a duplicate are
+    /// de-duplicated. A commit that carried no file commands before the purge is never
+    /// pruned — an empty marker commit is history the caller did not target. Roots, merges,
+    /// tag/reset targets, and commits with no descendants are left as valid empty commits
+    /// rather than risk a broken ref graph.
     /// </summary>
-    private void PruneEmptyCommits(ScopedRewriteOutcome outcome, CancellationToken ct)
+    private void PruneEmptyCommits(ScopedRewriteOutcome outcome, HashSet<long> emptiedByPurge, CancellationToken ct)
     {
         var commitsByMark = new Dictionary<long, CommitRecord>();
         var childCount = new Dictionary<long, int>();
@@ -351,6 +357,7 @@ public sealed class ScopedRewritePass
         {
             if (record is not CommitRecord commit || commit.Mark is not { } mark) continue;
             if (commit.FileCommands.Count != 0) continue;
+            if (!emptiedByPurge.Contains(mark)) continue;
             if (commit.Parents.Count != 1 || commit.Parents[0].IsMerge) continue;
             if (ParseMarkRef(commit.Parents[0].DataRef) is null) continue;
             if (externallyReferenced.Contains(mark)) continue;
