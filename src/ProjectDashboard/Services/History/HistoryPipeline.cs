@@ -40,7 +40,18 @@ public sealed class HistoryPipelineOptions
 
     /// <summary>Overrides git resolution (known install dirs, then PATH).</summary>
     public string? GitExecutable { get; init; }
+
+    /// <summary>
+    /// Runs between parse and import. Mutations to the parsed records are what the
+    /// import receives, so with a transform installed the emitted stream is no longer
+    /// byte-identical to the spool and the target's object ids follow the mutations.
+    /// A throw here aborts the run before the target bare is created.
+    /// </summary>
+    public Func<ParsedExport, CancellationToken, Task>? TransformAsync { get; init; }
 }
+
+/// <summary>Parsed stream handed to a transform. Spool slices in the records stay valid only while <see cref="SpoolPath"/> exists.</summary>
+public sealed record ParsedExport(IReadOnlyList<FastExportRecord> Records, FastExportIndex Index, string SpoolPath);
 
 public sealed class HistoryPipelineResult
 {
@@ -129,6 +140,9 @@ public sealed class HistoryPipeline
             }
         }
         options.Progress?.Invoke(new HistoryProgress("parse", bytesSpooled, records.Count));
+
+        if (options.TransformAsync is { } transform)
+            await transform(new ParsedExport(records, index, spoolPath), ct);
 
         await CreateFreshBareRepoAsync(options.TargetBareRepository, ct);
         var (importFeed, scratchHeadRef) = BuildImportFeed(records);
