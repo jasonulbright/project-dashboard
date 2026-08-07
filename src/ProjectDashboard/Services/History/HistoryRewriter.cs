@@ -519,9 +519,11 @@ public sealed class HistoryRewriter
     /// whose tree did not change, so a tips-plus-changed candidate set would miss exactly the
     /// survival case), the byte-level fallback catches literal needles inside skipped blobs
     /// git grep -I cannot read, and paths are scanned for needles no content grep sees. A
-    /// check reports <see cref="ScrubCheckResult.Complete"/> only when nothing was sampled,
-    /// skipped, grep-rejected, or left outside a scope. Message and identity ops are verified
-    /// in-process against the rewritten messages/headers. This method never throws — a
+    /// check reports <see cref="ScrubCheckResult.Complete"/> only when nothing it was
+    /// responsible for was sampled, skipped, or grep-rejected; how wide that responsibility
+    /// was is <see cref="ScrubCheckResult.WithinScopeOnly"/>, set independently, so a scoped
+    /// run's sampling and skips are not swallowed by the scope flag. Message and identity ops
+    /// are verified in-process against the rewritten messages/headers. This method never throws — a
     /// completed rewrite must always be reportable, so a failed check degrades to a note.
     /// </summary>
     private async Task<List<ScrubCheckResult>> RunScrubChecksAsync(
@@ -624,7 +626,7 @@ public sealed class HistoryRewriter
                 Kind = kind,
                 Needle = needle,
                 Performed = grep.Performed,
-                Complete = grep.Performed && !sampled && !hasSkips && !scope.ContentScoped,
+                Complete = grep.Performed && !sampled && !hasSkips,
                 WithinScopeOnly = scope.ContentScoped,
                 CommitsChecked = grep.Performed ? commits.Count : 0,
                 Hits = hits,
@@ -688,7 +690,7 @@ public sealed class HistoryRewriter
                 Kind = OpKind(op, "message"),
                 Needle = OpNeedle(op),
                 Performed = true,
-                Complete = !scope.CommitScoped && messageSkips == 0,
+                Complete = messageSkips == 0,
                 WithinScopeOnly = scope.CommitScoped,
                 CommitsChecked = scope.CommitScoped ? scope.InScopeCommits.Count : 0,
                 Hits = hits,
@@ -730,7 +732,9 @@ public sealed class HistoryRewriter
                 Kind = "identity",
                 Needle = DescribeMapping(mapping),
                 Performed = true,
-                Complete = !scope.CommitScoped,
+                // Every identity the scope selected is read back, so coverage is total whether
+                // or not the scope narrowed what the mapping was allowed to touch.
+                Complete = true,
                 WithinScopeOnly = scope.CommitScoped,
                 CommitsChecked = scope.CommitScoped ? scope.InScopeCommits.Count : 0,
                 Hits = hits,

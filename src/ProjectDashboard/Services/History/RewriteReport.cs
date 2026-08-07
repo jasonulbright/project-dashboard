@@ -35,11 +35,13 @@ public sealed class ScrubCheckResult
     public required bool Performed { get; init; }
 
     /// <summary>
-    /// True only when this needle's verification covered everything: the check ran over every
-    /// commit (no sampling), nothing it was responsible for was skipped — a blob that is
-    /// binary or over-limit for the tree scrub, a message that is not valid UTF-8 for the
-    /// message scrub — and paths were scanned. When false, an empty <see cref="Hits"/> list
-    /// does not prove the needle is gone — <see cref="Note"/> names what was not covered.
+    /// True only when this needle's verification covered everything it was responsible for:
+    /// the check ran over every commit the scope selected (no sampling), nothing it was
+    /// responsible for was skipped — a blob that is binary or over-limit for the tree scrub, a
+    /// message that is not valid UTF-8 for the message scrub — and paths were scanned. It says
+    /// nothing about how wide that responsibility was; <see cref="WithinScopeOnly"/> carries
+    /// that, and the two are independent. When false, an empty <see cref="Hits"/> list does not
+    /// prove the needle is gone even from the scope — <see cref="Note"/> names what was missed.
     /// </summary>
     public required bool Complete { get; init; }
 
@@ -48,11 +50,12 @@ public sealed class ScrubCheckResult
     public required IReadOnlyList<string> Hits { get; init; }
 
     /// <summary>
-    /// True when the check covered only a scope (a path/commit subset). An empty
-    /// <see cref="Hits"/> list then proves only "scrubbed within scope", never "scrubbed
-    /// everywhere"; <see cref="Complete"/> is always false while this is true. It does not
-    /// mean out-of-scope content is unchanged: under a commit scope a rewrite propagates into
-    /// every descendant that does not re-touch the path. <see cref="Note"/> carries the count.
+    /// True when the check was responsible for only a scope (a path/commit subset). An empty
+    /// <see cref="Hits"/> list then proves at most "scrubbed within scope", never "scrubbed
+    /// everywhere" — and proves even that only while <see cref="Complete"/> is true, which this
+    /// flag neither implies nor excludes. It does not mean out-of-scope content is unchanged:
+    /// under a commit scope a rewrite propagates into every descendant that does not re-touch
+    /// the path. <see cref="Note"/> carries the count.
     /// </summary>
     public bool WithinScopeOnly { get; init; }
 
@@ -64,8 +67,9 @@ public sealed class ScrubCheckResult
 /// commits map to new ones, and what the verification greps found. Serializable with
 /// System.Text.Json in both directions.
 /// Reading the scrub result: a non-empty <see cref="ScrubCheckResult.Hits"/> list means
-/// the needle survives in the target. An empty hit list proves the needle is gone only
-/// when that check's <see cref="ScrubCheckResult.Complete"/> is true; while any check is
+/// the needle survives in the target. An empty hit list proves the needle is gone only when
+/// that check's <see cref="ScrubCheckResult.Complete"/> is true, and then only across what
+/// <see cref="ScrubCheckResult.WithinScopeOnly"/> says it covered; while any check is
 /// incomplete — a skipped blob, a sampled commit set, or a grep that could not run — an
 /// empty hit list is silence, not a clean bill.
 /// </summary>

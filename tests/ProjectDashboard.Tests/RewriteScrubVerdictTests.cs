@@ -185,11 +185,13 @@ public class RewriteScrubVerdictTests
         Assert.Contains("git grep rejected the pattern", line.Detail);
     }
 
+    /// <summary>A scoped check earns the scope claim only when it covered the scope it took on.</summary>
     [Fact]
     public void WithinScopeOnly_SaysScopeAndRefusesTheEverywhereClaim()
     {
         var line = RewriteScrubVerdict.Describe(
-            Check(0, performed: true, complete: false, withinScopeOnly: true, note: "checked 3 of 40 commits"), []);
+            Check(0, performed: true, complete: true, withinScopeOnly: true,
+                note: "scrubbed within scope only (40 in-scope commit(s))"), []);
 
         Assert.Equal(ScrubVerdict.CleanWithinScope, line.Verdict);
         Assert.Equal(RewriteScrubVerdict.WithinScopeLabel, line.Label);
@@ -197,7 +199,41 @@ public class RewriteScrubVerdictTests
         Assert.Contains("within the selected scope", line.Headline);
         Assert.Contains("left by design", line.Headline);
         Assert.Contains("not a claim that the repository is clean everywhere", line.Headline);
-        Assert.Contains("checked 3 of 40 commits", line.Detail);
+        Assert.Contains("scrubbed within scope only", line.Detail);
+    }
+
+    /// <summary>
+    /// The gap a scoped check hides: incomplete coverage of the scope itself. A sampled grep
+    /// or a payload the transform skipped leaves an empty hit list that proves nothing about
+    /// the scope either, so it may not render as a cleaned scope.
+    /// </summary>
+    [Theory]
+    [InlineData("sampled 2048 of 9000 commit(s); unsampled commits were not grepped")]
+    [InlineData("1 blob(s) the transform skipped are invisible to git grep")]
+    public void AScopedCheckThatDidNotCoverItsOwnScope_IsNotVerifiedNotCleanWithinScope(string note)
+    {
+        var line = RewriteScrubVerdict.Describe(
+            Check(0, performed: true, complete: false, withinScopeOnly: true, note: note), []);
+
+        Assert.Equal(ScrubVerdict.NotVerified, line.Verdict);
+        Assert.Equal(RewriteScrubVerdict.NotVerifiedLabel, line.Label);
+        Assert.False(line.ClaimsClean);
+        Assert.Contains("NOT proof", line.Headline);
+        Assert.DoesNotContain("cleaned within the selected scope", line.Headline);
+        Assert.Contains(note, line.Detail);
+    }
+
+    /// <summary>The same gap through the summary line, which is what renders red rather than amber.</summary>
+    [Fact]
+    public void Overall_AScopedCheckThatDidNotCoverItsScope_IsNotVerified()
+    {
+        var line = RewriteScrubVerdict.Overall(
+            Report(Check(0, performed: true, complete: false, withinScopeOnly: true)));
+
+        Assert.Equal(ScrubVerdict.NotVerified, line.Verdict);
+        Assert.False(line.ClaimsClean);
+        Assert.True(line.IsProblem);
+        Assert.DoesNotContain("Clean within the selected scope", line.Headline);
     }
 
     [Fact]
@@ -224,7 +260,7 @@ public class RewriteScrubVerdictTests
         var report = Report(
             Check(0, true, true, false),                       // verified clean
             Check(0, true, false, false),                      // not verified
-            Check(0, true, false, true));                      // within scope only
+            Check(0, true, true, true));                       // within scope only
 
         var line = RewriteScrubVerdict.Overall(report);
 

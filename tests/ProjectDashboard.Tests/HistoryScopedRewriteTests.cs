@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using ProjectDashboard.Services;
 using ProjectDashboard.Services.History;
+using ProjectDashboard.ViewModels.Pages;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -216,7 +217,9 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         var scrub = Assert.Single(report.ScrubChecks);
         Assert.True(scrub.Performed);
         Assert.True(scrub.WithinScopeOnly);
-        Assert.False(scrub.Complete);
+        // Coverage of the scope is total; the scope flag alone is what withholds the
+        // everywhere claim.
+        Assert.True(scrub.Complete);
         Assert.Empty(scrub.Hits); // in-scope src/** is clean
         Assert.Contains("within scope", scrub.Note);
         output.WriteLine($"glob scope: src/app.cs scrubbed, docs/readme.md survivor retained; scrub WithinScopeOnly={scrub.WithinScopeOnly}, Complete={scrub.Complete}");
@@ -264,9 +267,56 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
 
         var scrub = Assert.Single(report.ScrubChecks);
         Assert.True(scrub.WithinScopeOnly);
-        Assert.False(scrub.Complete);
+        Assert.True(scrub.Complete);
         Assert.Empty(scrub.Hits);
-        output.WriteLine($"commit-range scope: c2,c3 scrubbed; c1 survivor retained honestly (Complete={scrub.Complete})");
+        output.WriteLine($"commit-range scope: c2,c3 scrubbed; c1 survivor retained honestly " +
+                         $"(WithinScopeOnly={scrub.WithinScopeOnly}, Complete={scrub.Complete})");
+    }
+
+    /// <summary>
+    /// A scope narrows what the check answers for; it does not excuse gaps inside that scope.
+    /// A regex op has no byte-level fallback, so an in-scope payload the transform skipped is
+    /// genuinely unsearched — the check must report incomplete coverage even though the run
+    /// was scoped, or the scope flag alone would render it as a cleaned scope.
+    /// </summary>
+    [Fact]
+    public async Task AScopedRunWithASkippedPayloadReportsIncompleteCoverageNotACleanedScope()
+    {
+        using var f = Fixture();
+        f.WriteBytes("src/big.txt", Encoding.ASCII.GetBytes(new string('a', 40) + "\n"));
+        f.Write("src/small.txt", "token-4\n");
+        f.Write("docs/out.txt", "token-9\n");
+        f.CommitAll("mixed sizes");
+
+        // 32-byte regex payload limit: src/big.txt (41 bytes) is skipped before it is read.
+        var report = await new HistoryRewriter(GitGuard.GitExe, regexPayloadLimit: 32).RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = new RewriteOptions
+            {
+                ContentOps = [new RegexReplace { Pattern = "token-[0-9]+", Replacement = "token-X" }],
+                FileScope = new GlobScope { Patterns = ["src/**"] }
+            },
+            GitExecutable = GitGuard.GitExe
+        });
+
+        Assert.Contains("regex transform limit", Assert.Single(report.BinarySkips).Reason);
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.True(check.Performed);
+        Assert.True(check.WithinScopeOnly);
+        Assert.False(check.Complete);
+        Assert.Empty(check.Hits);
+
+        var line = RewriteScrubVerdict.Describe(check, report.BinarySkips);
+        Assert.Equal(ScrubVerdict.NotVerified, line.Verdict);
+        Assert.False(line.ClaimsClean);
+        output.WriteLine($"scoped run with a skipped payload: WithinScopeOnly={check.WithinScopeOnly}, " +
+                         $"Complete={check.Complete}, verdict={line.Verdict}");
     }
 
     [Fact]
@@ -648,7 +698,7 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         foreach (var check in report.ScrubChecks)
         {
             Assert.True(check.WithinScopeOnly);
-            Assert.False(check.Complete);
+            Assert.True(check.Complete);
             Assert.Empty(check.Hits);
         }
         Assert.Contains($"commits [{c2}]", report.ScopeDescription);
@@ -812,7 +862,7 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         var check = Assert.Single(report.ScrubChecks);
         Assert.Empty(check.Hits);
         Assert.True(check.WithinScopeOnly);
-        Assert.False(check.Complete);
+        Assert.True(check.Complete);
         Assert.Contains("out-of-scope messages are untouched and unchecked", check.Note);
         output.WriteLine($"pruned in-scope commit: c2 maps to out-of-scope c1, scrub hits={check.Hits.Count}; note='{check.Note}'");
     }

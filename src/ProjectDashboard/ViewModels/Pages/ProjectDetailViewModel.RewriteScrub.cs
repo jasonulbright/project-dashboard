@@ -52,19 +52,19 @@ public static class RewriteScrubVerdict
 
     /// <summary>
     /// The whole verdict rule. A hit is direct evidence the needle survived, so it outranks
-    /// every coverage flag. Performed is tested next and before the scope flag: WithinScopeOnly
-    /// is derived from the requested scope, not from a search, so a check whose search never
-    /// ran carries it set and has nothing behind it. With a search behind it, a scoped check
-    /// can claim no more than its scope, an incomplete check can claim nothing at all, and only
-    /// a performed, complete, unscoped check is a clean bill.
+    /// every coverage flag. Both coverage flags are tested before the scope flag: WithinScopeOnly
+    /// is derived from the requested scope, not from a search, so a check whose search never ran
+    /// or covered only part of what it took on carries the scope flag set with nothing behind it.
+    /// Only a check that covered its own responsibility may claim anything; a scoped one then
+    /// claims no more than its scope, and an unscoped one is the single clean bill.
     /// </summary>
     public static ScrubVerdict For(ScrubCheckResult check)
     {
         if (check.Hits.Count > 0) return ScrubVerdict.OccurrencesRemain;
         if (!check.Performed) return ScrubVerdict.NotVerified;
+        if (!check.Complete) return ScrubVerdict.NotVerified;
         if (check.WithinScopeOnly) return ScrubVerdict.CleanWithinScope;
-        if (check.Complete) return ScrubVerdict.VerifiedClean;
-        return ScrubVerdict.NotVerified;
+        return ScrubVerdict.VerifiedClean;
     }
 
     /// <summary>One check as displayed text, naming the payloads its coverage missed.</summary>
