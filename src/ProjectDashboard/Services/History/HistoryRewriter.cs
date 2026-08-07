@@ -511,7 +511,10 @@ public sealed class HistoryRewriter
             commits = SampleEvenly(allCommits, ScrubSampleCap);
             sampled = true;
         }
-        var hasSkips = binarySkips.Count > 0;
+        // Message skips belong to the message check, not to the tree scrub git grep runs.
+        var messageSkips = binarySkips.Count(s => s.Reason == ScopedRewriteOutcome.MessageNotUtf8);
+        var contentSkips = binarySkips.Count - messageSkips;
+        var hasSkips = contentSkips > 0;
 
         // Only in-scope paths belong in the content scrub — an out-of-scope path carrying the
         // needle is a deliberate survivor, surfaced by the scope note, not a scrub failure.
@@ -565,7 +568,7 @@ public sealed class HistoryRewriter
             }
         }
 
-        checks.AddRange(await MessageScrubChecksAsync(request, scope, ct));
+        checks.AddRange(await MessageScrubChecksAsync(request, scope, messageSkips, ct));
         checks.AddRange(await IdentityScrubChecksAsync(request, scope, ct));
         return checks;
 
@@ -579,7 +582,7 @@ public sealed class HistoryRewriter
             if (grep.Performed && sampled)
                 notes.Add($"sampled {commits.Count} of {allCommits.Count} commit(s); unsampled commits were not grepped");
             if (hasSkips)
-                notes.Add($"{binarySkips.Count} blob(s) the transform skipped are invisible to git grep");
+                notes.Add($"{contentSkips} blob(s) the transform skipped are invisible to git grep");
             if (scope.ContentScoped)
             {
                 var scopeNote = new List<string> { $"scrubbed within scope only ({allCommits.Count} in-scope commit(s))" };
@@ -621,9 +624,11 @@ public sealed class HistoryRewriter
     /// touch — all of them, or the commit scope's commits plus the tags riding them. The
     /// message corpus is small, so the real op (literal byte search or the actual .NET regex)
     /// is applied directly — more faithful than the git-grep ERE gate the tree scrub needs.
+    /// <paramref name="messageSkips"/> counts messages the transform could not decode: each is
+    /// an op that did not run, so a non-zero count leaves the check incomplete.
     /// </summary>
     private async Task<List<ScrubCheckResult>> MessageScrubChecksAsync(
-        HistoryRewriteRequest request, ScrubScope scope, CancellationToken ct)
+        HistoryRewriteRequest request, ScrubScope scope, int messageSkips, CancellationToken ct)
     {
         var checks = new List<ScrubCheckResult>();
         if (request.Rewrite.MessageOps.Count == 0) return checks;
@@ -640,6 +645,15 @@ public sealed class HistoryRewriter
             return checks;
         }
 
+        var notes = new List<string>
+        {
+            scope.CommitScoped
+                ? $"messages verified in-process across the {scope.InScopeCommits.Count} in-scope commit(s) and the tags on them; out-of-scope messages are untouched and unchecked"
+                : "messages verified in-process across all commits and tags"
+        };
+        if (messageSkips > 0)
+            notes.Add($"{messageSkips} message(s) are not valid UTF-8, so the message op never ran on them");
+
         foreach (var op in request.Rewrite.MessageOps)
         {
             var hits = SurvivorsIn(corpus, op, "message");
@@ -648,13 +662,11 @@ public sealed class HistoryRewriter
                 Kind = OpKind(op, "message"),
                 Needle = OpNeedle(op),
                 Performed = true,
-                Complete = !scope.CommitScoped,
+                Complete = !scope.CommitScoped && messageSkips == 0,
                 WithinScopeOnly = scope.CommitScoped,
                 CommitsChecked = scope.CommitScoped ? scope.InScopeCommits.Count : 0,
                 Hits = hits,
-                Note = scope.CommitScoped
-                    ? $"messages verified in-process across the {scope.InScopeCommits.Count} in-scope commit(s) and the tags on them; out-of-scope messages are untouched and unchecked"
-                    : "messages verified in-process across all commits and tags"
+                Note = string.Join("; ", notes)
             });
         }
         return checks;

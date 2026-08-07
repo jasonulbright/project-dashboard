@@ -699,6 +699,40 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"{label}: needleSurvivesInTarget=True scrubHits={check.Hits.Count} Complete={check.Complete}");
     }
 
+    /// <summary>
+    /// A message op that could not run must leave a signal. Without one the report shows no
+    /// change and no skip, and the check reads as having covered the message.
+    /// The fixture leaks through a tag: fast-export converts a commit message to UTF-8
+    /// whatever the reencode flag says, so a tag message is the only one that reaches the
+    /// transform still undecodable.
+    /// </summary>
+    [Fact]
+    public async Task AMessageTheTransformCannotDecodeIsReportedAsASkip()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "body\n");
+        f.CommitAll("clean commit");
+
+        var tagMessagePath = Path.Combine(f.Root, "tag-message.bin");
+        File.WriteAllBytes(tagMessagePath, [.. Encoding.ASCII.GetBytes($"tag {Needle} "), 0xFF, 0xFE, (byte)'\n']);
+        f.Git("tag", "-a", "rel", "-F", tagMessagePath, "--cleanup=verbatim");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }]
+        });
+
+        var skip = Assert.Single(report.BinarySkips);
+        Assert.Equal("message is not valid UTF-8", skip.Reason);
+        Assert.Equal(0, report.MessagesChanged);
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.False(check.Complete);
+        Assert.Contains("1 message(s) are not valid UTF-8", check.Note);
+        output.WriteLine($"undecodable tag message: skip reported ({skip.Size} bytes), Complete={check.Complete}; note='{check.Note}'");
+    }
+
     // ---- Identity rewrite ----------------------------------------------------------------
 
     [Fact]

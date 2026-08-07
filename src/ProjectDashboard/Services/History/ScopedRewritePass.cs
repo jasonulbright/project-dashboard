@@ -6,10 +6,18 @@ namespace ProjectDashboard.Services.History;
 /// <summary>Everything one scoped transform pass observed, feeding the report and the commit map.</summary>
 public sealed class ScopedRewriteOutcome
 {
+    /// <summary>Skip reason recorded when a message op could not run because the message is not valid UTF-8.</summary>
+    public const string MessageNotUtf8 = "message is not valid UTF-8";
+
     public int BlobsChanged;
     public long BytesDelta;
 
-    /// <summary>In-scope blob versions the transform could not scrub (binary or over-limit).</summary>
+    /// <summary>
+    /// In-scope payloads the transform could not scrub: blob versions that are binary or
+    /// over-limit, and messages that are not valid UTF-8 (<see cref="MessageNotUtf8"/>,
+    /// carrying a null mark). Every entry is an op that did not run, so a check that covers
+    /// it cannot report itself complete.
+    /// </summary>
     public readonly List<(long? Mark, long Size, string Reason)> Skips = [];
 
     /// <summary>Literal needles found verbatim inside a skipped in-scope blob — a survivor git grep -I cannot see.</summary>
@@ -280,10 +288,18 @@ public sealed class ScopedRewritePass
             };
             if (message?.InlineBytes is not { } bytes) continue;
             var result = _messageTransformer!.Transform(bytes);
-            if (result.Class == TransformClass.Changed)
+            switch (result.Class)
             {
-                message.InlineBytes = result.Bytes;
-                outcome.MessagesChanged++;
+                case TransformClass.Changed:
+                    message.InlineBytes = result.Bytes;
+                    outcome.MessagesChanged++;
+                    break;
+                // A message the transform cannot decode is an op that did not run. Without
+                // this entry it leaves no trace at all — no change, no skip — and for a tag
+                // the message corpus is the only place a survivor would ever show up.
+                case TransformClass.BinarySkipped:
+                    outcome.Skips.Add((null, bytes.LongLength, ScopedRewriteOutcome.MessageNotUtf8));
+                    break;
             }
         }
     }
