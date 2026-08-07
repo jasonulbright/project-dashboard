@@ -21,7 +21,10 @@ public sealed record ScrubVerdictLine(ScrubVerdict Verdict, string Label, string
     /// <summary>True for the one verdict that asserts the content is gone from the whole repository.</summary>
     public bool ClaimsClean => Verdict == ScrubVerdict.VerifiedClean;
 
-    /// <summary>True when the reader must not treat the content as removed.</summary>
+    /// <summary>
+    /// True when the reader must not treat the content as removed. Bound by the summary block,
+    /// which is the one row a reader may act on without reading the per-check rows.
+    /// </summary>
     public bool IsProblem => Verdict is ScrubVerdict.OccurrencesRemain or ScrubVerdict.NotVerified;
 
     public bool HasDetail => Detail.Length > 0;

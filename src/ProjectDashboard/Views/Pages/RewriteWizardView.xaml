@@ -86,14 +86,30 @@
                               AutomationProperties.Name="Rewrite report counters" />
 
                 <TextBlock Text="Verification" Style="{StaticResource WizardSectionHeader}" />
+                <!-- The summary line carries the worst verdict of every check, so it is the one
+                     row a reader may act on without reading the rest: it draws red whenever the
+                     content must not be treated as removed. -->
                 <Border CornerRadius="6" Padding="12,8" Margin="0,0,0,10"
-                        Background="{DynamicResource ControlFillColorDefaultBrush}">
+                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                        BorderThickness="1" BorderBrush="Transparent">
                     <Border.Style>
                         <Style TargetType="Border">
                             <Setter Property="Visibility" Value="Visible" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding RewriteOverallVerdict}" Value="{x:Null}">
                                     <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding RewriteOverallVerdict.IsProblem}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource StatusBadFg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding RewriteOverallVerdict.Verdict}" Value="CleanWithinScope">
+                                    <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource StatusWarnFg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding RewriteOverallVerdict.ClaimsClean}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource StatusGoodFg}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

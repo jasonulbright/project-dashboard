@@ -249,7 +249,6 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private ObservableCollection<ScrubVerdictLine> _rewriteScrubLines = [];
     [ObservableProperty] private ObservableCollection<string> _rewriteSkipLines = [];
     [ObservableProperty] private ScrubVerdictLine? _rewriteOverallVerdict;
-    [ObservableProperty] private string _rewriteOperationSummary = "";
 
     // ── Step 4: typed confirmation ──────────────────────────────────────────────
 
@@ -424,7 +423,6 @@ public partial class ProjectDetailViewModel
         RewriteScrubLines = [];
         RewriteSkipLines = [];
         RewriteOverallVerdict = null;
-        RewriteOperationSummary = "";
 
         RewriteConfirmPhrase = "";
         RewriteConfirmInput = "";
@@ -596,7 +594,6 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var summary = BuildOperationSummary();
         await RunRewriteStepAsync("Dry run", async gen =>
         {
             _rewriteSession?.Dispose();
@@ -616,7 +613,6 @@ public partial class ProjectDetailViewModel
             }
 
             ShowReport(outcome.Report);
-            RewriteOperationSummary = summary;
             RewritePreviewAvailable = true;
             RewriteStatusText = "Dry run complete. Nothing has been changed yet.";
         });
