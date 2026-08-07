@@ -314,8 +314,26 @@ public class RewriteWizardViewModelTests
         Assert.Contains("Undo restores", vm.RewriteConfirmMessage);
         // Closing the wizard drops the one-click undo, so the promise names its lifetime.
         Assert.Contains("goes away when you close this wizard", vm.RewriteConfirmMessage);
-        Assert.Contains("backup itself is kept", vm.RewriteConfirmMessage);
         Assert.Contains($"Type {vm.RewriteConfirmPhrase} below", vm.RewriteConfirmMessage);
+    }
+
+    /// <summary>
+    /// The result screen's Undo is the only restore this app performs; the backup bundle on disk
+    /// is reachable from git alone. A confirmation that offers a later in-app restore is offering
+    /// a safety net the reader cannot reach once the wizard is closed.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmMessage_PromisesNoRestorePathBeyondTheResultScreensUndo()
+    {
+        var (repo, vm, _) = await OpenWizardAsync("rw-message-restore");
+        using var __ = repo;
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+
+        Assert.Contains("backup bundle is written", vm.RewriteConfirmMessage);
+        Assert.Contains("nothing in this app restores it", vm.RewriteConfirmMessage);
+        Assert.DoesNotContain("can still be restored", vm.RewriteConfirmMessage);
     }
 
     // ── Pre-flight refusals ──────────────────────────────────────────────────

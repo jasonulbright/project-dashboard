@@ -678,9 +678,9 @@ public partial class ProjectDetailViewModel
             $"Applies to: {DescribeScope()}\n\n" +
             $"This rewrites {commits} commit(s) in {name}. Every rewritten commit gets a new hash, so this " +
             "local history stops matching the remote until you force-push it yourself — Project Dashboard never pushes.\n\n" +
-            "A verified backup is taken first, and Undo restores the exact refs this repository had before the rewrite. " +
-            "The Undo button lives on the result screen and goes away when you close this wizard; the backup itself is kept " +
-            "and can still be restored afterwards.\n\n" +
+            "A verified backup bundle is written first, and Undo restores the exact refs this repository had before the " +
+            "rewrite. The Undo button lives on the result screen and goes away when you close this wizard; the bundle stays " +
+            "on disk afterwards, but nothing in this app restores it — that is a manual git job.\n\n" +
             $"Type {name} below to confirm.";
     }
 
