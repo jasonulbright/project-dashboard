@@ -795,12 +795,27 @@ public class RewriteWizardViewModelTests
         using var _ = repo;
         await AdvanceToPreviewAsync(vm);
 
-        var caller = Environment.CurrentManagedThreadId;
-        vm.CloseRewriteWizardCommand.Execute(null);
+        // The close runs on a dedicated thread held alive across the assertion. This test's own
+        // thread belongs to the pool the disposal is queued to, so it can serve that disposal
+        // the moment an await releases it — and a managed thread id is free to be reused once
+        // its thread has ended. Neither can happen to a thread that is still parked here.
+        using var closed = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var closer = new Thread(() =>
+        {
+            vm.CloseRewriteWizardCommand.Execute(null);
+            closed.Set();
+            release.Wait();
+        }) { IsBackground = true, Name = "rewrite-close-caller" };
+        closer.Start();
+        closed.Wait();
+
         await vm.RewriteSessionDisposal;
 
         Assert.True(session.Disposed);
-        Assert.NotEqual(caller, session.DisposedOnThreadId);
+        Assert.NotEqual(closer.ManagedThreadId, session.DisposedOnThreadId);
+        release.Set();
+        closer.Join();
     }
 
     [Fact]
