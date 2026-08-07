@@ -29,8 +29,12 @@ public partial class ProjectDetailViewModel
 
     // Stale index.lock recovery: shows a one-click "remove lock and retry" for the
     // op that failed on an orphaned lock (killed git never deletes its own lock).
+    // The stashed op is repo-bound: it runs against the path passed in, and the
+    // retry passes _staleLockRetryRepo — the path the op failed on — never the
+    // live RepoPath, which a project switch can change while a retry is in flight.
     [ObservableProperty] private bool _staleLockRetryVisible;
-    private Func<Task<ProcessResult>>? _staleLockRetryOp;
+    private Func<string, Task<ProcessResult>>? _staleLockRetryOp;
+    private string _staleLockRetryRepo = "";
     private string _staleLockRetryLabel = "";
 
     // State banner
@@ -194,28 +198,28 @@ public partial class ProjectDetailViewModel
     private async Task StageFile(WorkingFile? file)
     {
         if (file is null || IsBusy) return;
-        await RunOp(() => _gitService.StageAsync(RepoPath, file.Path), "Stage");
+        await RunOp(repo => _gitService.StageAsync(repo, file.Path), "Stage");
     }
 
     [RelayCommand]
     private async Task UnstageFile(WorkingFile? file)
     {
         if (file is null || IsBusy) return;
-        await RunOp(() => _gitService.UnstageAsync(RepoPath, file.Path), "Unstage");
+        await RunOp(repo => _gitService.UnstageAsync(repo, file.Path), "Unstage");
     }
 
     [RelayCommand]
     private async Task StageAll()
     {
         if (IsBusy) return;
-        await RunOp(() => _gitService.StageAllAsync(RepoPath), "Stage all");
+        await RunOp(repo => _gitService.StageAllAsync(repo), "Stage all");
     }
 
     [RelayCommand]
     private async Task UnstageAll()
     {
         if (IsBusy) return;
-        await RunOp(() => _gitService.UnstageAllAsync(RepoPath), "Unstage all");
+        await RunOp(repo => _gitService.UnstageAllAsync(repo), "Unstage all");
     }
 
     [RelayCommand]
@@ -228,7 +232,7 @@ public partial class ProjectDetailViewModel
             $"{verb} {file.Path}?\n\nThis cannot be undone.", "Discard");
         if (!confirmed) return;
 
-        await RunOp(() => _gitService.DiscardAsync(RepoPath, file), "Discard");
+        await RunOp(repo => _gitService.DiscardAsync(repo, file), "Discard");
     }
 
     [RelayCommand]
@@ -247,7 +251,7 @@ public partial class ProjectDetailViewModel
         }
 
         var gen = _generation;
-        var result = await RunOp(() => _gitService.CommitAsync(RepoPath, CommitMessage.Trim(), AmendMode),
+        var result = await RunOp(repo => _gitService.CommitAsync(repo, CommitMessage.Trim(), AmendMode),
             AmendMode ? "Amend" : "Commit");
         // A stale success must not clear a draft typed on the project switched to.
         if (result && IsCurrent(gen))
@@ -279,21 +283,21 @@ public partial class ProjectDetailViewModel
     private async Task Fetch()
     {
         if (IsBusy) return;
-        await RunOp(() => _gitService.FetchAsync(RepoPath), "Fetch");
+        await RunOp(repo => _gitService.FetchAsync(repo), "Fetch");
     }
 
     [RelayCommand]
     private async Task Pull()
     {
         if (IsBusy) return;
-        await RunOp(() => _gitService.PullAsync(RepoPath), "Pull");
+        await RunOp(repo => _gitService.PullAsync(repo), "Pull");
     }
 
     [RelayCommand]
     private async Task Push()
     {
         if (IsBusy) return;
-        var ok = await RunOp(() => _gitService.PushAsync(RepoPath), "Push");
+        var ok = await RunOp(repo => _gitService.PushAsync(repo), "Push");
         if (ok) await ReloadCommitsAsync();
     }
 
@@ -322,7 +326,7 @@ public partial class ProjectDetailViewModel
         var name = NewBranchName.Trim();
         if (name.Length == 0 || IsBusy) return;
         var gen = _generation;
-        var ok = await RunOp(() => _gitService.CreateBranchAsync(RepoPath, name), "Create branch");
+        var ok = await RunOp(repo => _gitService.CreateBranchAsync(repo, name), "Create branch");
         // A stale success must not blank a branch name typed on the project switched to.
         if (ok && IsCurrent(gen))
         {
@@ -335,7 +339,7 @@ public partial class ProjectDetailViewModel
     private async Task SwitchBranch(BranchInfo? branch)
     {
         if (branch is null || branch.IsCurrent || IsBusy) return;
-        var ok = await RunOp(() => _gitService.SwitchBranchAsync(RepoPath, branch.Name), "Switch branch");
+        var ok = await RunOp(repo => _gitService.SwitchBranchAsync(repo, branch.Name), "Switch branch");
         if (ok)
         {
             await LoadBranches();
@@ -357,7 +361,7 @@ public partial class ProjectDetailViewModel
             $"Delete local branch {branch.Name}?\n\nOnly fully merged branches can be deleted this way.", "Delete");
         if (!confirmed) return;
 
-        var ok = await RunOp(() => _gitService.DeleteBranchAsync(RepoPath, branch.Name), "Delete branch");
+        var ok = await RunOp(repo => _gitService.DeleteBranchAsync(repo, branch.Name), "Delete branch");
         if (ok) await LoadBranches();
     }
 
@@ -383,7 +387,7 @@ public partial class ProjectDetailViewModel
     private async Task StashApply(StashEntry? stash)
     {
         if (stash is null || IsBusy) return;
-        var ok = await RunOp(() => _gitService.StashApplyAsync(RepoPath, stash.Ref), "Apply stash");
+        var ok = await RunOp(repo => _gitService.StashApplyAsync(repo, stash.Ref), "Apply stash");
         if (ok) await LoadStashes();
     }
 
@@ -391,7 +395,7 @@ public partial class ProjectDetailViewModel
     private async Task StashPop(StashEntry? stash)
     {
         if (stash is null || IsBusy) return;
-        var ok = await RunOp(() => _gitService.StashPopAsync(RepoPath, stash.Ref), "Pop stash");
+        var ok = await RunOp(repo => _gitService.StashPopAsync(repo, stash.Ref), "Pop stash");
         if (ok) await LoadStashes();
     }
 
@@ -403,7 +407,7 @@ public partial class ProjectDetailViewModel
             $"Drop {stash.Ref} ({stash.Subject})?\n\nThis cannot be undone.", "Drop");
         if (!confirmed) return;
 
-        var ok = await RunOp(() => _gitService.StashDropAsync(RepoPath, stash.Ref), "Drop stash");
+        var ok = await RunOp(repo => _gitService.StashDropAsync(repo, stash.Ref), "Drop stash");
         if (ok) await LoadStashes();
     }
 
@@ -484,6 +488,9 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.
+    /// The op receives the repo path captured at entry and must run against it —
+    /// reading the live RepoPath from inside an op lets a stale-lock retry replay
+    /// the op against whatever repo a later switch made current.
     /// The busy gate is generation-owned: only the generation that acquired it may
     /// release it, so a stale release is impossible, not merely unlikely. A project
     /// switch resets IsBusy and bumps the generation; an old op's finally observing a
@@ -492,7 +499,7 @@ public partial class ProjectDetailViewModel
     /// on one repository (index.lock / FETCH_HEAD.lock collisions). A stale op also
     /// returns false and writes no status, so caller continuations are skipped.
     /// </summary>
-    private async Task<bool> RunOp(Func<Task<ProcessResult>> op, string label)
+    private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label)
     {
         if (IsBusy) return false;
         var gen = _generation;
@@ -503,12 +510,13 @@ public partial class ProjectDetailViewModel
         _staleLockRetryOp = null;
         try
         {
-            var result = await op();
+            var result = await op(repo);
             if (!IsCurrent(gen)) return false;
             SyncStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
             if (GitService.IsIndexLockConflict(result))
             {
                 _staleLockRetryOp = op;
+                _staleLockRetryRepo = repo;
                 _staleLockRetryLabel = label;
                 StaleLockRetryVisible = true;
             }
@@ -531,6 +539,7 @@ public partial class ProjectDetailViewModel
     private async Task RemoveStaleLockAndRetry()
     {
         var op = _staleLockRetryOp;
+        var repo = _staleLockRetryRepo;
         var label = _staleLockRetryLabel;
         _staleLockRetryOp = null;
         StaleLockRetryVisible = false;
@@ -538,12 +547,23 @@ public partial class ProjectDetailViewModel
 
         // One busy-gated unit: another op must not slip in between the lock
         // removal and the retry and recreate the contention being cleared.
-        await RunOp(async () =>
+        // Both halves are bound to the stashed repo path, never the live
+        // RepoPath. The cleanup's age re-check delay leaves a window wide
+        // enough for a project switch to land mid-flight, and the stashed op
+        // replays a mutation — worst case a Discard — so a moved generation
+        // abandons the retry before the op runs: the click that sanctioned the
+        // replay was made on the project that has since left the screen.
+        // Dispatcher continuations make the check-then-invoke atomic against
+        // ApplyProject.
+        var gen = _generation;
+        await RunOp(async _ =>
         {
-            var removed = await _gitService.TryCleanStaleLockAsync(RepoPath);
+            var removed = await _gitService.TryCleanStaleLockAsync(repo);
+            if (!IsCurrent(gen))
+                return new ProcessResult(-1, "", "project switched during lock cleanup — retry abandoned", TimedOut: false);
             if (!removed)
                 return new ProcessResult(-1, "", "no stale lock found — a git process may still be running", TimedOut: false);
-            return await op();
+            return await op(repo);
         }, label);
     }
 

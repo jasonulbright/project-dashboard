@@ -155,6 +155,52 @@ public class ProjectDetailViewModelTests
     }
 
     [Fact]
+    public async Task StaleLockRetry_SwitchDuringCleanup_AbandonsTheRetryAndTouchesNeitherRepo()
+    {
+        using var repoA = await TempRepo.CreateWithCommitAsync("abandon-a");
+        using var repoB = await TempRepo.CreateWithCommitAsync("abandon-b");
+        repoA.WriteFile("a-new.txt", "a\n");
+        repoB.WriteFile("b-new.txt", "b\n");
+
+        var vm = NewVm();
+        await vm.SetProjectAsync(ProjectFor(repoA));
+
+        var lockPath = System.IO.Path.Combine(repoA.Path, ".git", "index.lock");
+        File.WriteAllText(lockPath, "");
+        await vm.StageAllCommand.ExecuteAsync(null);
+        Assert.True(vm.StaleLockRetryVisible);
+
+        var old = DateTime.UtcNow.AddMinutes(-10);
+        File.SetCreationTimeUtc(lockPath, old);
+        File.SetLastWriteTimeUtc(lockPath, old);
+
+        // The retry parks at the cleanup's 500 ms re-check delay on its first
+        // yielding await, so the synchronous switch below lands mid-cleanup,
+        // before the wrapper's generation check can run.
+        var retry = vm.RemoveStaleLockAndRetryCommand.ExecuteAsync(null);
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        Assert.False(retry.IsCompleted); // interleave landed inside the cleanup window
+
+        await retry;
+
+        // The cleanup finishes against A (the lock it was pointed at goes away),
+        // but the moved generation abandons the replay: the stage-all reruns in
+        // NEITHER repo — A keeps its file unstaged, B is untouched — and the
+        // stale wrapper leaves B's freshly reset UI state alone.
+        Assert.False(File.Exists(lockPath));
+        var git = new GitService();
+        var stateA = await git.GetWorkingStateAsync(repoA.Path);
+        Assert.DoesNotContain(stateA!.Staged, f => f.Path == "a-new.txt");
+        Assert.Contains(stateA.Unstaged, f => f.Path == "a-new.txt");
+        var stateB = await git.GetWorkingStateAsync(repoB.Path);
+        Assert.Empty(stateB!.Staged);
+        Assert.Contains(stateB.Unstaged, f => f.Path == "b-new.txt");
+        Assert.False(vm.IsBusy);
+        Assert.Equal("", vm.SyncStatusText);
+        Assert.False(vm.StaleLockRetryVisible);
+    }
+
+    [Fact]
     public async Task Commit_WithoutSwitch_ClearsMessageAndReloadsCommits()
     {
         using var repo = await RepoWithStagedChangeAsync("plain", "work.txt", "work\n");
