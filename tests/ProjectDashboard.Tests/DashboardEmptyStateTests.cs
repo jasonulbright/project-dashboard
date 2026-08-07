@@ -50,6 +50,37 @@ public class DashboardEmptyStateTests
             DashboardEmptyState.Select(false, false, true, discoveredCount: 12, filteredCount: 3));
 
     [Fact]
+    public void ReloadOverARenderedGrid_KeepsTheCards()
+        => Assert.Equal(DashboardContent.Cards,
+            DashboardEmptyState.Select(loading: true, scanFailed: false, rootExists: true, 30, 30));
+
+    [Fact]
+    public void FaultedRescanOverARenderedGrid_KeepsTheCards()
+        => Assert.Equal(DashboardContent.Cards,
+            DashboardEmptyState.Select(loading: false, scanFailed: true, rootExists: true, 30, 30));
+
+    [Fact]
+    public void VanishedRootOverACachedList_KeepsTheCards()
+        => Assert.Equal(DashboardContent.Cards,
+            DashboardEmptyState.Select(loading: false, scanFailed: false, rootExists: false, 30, 30));
+
+    [Theory]
+    [InlineData("ShowLoading")]
+    [InlineData("ShowScanFailed")]
+    [InlineData("ShowRootMissing")]
+    [InlineData("ShowEmptyRoot")]
+    [InlineData("ShowNoMatches")]
+    [InlineData("ShowCards")]
+    public void EveryOutcome_HasABodyPanel(string flag)
+        => Assert.Contains($"Binding {flag}, Converter", RepoSource.Read("src/ProjectDashboard/Views/Pages/DashboardPage.xaml"),
+            StringComparison.Ordinal);
+
+    [Fact]
+    public void ReloadOverCards_ReportsItselfBesideTheGrid()
+        => Assert.Contains("Binding ShowRefreshing, Converter", RepoSource.Read("src/ProjectDashboard/Views/Pages/DashboardPage.xaml"),
+            StringComparison.Ordinal);
+
+    [Fact]
     public void EveryOutcome_IsReachable()
     {
         var seen = new HashSet<DashboardContent>

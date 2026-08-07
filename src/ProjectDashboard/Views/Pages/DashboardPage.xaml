@@ -233,6 +233,15 @@
                        ToolTip="Switch card density"
                        AutomationProperties.Name="{Binding DensityToggleLabel, StringFormat='Switch cards to {0} density'}"
                        Width="140" />
+
+            <!-- Reload over a rendered grid reports itself here; replacing the body with a
+                 spinner would discard the scroll position and the focused card. -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0"
+                        Visibility="{Binding ShowRefreshing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ui:ProgressRing IsIndeterminate="True" Width="16" Height="16" VerticalAlignment="Center" />
+                <TextBlock Text="Refreshing…" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
         </StackPanel>
 
         <!-- Loading: distinct from every empty state below -->
@@ -242,6 +251,26 @@
             <TextBlock Text="Scanning for projects…" FontSize="15" Margin="0,12,0,0"
                        HorizontalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        </StackPanel>
+
+        <!-- Faulted scan with nothing cached: the banner carries the reason, the body says
+             why it is empty rather than rendering as a blank page. -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="480"
+                    Visibility="{Binding ShowScanFailed, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ui:SymbolIcon Symbol="ErrorCircle24" FontSize="30" HorizontalAlignment="Center"
+                           Foreground="{StaticResource StatusBadFg}" />
+            <TextBlock Text="That scan didn't finish" FontSize="16" FontWeight="SemiBold"
+                       Margin="0,10,0,0" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="Nothing was discovered, so there are no projects to show."
+                       FontSize="13" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center"
+                       TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
+                <ui:Button Content="Scan again" Appearance="Primary" FontSize="12" Padding="12,6"
+                           Command="{Binding ForceRefreshCommand}" Margin="0,0,8,0" />
+                <ui:Button Content="Open Settings" FontSize="12" Padding="12,6"
+                           Command="{Binding OpenSettingsCommand}" />
+            </StackPanel>
         </StackPanel>
 
         <!-- Configured root does not exist: a different fault from an empty one -->

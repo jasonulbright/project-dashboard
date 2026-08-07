@@ -297,10 +297,14 @@ public partial class DashboardViewModel : ObservableObject
         LoadProjectsCommand.IsRunning, DiscoveryErrorVisible, _rootExists, Projects.Count, FilteredProjects.Count);
 
     public bool ShowLoading => Content == DashboardContent.Loading;
+    public bool ShowScanFailed => Content == DashboardContent.ScanFailed;
     public bool ShowRootMissing => Content == DashboardContent.RootMissing;
     public bool ShowEmptyRoot => Content == DashboardContent.EmptyRoot;
     public bool ShowNoMatches => Content == DashboardContent.NoMatches;
     public bool ShowCards => Content == DashboardContent.Cards;
+
+    /// <summary>Inline progress for a reload that keeps the rendered grid in place.</summary>
+    public bool ShowRefreshing => LoadProjectsCommand.IsRunning && Content == DashboardContent.Cards;
 
     public string ConfiguredRootPath => _settingsService.Load().ProjectsRootPath;
 
@@ -308,10 +312,12 @@ public partial class DashboardViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(Content));
         OnPropertyChanged(nameof(ShowLoading));
+        OnPropertyChanged(nameof(ShowScanFailed));
         OnPropertyChanged(nameof(ShowRootMissing));
         OnPropertyChanged(nameof(ShowEmptyRoot));
         OnPropertyChanged(nameof(ShowNoMatches));
         OnPropertyChanged(nameof(ShowCards));
+        OnPropertyChanged(nameof(ShowRefreshing));
         OnPropertyChanged(nameof(ConfiguredRootPath));
     }
 
@@ -1227,19 +1233,23 @@ public enum DashboardContent
 public static class DashboardEmptyState
 {
     /// <summary>
-    /// A load in flight wins over a stale failure so a retry doesn't keep showing the
-    /// error it is retrying; filter-emptiness is last because it only means anything
-    /// once a scan has produced projects.
+    /// A list already on screen outranks every transient state: the periodic reload, a
+    /// watcher refresh, a faulted scan and a vanished root are all recoverable, and
+    /// swapping the grid out for a panel discards the user's scroll position and focus
+    /// along with a set of cards that still work. Those states report themselves beside
+    /// the grid instead. Below that, a load in flight wins over a stale failure so a
+    /// retry doesn't keep showing the error it is retrying, and filter-emptiness is last
+    /// because it only means anything once a scan has produced projects.
     /// </summary>
     public static DashboardContent Select(
         bool loading, bool scanFailed, bool rootExists, int discoveredCount, int filteredCount)
     {
+        if (filteredCount > 0) return DashboardContent.Cards;
         if (loading) return DashboardContent.Loading;
         if (scanFailed) return DashboardContent.ScanFailed;
         if (!rootExists) return DashboardContent.RootMissing;
         if (discoveredCount == 0) return DashboardContent.EmptyRoot;
-        if (filteredCount == 0) return DashboardContent.NoMatches;
-        return DashboardContent.Cards;
+        return DashboardContent.NoMatches;
     }
 }
 
