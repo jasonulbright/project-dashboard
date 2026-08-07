@@ -360,8 +360,14 @@
                             </Expander.Header>
                             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                     CornerRadius="0,0,8,8" Padding="20">
+                                <!-- IsDocumentEnabled gates whether a Hyperlink inside the
+                                     document receives mouse input at all: without it the
+                                     rendered markdown link is styled as a link, carries its
+                                     tooltip, and does nothing when clicked. IsReadOnly still
+                                     blocks editing. -->
                                 <RichTextBox x:Name="ReadmeRichText"
                                              IsReadOnly="True"
+                                             IsDocumentEnabled="True"
                                              BorderThickness="0"
                                              Background="Transparent"
                                              FontFamily="Segoe UI"
@@ -378,6 +384,7 @@
                                     CornerRadius="0,0,8,8" Padding="20">
                                 <RichTextBox x:Name="ChangelogRichText"
                                              IsReadOnly="True"
+                                             IsDocumentEnabled="True"
                                              BorderThickness="0"
                                              Background="Transparent"
                                              FontFamily="Segoe UI"
@@ -966,6 +973,7 @@
                                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                                   PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
                                         <RichTextBox x:Name="IssueConversationRich" IsReadOnly="True"
+                                                     IsDocumentEnabled="True"
                                                      BorderThickness="0" Background="Transparent"
                                                      FontFamily="Segoe UI" FontSize="13"
                                                      AutomationProperties.Name="Issue conversation" />
@@ -1288,6 +1296,7 @@
                                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                                   PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
                                         <RichTextBox x:Name="PullRequestConversationRich" IsReadOnly="True"
+                                                     IsDocumentEnabled="True"
                                                      BorderThickness="0" Background="Transparent"
                                                      FontFamily="Segoe UI" FontSize="13"
                                                      AutomationProperties.Name="Pull request conversation" />
