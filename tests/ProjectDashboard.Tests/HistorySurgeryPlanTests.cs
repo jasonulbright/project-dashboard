@@ -160,20 +160,50 @@ public class HistorySurgeryPlanTests
     }
 
     [Fact]
-    public void SeparateSquashRuns_AreHandedOnAsOneNonContiguousSetForTheDriverToRefuse()
+    public void SquashRunsSeparatedByAGap_AreRefusedAsTwoGroups()
     {
-        // The fold set skips "c": the driver's own contiguity message is what the user sees,
-        // rather than a paraphrase written here.
         var commits = Range("a", "b", "c", "d", "e");
         commits[1].SquashIntoPrevious = true;
         commits[4].SquashIntoPrevious = true;
 
         var resolution = HistoryPlan.Resolve(commits, Order(commits));
 
-        Assert.True(resolution.IsValid);
-        Assert.Equal(HistoryPlanKind.Squash, resolution.Kind);
-        Assert.Equal([Sha("a"), Sha("b"), Sha("d"), Sha("e")], resolution.Shas);
-        Assert.DoesNotContain(Sha("c"), resolution.Shas);
+        Assert.False(resolution.IsValid);
+        Assert.Contains("folds 2 separate groups", resolution.Refusal);
+        Assert.Contains("fold one, then plan the next", resolution.Refusal);
+    }
+
+    [Fact]
+    public void AdjacentSquashRuns_AreRefusedRatherThanCollapsedIntoOneFold()
+    {
+        // {a,b} and {c,d} form one contiguous sha list, which a driver reads as a single fold
+        // set anchored on "a" — two previewed commits, one produced. Counting runs is what
+        // separates this from the consecutive marks below, which really are one group.
+        var commits = Range("a", "b", "c", "d");
+        commits[1].SquashIntoPrevious = true;
+        commits[3].SquashIntoPrevious = true;
+
+        var resolution = HistoryPlan.Resolve(commits, Order(commits));
+
+        Assert.False(resolution.IsValid);
+        Assert.Equal(HistoryPlanKind.None, resolution.Kind);
+        Assert.Contains("folds 2 separate groups", resolution.Refusal);
+        Assert.Equal(2, HistoryPlan.Preview(commits).Count);
+    }
+
+    [Fact]
+    public void DroppingEveryCommit_IsRefusedWithTheResetAdvice()
+    {
+        var commits = Range("a", "b");
+        commits[0].Drop = true;
+        commits[1].Drop = true;
+
+        var resolution = HistoryPlan.Resolve(commits, Order(commits));
+
+        Assert.False(resolution.IsValid);
+        Assert.Equal(HistoryPlanKind.None, resolution.Kind);
+        Assert.Contains("empty the branch", resolution.Refusal);
+        Assert.Contains("use a reset to the commit before the range", resolution.Refusal);
     }
 
     [Fact]

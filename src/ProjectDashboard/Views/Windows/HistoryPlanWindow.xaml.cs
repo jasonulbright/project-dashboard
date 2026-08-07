@@ -48,9 +48,11 @@ public partial class HistoryPlanWindow
 }
 
 /// <summary>
-/// Live state of one open dialog. The preview and the apply gate are recomputed from
-/// <see cref="HistoryPlan"/> after every move and mark, so what the buttons allow and what the
-/// preview shows can never disagree with what the resolution will do.
+/// Live state of one open dialog. The preview, the status line and the apply gate are all
+/// recomputed from one <see cref="HistoryPlan.Resolve"/> call after every move and mark, so the
+/// gate and the text describe the same resolution the apply will hand to a driver. A plan whose
+/// preview no gated operation can reproduce is refused by that resolution, which is what keeps
+/// the preview the history the apply produces.
 /// </summary>
 public sealed partial class HistoryPlanViewModel : ObservableObject
 {

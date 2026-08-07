@@ -118,7 +118,12 @@ public static class HistoryPlan
                 "The oldest commit in the range has nothing before it to squash into.");
 
         var dropped = planned.Where(p => p.Drop).Select(p => p.Sha).ToList();
-        var folded = FoldSet(planned);
+        if (dropped.Count > 0 && dropped.Count == planned.Count)
+            return HistoryPlanResolution.Refused(
+                "Dropping every commit in the range would empty the branch — use a reset to the commit " +
+                "before the range instead.");
+
+        var (folded, foldRuns) = FoldSet(planned);
         var reordered = !planned.Select(p => p.Sha).SequenceEqual(originalOrder, StringComparer.OrdinalIgnoreCase);
 
         var kinds = new List<string>();
@@ -133,28 +138,39 @@ public static class HistoryPlan
                 $"This plan mixes {string.Join(" and ", kinds)}. Each one rewrites the range, so they cannot be " +
                 "applied together — apply one, then plan the next on the new history. Drops first, then a reorder, then a squash.");
 
+        if (foldRuns > 1)
+            return HistoryPlanResolution.Refused(
+                $"This plan folds {foldRuns} separate groups of commits. One apply folds a single group — " +
+                "fold one, then plan the next on the new history.");
+
         if (dropped.Count > 0) return new HistoryPlanResolution(HistoryPlanKind.Drop, dropped, null);
         if (folded.Count > 0) return new HistoryPlanResolution(HistoryPlanKind.Squash, folded, null);
         return new HistoryPlanResolution(HistoryPlanKind.Reorder, planned.Select(p => p.Sha).ToList(), null);
     }
 
     /// <summary>
-    /// Every commit a squash touches: each marked commit plus the unmarked one it folds into.
-    /// A set spanning a gap is passed on as it stands — the driver refuses a non-contiguous run
-    /// in its own words, which name the constraint git actually imposes.
+    /// Every commit a squash touches — each marked commit plus the unmarked one its run folds
+    /// into — and how many maximal runs the marks form.
+    ///
+    /// The run count is what keeps the preview and the outcome the same history. A driver reads
+    /// the whole list as ONE fold set and picks a single anchor, so two runs that happen to be
+    /// adjacent form a contiguous set it accepts and collapses into one commit, while the
+    /// preview still shows two. More than one run is refused in <see cref="Resolve"/>.
     /// </summary>
-    private static List<string> FoldSet(IReadOnlyList<PlannedCommit> planned)
+    private static (List<string> Shas, int Runs) FoldSet(IReadOnlyList<PlannedCommit> planned)
     {
         var included = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var runs = 0;
         for (var i = 0; i < planned.Count; i++)
         {
             if (!planned[i].SquashIntoPrevious) continue;
+            if (i == 0 || !planned[i - 1].SquashIntoPrevious) runs++;
             included.Add(planned[i].Sha);
             var anchor = i - 1;
             while (anchor >= 0 && planned[anchor].SquashIntoPrevious) anchor--;
             if (anchor >= 0) included.Add(planned[anchor].Sha);
         }
-        return planned.Where(p => included.Contains(p.Sha)).Select(p => p.Sha).ToList();
+        return (planned.Where(p => included.Contains(p.Sha)).Select(p => p.Sha).ToList(), runs);
     }
 }
 

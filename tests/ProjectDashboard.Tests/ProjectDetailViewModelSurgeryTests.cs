@@ -293,26 +293,114 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Contains("narrow the range", vm.SurgeryFailureText);
     }
 
-    [Fact]
-    public async Task NonContiguousSquashPlan_SurfacesTheDriversContiguityRefusal()
+    [Theory]
+    // Two runs separated by a gap, and two runs that sit next to each other. The adjacent pair
+    // is the dangerous one: its shas form a contiguous list a driver folds into ONE commit,
+    // while the preview the confirm showed named two.
+    [InlineData(1, 4)]
+    [InlineData(2, 4)]
+    public async Task APlanFoldingTwoGroups_IsRefusedBeforeTheConfirm(int first, int second)
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
         var vm = await VmForAsync(repo);
-        CaptureConfirmations(vm, answer: true);
-        // Marks on the 2nd and 5th commits fold two disjoint runs, skipping the 3rd.
+        var seen = CaptureConfirmations(vm, answer: true);
         vm.ShowHistoryPlanAsync = planned =>
         {
             var list = planned.ToList();
-            list[1].SquashIntoPrevious = true;
-            list[4].SquashIntoPrevious = true;
+            list[first].SquashIntoPrevious = true;
+            list[second].SquashIntoPrevious = true;
             return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
         };
         vm.SelectedCommit = vm.Commits[^1];
 
         await vm.PlanHistoryEditCommand.ExecuteAsync(null);
 
-        Assert.Contains("contiguous", vm.SurgeryFailureText);
+        Assert.Equal("Nothing applied.", vm.SurgeryStatusText);
+        Assert.Contains("folds 2 separate groups", vm.SurgeryFailureText);
+        Assert.Empty(seen);
+        Assert.False(vm.SurgeryUndoVisible);
         Assert.Equal(["d", "c", "b", "a", "seed"], await repo.SubjectsAsync());
+    }
+
+    [Fact]
+    public async Task APlanDroppingEveryCommit_IsRefusedBeforeABackupIsTaken()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a");
+        var vm = await VmForAsync(repo);
+        var seen = CaptureConfirmations(vm, answer: true);
+        vm.ShowHistoryPlanAsync = planned =>
+        {
+            var list = planned.ToList();
+            foreach (var commit in list) commit.Drop = true;
+            return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
+        };
+        vm.SelectedCommit = vm.Commits[^1];
+
+        await vm.PlanHistoryEditCommand.ExecuteAsync(null);
+
+        // The driver refuses this too, but only after a verified backup and a journal entry,
+        // which would leave an Undo standing for an operation that never touched anything.
+        Assert.Contains("empty the branch", vm.SurgeryFailureText);
+        Assert.Empty(seen);
+        Assert.False(vm.SurgeryUndoVisible);
+        Assert.Equal(["a", "seed"], await repo.SubjectsAsync());
+    }
+
+    /// <summary>
+    /// The plan cases whose preview must survive a real rebase unchanged: one fold run, one
+    /// longer fold run, drops, and a pure reorder.
+    /// </summary>
+    [Theory]
+    [InlineData("one-fold")]
+    [InlineData("long-fold")]
+    [InlineData("drops")]
+    [InlineData("reorder")]
+    public async Task AnAppliedPlan_ProducesExactlyTheCommitsItsPreviewShowed(string plan)
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
+        var vm = await VmForAsync(repo);
+        CaptureConfirmations(vm, answer: true);
+
+        // The preview the confirm renders, captured from the accepted plan itself.
+        List<string> preview = [];
+        vm.ShowHistoryPlanAsync = planned =>
+        {
+            var list = planned.ToList();
+            switch (plan)
+            {
+                case "one-fold": list[3].SquashIntoPrevious = true; break;
+                case "long-fold":
+                    list[3].SquashIntoPrevious = true;
+                    list[4].SquashIntoPrevious = true;
+                    break;
+                case "drops":
+                    list[1].Drop = true;
+                    list[3].Drop = true;
+                    break;
+                default: HistoryPlan.MoveUp(list, 4); break;
+            }
+            preview = HistoryPlan.Preview(list).ToList();
+            return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
+        };
+        vm.SelectedCommit = vm.Commits[^1];
+
+        await vm.PlanHistoryEditCommand.ExecuteAsync(null);
+
+        Assert.Equal("", vm.SurgeryFailureText);
+        var produced = await repo.SubjectsAsync();
+        produced.Reverse();
+        Assert.Equal(preview.Select(PreviewedSubject), produced);
+    }
+
+    /// <summary>
+    /// The subject the commit on a preview line ends up carrying: the line is "sha  subject",
+    /// and a fold keeps the anchor's message, so everything from " + " on is absorbed.
+    /// </summary>
+    private static string PreviewedSubject(string line)
+    {
+        var subject = line[(line.IndexOf("  ", StringComparison.Ordinal) + 2)..];
+        var fold = subject.IndexOf(" + ", StringComparison.Ordinal);
+        return fold < 0 ? subject : subject[..fold];
     }
 
     [Fact]
