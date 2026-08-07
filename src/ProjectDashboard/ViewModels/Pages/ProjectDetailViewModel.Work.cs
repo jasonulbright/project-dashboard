@@ -511,7 +511,19 @@ public partial class ProjectDetailViewModel
         try
         {
             var result = await op(repo);
-            if (!IsCurrent(gen)) return false;
+            if (!IsCurrent(gen))
+            {
+                // A stale op still mutated its bound repo on disk. When that repo
+                // is the one back on screen (switched away and back), the lists
+                // shown were loaded mid-op and predate the mutation — refresh
+                // them; the refresh reads under the CURRENT generation, so it is
+                // not a stale write. When the op's repo differs from the current
+                // one, nothing on screen describes it, and a refresh here would
+                // poke the unrelated current project's UI from a stale
+                // continuation — it must not run.
+                if (repo == RepoPath) await SafeRefreshWorkingStateAsync();
+                return false;
+            }
             SyncStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
             if (GitService.IsIndexLockConflict(result))
             {

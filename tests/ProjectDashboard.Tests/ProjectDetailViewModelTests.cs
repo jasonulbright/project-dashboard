@@ -154,6 +154,51 @@ public class ProjectDetailViewModelTests
         Assert.Contains(state!.Staged, f => f.Path == "new.txt");
     }
 
+    /// <summary>Bounded wait for an async UI write to land; fails loudly instead of hanging.</summary>
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        for (var i = 0; i < 200 && !condition(); i++)
+            await Task.Delay(25);
+        Assert.True(condition(), "condition not reached within the wait cap");
+    }
+
+    [Fact]
+    public async Task SwitchAwayAndBack_StaleCompletionRefreshesTheRepoItMutated()
+    {
+        using var repoA = await RepoWithStagedChangeAsync("back-a", "a.txt", "a\n");
+        using var repoB = await TempRepo.CreateWithCommitAsync("back-b");
+        var sentinelA = System.IO.Path.Combine(TestEnv.NewDir("sentinels"), "release-a");
+        InstallBlockingPreCommitHook(repoA, sentinelA);
+
+        var vm = NewVm();
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.StagedFiles = [new WorkingFile { Path = "a.txt", IndexStatus = 'A' }];
+        vm.CommitMessage = "slow commit on A";
+
+        var commitA = vm.CommitCommand.ExecuteAsync(null);
+        Assert.True(vm.IsBusy);
+
+        // Away and back while the commit is blocked in the hook. The switch-back
+        // refresh reads the mid-commit state; wait for it to land so the stale
+        // completion's refresh is provably the last writer.
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        await WaitForAsync(() => vm.WorkingState is not null);
+        Assert.Contains(vm.StagedFiles, f => f.Path == "a.txt");
+
+        File.WriteAllText(sentinelA, "go");
+        await commitA;
+
+        // The commit landed in the repo now on screen, so the Changes tab must
+        // describe the post-commit state, not the mid-commit snapshot — while
+        // the stale suppression of gate, status, and draft still holds.
+        Assert.Equal(2, await repoA.CommitCountAsync());
+        Assert.Empty(vm.StagedFiles);
+        Assert.False(vm.IsBusy);
+        Assert.Equal("", vm.SyncStatusText);
+        Assert.Equal("", vm.CommitMessage);
+    }
+
     [Fact]
     public async Task StaleLockRetry_SwitchDuringCleanup_AbandonsTheRetryAndTouchesNeitherRepo()
     {
