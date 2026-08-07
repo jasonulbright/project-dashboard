@@ -48,8 +48,17 @@ public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry bu
     public const int MinTermLength = 2;
     public static readonly TimeSpan PerRepoTimeout = TimeSpan.FromSeconds(4);
 
-    public async Task<RepoSearchResult> SearchAsync(
+    /// <summary>
+    /// The whole fan-out runs off the caller's thread. Target triage touches the disk
+    /// before the first await, and one target under a disconnected UNC root blocks on
+    /// the SMB timeout — on the dispatcher that is the window frozen mid-keystroke.
+    /// </summary>
+    public Task<RepoSearchResult> SearchAsync(
         string term, IReadOnlyList<RepoSearchTarget> targets, CancellationToken ct = default)
+        => Task.Run(() => SearchCoreAsync(term, targets, ct), ct);
+
+    private async Task<RepoSearchResult> SearchCoreAsync(
+        string term, IReadOnlyList<RepoSearchTarget> targets, CancellationToken ct)
     {
         term = term.Trim();
         if (term.Length < MinTermLength || targets.Count == 0) return RepoSearchResult.Empty;
