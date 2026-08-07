@@ -554,8 +554,10 @@ public partial class ProjectDetailPage
     private const int MaxImageEdge = 800;
 
     /// <summary>
-    /// Source pixel count refused outright. Decode allocates four bytes per source pixel
-    /// before any downscale, so a declared 40000×40000 must never reach the decoder.
+    /// Source pixel count refused outright. The bound is on decoder WORK, not on peak
+    /// memory: the scaling decoder does not materialize the source at full size, but its
+    /// running time tracks the source, not the capped output. A local file decodes inline
+    /// on the render thread, so a declared 40000×40000 stalls the UI for the whole decode.
     /// </summary>
     private const long MaxImagePixels = 50_000_000;
 

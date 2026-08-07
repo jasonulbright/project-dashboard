@@ -68,8 +68,8 @@ public class MarkdownImageDecodeTests
     [Fact]
     public void SourceOverThePixelBudget_IsRefusedWithoutDecoding()
     {
-        // 8000x8000 = 64M source pixels, past the 50M budget. Decode would allocate
-        // four bytes per SOURCE pixel before any downscale could apply.
+        // 8000x8000 = 64M source pixels, past the 50M budget. The budget bounds decode
+        // time, which tracks the source rather than the capped output.
         using var png = BlackWhitePng(8000, 8000);
         Assert.Null(ProjectDetailPage.DecodeBounded(png));
     }
