@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using ProjectDashboard.Models;
 
 namespace ProjectDashboard.Services;
@@ -510,6 +511,602 @@ public class GitService
         var result = await RunAsync(repoPath, ["show", "--no-color", "--format=", hash, "--", filePath], ct);
         if (!result.Success) return null;
         return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+    }
+
+    // ── Tags (L-01) ───────────────────────────────────────────────────────────
+
+    public async Task<List<TagInfo>> GetTagsAsync(string repoPath, CancellationToken ct = default)
+    {
+        // %(objecttype) is "tag" for an annotated tag, "commit" for a lightweight one.
+        // TargetSha must be the COMMIT: %(*objectname) dereferences an annotated tag to
+        // its commit and is empty for a lightweight tag whose %(objectname) already is
+        // the commit. Tab-separated: none of the leading fields can contain a tab, and
+        // the subject stays last so delimiters inside it never split a field.
+        var result = await RunAsync(repoPath,
+            ["for-each-ref", "refs/tags",
+             "--format=%(refname:short)%09%(objecttype)%09%(objectname)%09%(*objectname)%09%(taggerdate:iso8601-strict)%09%(contents:subject)"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git for-each-ref tags failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+
+        var tags = new List<TagInfo>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var f = raw.TrimEnd('\r').Split('\t');
+            if (f.Length < 3) continue;
+            var annotated = f[1] == "tag";
+            var deref = f.Length > 3 ? f[3] : "";
+            tags.Add(new TagInfo
+            {
+                Name = f[0],
+                IsAnnotated = annotated,
+                TargetSha = annotated ? deref : f[2],
+                Subject = annotated && f.Length > 5 ? f[5] : null,
+                TaggerDate = annotated && f.Length > 4 && DateTimeOffset.TryParse(f[4],
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d) ? d : null
+            });
+        }
+        return tags;
+    }
+
+    /// <summary>Creates a tag: annotated when <paramref name="message"/> is non-null, else lightweight.</summary>
+    public Task<ProcessResult> CreateTagAsync(string repoPath, string name, string? message = null,
+        string? targetCommit = null, CancellationToken ct = default)
+    {
+        var args = new List<string> { "tag" };
+        if (message is not null) { args.Add("-a"); args.Add("-m"); args.Add(message); }
+        args.Add(name);
+        if (!string.IsNullOrEmpty(targetCommit)) args.Add(targetCommit);
+        return RunAsync(repoPath, args, ct);
+    }
+
+    public Task<ProcessResult> DeleteTagAsync(string repoPath, string name, CancellationToken ct = default)
+        => RunAsync(repoPath, ["tag", "-d", name], ct);
+
+    public Task<ProcessResult> PushTagAsync(string repoPath, string remote, string name, CancellationToken ct = default)
+        => RunAsync(repoPath, ["push", remote, $"refs/tags/{name}"], ct, NetworkTimeout);
+
+    public Task<ProcessResult> PushAllTagsAsync(string repoPath, string remote, CancellationToken ct = default)
+        => RunAsync(repoPath, ["push", remote, "--tags"], ct, NetworkTimeout);
+
+    // ── Remotes (L-02) ─────────────────────────────────────────────────────────
+
+    public async Task<List<RemoteEntry>> GetRemotesAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["remote", "-v"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git remote -v failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+
+        // Lines are "<name>\t<url> (fetch)" and "<name>\t<url> (push)"; fetch and push
+        // URLs can differ, so both variants merge into one entry per name. Insertion
+        // order is preserved so the listing matches `git remote`.
+        var byName = new Dictionary<string, (string fetch, string push)>();
+        var order = new List<string>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.TrimEnd('\r');
+            var tab = line.IndexOf('\t');
+            if (tab < 0) continue;
+            var name = line[..tab];
+            var rest = line[(tab + 1)..];
+            var sp = rest.LastIndexOf(' ');
+            if (sp < 0) continue;
+            var url = rest[..sp];
+            var kind = rest[(sp + 1)..].Trim('(', ')');
+            if (!byName.TryGetValue(name, out var cur)) { cur = ("", ""); order.Add(name); }
+            byName[name] = kind == "push" ? (cur.fetch, url) : (url, cur.push);
+        }
+
+        var remotes = new List<RemoteEntry>();
+        foreach (var name in order)
+        {
+            var (fetch, push) = byName[name];
+            remotes.Add(new RemoteEntry { Name = name, FetchUrl = fetch, PushUrl = push.Length > 0 ? push : fetch });
+        }
+        return remotes;
+    }
+
+    public Task<ProcessResult> AddRemoteAsync(string repoPath, string name, string url, CancellationToken ct = default)
+        => RunAsync(repoPath, ["remote", "add", name, url], ct);
+
+    public Task<ProcessResult> RemoveRemoteAsync(string repoPath, string name, CancellationToken ct = default)
+        => RunAsync(repoPath, ["remote", "remove", name], ct);
+
+    public Task<ProcessResult> RenameRemoteAsync(string repoPath, string oldName, string newName, CancellationToken ct = default)
+        => RunAsync(repoPath, ["remote", "rename", oldName, newName], ct);
+
+    public Task<ProcessResult> SetRemoteUrlAsync(string repoPath, string name, string url, CancellationToken ct = default)
+        => RunAsync(repoPath, ["remote", "set-url", name, url], ct);
+
+    // ── Branch extras (L-03) ────────────────────────────────────────────────────
+
+    public Task<ProcessResult> RenameBranchAsync(string repoPath, string oldName, string newName, CancellationToken ct = default)
+        => RunAsync(repoPath, ["branch", "-m", oldName, newName], ct);
+
+    /// <summary>Remote-tracking branches (refs/remotes) for a checkout picker; the symbolic "&lt;remote&gt;/HEAD" pointer is dropped.</summary>
+    public async Task<List<string>> GetRemoteBranchesAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["for-each-ref", "refs/remotes", "--format=%(refname:short)"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git for-each-ref remotes failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+        return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(r => r.TrimEnd('\r'))
+            .Where(r => r.Length > 0 && !r.EndsWith("/HEAD", StringComparison.Ordinal))
+            .ToList();
+    }
+
+    /// <summary>Creates a local tracking branch for a remote-tracking ref (strips the leading "&lt;remote&gt;/").</summary>
+    public Task<ProcessResult> CheckoutRemoteBranchAsync(string repoPath, string remoteBranch, CancellationToken ct = default)
+    {
+        var slash = remoteBranch.IndexOf('/');
+        var local = slash >= 0 ? remoteBranch[(slash + 1)..] : remoteBranch;
+        return RunAsync(repoPath, ["switch", "-c", local, "--track", remoteBranch], ct);
+    }
+
+    /// <summary>Deletes a branch on the remote (destructive; the UI confirms and gates this).</summary>
+    public Task<ProcessResult> DeleteRemoteBranchAsync(string repoPath, string remote, string branch, CancellationToken ct = default)
+        => RunAsync(repoPath, ["push", remote, "--delete", branch], ct, NetworkTimeout);
+
+    public Task<ProcessResult> PruneRemoteAsync(string repoPath, string remote, CancellationToken ct = default)
+        => RunAsync(repoPath, ["remote", "prune", remote], ct, NetworkTimeout);
+
+    // ── File history & blame (L-04) ──────────────────────────────────────────────
+
+    /// <summary>Commit history for one file, following it across renames.</summary>
+    public async Task<List<GitCommit>> GetFileHistoryAsync(string repoPath, string filePath, int limit = 50, CancellationToken ct = default)
+    {
+        var commits = new List<GitCommit>();
+        var result = await RunAsync(repoPath,
+            ["log", "--follow", "--format=%h|%an|%aI|%s", "-n", limit.ToString(), "--", filePath], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git log --follow failed for {filePath} in {repoPath}: {result.FirstError}");
+            return commits;
+        }
+        foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('|', 4);
+            if (parts.Length < 4) continue;
+            commits.Add(ParseCommitLine(parts));
+        }
+        return commits;
+    }
+
+    public async Task<List<BlameLine>> GetBlameAsync(string repoPath, string filePath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["blame", "--porcelain", "--", filePath], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git blame failed for {filePath} in {repoPath}: {result.FirstError}");
+            return [];
+        }
+        return ParseBlamePorcelain(result.StdOut);
+    }
+
+    /// <summary>
+    /// Parses `git blame --porcelain`. Each source line is a header
+    /// "&lt;sha&gt; &lt;orig&gt; &lt;final&gt; [&lt;count&gt;]" followed — the FIRST time a commit
+    /// appears — by its metadata block ending at "filename", then a TAB-prefixed content
+    /// line. Later lines of the same commit repeat only the header, so per-sha metadata is
+    /// cached and reused. A "boundary" line in a commit's block marks a walk boundary.
+    /// </summary>
+    internal static List<BlameLine> ParseBlamePorcelain(string porcelain)
+    {
+        var lines = new List<BlameLine>();
+        var meta = new Dictionary<string, (string author, DateTimeOffset? date, bool boundary)>();
+
+        var sha = "";
+        var finalLine = 0;
+        var author = "";
+        long epoch = 0;
+        var tz = "";
+        var boundary = false;
+
+        foreach (var raw in porcelain.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.Length == 0) continue;
+
+            if (line[0] == '\t')
+            {
+                var m = meta.TryGetValue(sha, out var cached) ? cached : (author, ToBlameDate(epoch, tz), boundary);
+                lines.Add(new BlameLine
+                {
+                    Sha = sha,
+                    Author = m.Item1,
+                    Date = m.Item2,
+                    LineNumber = finalLine,
+                    Text = line[1..],
+                    IsBoundary = m.Item3
+                });
+                continue;
+            }
+
+            var sp = line.IndexOf(' ');
+            var key = sp < 0 ? line : line[..sp];
+
+            if (key.Length == 40 && IsHex(key))
+            {
+                sha = key;
+                var fields = line.Split(' ');
+                if (fields.Length >= 3 && int.TryParse(fields[2], out var fl)) finalLine = fl;
+                if (!meta.ContainsKey(sha)) { author = ""; epoch = 0; tz = ""; boundary = false; }
+                continue;
+            }
+
+            switch (key)
+            {
+                case "author": author = sp < 0 ? "" : line[(sp + 1)..]; break;
+                case "author-time": long.TryParse(sp < 0 ? "" : line[(sp + 1)..], out epoch); break;
+                case "author-tz": tz = sp < 0 ? "" : line[(sp + 1)..]; break;
+                case "boundary": boundary = true; break;
+                case "filename":
+                    if (!meta.ContainsKey(sha)) meta[sha] = (author, ToBlameDate(epoch, tz), boundary);
+                    break;
+            }
+        }
+        return lines;
+    }
+
+    private static DateTimeOffset? ToBlameDate(long epoch, string tz)
+    {
+        if (epoch <= 0) return null;
+        var utc = DateTimeOffset.FromUnixTimeSeconds(epoch);
+        // tz is "+HHMM" / "-HHMM" — apply it so the displayed time is the author's local time.
+        if (tz.Length == 5 && (tz[0] == '+' || tz[0] == '-')
+            && int.TryParse(tz.AsSpan(1, 2), out var h) && int.TryParse(tz.AsSpan(3, 2), out var mm))
+        {
+            var offset = new TimeSpan(h, mm, 0);
+            if (tz[0] == '-') offset = -offset;
+            try { return utc.ToOffset(offset); } catch { return utc; }
+        }
+        return utc;
+    }
+
+    private static bool IsHex(string s)
+    {
+        foreach (var c in s)
+            if (!Uri.IsHexDigit(c)) return false;
+        return true;
+    }
+
+    private static GitCommit ParseCommitLine(string[] parts) => new()
+    {
+        ShortHash = parts[0],
+        Author = parts[1],
+        Date = DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d) ? d : default,
+        Message = parts[3]
+    };
+
+    // ── Paged history & search (L-05) ────────────────────────────────────────────
+
+    /// <summary>
+    /// One page of history from `--skip`/`-n`, optionally filtered by message, author,
+    /// path, and date range (all combine). Reads count+1 commits so the extra row's
+    /// presence is a cheap HasMore signal; it is trimmed before returning.
+    /// </summary>
+    public async Task<CommitPage> GetCommitsPagedAsync(string repoPath, int skip, int count,
+        CommitFilter? filter = null, CancellationToken ct = default)
+    {
+        var args = new List<string> { "log", "--format=%h|%an|%aI|%s", $"--skip={skip}", $"-n{count + 1}" };
+        string? path = null;
+        if (filter is not null)
+        {
+            if (!string.IsNullOrEmpty(filter.MessageGrep)) args.Add("--grep=" + filter.MessageGrep);
+            if (!string.IsNullOrEmpty(filter.Author)) args.Add("--author=" + filter.Author);
+            if (filter.Since is { } since) args.Add("--since=" + since.ToString("o"));
+            if (filter.Until is { } until) args.Add("--until=" + until.ToString("o"));
+            path = string.IsNullOrEmpty(filter.Path) ? null : filter.Path;
+        }
+        if (path is not null) { args.Add("--"); args.Add(path); }
+
+        var result = await RunAsync(repoPath, args, ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git log paged failed for {repoPath}: {result.FirstError}");
+            return new CommitPage();
+        }
+
+        var all = new List<GitCommit>();
+        foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('|', 4);
+            if (parts.Length < 4) continue;
+            all.Add(ParseCommitLine(parts));
+        }
+
+        var hasMore = all.Count > count;
+        return new CommitPage
+        {
+            Commits = hasMore ? all.GetRange(0, count) : all,
+            HasMore = hasMore
+        };
+    }
+
+    // ── Hunk staging (L-06) ──────────────────────────────────────────────────────
+
+    public Task<ProcessResult> StageHunkAsync(string repoPath, string patchText, CancellationToken ct = default)
+        => ApplyPatchAsync(repoPath, patchText, ["apply", "--cached"], ct);
+
+    public Task<ProcessResult> UnstageHunkAsync(string repoPath, string patchText, CancellationToken ct = default)
+        => ApplyPatchAsync(repoPath, patchText, ["apply", "--cached", "--reverse"], ct);
+
+    public Task<ProcessResult> DiscardHunkAsync(string repoPath, string patchText, CancellationToken ct = default)
+        => ApplyPatchAsync(repoPath, patchText, ["apply", "--reverse"], ct);
+
+    private async Task<ProcessResult> ApplyPatchAsync(string repoPath, string patchText,
+        IReadOnlyList<string> applyArgs, CancellationToken ct)
+    {
+        // git apply reads a patch FILE (ProcessRunner has no stdin); paths inside the
+        // patch resolve against the repo working dir, not the patch file's location.
+        // The patch already carries its own line endings (CRLF preserved from the source
+        // diff) and git apply is strict about the trailing newline, so the bytes are
+        // written verbatim with no newline translation.
+        var tmp = Path.Combine(Path.GetTempPath(), $"pd-hunk-{Guid.NewGuid():N}.patch");
+        try
+        {
+            await File.WriteAllTextAsync(tmp, patchText, new UTF8Encoding(false), ct);
+            var args = new List<string>(applyArgs) { tmp };
+            return await RunAsync(repoPath, args, ct);
+        }
+        finally
+        {
+            try { File.Delete(tmp); } catch { /* temp cleanup is best-effort */ }
+        }
+    }
+
+    /// <summary>Raw `git diff` for one file, bytes untouched (CRLF preserved) so a hunk can be sliced out faithfully. Null on failure.</summary>
+    public async Task<string?> GetFileDiffRawAsync(string repoPath, string filePath, bool staged, CancellationToken ct = default)
+    {
+        var args = new List<string> { "diff", "--no-color" };
+        if (staged) args.Add("--cached");
+        args.Add("--");
+        args.Add(filePath);
+        var result = await RunAsync(repoPath, args, ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git diff (raw) failed for {filePath} in {repoPath}: {result.FirstError}");
+            return null;
+        }
+        return result.StdOut;
+    }
+
+    /// <summary>
+    /// Slices a single-hunk patch out of one file's RAW `git diff` output, byte-for-byte
+    /// (CR bytes and the "\ No newline at end of file" markers survive intact, which the
+    /// FileDiff model discards). This is the byte-faithful path for staging real hunks;
+    /// <see cref="BuildHunkPatch"/> is the model-based counterpart. Null when the diff has
+    /// no hunk at <paramref name="hunkIndex"/>. Body lines never start with "@@" (they
+    /// carry a +/-/space prefix), so a column-0 "@@" unambiguously marks a hunk header.
+    /// </summary>
+    internal static string? ExtractHunkPatch(string rawFileDiff, int hunkIndex)
+    {
+        if (string.IsNullOrEmpty(rawFileDiff)) return null;
+        // Split on '\n' only: each element keeps its trailing '\r' for a CRLF diff.
+        var lines = rawFileDiff.Split('\n');
+
+        var firstHunk = -1;
+        for (var i = 0; i < lines.Length; i++)
+            if (lines[i].StartsWith("@@", StringComparison.Ordinal)) { firstHunk = i; break; }
+        if (firstHunk < 0) return null;
+
+        var headers = new List<int>();
+        for (var i = firstHunk; i < lines.Length; i++)
+            if (lines[i].StartsWith("@@", StringComparison.Ordinal)) headers.Add(i);
+        if (hunkIndex < 0 || hunkIndex >= headers.Count) return null;
+
+        var start = headers[hunkIndex];
+        var end = hunkIndex + 1 < headers.Count ? headers[hunkIndex + 1] : lines.Length;
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < firstHunk; i++)  // preamble: diff --git / index / --- / +++
+            sb.Append(lines[i]).Append('\n');
+        for (var i = start; i < end; i++)
+        {
+            // A diff ending in '\n' yields a trailing empty split element; don't emit it
+            // as a spurious blank line.
+            if (i == lines.Length - 1 && lines[i].Length == 0) break;
+            sb.Append(lines[i]).Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a valid single-hunk patch from a parsed <see cref="FileDiff"/> and a hunk
+    /// index, reconstructing the "diff --git"/"---"/"+++" headers git apply needs and the
+    /// hunk body. Faithful to the DiffLine text it is given, including a trailing CR when
+    /// present and the "\ No newline at end of file" marker. Because FileDiff.ParseUnified
+    /// strips the CR from CRLF content, feed <see cref="ExtractHunkPatch"/> from
+    /// <see cref="GetFileDiffRawAsync"/> when byte-exact CRLF staging is required.
+    /// </summary>
+    public static string BuildHunkPatch(FileDiff diff, int hunkIndex)
+    {
+        var headers = new List<int>();
+        for (var i = 0; i < diff.Lines.Count; i++)
+            if (diff.Lines[i].Kind == DiffLineKind.HunkHeader &&
+                diff.Lines[i].Text.StartsWith("@@", StringComparison.Ordinal))
+                headers.Add(i);
+
+        if (hunkIndex < 0 || hunkIndex >= headers.Count)
+            throw new ArgumentOutOfRangeException(nameof(hunkIndex),
+                $"hunk {hunkIndex} requested; the diff has {headers.Count}");
+
+        var start = headers[hunkIndex];
+        var end = hunkIndex + 1 < headers.Count ? headers[hunkIndex + 1] : diff.Lines.Count;
+
+        var oldPath = diff.OldPath ?? diff.Path;
+        var newPath = diff.Path;
+
+        var sb = new StringBuilder();
+        sb.Append("diff --git a/").Append(oldPath).Append(" b/").Append(newPath).Append('\n');
+        sb.Append("--- a/").Append(oldPath).Append('\n');
+        sb.Append("+++ b/").Append(newPath).Append('\n');
+        for (var i = start; i < end; i++)
+        {
+            var dl = diff.Lines[i];
+            switch (dl.Kind)
+            {
+                case DiffLineKind.HunkHeader:
+                    sb.Append(dl.Text).Append('\n');
+                    break;
+                case DiffLineKind.Added:
+                    sb.Append('+').Append(dl.Text).Append('\n');
+                    break;
+                case DiffLineKind.Removed:
+                    sb.Append('-').Append(dl.Text).Append('\n');
+                    break;
+                case DiffLineKind.Context:
+                    // The "\ No newline at end of file" marker is emitted verbatim; every
+                    // other context line takes the leading space a unified diff requires.
+                    if (dl.Text.StartsWith("\\ ", StringComparison.Ordinal))
+                        sb.Append(dl.Text).Append('\n');
+                    else
+                        sb.Append(' ').Append(dl.Text).Append('\n');
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    // ── Stash depth (L-07) ───────────────────────────────────────────────────────
+
+    public Task<ProcessResult> StashPushAsync(string repoPath, string? message = null,
+        bool includeUntracked = false, CancellationToken ct = default)
+    {
+        var args = new List<string> { "stash", "push" };
+        if (includeUntracked) args.Add("-u");
+        if (!string.IsNullOrEmpty(message)) { args.Add("-m"); args.Add(message); }
+        return RunAsync(repoPath, args, ct, TimeSpan.FromSeconds(30));
+    }
+
+    public async Task<List<FileDiff>> GetStashDiffAsync(string repoPath, string stashRef, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["stash", "show", "-p", "--no-color", stashRef], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git stash show failed for {stashRef} in {repoPath}: {result.FirstError}");
+            return [];
+        }
+        return FileDiff.ParseUnified(result.StdOut);
+    }
+
+    // ── Worktrees (L-08) ─────────────────────────────────────────────────────────
+
+    public async Task<List<WorktreeEntry>> GetWorktreesAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["worktree", "list", "--porcelain"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git worktree list failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+        return ParseWorktreePorcelain(result.StdOut);
+    }
+
+    /// <summary>
+    /// Parses `git worktree list --porcelain`: blank-line-separated blocks of
+    /// "worktree &lt;path&gt;", "HEAD &lt;sha&gt;", and one of "branch &lt;ref&gt;" / "detached" /
+    /// "bare", plus an optional "locked" line.
+    /// </summary>
+    internal static List<WorktreeEntry> ParseWorktreePorcelain(string porcelain)
+    {
+        var entries = new List<WorktreeEntry>();
+        string? path = null, head = null, branch = null;
+        bool bare = false, detached = false, locked = false;
+
+        void Flush()
+        {
+            if (path is null) return;
+            entries.Add(new WorktreeEntry
+            {
+                Path = path,
+                HeadSha = head ?? "",
+                Branch = branch,
+                IsBare = bare,
+                IsDetached = detached,
+                IsLocked = locked
+            });
+            path = head = branch = null;
+            bare = detached = locked = false;
+        }
+
+        foreach (var raw in porcelain.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.Length == 0) { Flush(); continue; }
+
+            var sp = line.IndexOf(' ');
+            var key = sp < 0 ? line : line[..sp];
+            var val = sp < 0 ? "" : line[(sp + 1)..];
+            switch (key)
+            {
+                case "worktree": Flush(); path = val; break;
+                case "HEAD": head = val; break;
+                case "branch": branch = val.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? val["refs/heads/".Length..] : val; break;
+                case "bare": bare = true; break;
+                case "detached": detached = true; break;
+                case "locked": locked = true; break;
+            }
+        }
+        Flush();
+        return entries;
+    }
+
+    public Task<ProcessResult> AddWorktreeAsync(string repoPath, string path, string? branch = null, CancellationToken ct = default)
+    {
+        var args = new List<string> { "worktree", "add" };
+        if (!string.IsNullOrEmpty(branch)) { args.Add("-b"); args.Add(branch); }
+        args.Add(path);
+        return RunAsync(repoPath, args, ct, TimeSpan.FromSeconds(30));
+    }
+
+    public Task<ProcessResult> RemoveWorktreeAsync(string repoPath, string path, CancellationToken ct = default)
+        => RunAsync(repoPath, ["worktree", "remove", path], ct);
+
+    // ── .gitignore (L-10) ────────────────────────────────────────────────────────
+
+    /// <summary>Root .gitignore contents, or null when absent.</summary>
+    public async Task<string?> GetGitignoreAsync(string repoPath, CancellationToken ct = default)
+    {
+        var p = Path.Combine(repoPath, ".gitignore");
+        if (!File.Exists(p)) return null;
+        return await File.ReadAllTextAsync(p, ct);
+    }
+
+    /// <summary>Overwrites the root .gitignore (a plain file write — no git command runs).</summary>
+    public Task SaveGitignoreAsync(string repoPath, string content, CancellationToken ct = default)
+        => File.WriteAllTextAsync(Path.Combine(repoPath, ".gitignore"), content, ct);
+
+    /// <summary>Appends a pattern to the root .gitignore unless it already appears as a whole-line entry.</summary>
+    public async Task AppendIgnoreEntryAsync(string repoPath, string pattern, CancellationToken ct = default)
+    {
+        var p = Path.Combine(repoPath, ".gitignore");
+        var existing = File.Exists(p) ? await File.ReadAllTextAsync(p, ct) : "";
+        var target = pattern.Trim();
+        if (existing.Split('\n').Any(l => l.TrimEnd('\r').Trim() == target)) return;
+
+        var sb = new StringBuilder(existing);
+        if (existing.Length > 0 && !existing.EndsWith('\n')) sb.Append('\n');
+        sb.Append(target).Append('\n');
+        await File.WriteAllTextAsync(p, sb.ToString(), ct);
+    }
+
+    /// <summary>True when the path is ignored (`check-ignore` exits 0 when ignored, 1 when not).</summary>
+    public async Task<bool> CheckIgnoreAsync(string repoPath, string path, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["check-ignore", "-q", "--", path], ct);
+        return result.ExitCode == 0 && !result.TimedOut;
     }
 
     // ── Clone ───────────────────────────────────────────────────────────────
