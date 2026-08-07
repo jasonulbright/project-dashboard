@@ -322,20 +322,25 @@ public sealed class ScopedRewritePass
     /// pruned commit's parent, transitively; merge parents that collapse to a duplicate are
     /// de-duplicated. A commit that carried no file commands before the purge is never
     /// pruned — an empty marker commit is history the caller did not target. Roots, merges,
-    /// tag/reset targets, and commits with no descendants are left as valid empty commits
-    /// rather than risk a broken ref graph.
+    /// tag/reset targets, ref-establishing commits, and commits with no descendants are left
+    /// as valid empty commits rather than risk a ref rewinding to an ancestor. Being merged
+    /// into another branch does not make a tip prunable: a merged tip has a child, so child
+    /// count alone never decides this.
     /// </summary>
     private void PruneEmptyCommits(ScopedRewriteOutcome outcome, HashSet<long> emptiedByPurge, CancellationToken ct)
     {
         var commitsByMark = new Dictionary<long, CommitRecord>();
         var childCount = new Dictionary<long, int>();
         var externallyReferenced = new HashSet<long>();
+        // Latin1 keys the raw ref bytes losslessly; ref names are not required to be UTF-8.
+        var lastCommitPerRef = new Dictionary<string, long>(StringComparer.Ordinal);
 
         foreach (var record in _parsed.Records)
             switch (record)
             {
                 case CommitRecord c when c.Mark is { } m:
                     commitsByMark[m] = c;
+                    lastCommitPerRef[Encoding.Latin1.GetString(c.RefNameBytes)] = m;
                     break;
                 case TagRecord { FromRef: { } from }:
                     if (ParseMarkRef(from) is { } tm) externallyReferenced.Add(tm);
@@ -344,6 +349,11 @@ public sealed class ScopedRewritePass
                     if (ParseMarkRef(rfrom) is { } rm) externallyReferenced.Add(rm);
                     break;
             }
+
+        // The last `commit <ref>` record is what leaves the ref pointing where it does.
+        // Dropping it would rewind the ref to an ancestor with nothing in the report saying so.
+        foreach (var tip in lastCommitPerRef.Values)
+            externallyReferenced.Add(tip);
 
         foreach (var c in commitsByMark.Values)
             foreach (var parent in c.Parents)
@@ -361,7 +371,7 @@ public sealed class ScopedRewritePass
             if (commit.Parents.Count != 1 || commit.Parents[0].IsMerge) continue;
             if (ParseMarkRef(commit.Parents[0].DataRef) is null) continue;
             if (externallyReferenced.Contains(mark)) continue;
-            if (childCount.GetValueOrDefault(mark) == 0) continue; // a branch tip — keep
+            if (childCount.GetValueOrDefault(mark) == 0) continue; // nothing descends from it
 
             var parentRef = commit.Parents[0].DataRef;
             // Follow the parent through any already-pruned ancestor.

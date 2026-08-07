@@ -393,6 +393,41 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task PurgeKeepsAMergedBranchTipAtItsOwnCommit()
+    {
+        using var f = Fixture();
+        f.Write("base.txt", "base\n");
+        f.CommitAll("base");
+        var baseOid = f.Git("rev-parse", "HEAD").Trim();
+        f.Git("switch", "-q", "-c", "feature");
+        f.Write("junk.txt", $"{Needle}\n");
+        f.CommitAll("feature adds junk only");
+        var featureTip = f.Git("rev-parse", "HEAD").Trim();
+        f.Git("switch", "-q", "main");
+        f.Write("m.txt", "m\n");
+        f.CommitAll("main advances");
+        f.Git("merge", "-q", "--no-ff", "feature", "-m", "merge feature");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [],
+            Purge = new PurgeSpec { Paths = new ExplicitPathsScope { Paths = ["junk.txt"] } }
+        });
+
+        var targetFeature = FixtureRepo.RunGit(f.TargetPath, ["rev-parse", "refs/heads/feature"], null, null).Trim();
+        // The tip is empty after the purge but still establishes refs/heads/feature; rewinding
+        // it onto "base" would drop a commit nobody asked to remove.
+        Assert.Equal(report.CommitMap[featureTip], targetFeature);
+        Assert.NotEqual(report.CommitMap[baseOid], targetFeature);
+        Assert.Equal("feature adds junk only",
+            FixtureRepo.RunGit(f.TargetPath, ["log", "-1", "--format=%s", targetFeature], null, null).Trim());
+        Assert.Equal(0, report.CommitsPruned);
+        Assert.False(ObjectReachable(f.TargetPath, f.Git("rev-parse", $"{featureTip}:junk.txt").Trim()));
+        output.WriteLine($"merged tip: refs/heads/feature -> {targetFeature[..10]} (its own rewritten tip), " +
+                         $"not base {report.CommitMap[baseOid][..10]}");
+    }
+
+    [Fact]
     public async Task PurgeBySizeTargetsLargestBlobs()
     {
         using var f = Fixture();
