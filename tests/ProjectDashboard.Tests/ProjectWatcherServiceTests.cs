@@ -127,6 +127,14 @@ public class ProjectWatcherServiceTests
         }
         while (!expected.All(r => harness.Signals.Any(b => b.Contains(r))));
 
+        // Hold until a full quiet window passes with no further signal: a rogue
+        // duplicate arriving after coverage would otherwise land after the
+        // snapshot and escape the count ceiling below. The window exceeds the
+        // debounce, so any signal already in flight arrives inside it.
+        while (await harness.SignalArrivedWithinAsync(QuietWindow))
+        {
+        }
+
         var batches = harness.Signals;
         Assert.All(batches, b => Assert.NotEmpty(b));
         Assert.Equal(expected, batches.SelectMany(b => b).Distinct().Order());
