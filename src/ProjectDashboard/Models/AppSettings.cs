@@ -18,6 +18,12 @@ public sealed class AppSettings
     /// <summary>Refresh a repo's card automatically when its working tree changes on disk.</summary>
     public bool EnableAutoRefresh { get; set; } = true;
 
+    /// <summary>Per-repo backups retained before a history rewrite prunes the oldest (R-01).</summary>
+    public int BackupRetentionCount { get; set; } = 10;
+
+    /// <summary>Gate for the destructive GitHub-admin surface; off until the user opts in (R-05).</summary>
+    public bool DangerZoneEnabled { get; set; }
+
     // Window state
     public double WindowLeft { get; set; } = -1;
     public double WindowTop { get; set; } = -1;

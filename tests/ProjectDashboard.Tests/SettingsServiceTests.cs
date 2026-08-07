@@ -31,6 +31,25 @@ public class SettingsServiceTests
     }
 
     [Fact]
+    public void NewSettings_HaveExpectedDefaults()
+    {
+        var defaults = new AppSettings();
+        Assert.Equal(10, defaults.BackupRetentionCount);
+        Assert.False(defaults.DangerZoneEnabled);
+    }
+
+    [Fact]
+    public void BackupRetentionAndDangerZone_RoundTrip()
+    {
+        var service = new SettingsService();
+        service.Save(new AppSettings { BackupRetentionCount = 25, DangerZoneEnabled = true });
+
+        var loaded = service.Load();
+        Assert.Equal(25, loaded.BackupRetentionCount);
+        Assert.True(loaded.DangerZoneEnabled);
+    }
+
+    [Fact]
     public void CorruptSettings_RecoveredFromBackup_NotSilentlyDefaults()
     {
         var service = new SettingsService();
