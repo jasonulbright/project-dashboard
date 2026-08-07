@@ -13,6 +13,22 @@ public sealed class PaletteItem
     /// <summary>Invoked when the row is chosen.</summary>
     public Action Invoke { get; init; } = () => { };
 
+    /// <summary>Header the row is listed under; rows of one group stay contiguous.</summary>
+    public string Group { get; init; } = "Commands";
+
+    /// <summary>
+    /// Added to the match score so equally-matching rows rank by kind — a project
+    /// jump outranks the same project's verbs, which would otherwise bury it.
+    /// </summary>
+    public int Bias { get; init; }
+
+    /// <summary>
+    /// Whether a scattered subsequence counts as a match. Off for rows generated per
+    /// project: seven verbs per repo turn a forgiving fallback into a wall of matches
+    /// on any query with common letters.
+    /// </summary>
+    public bool AllowFuzzy { get; init; } = true;
+
     /// <summary>
     /// Subsequence + substring score, higher is better, -1 = no match. A contiguous
     /// substring beats a scattered subsequence; an earlier match beats a later one.
@@ -24,6 +40,8 @@ public sealed class PaletteItem
 
         var idx = hay.IndexOf(queryLower, StringComparison.Ordinal);
         if (idx >= 0) return Math.Max(300, 1000 - idx); // contiguous match, prefer earlier; stays > subsequence
+
+        if (!AllowFuzzy) return -1;
 
         // Fall back to in-order subsequence.
         int qi = 0;
