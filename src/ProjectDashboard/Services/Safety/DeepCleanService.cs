@@ -53,7 +53,9 @@ public sealed class DeepCleanService
 
     /// <summary>
     /// The reason a repository is not eligible, in the order the gates run, or null when it is.
-    /// Read on its own so a surface can state the refusal before the reader types anything.
+    /// Read on its own so a surface can state the refusal before the reader types anything; that
+    /// early read is for the reader's benefit only, and <see cref="RunAsync"/> reads all of it
+    /// again under the repository lease before anything is expired.
     /// </summary>
     public async Task<string?> DescribeBlockerAsync(string repoPath, CancellationToken ct = default)
     {
@@ -72,9 +74,13 @@ public sealed class DeepCleanService
             return $"A {state.Activity.ToString().ToLowerInvariant()} is in progress. Finish or abort it in a " +
                    "terminal first — pruning under it would remove objects it still needs.";
 
-        var stashes = await _git.GetStashesAsync(repoPath, ct);
-        if (stashes.Count > 0)
-            return StashRefusal(stashes.Count);
+        // A stash read that failed is not a repository without stashes, and this is the one
+        // operation that erases the stack outright.
+        var stashes = await _git.CountStashEntriesAsync(repoPath, ct);
+        if (stashes is null)
+            return UnreadableStashRefusal;
+        if (stashes > 0)
+            return StashRefusal(stashes.Value);
 
         return null;
     }
@@ -93,25 +99,29 @@ public sealed class DeepCleanService
         "expiring the reflogs erases every one of them, and a backup bundle holds only the top entry — the rest " +
         "exist nowhere else. Apply or drop them first.";
 
+    /// <summary>Shown when the stash stack could not be read at all, which is not the same as it being empty.</summary>
+    public const string UnreadableStashRefusal =
+        "This repository's stash stack could not be read, so whether expiring the reflogs would erase stashed work " +
+        "is unknown. Nothing was expired. Check the repository in a terminal and try again.";
+
     /// <summary>
     /// Expires every reflog and prunes, under the repository lease. Measures the object store on
     /// both sides so the reclaim reported is one that was observed, never one that was computed
     /// from what the operation was expected to remove.
+    ///
+    /// Every gate is read inside the lease. Each one is a claim about the repository at the moment
+    /// the expire runs, and a gate read before the lease describes a repository that a stash push
+    /// or a started rebase could have changed since.
     /// </summary>
     public async Task<DeepCleanResult> RunAsync(string repoPath, CancellationToken ct = default)
     {
-        if (await DescribeBlockerAsync(repoPath, ct) is { } blocker)
-            return DeepCleanResult.Refused(blocker);
-
         if (!_busy.TryAcquire(repoPath, out var lease))
             return DeepCleanResult.Refused($"Repository is busy with another operation: {repoPath}");
 
         using (lease)
         {
-            // Re-read under the lease: the gates above ran unleased, so an operation that started
-            // between them and here would have written a journal entry nothing has checked.
-            if (await _journal.ReadPendingAsync(repoPath, ct) is not null)
-                return DeepCleanResult.Refused(InterruptedOperationRefusal);
+            if (await DescribeBlockerAsync(repoPath, ct) is { } blocker)
+                return DeepCleanResult.Refused(blocker);
 
             var before = await _git.CountObjectsAsync(repoPath, ct);
 

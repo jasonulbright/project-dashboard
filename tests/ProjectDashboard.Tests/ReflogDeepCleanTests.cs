@@ -49,11 +49,15 @@ public class ReflogDeepCleanTests
 
         internal override bool ReadDangerZoneEnabled() => DangerZone;
 
-        internal override Task<string?> PromptForTextAsync(string title, string message, string confirmLabel)
+        /// <summary>Runs while the prompt is notionally on screen, for the states a reader can reach mid-decision.</summary>
+        public Func<Task>? WhileThePromptIsOpen { get; set; }
+
+        internal override async Task<string?> PromptForTextAsync(string title, string message, string confirmLabel)
         {
             Prompts++;
             LastPromptMessage = message;
-            return Task.FromResult(Typed);
+            if (WhileThePromptIsOpen is { } during) await during();
+            return Typed;
         }
 
         public string LastPromptMessage { get; private set; } = "";
@@ -276,7 +280,10 @@ public class ReflogDeepCleanTests
         var text = ProjectDetailViewModel.DescribeDeepClean(result);
         Assert.Contains("Deep clean finished", text);
         Assert.Contains("objects down to", text);
-        Assert.Contains("backup bundle taken before that rewrite still holds them", text);
+        // Nothing here knows whether a bundle was ever taken, so the outcome claims only what a
+        // bundle would hold if one exists — the same hedge the confirmation is written in.
+        Assert.Contains("whatever a backup bundle captured", text);
+        Assert.DoesNotContain("still holds them", text);
     }
 
     /// <summary>A store that could not be measured is reported as unmeasured, never as a reclaim of zero.</summary>
@@ -352,6 +359,102 @@ public class ReflogDeepCleanTests
         Assert.Contains("holds only the top entry", result.RefusalReason!);
         Assert.Equal(stashBefore, await repo.GitAsync("stash", "list"));
         _output.WriteLine(result.RefusalReason!);
+    }
+
+    /// <summary>
+    /// A stash read that failed is not a repository without stashes. Treating the two alike would
+    /// let the one operation that erases the stash stack run precisely when nothing could confirm
+    /// the stack was empty.
+    /// </summary>
+    [Fact]
+    public async Task WhenTheStashStackCannotBeRead_TheCleanRefusesRatherThanExpiringIt()
+    {
+        using var repo = await RepoWithAbandonedStateAsync("clean-stash-unreadable");
+        repo.Write("file.txt", "work in progress\n");
+        await repo.GitAsync("stash", "push", "-m", "wip");
+        var stashBefore = await repo.GitAsync("stash", "list");
+        var reflogBefore = (await new GitService().GetReflogAsync(repo.Path, "HEAD")).Count;
+        var service = new DeepCleanService(new StashReadFailingGit(), new RepoBusyRegistry(), new RewriteJournal());
+
+        var result = await service.RunAsync(repo.Path);
+
+        Assert.False(result.Success);
+        Assert.Contains("stash", result.RefusalReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(stashBefore, await repo.GitAsync("stash", "list"));
+        Assert.Equal(reflogBefore, (await new GitService().GetReflogAsync(repo.Path, "HEAD")).Count);
+        _output.WriteLine(result.RefusalReason!);
+    }
+
+    /// <summary>
+    /// Every gate is a claim about the repository at the moment the destructive command runs, so
+    /// each one is read while the lease is held. A gate read before the lease describes a
+    /// repository that anything could have changed since.
+    /// </summary>
+    [Fact]
+    public async Task EveryGate_IsReadUnderTheRepositoryLeaseAndNotBeforeIt()
+    {
+        using var repo = await RepoWithAbandonedStateAsync("clean-gate-lease");
+        var busy = new RepoBusyRegistry();
+        var git = new LeaseWatchingGit(busy);
+
+        Assert.True((await new DeepCleanService(git, busy, new RewriteJournal()).RunAsync(repo.Path)).Success);
+
+        Assert.NotEmpty(git.Gates);
+        Assert.All(git.Gates, g => Assert.True(g.Held, $"the '{g.Call}' gate was read before the lease was held"));
+        _output.WriteLine(string.Join(", ", git.Gates.Select(g => $"{g.Call}:{g.Held}")));
+    }
+
+    /// <summary>
+    /// The confirmation dialog is open for as long as a reader takes, and a stash pushed in that
+    /// window exists nowhere a bundle could hold it.
+    /// </summary>
+    [Fact]
+    public async Task AStashCreatedWhileThePromptIsOpen_IsCaughtBeforeAnythingIsExpired()
+    {
+        using var repo = await RepoWithAbandonedStateAsync("clean-stash-race");
+        var vm = new PromptingViewModel(NewDeepClean()) { Typed = System.IO.Path.GetFileName(repo.Path) };
+        vm.WhileThePromptIsOpen = async () =>
+        {
+            repo.Write("file.txt", "work in progress\n");
+            await repo.GitAsync("stash", "push", "-m", "wip");
+        };
+        await vm.SetProjectAsync(ProjectFor(repo));
+
+        await vm.DeepCleanCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Prompts);
+        Assert.Contains("stash", vm.DeepCleanStatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual("", (await repo.GitAsync("stash", "list")).Trim());
+        Assert.NotEmpty(await new GitService().GetReflogAsync(repo.Path, "HEAD"));
+        _output.WriteLine(vm.DeepCleanStatusText);
+    }
+
+    /// <summary>Fails only the calls that read the stash stack; every other git call is real.</summary>
+    private sealed class StashReadFailingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            if (list.Any(a => a.Contains("stash", StringComparison.Ordinal)))
+                return Task.FromResult(new ProcessResult(128, "", "fatal: unable to read the object store", false));
+            return base.RunAsync(repoPath, list, ct, timeout);
+        }
+    }
+
+    /// <summary>Records whether the repository lease was held at the moment each gate read ran.</summary>
+    private sealed class LeaseWatchingGit(RepoBusyRegistry busy) : GitService
+    {
+        public List<(string Call, bool Held)> Gates { get; } = [];
+
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            if (list.Contains("status") || list.Any(a => a.Contains("stash", StringComparison.Ordinal)))
+                Gates.Add((string.Join(' ', list.Take(2)), busy.IsBusy(repoPath)));
+            return base.RunAsync(repoPath, list, ct, timeout);
+        }
     }
 
     [Fact]
@@ -493,7 +596,7 @@ public class ReflogDeepCleanTests
         var git = new RecordingGit();
         await new DeepCleanService(git, new RepoBusyRegistry(), new RewriteJournal()).RunAsync(repo.Path);
 
-        var expire = Assert.Single(git.Calls, c => c.Contains("reflog"));
+        var expire = Assert.Single(git.Calls, c => c.Contains("reflog") && c.Contains("expire"));
         Assert.Contains(expire, a => a == "--expire=now");
         Assert.Contains(expire, a => a == "--expire-unreachable=now");
         Assert.Contains(expire, a => a == "--all");

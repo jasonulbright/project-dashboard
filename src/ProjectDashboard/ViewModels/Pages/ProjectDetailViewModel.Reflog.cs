@@ -344,7 +344,8 @@ public partial class ProjectDetailViewModel
     /// <summary>
     /// The outcome in the terms the action was sold in. A reclaim is reported only where both
     /// measurements were taken, and a store that grew is said to have grown rather than dressed up
-    /// as a reclaim of zero.
+    /// as a reclaim of zero. Nothing here knows whether a backup bundle was ever taken, so the
+    /// recoverability line is conditional in the same way the confirmation's is.
     /// </summary>
     internal static string DescribeDeepClean(DeepCleanResult result)
     {
@@ -364,8 +365,8 @@ public partial class ProjectDetailViewModel
                 : $"grew by {DescribeKiB(-reclaimed)}, because repacking cost more than the prune saved";
         return $"Deep clean finished and {size}: {DescribeKiB(before.TotalKiB)} before, " +
                $"{DescribeKiB(after.TotalKiB)} after, {before.TotalObjects:N0} objects down to {after.TotalObjects:N0}. " +
-               "The commits the rewrite replaced are no longer reachable here; the backup bundle taken before that " +
-               "rewrite still holds them.";
+               "The commits the rewrite replaced are no longer reachable here; whatever a backup bundle captured is " +
+               "still in that bundle, and Backups can restore it.";
     }
 
     private static string DescribeKiB(long kib) => kib switch
