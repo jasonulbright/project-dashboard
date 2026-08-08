@@ -2,9 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: ['**']
   pull_request:
     branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
   build-and-test:
@@ -16,8 +24,36 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Restore
+        run: dotnet restore
+
       - name: Build
-        run: dotnet build --configuration Release
+        run: dotnet build --configuration Release --no-restore -warnaserror
 
       - name: Test
-        run: dotnet test --configuration Release --logger trx
+        run: dotnet test --configuration Release --no-build --logger trx --results-directory TestResults
+
+      # A run whose suite silently collects nothing exits 0. The tally is the second
+      # half of the gate, so it is asserted rather than eyeballed in the log.
+      - name: Verify test tally
+        run: |
+          $trx = Get-ChildItem TestResults -Filter *.trx -Recurse
+          if (-not $trx) { throw 'No .trx produced by the test run.' }
+          $total = 0
+          $failed = 0
+          foreach ($file in $trx) {
+            $counters = ([xml](Get-Content -LiteralPath $file.FullName -Raw)).TestRun.ResultSummary.Counters
+            $total  += [int] $counters.total
+            $failed += [int] $counters.failed
+          }
+          Write-Host "Total $total, failed $failed across $($trx.Count) result file(s)."
+          if ($total -eq 0) { throw 'The test run collected no tests.' }
+          if ($failed -ne 0) { throw "$failed test(s) failed." }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: error
