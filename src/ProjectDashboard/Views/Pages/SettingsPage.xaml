@@ -66,14 +66,20 @@
                         Margin="0,0,0,24" />
 
             <!-- Save -->
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
-                <ui:Button Content="Save Settings"
+            <Grid Margin="0,0,0,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <ui:Button Grid.Column="0"
+                           Content="Save Settings"
                            Appearance="Primary"
                            Command="{Binding SaveSettingsCommand}" />
-                <TextBlock Text="{Binding SaveStatus}" FontSize="12" TextWrapping="Wrap"
+                <TextBlock Grid.Column="1"
+                           Text="{Binding SaveStatus}" FontSize="12" TextWrapping="Wrap"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            VerticalAlignment="Center" Margin="12,0,0,0" />
-            </StackPanel>
+            </Grid>
 
             <!-- GitHub Status -->
             <TextBlock Text="GitHub CLI Status" FontSize="16" Margin="0,0,0,8"
