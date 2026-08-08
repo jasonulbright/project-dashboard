@@ -18,8 +18,10 @@ TestResults/
 
 # Installer build artifacts (sources are tracked: branding/*.svg, installer/*.nsi, installer/*.ps1)
 installer/payload/
+installer/ProjectDashboard-Portable-*/
 installer/*.exe
 installer/*.zip
+installer/*.zip.partial
 branding/*.png
 
 # Local working state (never shipped)

@@ -81,33 +81,48 @@ $zipPath     = Join-Path $OutputDirectory "$archiveName.zip"
 if (Test-Path -LiteralPath $stageDir) {
     Remove-Item -LiteralPath $stageDir -Recurse -Force
 }
-New-Item -ItemType Directory -Path $stageDir | Out-Null
 
-# The archive carries exactly what the installer packs (payload\*.*) plus the marker.
-# The installer must never see the marker: an installed copy has to keep using the
-# per-user data location.
-Copy-Item -Path (Join-Path $payloadDir '*') -Destination $stageDir -Recurse -Force
+# A partial zip written straight to $zipPath is an openable archive under the release
+# asset name; the staging tree left behind on failure would be picked up by a later
+# `git add -A`. The finally block clears both.
+$partialPath = "$zipPath.partial"
+try {
+    New-Item -ItemType Directory -Path $stageDir | Out-Null
 
-Set-Content -LiteralPath (Join-Path $stageDir 'portable.marker') -Encoding utf8 -Value @'
+    # The archive carries exactly what the installer packs (payload\*.*) plus the marker.
+    # The installer must never see the marker: an installed copy has to keep using the
+    # per-user data location.
+    Copy-Item -Path (Join-Path $payloadDir '*') -Destination $stageDir -Recurse -Force
+
+    Set-Content -LiteralPath (Join-Path $stageDir 'portable.marker') -Encoding utf8 -Value @'
 This file makes Project Dashboard keep its settings, cache, log, and project
 metadata in the data folder beside ProjectDashboard.exe.
 
 Delete it to use the standard per-user location instead.
 '@
 
-if (Test-Path -LiteralPath $zipPath) {
-    Remove-Item -LiteralPath $zipPath -Force
+    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+    if (Test-Path -LiteralPath $partialPath) {
+        Remove-Item -LiteralPath $partialPath -Force
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $stageDir,
+        $partialPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $true)
+
+    Move-Item -LiteralPath $partialPath -Destination $zipPath -Force
 }
-New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $stageDir,
-    $zipPath,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $true)
-
-Remove-Item -LiteralPath $stageDir -Recurse -Force
+finally {
+    if (Test-Path -LiteralPath $stageDir) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $partialPath) {
+        Remove-Item -LiteralPath $partialPath -Force
+    }
+}
 
 $zip = Get-Item -LiteralPath $zipPath
 Write-Host ("Wrote {0} ({1:N1} MB)" -f $zip.FullName, ($zip.Length / 1MB))
