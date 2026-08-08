@@ -29,11 +29,13 @@ public class ProjectDetailViewModelSurgeryTests
     /// The discovery and GitHub services are unreachable from these paths (no manifest save,
     /// no remote on a fixture repo), so both nulls keep the test to local git.
     /// </summary>
-    private static async Task<ProjectDetailViewModel> VmForAsync(SurgeryRepo repo)
+    private static Task<ProjectDetailViewModel> VmForAsync(SurgeryRepo repo) => VmForAsync(repo, new GitService());
+
+    private static async Task<ProjectDetailViewModel> VmForAsync(SurgeryRepo repo, GitService gitService)
     {
         var name = Path.GetFileName(repo.Path);
         var commits = await new GitService().GetRecentCommitsAsync(repo.Path, 50);
-        var vm = new ProjectDetailViewModel(null!, new GitService(), null!) { Surgery = NewCoordinator() };
+        var vm = new ProjectDetailViewModel(null!, gitService, null!) { Surgery = NewCoordinator() };
         await vm.SetProjectAsync(new ProjectInfo
         {
             DirectoryName = name,
@@ -824,6 +826,42 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.StartsWith("Restored", vm.SurgeryStatusText);
         // A restored repository is whole, so nothing may report an interrupted rewrite for it.
         Assert.Null(await new RewriteJournal().ReadPendingAsync(repo.Path));
+    }
+
+    /// <summary>A git that refuses every stash push, leaving the tree the surgery gate refused.</summary>
+    private sealed class StashRefusingGitService : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            if (argv is ["stash", "push", ..])
+                return Task.FromResult(new ProcessResult(1, "", "fatal: unable to write stash", TimedOut: false));
+            return base.RunAsync(repoPath, argv, ct, timeout);
+        }
+    }
+
+    [Fact]
+    public async Task AFailedStash_ReportsIntoTheSurgeryPanelThatOfferedIt()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var vm = await VmForAsync(repo, new StashRefusingGitService());
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        repo.Write("alpha.txt", "uncommitted edit\n");
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        Assert.True(vm.SurgeryStashOfferVisible);
+        var refusal = vm.SurgeryFailureText;
+
+        await vm.StashBeforeSurgeryCommand.ExecuteAsync(null);
+
+        // The offer stands in the surgery panel, so a stash that did not run has to say so there.
+        Assert.Equal("Stash failed.", vm.SurgeryStatusText);
+        Assert.Contains("unable to write stash", vm.SurgeryFailureText);
+        Assert.NotEqual(refusal, vm.SurgeryFailureText);
+        Assert.True(vm.SurgeryStashOfferVisible);
+        Assert.Equal("uncommitted edit\n", repo.Read("alpha.txt"));
     }
 
     [Fact]

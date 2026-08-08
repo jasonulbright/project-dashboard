@@ -748,10 +748,19 @@ public partial class ProjectDetailViewModel
     private async Task StashBeforeSurgery()
     {
         if (IsBusy || RepoPath.Length == 0) return;
+        var gen = _generation;
         var ok = await RunOp(
             repo => _gitService.StashPushAsync(repo, "before history edit", includeUntracked: true),
             "Stash changes");
-        if (!ok) return;
+        if (!IsCurrent(gen)) return;
+        if (!ok)
+        {
+            // The stash reports into the sync pane; the offer that asked for it stands in this
+            // one, so its failure is restated here or the click reads as having done nothing.
+            SurgeryStatusText = "Stash failed.";
+            SurgeryFailureText = SyncStatusText;
+            return;
+        }
         SurgeryStashOfferVisible = false;
         SurgeryFailureText = "";
         await LoadStashes();
