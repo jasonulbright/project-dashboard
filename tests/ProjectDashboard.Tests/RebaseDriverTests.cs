@@ -214,6 +214,46 @@ public class RebaseDriverTests
     }
 
     [Fact]
+    public async Task AShaPrefixTwoCommitsShare_IsRefusedAsAmbiguous_NotAsOutOfRange()
+    {
+        // Hand-built shas: git's own %h auto-extends past a collision, so a shared four-character
+        // prefix only reaches the driver from a caller that abbreviates on its own.
+        var scope = new RebaseScope
+        {
+            RepoPath = TestEnv.NewDir("ambiguous-prefix"),
+            BaseSha = new string('0', 40),
+            Commits =
+            [
+                new RebaseCommit("abcd" + new string('1', 36), "one"),
+                new RebaseCommit("abcd" + new string('2', 36), "two"),
+                new RebaseCommit("beef" + new string('3', 36), "three")
+            ]
+        };
+        var driver = NewDriver();
+
+        var ambiguous = await driver.DropAsync(scope, ["abcd"]);
+
+        Assert.False(ambiguous.Success);
+        Assert.Contains("matches more than one commit in the range", ambiguous.FailureReason);
+        Assert.DoesNotContain("not in the editable range", ambiguous.FailureReason);
+
+        // A prefix no commit carries keeps the range wording.
+        var absent = await driver.DropAsync(scope, ["dead"]);
+        Assert.False(absent.Success);
+        Assert.Contains("not in the editable range", absent.FailureReason);
+
+        // Longer prefixes each name one commit: the refusal is the one that only a scope with
+        // every commit resolved can produce.
+        var resolved = await driver.DropAsync(scope, ["abcd1111", "abcd2222", "beef3333"]);
+        Assert.False(resolved.Success);
+        Assert.Contains("empty the branch", resolved.FailureReason);
+
+        var reworded = await driver.RewordAsync(scope, "abcd", "new message");
+        Assert.False(reworded.Success);
+        Assert.Contains("matches more than one commit in the range", reworded.FailureReason);
+    }
+
+    [Fact]
     public async Task Reword_ThirdOfFive_ChangesOnlyThatMessage_LeavingTheTreeIdentical()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "c1", "c2", "c3", "c4", "c5");

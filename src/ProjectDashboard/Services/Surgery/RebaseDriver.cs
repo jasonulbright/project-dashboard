@@ -137,7 +137,7 @@ public class RebaseDriver
         RebaseScope scope, IReadOnlyList<string> shasInNewOrder,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
     {
-        var byId = Index(scope);
+        var index = Index(scope);
         if (shasInNewOrder.Count != scope.Commits.Count)
             return Refuse($"reorder must list all {scope.Commits.Count} commit(s) in the range, got {shasInNewOrder.Count}");
 
@@ -145,8 +145,9 @@ public class RebaseDriver
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var sha in shasInNewOrder)
         {
-            if (!byId.TryGetValue(sha, out var commit))
-                return Refuse($"commit {Short(sha)} is not in the editable range");
+            var commit = index.Resolve(sha);
+            if (commit is null)
+                return Refuse(index.Rejection(sha));
             if (!seen.Add(commit.Sha))
                 return Refuse($"commit {Short(sha)} listed twice in the new order");
             todo.Add(Pick(commit));
@@ -160,12 +161,13 @@ public class RebaseDriver
         RebaseScope scope, IReadOnlyList<string> shasToDrop,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
     {
-        var byId = Index(scope);
+        var index = Index(scope);
         var drop = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var sha in shasToDrop)
         {
-            if (!byId.TryGetValue(sha, out var commit))
-                return Refuse($"commit {Short(sha)} is not in the editable range");
+            var commit = index.Resolve(sha);
+            if (commit is null)
+                return Refuse(index.Rejection(sha));
             drop.Add(commit.Sha);
         }
         if (drop.Count == 0)
@@ -187,15 +189,16 @@ public class RebaseDriver
         RebaseScope scope, IReadOnlyList<string> shasToFold, string? newMessage = null,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
     {
-        var byId = Index(scope);
+        var index = Index(scope);
         if (shasToFold.Count < 2)
             return Refuse("a squash needs at least two commits");
 
         var resolved = new List<RebaseCommit>();
         foreach (var sha in shasToFold)
         {
-            if (!byId.TryGetValue(sha, out var commit))
-                return Refuse($"commit {Short(sha)} is not in the editable range");
+            var commit = index.Resolve(sha);
+            if (commit is null)
+                return Refuse(index.Rejection(sha));
             resolved.Add(commit);
         }
 
@@ -237,8 +240,10 @@ public class RebaseDriver
     {
         if (string.IsNullOrWhiteSpace(newMessage))
             return Refuse("a commit message cannot be empty");
-        if (!Index(scope).TryGetValue(sha, out var target))
-            return Refuse($"commit {Short(sha)} is not in the editable range");
+        var index = Index(scope);
+        var target = index.Resolve(sha);
+        if (target is null)
+            return Refuse(index.Rejection(sha));
 
         var messageToken = MessageToken("reword");
         var todo = new List<string>();
@@ -263,11 +268,13 @@ public class RebaseDriver
         RebaseScope scope, string targetSha, string fixupSha,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
     {
-        var byId = Index(scope);
-        if (!byId.TryGetValue(targetSha, out var target))
-            return Refuse($"commit {Short(targetSha)} is not in the editable range");
-        if (!byId.TryGetValue(fixupSha, out var fixup))
-            return Refuse($"commit {Short(fixupSha)} is not in the editable range");
+        var index = Index(scope);
+        var target = index.Resolve(targetSha);
+        if (target is null)
+            return Refuse(index.Rejection(targetSha));
+        var fixup = index.Resolve(fixupSha);
+        if (fixup is null)
+            return Refuse(index.Rejection(fixupSha));
         if (string.Equals(target.Sha, fixup.Sha, StringComparison.OrdinalIgnoreCase))
             return Refuse("a commit cannot be folded into itself");
 
@@ -660,7 +667,21 @@ public class RebaseDriver
 
     // ── small helpers ─────────────────────────────────────────────────────
 
-    private static Dictionary<string, RebaseCommit> Index(RebaseScope scope)
+    /// <summary>
+    /// Resolves a caller's sha — full or abbreviated — against one scope. A prefix two commits
+    /// share resolves to neither, and is reported as ambiguous rather than as out of range: the
+    /// two refusals ask the caller for opposite corrections.
+    /// </summary>
+    private readonly struct ShaIndex(Dictionary<string, RebaseCommit> byId, HashSet<string> ambiguous)
+    {
+        internal RebaseCommit? Resolve(string sha) => byId.GetValueOrDefault(sha);
+
+        internal string Rejection(string sha) => ambiguous.Contains(sha)
+            ? $"commit {Short(sha)} matches more than one commit in the range — use a longer sha"
+            : $"commit {Short(sha)} is not in the editable range";
+    }
+
+    private static ShaIndex Index(RebaseScope scope)
     {
         var map = new Dictionary<string, RebaseCommit>(StringComparer.OrdinalIgnoreCase);
         var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -685,7 +706,7 @@ public class RebaseDriver
             }
         }
         foreach (var prefix in ambiguous) map.Remove(prefix);
-        return map;
+        return new ShaIndex(map, ambiguous);
     }
 
     private static int IndexOf(RebaseScope scope, string sha)
