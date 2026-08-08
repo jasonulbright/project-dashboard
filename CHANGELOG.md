@@ -23,6 +23,7 @@ Full repository management -- deliberate, guarded history rewriting and commit s
 - **File history and blame** -- per-file history and a blame view with jump-through to the commit, reachable from a file row in Changes or from the History tab
 - **Hunk staging** -- stage, unstage, or discard an individual hunk from the diff viewer, including the unstaged side of a staged rename
 - **Stash depth** -- stash with a message and optionally include untracked files, and read a stash's diff before applying it
+- **Changes follows the working tree** -- an external edit reaches the open detail page: the file lists refresh when the watcher reports a change (held while an operation runs, never interrupting one), and a Refresh button and `F5` re-read on demand
 - **Internals tab** -- worktrees (add, remove, prune stale entries), submodules (init, update, sync, deinitialize), and a `.gitignore` editor with a path tester that says which rule decides a path
 - **Commit graph** -- branch-lane visualization of history, paged without the lanes shifting under you
 - **History paging** -- load older commits beyond the first page
@@ -55,6 +56,7 @@ Full repository management -- deliberate, guarded history rewriting and commit s
 - A repository whose history cannot be walked reports that instead of reading as a repository with no commits
 - Links in rendered README and CHANGELOG markdown are clickable and reachable from the keyboard, and open the parsed target after disclosing its real host
 - A repository's `commit.cleanup` setting no longer rewrites a commit message typed in the app
+- Issues and Pull Requests answer honestly: a repository with no GitHub remote says so instead of showing an empty list with enabled compose buttons, and a failed fetch leaves the list already on screen standing instead of reading as "none open"
 - The command palette keeps its selection when search results arrive late
 
 ## [1.2.0] - 2026-07-17
