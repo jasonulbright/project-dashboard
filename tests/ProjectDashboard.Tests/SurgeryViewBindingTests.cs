@@ -1,9 +1,14 @@
+using System.Globalization;
+using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using ProjectDashboard.Helpers;
 
 namespace ProjectDashboard.Tests;
 
@@ -100,6 +105,35 @@ public class SurgeryViewBindingTests
             Assert.True(presenter.RecognizesAccessKey);
             Assert.Single(Descendants(button).OfType<AccessText>());
         });
+    }
+
+    /// <summary>
+    /// Reword and squash discard a whitespace-only message, so the prompt's Save must be
+    /// unavailable while the box holds one. Without the gate the button is live and its click
+    /// closes nothing — a control that looks broken rather than refused.
+    /// </summary>
+    [Fact]
+    public void TheCommitMessagePromptsSaveButton_IsGatedOnANonWhitespaceMessage()
+    {
+        var converter = new HasNonWhitespaceTextConverter();
+        Assert.Equal(false, converter.Convert(null, typeof(bool), null, CultureInfo.InvariantCulture));
+        Assert.Equal(false, converter.Convert("", typeof(bool), null, CultureInfo.InvariantCulture));
+        Assert.Equal(false, converter.Convert(" \t\r\n ", typeof(bool), null, CultureInfo.InvariantCulture));
+        Assert.Equal(true, converter.Convert("a message", typeof(bool), null, CultureInfo.InvariantCulture));
+
+        var declaration = Regex.Match(File.ReadAllText(PromptWindowXaml()), @"<ui:Button x:Name=""SaveButton""[^>]*>").Value;
+        Assert.Contains(
+            @"IsEnabled=""{Binding Text, ElementName=MessageInput, Converter={StaticResource HasNonWhitespaceTextConverter}}""",
+            declaration);
+    }
+
+    private static string PromptWindowXaml([CallerFilePath] string testFile = "")
+    {
+        var path = Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(testFile)!, "..", "..",
+            "src", "ProjectDashboard", "Views", "Windows", "CommitMessagePromptWindow.xaml"));
+        Assert.True(File.Exists(path), $"commit message prompt markup not found at {path}");
+        return path;
     }
 
     private sealed class MenuHost

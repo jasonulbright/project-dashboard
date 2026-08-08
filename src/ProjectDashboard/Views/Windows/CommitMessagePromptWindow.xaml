@@ -2,6 +2,7 @@
     x:Class="ProjectDashboard.Views.Windows.CommitMessagePromptWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     Title="Commit message"
     Width="640"
@@ -11,6 +12,10 @@
     WindowStartupLocation="CenterOwner"
     ExtendsContentIntoTitleBar="True"
     WindowBackdropType="Mica">
+
+    <ui:FluentWindow.Resources>
+        <helpers:HasNonWhitespaceTextConverter x:Key="HasNonWhitespaceTextConverter" />
+    </ui:FluentWindow.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -40,6 +45,7 @@
                        AutomationProperties.Name="Cancel and keep the message unchanged" />
             <ui:Button x:Name="SaveButton" Content="Save" Padding="14,5" Appearance="Primary"
                        IsDefault="False" Click="OnSave"
+                       IsEnabled="{Binding Text, ElementName=MessageInput, Converter={StaticResource HasNonWhitespaceTextConverter}}"
                        AutomationProperties.Name="Save this commit message" />
         </StackPanel>
     </Grid>

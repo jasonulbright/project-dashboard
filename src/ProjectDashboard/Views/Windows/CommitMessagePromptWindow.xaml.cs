@@ -6,6 +6,10 @@ namespace ProjectDashboard.Views.Windows;
 /// <summary>
 /// Multi-line commit message entry for reword and squash. Enter inserts a newline — a commit
 /// message is a body, not a single line — so Ctrl+Enter is what accepts.
+///
+/// A whitespace-only message is not a message the callers can use: Save is disabled while the
+/// box holds one, and Ctrl+Enter is inert on the same condition, so neither route closes the
+/// dialog on a value that would be discarded.
 /// </summary>
 public partial class CommitMessagePromptWindow
 {
