@@ -66,11 +66,19 @@ public class RewriteWizardViewModelTests
 
         public Exception? UndoThrows { get; set; }
 
-        public Task<RestoreResult> UndoAsync(CancellationToken ct = default)
+        /// <summary>Held open, this stands in for the restore still reconciling refs.</summary>
+        public Task? UndoGate { get; set; }
+
+        private readonly TaskCompletionSource _undoEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task UndoEntered => _undoEntered.Task;
+
+        public async Task<RestoreResult> UndoAsync(CancellationToken ct = default)
         {
             UndoCount++;
+            _undoEntered.TrySetResult();
+            if (UndoGate is { } gate) await gate;
             if (UndoThrows is { } ex) throw ex;
-            return Task.FromResult(RestoreResult);
+            return RestoreResult;
         }
 
         public void Dispose()
@@ -1238,4 +1246,54 @@ public class RewriteWizardViewModelTests
         await vm.RewriteSessionDisposal;
     }
 
+    // ── Returning to an undo that is still running ───────────────────────────
+
+    /// <summary>
+    /// An undo writes the repository, so leaving the page parks it exactly as a rewrite is
+    /// parked. Coming back puts the wizard on the Running step; without a step move when the
+    /// restore returns, the spinner is the last thing the surface ever shows and the disclosure
+    /// of what the reset discarded is never rendered.
+    /// </summary>
+    [Fact]
+    public async Task ReturningToAParkedUndo_LandsOnTheResultStepWhenTheRestoreFinishes()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-undo-park-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-undo-park-b");
+        using var __ = repoB;
+
+        var session = new StubSession
+        {
+            RestoreResult = new RestoreResult(true, "restored 3 refs", WorktreeWasDirty: true, DiscardedChangeCount: 2, RefsRestored: true),
+        };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        await (await StartRewriteAsync(vm, session));
+        Assert.True(vm.RewriteUndoAvailable);
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.UndoGate = gate.Task;
+        var undoing = vm.UndoRewriteCommand.ExecuteAsync(null);
+        await session.UndoEntered;
+
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        Assert.False(vm.IsBusy);
+
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        Assert.True(vm.RewriteStepIsRunning);
+        Assert.True(vm.IsBusy);
+
+        gate.SetResult();
+        await undoing;
+
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.False(vm.RewriteStepIsRunning);
+        Assert.Contains("2 uncommitted change(s) were discarded", vm.RewriteUndoText);
+        Assert.False(vm.RewriteUndoAvailable);
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.RewriteRunning);
+    }
 }

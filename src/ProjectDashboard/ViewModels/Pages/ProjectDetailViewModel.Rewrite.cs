@@ -993,6 +993,12 @@ public partial class ProjectDetailViewModel
                 await SafeRefreshWorkingStateAsync();
             }
         });
+
+        // An undo that was parked and restored comes back on the Running step, and nothing else
+        // moves the wizard off it; without this the spinner is the last thing the surface shows
+        // and the text naming what the reset discarded is never rendered.
+        if (OwnsLiveWizard(session))
+            RewriteStep = RewriteWizardStep.Result;
     }
 
     /// <summary>
