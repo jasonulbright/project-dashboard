@@ -58,7 +58,7 @@ jobs:
           Write-Host "Total $total across $($trx.Count) result file(s)."
 
       - name: Upload test results
-        if: always()
+        if: always() && hashFiles('TestResults/*.trx') != ''
         uses: actions/upload-artifact@v4
         with:
           name: test-results
