@@ -32,7 +32,10 @@ public sealed class HistoryRewriteRequest
 /// Content rewrite over full history: export, parse, transform every blob (all-files
 /// scope), import into a fresh bare target, then verify (fsck --strict, plus scrub greps
 /// for each op's needle across the full rewritten commit set, byte-scanning skipped blobs
-/// and scanning paths) and report. Changed payloads are held in memory until import, so
+/// and scanning paths) and report. A literal needle no git grep argument can carry — invalid
+/// UTF-8, an embedded NUL, a newline — is verified entirely by scanning each in-scope
+/// payload's final bytes during the transform pass, so it is checked rather than skipped.
+/// Changed payloads are held in memory until import, so
 /// peak memory is the sum of changed payload bytes plus one payload in flight; a
 /// configurable ceiling refuses the run before that sum can exhaust memory. Unchanged
 /// payloads stream from the spool untouched.
@@ -77,6 +80,9 @@ public sealed class HistoryRewriter
 
         var transformer = new BlobTransformer(rewrite.ContentOps, _regexPayloadLimit);
         var literalOps = rewrite.ContentOps.OfType<LiteralReplace>().ToList();
+        // Needles argv cannot carry — invalid UTF-8, an embedded NUL, a newline — have no git
+        // grep to run at all, so the transform pass scans the final bytes for them instead.
+        var byteScanOps = literalOps.Where(op => !TryDescribeNeedle(op.Find, out _)).ToList();
         var messageTransformer = rewrite.MessageOps.Count > 0
             ? new BlobTransformer(rewrite.MessageOps, _regexPayloadLimit)
             : null;
@@ -95,7 +101,7 @@ public sealed class HistoryRewriter
             legacyTally = new TransformTally();
             transform = (parsed, token) =>
             {
-                TransformBlobs(parsed, transformer, literalOps, _changedPayloadCeiling, legacyTally, token);
+                TransformBlobs(parsed, transformer, literalOps, byteScanOps, _changedPayloadCeiling, legacyTally, token);
                 return Task.CompletedTask;
             };
         }
@@ -104,7 +110,7 @@ public sealed class HistoryRewriter
             transform = (parsed, token) =>
             {
                 scoped = new ScopedRewritePass(
-                    parsed, transformer, literalOps, messageTransformer, rewrite.IdentityMappings,
+                    parsed, transformer, literalOps, byteScanOps, messageTransformer, rewrite.IdentityMappings,
                     rewrite.FileScope, inScopeCommitOids, rewrite.Purge, _changedPayloadCeiling).Run(token);
                 return Task.CompletedTask;
             };
@@ -127,6 +133,7 @@ public sealed class HistoryRewriter
         var bytesDelta = legacyTally?.BytesDelta ?? scoped!.BytesDelta;
         var skips = legacyTally?.Skips ?? scoped!.Skips;
         var byteSurvivors = legacyTally?.ByteSurvivors ?? scoped!.ByteSurvivors;
+        var byteScanSurvivors = legacyTally?.ByteScanSurvivors ?? scoped!.ByteScanSurvivors;
         var prunedMarks = scoped?.PrunedMarkToSurvivingMark ?? [];
 
         var commitMap = BuildCommitMap(result, prunedMarks);
@@ -146,7 +153,8 @@ public sealed class HistoryRewriter
 
         var scope = new ScrubScope(
             rewrite, inScopeCommitOids, commitMap, changedTrees, PrunedSourceOids(result.Index, prunedMarks));
-        var scrubChecks = await RunScrubChecksAsync(request, commitMap, binarySkips, byteSurvivors, paths, scope, ct);
+        var scrubChecks = await RunScrubChecksAsync(
+            request, commitMap, binarySkips, byteSurvivors, byteScanSurvivors, paths, scope, ct);
 
         var report = new RewriteReport
         {
@@ -288,6 +296,9 @@ public sealed class HistoryRewriter
 
         /// <summary>Literal needles found verbatim inside a skipped (unscrubbable) blob's bytes — a definite survivor git grep -I cannot see.</summary>
         public readonly List<(LiteralReplace Op, long? Mark, long Size)> ByteSurvivors = [];
+
+        /// <summary>Literal needles still present in a rewritten payload's final bytes, for the ops no git grep argument can express.</summary>
+        public readonly List<(LiteralReplace Op, long? Mark, long Size)> ByteScanSurvivors = [];
     }
 
     /// <summary>
@@ -299,7 +310,7 @@ public sealed class HistoryRewriter
     /// </summary>
     private static void TransformBlobs(
         ParsedExport parsed, BlobTransformer transformer, IReadOnlyList<LiteralReplace> literalOps,
-        long changedPayloadCeiling, TransformTally tally, CancellationToken ct)
+        IReadOnlyList<LiteralReplace> byteScanOps, long changedPayloadCeiling, TransformTally tally, CancellationToken ct)
     {
         using var spool = new FileStream(
             parsed.SpoolPath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan);
@@ -348,6 +359,10 @@ public sealed class HistoryRewriter
                                 throw new HistoryPipelineException(
                                     "transform",
                                     $"changed payloads reached {changedBytes} bytes, past the {changedPayloadCeiling}-byte ceiling — rewrite refused before exhausting memory");
+                            ScanFinalBytes(outcome.Bytes, byteScanOps, blob.Mark, tally.ByteScanSurvivors);
+                            break;
+                        case TransformClass.Unchanged:
+                            ScanFinalBytes(payload, byteScanOps, blob.Mark, tally.ByteScanSurvivors);
                             break;
                     }
                     break;
@@ -365,6 +380,21 @@ public sealed class HistoryRewriter
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Records any needle still present in the bytes the import will receive, for the ops no git
+    /// grep argument can express. A skipped payload is not scanned here: its bytes never changed,
+    /// so the same finding is already recorded as a byte survivor.
+    /// </summary>
+    private static void ScanFinalBytes(
+        byte[]? finalBytes, IReadOnlyList<LiteralReplace> byteScanOps, long? mark,
+        List<(LiteralReplace Op, long? Mark, long Size)> survivors)
+    {
+        if (finalBytes is null) return;
+        foreach (var op in byteScanOps)
+            if (finalBytes.AsSpan().IndexOf(op.Find) >= 0)
+                survivors.Add((op, mark, finalBytes.LongLength));
     }
 
     private static byte[] ReadSlice(FileStream spool, SpoolSlice slice)
@@ -580,6 +610,7 @@ public sealed class HistoryRewriter
     private async Task<List<ScrubCheckResult>> RunScrubChecksAsync(
         HistoryRewriteRequest request, Dictionary<string, string> commitMap,
         IReadOnlyList<BinarySkip> binarySkips, IReadOnlyList<(LiteralReplace Op, long? Mark, long Size)> byteSurvivors,
+        IReadOnlyList<(LiteralReplace Op, long? Mark, long Size)> byteScanSurvivors,
         IReadOnlyList<(byte[] Bytes, string Text)> paths, ScrubScope scope, CancellationToken ct)
     {
         var allCommits = scope.InScopeCommits;
@@ -617,9 +648,18 @@ public sealed class HistoryRewriter
                             .ToList();
                         if (!TryDescribeNeedle(literal.Find, out var needle))
                         {
+                            // No grep can carry this needle, so the transform pass scanned every
+                            // in-scope payload's final bytes for it instead. That covers strictly
+                            // more than a grep would — every payload, not a sampled commit set —
+                            // so the check is performed, and its hits are those survivors.
+                            var scanHits = byteScanSurvivors
+                                .Where(b => ReferenceEquals(b.Op, literal))
+                                .Select(b => $"payload mark :{b.Mark?.ToString() ?? "?"}: {b.Size} byte(s) still carry the needle")
+                                .ToList();
                             checks.Add(Make("literal", Convert.ToHexString(literal.Find),
-                                new GrepOutcome(false, [], "needle is not expressible as a single-line UTF-8 grep argument"),
-                                literalExtras));
+                                new GrepOutcome(true, scanHits,
+                                    "needle is not expressible as a git grep argument; every in-scope payload's final bytes were scanned for it instead"),
+                                literalExtras, commitSampling: false));
                             break;
                         }
                         checks.Add(Make("literal", needle,
@@ -652,14 +692,19 @@ public sealed class HistoryRewriter
         checks.AddRange(await IdentityScrubChecksAsync(request, scope, identitySkips, ct));
         return checks;
 
-        ScrubCheckResult Make(string kind, string needle, GrepOutcome grep, IReadOnlyList<string> extraHits)
+        // commitSampling is false for a check whose coverage is per-payload rather than per-commit:
+        // the commit sample cap never applied to it, so neither the sampling note nor the
+        // completeness penalty it carries belongs on it.
+        ScrubCheckResult Make(
+            string kind, string needle, GrepOutcome grep, IReadOnlyList<string> extraHits, bool commitSampling = true)
         {
             var hits = new List<string>(grep.Hits);
             hits.AddRange(extraHits);
+            var wasSampled = commitSampling && sampled;
 
             var notes = new List<string>();
             if (grep.Note is { } gn) notes.Add(gn);
-            if (grep.Performed && sampled)
+            if (grep.Performed && wasSampled)
                 notes.Add($"sampled {commits.Count} of {allCommits.Count} commit(s); unsampled commits were not grepped");
             if (hasSkips)
                 notes.Add($"{contentSkips} blob(s) the transform skipped are invisible to git grep");
@@ -678,9 +723,9 @@ public sealed class HistoryRewriter
                 Kind = kind,
                 Needle = needle,
                 Performed = grep.Performed,
-                Complete = grep.Performed && !sampled && !hasSkips,
+                Complete = grep.Performed && !wasSampled && !hasSkips,
                 WithinScopeOnly = scope.ContentScoped,
-                CommitsChecked = grep.Performed ? commits.Count : 0,
+                CommitsChecked = grep.Performed ? (commitSampling ? commits.Count : allCommits.Count) : 0,
                 Hits = hits,
                 Note = notes.Count > 0 ? string.Join("; ", notes) : null
             };

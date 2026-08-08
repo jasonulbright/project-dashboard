@@ -27,6 +27,13 @@ public sealed class ScopedRewriteOutcome
     /// <summary>Literal needles found verbatim inside a skipped in-scope blob — a survivor git grep -I cannot see.</summary>
     public readonly List<(LiteralReplace Op, long? Mark, long Size)> ByteSurvivors = [];
 
+    /// <summary>
+    /// Literal needles found in a rewritten payload's FINAL bytes, for the ops whose needle cannot
+    /// be carried as a git grep argument at all. Those ops have no grep to run, so this in-process
+    /// byte scan is their whole verification rather than a supplement to one.
+    /// </summary>
+    public readonly List<(LiteralReplace Op, long? Mark, long Size)> ByteScanSurvivors = [];
+
     /// <summary>Shared blobs split: the original mark stayed for out-of-scope refs, a fresh mark carries the rewrite for in-scope refs.</summary>
     public readonly List<(long OldMark, long NewMark, string Path)> Splits = [];
 
@@ -52,6 +59,7 @@ public sealed class ScopedRewritePass
     private readonly ParsedExport _parsed;
     private readonly BlobTransformer _contentTransformer;
     private readonly IReadOnlyList<LiteralReplace> _contentLiteralOps;
+    private readonly IReadOnlyList<LiteralReplace> _byteScanOps;
     private readonly BlobTransformer? _messageTransformer;
     private readonly IReadOnlyList<IdentityMapping> _identityMappings;
     private readonly FileScope _fileScope;
@@ -65,6 +73,7 @@ public sealed class ScopedRewritePass
         ParsedExport parsed,
         BlobTransformer contentTransformer,
         IReadOnlyList<LiteralReplace> contentLiteralOps,
+        IReadOnlyList<LiteralReplace> byteScanOps,
         BlobTransformer? messageTransformer,
         IReadOnlyList<IdentityMapping> identityMappings,
         FileScope fileScope,
@@ -75,6 +84,7 @@ public sealed class ScopedRewritePass
         _parsed = parsed;
         _contentTransformer = contentTransformer;
         _contentLiteralOps = contentLiteralOps;
+        _byteScanOps = byteScanOps;
         _messageTransformer = messageTransformer;
         _identityMappings = identityMappings;
         _fileScope = fileScope;
@@ -225,12 +235,29 @@ public sealed class ScopedRewritePass
                             fm.Repoint(newMark);
                         outcome.Splits.Add((mark, newMark, info.AnyPath ?? FirstInScopePath(info)));
                     }
+                    ScanFinalBytes(newBytes, mark, outcome);
+                    break;
+
+                case TransformClass.Unchanged:
+                    ScanFinalBytes(payload, mark, outcome);
                     break;
             }
         }
 
         if (insertAfter.Count > 0)
             SpliceNewBlobs(insertAfter);
+    }
+
+    /// <summary>
+    /// Records any needle still present in the bytes the import will receive, for the ops no git
+    /// grep argument can express. A skipped payload is not scanned here: its bytes never changed,
+    /// so the same finding is already recorded as a byte survivor.
+    /// </summary>
+    private void ScanFinalBytes(byte[] finalBytes, long mark, ScopedRewriteOutcome outcome)
+    {
+        foreach (var op in _byteScanOps)
+            if (finalBytes.AsSpan().IndexOf(op.Find) >= 0)
+                outcome.ByteScanSurvivors.Add((op, mark, finalBytes.LongLength));
     }
 
     private static string FirstInScopePath(BlobRefInfo info) =>

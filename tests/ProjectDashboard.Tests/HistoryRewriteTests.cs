@@ -625,6 +625,49 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         Assert.Equal(0, CountGrepHits(f.TargetPath, AllCommits(f.TargetPath), Needle, "target"));
     }
 
+    /// <summary>A needle carrying a NUL cannot ride argv, so the scrub has no grep for it and the byte scan is its whole verification.</summary>
+    private static RewriteOptions NulNeedleScrub(byte[] replace) => new()
+    {
+        ContentOps = [new LiteralReplace { Find = [(byte)'A', 0x00, (byte)'B'], Replace = replace }]
+    };
+
+    [Fact]
+    public async Task ArgvBlindLiteralNeedleIsVerifiedByScanningTheFinalBytes()
+    {
+        using var f = Fixture();
+        f.WriteBytes("a.txt", [.. "head "u8.ToArray(), (byte)'A', 0x00, (byte)'B', .. " tail\n"u8.ToArray()]);
+        f.CommitAll("one");
+        f.Write("b.txt", "unrelated\n");
+        f.CommitAll("two");
+
+        var report = await RewriteAsync(f, NulNeedleScrub("X"u8.ToArray()));
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.Equal("literal", check.Kind);
+        Assert.True(check.Performed, check.Note);
+        Assert.True(check.Complete, check.Note);
+        Assert.Empty(check.Hits);
+        Assert.Contains("final bytes were scanned", check.Note);
+        Assert.Equal(1, report.BlobsChanged);
+    }
+
+    [Fact]
+    public async Task ArgvBlindLiteralNeedleThatSurvivesTheReplacementIsReportedAsAHit()
+    {
+        using var f = Fixture();
+        f.WriteBytes("a.txt", [.. "head "u8.ToArray(), (byte)'A', 0x00, (byte)'B', .. " tail\n"u8.ToArray()]);
+        f.CommitAll("one");
+
+        // The replacement re-introduces the needle, and a replacement is never re-scanned by the
+        // transform, so the needle is present in the bytes the import receives.
+        var report = await RewriteAsync(f, NulNeedleScrub([.. "keep-"u8.ToArray(), (byte)'A', 0x00, (byte)'B']));
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.True(check.Performed, check.Note);
+        var hit = Assert.Single(check.Hits);
+        Assert.Contains("still carry the needle", hit);
+    }
+
     [Fact]
     public async Task NormalizationScanNamesReencodedCommitsAndSignedTags()
     {
