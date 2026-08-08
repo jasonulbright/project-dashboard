@@ -101,9 +101,9 @@ public class BackupsSurfaceTests
     }
 
     /// <summary>
-    /// The W4-8 claim, on the surface that has to make it: with no backups on disk the browser
-    /// may not imply nothing was ever interrupted, because a lost journal reports exactly the
-    /// same thing as a clean shutdown.
+    /// With no backups on disk the browser may not imply nothing was ever interrupted: a lost
+    /// journal reports exactly the same thing as a clean shutdown, so the empty state has to
+    /// state the limit of what it knows.
     /// </summary>
     [Fact]
     public async Task WithNoBackupsOnDisk_TheEmptyStateRefusesToClaimNothingWasInterrupted()
