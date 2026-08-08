@@ -109,8 +109,8 @@ public class SettingsServiceTests
     [Fact]
     public void ClosePathSave_Failure_IsIgnorable_SoTheCloseIsNeverCancelled()
     {
-        // Mirrors the window's Closing handler: load, mutate placement, save, discard
-        // the result. A throw there cancels the close and leaves the app unclosable.
+        // A directory occupying the settings file path makes the write fail. A throw
+        // from the window's Closing handler cancels the close and leaves the app unclosable.
         var service = new SettingsService();
         Directory.CreateDirectory(SettingsPath);
         try
@@ -118,7 +118,7 @@ public class SettingsServiceTests
             var s = service.Load();
             s.PaneOpen = false;
             s.WindowMaximized = true;
-            service.Save(s);
+            Assert.False(service.Save(s));
         }
         finally
         {

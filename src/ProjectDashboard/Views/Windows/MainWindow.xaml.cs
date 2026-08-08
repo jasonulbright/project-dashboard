@@ -163,8 +163,7 @@ public partial class MainWindow : INavigationWindow
                 s.WindowDeviceRect = new SavedWindowRect(
                     (int)rect.Left, (int)rect.Top, (int)rect.Width, (int)rect.Height);
             s.PaneOpen = RootNavigation.IsPaneOpen;
-            // The close path discards the save result: reporting it would need a surface
-            // that is already being torn down, and blocking here cancels the close.
+            // Blocking on the save result here cancels the close.
             settingsService.Save(s);
         };
 
