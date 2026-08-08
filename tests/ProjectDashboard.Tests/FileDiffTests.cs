@@ -426,7 +426,9 @@ public class FileDiffTests
 
     /// <summary>
     /// The rendered row and the patch builder must agree on what index N names, or the reader
-    /// stages a hunk other than the one selected. Both count column-0 "@@" headers in order.
+    /// stages a hunk other than the one selected. Both count column-0 "@@" headers in order and
+    /// both restart the count at each file, so the agreement survives text carrying more than
+    /// one of them.
     /// </summary>
     [Fact]
     public void HunkIndex_NamesTheSameHunkExtractHunkPatchSlices()
@@ -437,14 +439,20 @@ public class FileDiffTests
             "--- a/f.txt\n" +
             "+++ b/f.txt\n" +
             "@@ -1,2 +1,2 @@\n-a\n+A\n b\n" +
-            "@@ -10,2 +10,2 @@ tail section\n y\n-z\n+Z\n";
+            "@@ -10,2 +10,2 @@ tail section\n y\n-z\n+Z\n" +
+            "diff --git a/g.txt b/g.txt\n" +
+            "index 333..444 100644\n" +
+            "--- a/g.txt\n" +
+            "+++ b/g.txt\n" +
+            "@@ -5,2 +5,2 @@ other file\n p\n-q\n+Q\n";
 
-        var file = Assert.Single(FileDiff.ParseUnified(raw));
-        foreach (var header in file.Lines.Where(l => l.IsHunkStart))
-        {
-            var patch = Services.GitService.ExtractHunkPatch(raw, header.HunkIndex);
-            Assert.NotNull(patch);
-            Assert.Contains(header.Text + "\n", patch);
-        }
+        foreach (var file in FileDiff.ParseUnified(raw))
+            foreach (var header in file.Lines.Where(l => l.IsHunkStart))
+            {
+                var patch = Services.GitService.ExtractHunkPatch(raw, file.Path, header.HunkIndex);
+                Assert.NotNull(patch);
+                Assert.Contains(header.Text + "\n", patch);
+                Assert.Contains($"diff --git a/{file.Path} ", patch);
+            }
     }
 }

@@ -51,6 +51,18 @@ public class ProjectDetailViewModelHunkTests
         return repo;
     }
 
+    /// <summary>Two tracked files, each carrying the same two independent pending hunks.</summary>
+    private static async Task<TempRepo> TwoFileTwoHunkRepoAsync(string prefix)
+    {
+        var repo = await TempRepo.CreateWithCommitAsync(prefix);
+        repo.WriteFile("file.txt", FifteenLines);
+        repo.WriteFile("other.txt", FifteenLines);
+        await repo.CommitAllAsync("fifteen lines each");
+        repo.WriteFile("file.txt", FifteenEdited);
+        repo.WriteFile("other.txt", FifteenEdited);
+        return repo;
+    }
+
     /// <summary>Opens the pane on the unstaged side of file.txt and lands on the given hunk's header.</summary>
     private static async Task SelectUnstagedHunkAsync(ProjectDetailViewModel vm, int hunkIndex)
     {
@@ -237,6 +249,142 @@ public class ProjectDetailViewModelHunkTests
         Assert.False(vm.StageHunkCommand.CanExecute(null));
         Assert.False(vm.UnstageHunkCommand.CanExecute(null));
         Assert.False(vm.DiscardHunkCommand.CanExecute(null));
+    }
+
+    /// <summary>
+    /// A path is a pathspec to git, so a name holding a bracket range also selects the paths it
+    /// globs — here its own sibling, which sorts first. The pane would then render the sibling's
+    /// rows under the selected file's title, and every hunk index would name the sibling's hunk.
+    /// </summary>
+    private static async Task<TempRepo> GlobNameRepoAsync(string prefix)
+    {
+        var repo = TempRepo.CreateEmptyDir(prefix);
+        await repo.GitAsync("init", "-b", "main");
+        repo.WriteFile("notes1.txt", "sibling one\n");
+        repo.WriteFile("notes[1].txt", "bracket one\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("commit", "-m", "both files");
+        repo.WriteFile("notes1.txt", "SIBLING TWO\n");
+        repo.WriteFile("notes[1].txt", "BRACKET TWO\n");
+        return repo;
+    }
+
+    [Fact]
+    public async Task TheDiffPane_ShowsTheSelectedFileNotThePathItGlobs()
+    {
+        using var repo = await GlobNameRepoAsync("vm-hunk-glob-pane");
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        vm.SelectedUnstagedFile = vm.UnstagedFiles.First(f => f.Path == "notes[1].txt");
+        await vm.DiffRefresh;
+
+        Assert.Equal("notes[1].txt", vm.DiffTitle);
+        Assert.True(DiffTouches(vm.DiffLines, "BRACKET TWO"));
+        Assert.False(DiffTouches(vm.DiffLines, "SIBLING TWO"));
+    }
+
+    /// <summary>
+    /// The irreversible one: the content a discard removes was never committed and is in no
+    /// index, and the confirmation names the file the reader picked.
+    /// </summary>
+    [Fact]
+    public async Task DiscardHunk_RevertsTheSelectedFileNotThePathItGlobs()
+    {
+        using var repo = await GlobNameRepoAsync("vm-hunk-glob-discard");
+        var vm = new ConfirmingViewModel(new GitService(), answer: true);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        vm.SelectedUnstagedFile = vm.UnstagedFiles.First(f => f.Path == "notes[1].txt");
+        await vm.DiffRefresh;
+        vm.SelectedDiffLine = vm.DiffLines.First(l => l.IsHunkStart);
+        await vm.DiscardHunkCommand.ExecuteAsync(null);
+
+        Assert.Contains("notes[1].txt", vm.LastMessage);
+        Assert.Equal("bracket one\n", repo.ReadFile("notes[1].txt"));
+        Assert.Equal("SIBLING TWO\n", repo.ReadFile("notes1.txt"));
+    }
+
+    /// <summary>
+    /// The pane reads a staged rename with both of its paths and gets the rename diff; the slice
+    /// is read with the new path alone and gets a whole-file add. No header can match across the
+    /// two, so every operation would refuse with a staleness message that is not true — and a
+    /// reverse-applied add would unstage the rename rather than the hunk. The gate says what it is.
+    /// </summary>
+    [Fact]
+    public async Task HunkActions_AreRefusedForAStagedRename()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("vm-hunk-rename");
+        repo.WriteFile("before.txt", FifteenLines);
+        await repo.CommitAllAsync("fifteen lines");
+        await repo.GitAsync("mv", "before.txt", "after.txt");
+        repo.WriteFile("after.txt", FifteenEdited);
+        await repo.GitAsync("add", "after.txt");
+
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        var renamed = vm.StagedFiles.First(f => f.Path == "after.txt");
+        Assert.Equal("before.txt", renamed.OrigPath);
+        vm.SelectedStagedFile = renamed;
+        await vm.DiffRefresh;
+        vm.SelectedDiffLine = vm.DiffLines.First(l => l.IsHunkStart);
+
+        const string expected = "This is a staged rename — unstage the file to work on its hunks.";
+        Assert.Equal(expected, vm.StageHunkBlockedReason);
+        Assert.Equal(expected, vm.UnstageHunkBlockedReason);
+        Assert.Equal(expected, vm.DiscardHunkBlockedReason);
+        Assert.False(vm.UnstageHunkCommand.CanExecute(null));
+    }
+
+    /// <summary>
+    /// The hunk a refresh should land on belongs to one file and one side. A quick switch to
+    /// another file must not consume it: the same index there names a change the reader never
+    /// staged, discarded, or looked at.
+    /// </summary>
+    [Fact]
+    public async Task AHunkOperationsFocus_IsNotRestoredOntoADifferentFile()
+    {
+        using var repo = await TwoFileTwoHunkRepoAsync("vm-hunk-focus-switch");
+
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        await SelectUnstagedHunkAsync(vm, 1);
+        await vm.StageHunkCommand.ExecuteAsync(null);
+
+        vm.SelectedUnstagedFile = vm.UnstagedFiles.First(f => f.Path == "other.txt");
+        await vm.DiffRefresh;
+
+        Assert.Null(vm.SelectedDiffLine);
+    }
+
+    /// <summary>
+    /// The gates read the selected row, and a row of the file the pane was showing before names
+    /// a hunk of the new one the moment the selection moves. The row is dropped as the selection
+    /// changes, not once the read that replaces the pane returns.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingFiles_DropsTheSelectedRowBeforeTheNewDiffIsRead()
+    {
+        using var repo = await TwoFileTwoHunkRepoAsync("vm-hunk-row-switch");
+
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        await SelectUnstagedHunkAsync(vm, 1);
+        Assert.NotNull(vm.SelectedDiffLine);
+
+        vm.SelectedUnstagedFile = vm.UnstagedFiles.First(f => f.Path == "other.txt");
+        Assert.Null(vm.SelectedDiffLine);
+        Assert.Equal("Select a line inside a hunk first.", vm.StageHunkBlockedReason);
+
+        await vm.DiffRefresh;
     }
 
     [Theory]

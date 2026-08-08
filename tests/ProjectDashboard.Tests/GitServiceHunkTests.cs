@@ -36,7 +36,7 @@ public class GitServiceHunkTests
     {
         var raw = await _git.GetFileDiffRawAsync(repo.Path, "file.txt", staged);
         Assert.NotNull(raw);
-        var patch = GitService.ExtractHunkPatch(raw, hunkIndex);
+        var patch = GitService.ExtractHunkPatch(raw, "file.txt", hunkIndex);
         Assert.NotNull(patch);
         return patch;
     }
@@ -138,7 +138,7 @@ public class GitServiceHunkTests
         // FileDiff.ParseUnified drops these CRs, which is why it is not the staging path.
         Assert.DoesNotContain("\r", string.Concat((await FileDiffAsync(repo, false)).Lines.Select(l => l.Text)));
 
-        var patch = GitService.ExtractHunkPatch(raw, 0);
+        var patch = GitService.ExtractHunkPatch(raw, "file.txt", 0);
         Assert.NotNull(patch);
         Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
 
@@ -184,7 +184,7 @@ public class GitServiceHunkTests
             "@@ -10,2 +10,2 @@\n" +
             " y\n-z\n+Z\n";
 
-        var second = GitService.ExtractHunkPatch(raw, 1);
+        var second = GitService.ExtractHunkPatch(raw, "f.txt", 1);
         Assert.Equal(
             "diff --git a/f.txt b/f.txt\n" +
             "index 111..222 100644\n" +
@@ -210,12 +210,83 @@ public class GitServiceHunkTests
             "@@ -1,2 +1,2 @@\n-a\n+A\n b\n" +
             "@@ -10,2 +10,2 @@\n y\n-z\n+Z\n";
 
-        Assert.Null(GitService.ExtractHunkPatch(raw, hunkIndex));
+        Assert.Null(GitService.ExtractHunkPatch(raw, "f.txt", hunkIndex));
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("diff --git a/f.txt b/f.txt\nindex 111..222 100644\n")]
     public void ExtractHunkPatch_DiffWithNoHunk_YieldsNothing(string raw)
-        => Assert.Null(GitService.ExtractHunkPatch(raw, 0));
+        => Assert.Null(GitService.ExtractHunkPatch(raw, "f.txt", 0));
+
+    /// <summary>
+    /// Raw diff text carrying two files, as a pathspec that globs onto a sibling produces. The
+    /// index names a hunk WITHIN the file asked for, so the count starts again at its own
+    /// section — counting across the whole text slices the other file's change under this
+    /// file's name.
+    /// </summary>
+    private const string TwoFileRaw =
+        "diff --git a/notes1.txt b/notes1.txt\n" +
+        "index aaa..bbb 100644\n" +
+        "--- a/notes1.txt\n" +
+        "+++ b/notes1.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-sibling one\n+SIBLING TWO\n" +
+        "diff --git a/notes[1].txt b/notes[1].txt\n" +
+        "index ccc..ddd 100644\n" +
+        "--- a/notes[1].txt\n" +
+        "+++ b/notes[1].txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-bracket one\n+BRACKET TWO\n";
+
+    [Fact]
+    public void ExtractHunkPatch_CountsHunksWithinTheNamedFilesOwnSection()
+    {
+        var patch = GitService.ExtractHunkPatch(TwoFileRaw, "notes[1].txt", 0);
+
+        Assert.Equal(
+            "diff --git a/notes[1].txt b/notes[1].txt\n" +
+            "index ccc..ddd 100644\n" +
+            "--- a/notes[1].txt\n" +
+            "+++ b/notes[1].txt\n" +
+            "@@ -1,1 +1,1 @@\n" +
+            "-bracket one\n+BRACKET TWO\n",
+            patch);
+    }
+
+    [Fact]
+    public void ExtractHunkPatch_StopsTheLastHunkAtTheNextFilesSection()
+    {
+        var patch = GitService.ExtractHunkPatch(TwoFileRaw, "notes1.txt", 0);
+
+        Assert.NotNull(patch);
+        Assert.EndsWith("-sibling one\n+SIBLING TWO\n", patch);
+        Assert.DoesNotContain("bracket", patch);
+    }
+
+    [Fact]
+    public void ExtractHunkPatch_PathTheDiffDoesNotDescribe_YieldsNothing()
+    {
+        Assert.Null(GitService.ExtractHunkPatch(TwoFileRaw, "absent.txt", 0));
+        Assert.Null(GitService.ExtractHunkPatch(TwoFileRaw, "", 0));
+    }
+
+    /// <summary>A rename's section is found under the path the pane names it by, which is the new one.</summary>
+    [Fact]
+    public void ExtractHunkPatch_FindsARenamedFileByItsNewPath()
+    {
+        const string raw =
+            "diff --git a/before.txt b/after.txt\n" +
+            "similarity index 86%\n" +
+            "rename from before.txt\n" +
+            "rename to after.txt\n" +
+            "index aaa..bbb 100644\n" +
+            "--- a/before.txt\n" +
+            "+++ b/after.txt\n" +
+            "@@ -1,1 +1,1 @@\n" +
+            "-l1\n+L1\n";
+
+        Assert.NotNull(GitService.ExtractHunkPatch(raw, "after.txt", 0));
+        Assert.Null(GitService.ExtractHunkPatch(raw, "before.txt", 0));
+    }
 }

@@ -1182,38 +1182,37 @@ public class GitService
     }
 
     /// <summary>
-    /// Slices a single-hunk patch out of one file's RAW `git diff` output, byte-for-byte.
-    /// The only patch builder: a patch reconstructed from a parsed
+    /// Slices a single-hunk patch for <paramref name="filePath"/> out of RAW `git diff` output,
+    /// byte-for-byte. The only patch builder: a patch reconstructed from a parsed
     /// <see cref="FileDiff"/> cannot be byte-faithful, because the model discards the CR
     /// of a CRLF line and cannot tell the "\ No newline at end of file" marker from a
     /// context line whose own content begins with a backslash — either one produces a
     /// patch `git apply` rejects or, worse, applies with the wrong bytes.
     ///
-    /// Null when the diff has no hunk at <paramref name="hunkIndex"/>. Body lines never
-    /// start with "@@" (they carry a +/-/space prefix), so a column-0 "@@" unambiguously
-    /// marks a hunk header.
+    /// The index counts hunks WITHIN that file's own "diff --git" section, as
+    /// <see cref="FileDiff.ParseUnified"/> counts them, so a text carrying more than one file
+    /// cannot leave the row on screen and the slice naming different hunks. Null when the text
+    /// has no section for the path, or that section has no hunk at <paramref name="hunkIndex"/>.
+    /// Body lines never start with "@@" (they carry a +/-/space prefix), so a column-0 "@@"
+    /// unambiguously marks a hunk header.
     /// </summary>
-    public static string? ExtractHunkPatch(string rawFileDiff, int hunkIndex)
+    public static string? ExtractHunkPatch(string rawFileDiff, string filePath, int hunkIndex)
     {
-        if (string.IsNullOrEmpty(rawFileDiff)) return null;
+        if (string.IsNullOrEmpty(rawFileDiff) || string.IsNullOrEmpty(filePath)) return null;
         // Split on '\n' only: each element keeps its trailing '\r' for a CRLF diff.
         var lines = rawFileDiff.Split('\n');
-
-        var firstHunk = -1;
-        for (var i = 0; i < lines.Length; i++)
-            if (lines[i].StartsWith("@@", StringComparison.Ordinal)) { firstHunk = i; break; }
-        if (firstHunk < 0) return null;
+        if (!TryFindFileSection(lines, filePath, out var from, out var to)) return null;
 
         var headers = new List<int>();
-        for (var i = firstHunk; i < lines.Length; i++)
+        for (var i = from; i < to; i++)
             if (lines[i].StartsWith("@@", StringComparison.Ordinal)) headers.Add(i);
         if (hunkIndex < 0 || hunkIndex >= headers.Count) return null;
 
         var start = headers[hunkIndex];
-        var end = hunkIndex + 1 < headers.Count ? headers[hunkIndex + 1] : lines.Length;
+        var end = hunkIndex + 1 < headers.Count ? headers[hunkIndex + 1] : to;
 
         var sb = new StringBuilder();
-        for (var i = 0; i < firstHunk; i++)  // preamble: diff --git / index / --- / +++
+        for (var i = from; i < headers[0]; i++)  // preamble: diff --git / index / --- / +++
             sb.Append(lines[i]).Append('\n');
         for (var i = start; i < end; i++)
         {
@@ -1223,6 +1222,75 @@ public class GitService
             sb.Append(lines[i]).Append('\n');
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Bounds of the one section describing <paramref name="filePath"/>, as [from, to). False
+    /// when no section names it — a slice from the wrong section applies somebody else's change,
+    /// so an unrecognized rendering (git C-quotes a path holding a quote, a backslash, or a
+    /// control byte even with core.quotepath off) refuses rather than guesses.
+    /// </summary>
+    private static bool TryFindFileSection(string[] lines, string filePath, out int from, out int to)
+    {
+        from = to = 0;
+        var open = -1;
+        for (var i = 0; i <= lines.Length; i++)
+        {
+            var starts = i < lines.Length && IsSectionStart(lines[i]);
+            if (i < lines.Length && !starts) continue;
+            if (open >= 0 && SectionPath(lines, open, i) == filePath)
+            {
+                from = open;
+                to = i;
+                return true;
+            }
+            open = starts ? i : -1;
+        }
+        return false;
+    }
+
+    private static bool IsSectionStart(string line) =>
+        line.StartsWith("diff --git ", StringComparison.Ordinal) ||
+        line.StartsWith("diff --cc ", StringComparison.Ordinal) ||
+        line.StartsWith("diff --combined ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The path a section describes, derived exactly as <see cref="FileDiff.ParseUnified"/>
+    /// derives it: seeded from the "diff --git" header so a mode-only change still names its
+    /// file, then overridden by the rename and "+++" headers, which appear only before the
+    /// section's first hunk.
+    /// </summary>
+    private static string SectionPath(string[] lines, int from, int to)
+    {
+        var header = lines[from].TrimEnd('\r');
+        if (!header.StartsWith("diff --git ", StringComparison.Ordinal))
+        {
+            var sp = header.IndexOf(' ', 8);
+            return sp > 0 ? header[(sp + 1)..].Trim() : "";
+        }
+
+        var path = FileDiff.PathFromDiffGit(header);
+        string? oldPath = null;
+        for (var i = from + 1; i < to; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.StartsWith("@@", StringComparison.Ordinal)) break;
+            if (line.StartsWith("rename from ", StringComparison.Ordinal))
+                oldPath = line["rename from ".Length..];
+            else if (line.StartsWith("rename to ", StringComparison.Ordinal))
+                path = line["rename to ".Length..];
+            else if (line.StartsWith("--- ", StringComparison.Ordinal))
+            {
+                var p = line[4..];
+                if (p != "/dev/null") oldPath = FileDiff.StripPrefix(p);
+            }
+            else if (line.StartsWith("+++ ", StringComparison.Ordinal))
+            {
+                var p = line[4..];
+                path = p == "/dev/null" ? oldPath ?? "" : FileDiff.StripPrefix(p);
+            }
+        }
+        return path;
     }
 
     // ── Stash depth (L-07) ───────────────────────────────────────────────────────

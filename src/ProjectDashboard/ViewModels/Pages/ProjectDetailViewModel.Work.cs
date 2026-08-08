@@ -162,11 +162,15 @@ public partial class ProjectDetailViewModel
     /// </summary>
     internal Task DiffRefresh { get; private set; } = Task.CompletedTask;
 
+    // The hunk gates read the selected row, and the pane still holds the previous file's rows
+    // until the read below returns; a row of those names a hunk of the file now selected.
+    // The row is dropped as the selection moves, not once the replacement rows arrive.
     partial void OnSelectedUnstagedFileChanged(WorkingFile? value)
     {
         if (value is not null)
         {
             SelectedStagedFile = null;
+            SelectedDiffLine = null;
             DiffRefresh = ShowDiffAsync(value, staged: false);
         }
         else if (SelectedStagedFile is null)
@@ -180,6 +184,7 @@ public partial class ProjectDetailViewModel
         if (value is not null)
         {
             SelectedUnstagedFile = null;
+            SelectedDiffLine = null;
             DiffRefresh = ShowDiffAsync(value, staged: true);
         }
         else if (SelectedUnstagedFile is null)
@@ -196,7 +201,7 @@ public partial class ProjectDetailViewModel
         DiffIsBinary = false;
         DiffIsCombined = false;
         SelectedDiffLine = null;
-        _diffFocusHunk = null;
+        _diffFocus = null;
     }
 
     private async Task ShowDiffAsync(WorkingFile file, bool staged)
@@ -213,12 +218,12 @@ public partial class ProjectDetailViewModel
             DiffIsCombined = diff?.IsCombined ?? false;
             SelectedDiffLine = null;
             DiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
-            RestoreDiffFocus();
+            RestoreDiffFocus(file, staged);
         }
         catch (Exception ex)
         {
             Log.Warn($"diff load failed for {file.Path}", ex);
-            if (IsCurrent(gen)) { DiffLines = []; _diffFocusHunk = null; }
+            if (IsCurrent(gen)) { DiffLines = []; _diffFocus = null; }
         }
     }
 

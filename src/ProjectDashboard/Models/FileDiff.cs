@@ -191,7 +191,7 @@ public sealed class FileDiff
     /// identical path twice, so P = the front half of "P b/P" — computed by length rather
     /// than by finding " b/" (which a path containing that substring would break).
     /// </summary>
-    private static string PathFromDiffGit(string line)
+    internal static string PathFromDiffGit(string line)
     {
         var rest = line["diff --git ".Length..].Trim();
         if (!rest.StartsWith("a/", StringComparison.Ordinal)) return "";
@@ -204,7 +204,7 @@ public sealed class FileDiff
         return body == $"{p} b/{p}" ? p : "";
     }
 
-    private static string StripPrefix(string path) =>
+    internal static string StripPrefix(string path) =>
         path.StartsWith("a/", StringComparison.Ordinal) || path.StartsWith("b/", StringComparison.Ordinal)
             ? path[2..]
             : path;

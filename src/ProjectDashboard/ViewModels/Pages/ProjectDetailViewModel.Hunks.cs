@@ -31,8 +31,10 @@ public partial class ProjectDetailViewModel
     /// The hunk the pane should land on once the refresh a hunk operation triggers has rebuilt
     /// the rows. The rebuild replaces every <see cref="DiffLine"/>, so a selection held by
     /// reference is lost and the reader is thrown back to the top of a long diff.
+    /// The file and side it was taken in travel with it: a file switch racing the refresh
+    /// renders a different diff, where the same index names a hunk the reader never acted on.
     /// </summary>
-    private int? _diffFocusHunk;
+    private (string Path, bool Staged, int Hunk)? _diffFocus;
 
     /// <summary>The file the diff pane is showing and which side of it, or null when it shows none.</summary>
     private (WorkingFile File, bool Staged)? DiffTarget =>
@@ -45,6 +47,10 @@ public partial class ProjectDetailViewModel
         DiffTarget is not { } target ? "Select a changed file first."
         : IsBusy ? "Another git operation is running."
         : target.File.IsUntracked ? "An untracked file has no hunks — stage the whole file instead."
+        // The pane reads a rename with both of its paths and gets the rename diff; a slice is
+        // read with the new path alone and gets a whole-file add, whose reverse would unstage
+        // the rename rather than one hunk. No header can match across the two.
+        : target.File.OrigPath is not null ? "This is a staged rename — unstage the file to work on its hunks."
         : DiffIsBinary ? "Binary file — there are no hunks to stage."
         : DiffIsCombined ? "This is a merge diff — resolve the conflict and stage the file."
         : SelectedDiffLine is not { HunkIndex: >= 0 } ? "Select a line inside a hunk first."
@@ -164,7 +170,7 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var patch = GitService.ExtractHunkPatch(raw, hunk);
+        var patch = GitService.ExtractHunkPatch(raw, target.File.Path, hunk);
         if (patch is null || !HeaderMatches(patch, shownHeader))
         {
             SyncStatusText = $"{label} refused: {target.File.Path} changed since this diff was shown. " +
@@ -173,9 +179,9 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        _diffFocusHunk = hunk;
+        _diffFocus = (target.File.Path, target.Staged, hunk);
         var ok = await RunOp(r => operate(r, patch), label, repo, gen);
-        if (!ok) _diffFocusHunk = null;
+        if (!ok) _diffFocus = null;
     }
 
     /// <summary>
@@ -203,15 +209,18 @@ public partial class ProjectDetailViewModel
     /// Re-selects the row the reader was on once the rows have been rebuilt. The hunk that was
     /// staged, unstaged, or discarded is gone from this side, so the same index now names the
     /// hunk that followed it; clamped to the last hunk when it was the final one.
+    /// Only for the file and side the operation ran on: the focus is spent either way, so a
+    /// diff for anything else drops it rather than selecting a hunk of its own at that index.
     /// </summary>
-    private void RestoreDiffFocus()
+    private void RestoreDiffFocus(WorkingFile file, bool staged)
     {
-        var wanted = _diffFocusHunk;
-        _diffFocusHunk = null;
-        if (wanted is not { } hunk || DiffLines.Count == 0) return;
+        var wanted = _diffFocus;
+        _diffFocus = null;
+        if (wanted is not { } focus || DiffLines.Count == 0) return;
+        if (focus.Staged != staged || !string.Equals(focus.Path, file.Path, StringComparison.Ordinal)) return;
 
         var headers = DiffLines.Where(l => l.IsHunkStart).ToList();
         if (headers.Count == 0) return;
-        SelectedDiffLine = headers[Math.Min(hunk, headers.Count - 1)];
+        SelectedDiffLine = headers[Math.Min(focus.Hunk, headers.Count - 1)];
     }
 }
