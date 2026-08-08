@@ -340,3 +340,49 @@ public class WindowPlacementTests
         Assert.Equal(CurrentRect, placement.Rect);
     }
 }
+
+/// <summary>
+/// Whether a placement call took. A move onto a monitor of a different scale factor
+/// is answered with a DPI-scaled suggested rect that overwrites the requested one, so
+/// the restore is only settled once the window reads back what was asked for.
+/// </summary>
+public class WindowRectApplicationTests
+{
+    private static readonly MainWindow.ScreenRect Requested = new(4000, 100, 1200, 800);
+
+    [Fact]
+    public void RectReadBackVerbatim_ReadsAsApplied()
+    {
+        Assert.True(MainWindow.RectApplied(Requested, new MainWindow.ScreenRect(4000, 100, 1200, 800)));
+    }
+
+    [Fact]
+    public void RectHalvedByADpiChange_ReadsAsNotApplied()
+    {
+        // Requested on a 100% monitor from a 200% one: the suggested rect that lands
+        // over it keeps the position and halves the size.
+        Assert.False(MainWindow.RectApplied(Requested, new MainWindow.ScreenRect(4000, 100, 600, 400)));
+    }
+
+    [Fact]
+    public void RectDoubledByADpiChange_ReadsAsNotApplied()
+    {
+        Assert.False(MainWindow.RectApplied(Requested, new MainWindow.ScreenRect(4000, 100, 2400, 1600)));
+    }
+
+    [Fact]
+    public void SameSizeAtADifferentPosition_ReadsAsNotApplied()
+    {
+        Assert.False(MainWindow.RectApplied(Requested, new MainWindow.ScreenRect(3990, 100, 1200, 800)));
+    }
+
+    [Fact]
+    public void FractionalRequest_MatchesTheWholePixelsItIsAppliedAs()
+    {
+        // A rect scaled out of the legacy DIP fields is fractional; the window can
+        // only ever report the truncated one, and that is not a failed application.
+        var fractional = new MainWindow.ScreenRect(300.75, 150.5, 2026.25, 1028.75);
+
+        Assert.True(MainWindow.RectApplied(fractional, new MainWindow.ScreenRect(300, 150, 2026, 1028)));
+    }
+}

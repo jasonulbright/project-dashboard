@@ -295,14 +295,36 @@ public partial class MainWindow : INavigationWindow
         var placement = SavedPlacement(settings, VisualTreeHelper.GetDpi(this).DpiScaleX,
             current ?? new ScreenRect(0, 0, ActualWidth, ActualHeight), WorkAreas());
 
-        if (current is { } rect && rect != placement.Rect)
-            SetWindowPos(hwnd, IntPtr.Zero,
-                (int)placement.Rect.Left, (int)placement.Rect.Top,
-                (int)placement.Rect.Width, (int)placement.Rect.Height,
-                SwpNoZOrder | SwpNoActivate);
+        if (current is { } rect && !RectApplied(placement.Rect, rect))
+        {
+            ApplyRect(hwnd, placement.Rect);
+            // A move onto a monitor of a different scale factor makes the system hand
+            // the window a DPI-scaled suggested rect, which lands over the requested
+            // one and leaves it sized by the ratio of the two scales. Re-applying
+            // settles it, and the second move ends on the monitor the first one
+            // reached, so nothing rescales it again.
+            if (DeviceRect() is { } applied && !RectApplied(placement.Rect, applied))
+                ApplyRect(hwnd, placement.Rect);
+        }
 
         if (placement.Maximized) WindowState = WindowState.Maximized;
     }
+
+    private static void ApplyRect(IntPtr hwnd, ScreenRect rect) =>
+        SetWindowPos(hwnd, IntPtr.Zero,
+            (int)rect.Left, (int)rect.Top, (int)rect.Width, (int)rect.Height,
+            SwpNoZOrder | SwpNoActivate);
+
+    /// <summary>
+    /// Whether a rect the window reports is the one a placement call asked for. The
+    /// request is truncated first because whole device pixels are all SetWindowPos
+    /// accepts: a fractional request would otherwise never read as applied.
+    /// </summary>
+    public static bool RectApplied(ScreenRect requested, ScreenRect observed) =>
+        (int)requested.Left == (int)observed.Left
+        && (int)requested.Top == (int)observed.Top
+        && (int)requested.Width == (int)observed.Width
+        && (int)requested.Height == (int)observed.Height;
 
     /// <summary>The window's own rect in device pixels; null before its HWND exists.</summary>
     private ScreenRect? DeviceRect()
