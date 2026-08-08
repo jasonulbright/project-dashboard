@@ -1394,3 +1394,103 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
                          $"{report.BlobsChanged} blobs changed in dir0/**, {report.BlobsSplit} splits");
     }
 }
+
+/// <summary>
+/// The chunked spool scan the over-limit transform arm runs instead of materializing a payload
+/// it already refused for its size.
+/// </summary>
+public class SpoolScanTests
+{
+    private const int Chunk = 16;
+    private const int SliceOffset = 7;
+
+    private static readonly byte[] NeedleBytes = Encoding.ASCII.GetBytes("SECRET");
+
+    private static List<LiteralReplace> ScanFor(byte[] payload, params byte[][] needles)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "pd-fixtures", $"spool-{Guid.NewGuid():N}.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // A non-zero slice offset proves the scan seeks rather than reading from position 0.
+        File.WriteAllBytes(path, [.. new byte[SliceOffset], .. payload]);
+        try
+        {
+            using var spool = File.OpenRead(path);
+            var ops = needles.Select(n => new LiteralReplace { Find = n, Replace = [] }).ToList();
+            return SpoolScan.LiteralsPresent(spool, new SpoolSlice(SliceOffset, payload.Length), ops, Chunk);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static byte[] PayloadWithNeedleAt(int offset, int length)
+    {
+        var payload = new byte[length];
+        Array.Fill(payload, (byte)'.');
+        NeedleBytes.CopyTo(payload, offset);
+        return payload;
+    }
+
+    /// <summary>
+    /// A needle straddling any chunk boundary is still found: the overlap window carried
+    /// between chunks is one byte short of the longest needle, so no placement can fall
+    /// between two reads.
+    /// </summary>
+    [Fact]
+    public void EveryPlacementAcrossAMultiChunkPayloadIsFound()
+    {
+        const int length = Chunk * 4;
+        var missed = new List<int>();
+        for (var offset = 0; offset + NeedleBytes.Length <= length; offset++)
+            if (ScanFor(PayloadWithNeedleAt(offset, length), NeedleBytes).Count != 1)
+                missed.Add(offset);
+
+        Assert.Empty(missed);
+    }
+
+    [Fact]
+    public void ANeedleThatIsAbsentIsNotReported()
+    {
+        var payload = new byte[Chunk * 4];
+        Array.Fill(payload, (byte)'.');
+
+        Assert.Empty(ScanFor(payload, NeedleBytes));
+    }
+
+    /// <summary>Only the bytes the slice names are scanned; the overlap must not reach past its end.</summary>
+    [Fact]
+    public void ANeedleOutsideTheSliceIsNotReported()
+    {
+        var payload = PayloadWithNeedleAt(Chunk * 3, Chunk * 4);
+        var path = Path.Combine(Path.GetTempPath(), "pd-fixtures", $"spool-{Guid.NewGuid():N}.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, payload);
+        try
+        {
+            using var spool = File.OpenRead(path);
+            var ops = new List<LiteralReplace> { new() { Find = NeedleBytes, Replace = [] } };
+            Assert.Empty(SpoolScan.LiteralsPresent(spool, new SpoolSlice(0, Chunk * 3), ops, Chunk));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>The overlap is sized by the longest needle, so a short one cannot shrink it.</summary>
+    [Fact]
+    public void MixedNeedleLengthsAreEachFoundAcrossTheBoundary()
+    {
+        // Disjoint from the short needle, so each op's single report names its own placement.
+        var longNeedle = Encoding.ASCII.GetBytes("LONGER-CREDENTIAL-XX");
+        var payload = new byte[Chunk * 4];
+        Array.Fill(payload, (byte)'.');
+        longNeedle.CopyTo(payload, Chunk - 4);
+        NeedleBytes.CopyTo(payload, Chunk * 3 - 2);
+
+        var found = ScanFor(payload, NeedleBytes, longNeedle);
+
+        Assert.Equal(2, found.Count);
+    }
+}

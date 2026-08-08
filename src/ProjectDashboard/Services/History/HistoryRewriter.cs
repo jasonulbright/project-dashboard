@@ -326,16 +326,19 @@ public sealed class HistoryRewriter
                     // Gate the regex payload limit against the slice length, so an over-limit
                     // blob is a reported skip (feeding scrub incompleteness) rather than a
                     // regex transform over a payload that size or a run-aborting throw. The
-                    // rest of the repository still rewrites. The literal scan still runs: the
-                    // untransformed bytes reach the import.
+                    // rest of the repository still rewrites. The literal scan still runs — the
+                    // untransformed bytes reach the import — and streams the slice, so a
+                    // payload refused for its size cannot exhaust memory on the way to being
+                    // reported.
                     if (transformer.HasRegexOp && slice.Length > transformer.RegexPayloadLimit)
                     {
                         tally.Skips.Add((blob.Mark, slice.Length,
                             $"exceeds the {transformer.RegexPayloadLimit}-byte regex transform limit"));
-                        ScanLiteralSurvivors(ReadSlice(spool, slice), literalOps, blob.Mark, slice.Length, tally);
+                        foreach (var op in SpoolScan.LiteralsPresent(spool, slice, literalOps))
+                            tally.ByteSurvivors.Add((op, blob.Mark, slice.Length));
                         break;
                     }
-                    var payload = ReadSlice(spool, slice);
+                    var payload = SpoolScan.ReadSlice(spool, slice);
                     var outcome = transformer.Transform(payload);
                     switch (outcome.Class)
                     {
@@ -379,7 +382,9 @@ public sealed class HistoryRewriter
 
     /// <summary>
     /// Records a literal needle still present in a payload the transform declined to rewrite.
-    /// Every skip arm runs this, so no payload reaches the import unscanned.
+    /// Every skip arm scans, so no payload reaches the import unscanned. This in-memory form
+    /// serves the binary arm alone, whose payload the transform already materialized to
+    /// classify it; the over-limit arm streams the slice instead, having read none of it.
     /// </summary>
     private static void ScanLiteralSurvivors(
         byte[] payload, IReadOnlyList<LiteralReplace> literalOps, long? mark, long size, TransformTally tally)
@@ -403,14 +408,6 @@ public sealed class HistoryRewriter
         foreach (var op in byteScanOps)
             if (finalBytes.AsSpan().IndexOf(op.Find) >= 0)
                 survivors.Add((op, mark, finalBytes.LongLength));
-    }
-
-    private static byte[] ReadSlice(FileStream spool, SpoolSlice slice)
-    {
-        var payload = new byte[slice.Length];
-        spool.Seek(slice.Offset, SeekOrigin.Begin);
-        spool.ReadExactly(payload);
-        return payload;
     }
 
     /// <summary>

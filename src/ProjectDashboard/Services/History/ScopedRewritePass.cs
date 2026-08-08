@@ -190,11 +190,14 @@ public sealed class ScopedRewritePass
                     $"exceeds the {_contentTransformer.RegexPayloadLimit}-byte regex transform limit"));
                 // The transform is refused, not the scan: an unchanged in-scope payload still
                 // reaches the import, so its literal needles are reported as byte survivors.
-                ScanLiteralSurvivors(ReadSlice(spool, slice), mark, slice.Length, outcome);
+                // The scan streams the slice — materializing a payload refused for its size
+                // trades a reported skip for an OutOfMemoryException that ends the rewrite.
+                foreach (var op in SpoolScan.LiteralsPresent(spool, slice, _contentLiteralOps))
+                    outcome.ByteSurvivors.Add((op, mark, slice.Length));
                 continue;
             }
 
-            var payload = ReadSlice(spool, slice);
+            var payload = SpoolScan.ReadSlice(spool, slice);
             var result = _contentTransformer.Transform(payload);
             switch (result.Class)
             {
@@ -251,7 +254,10 @@ public sealed class ScopedRewritePass
 
     /// <summary>
     /// Records a literal needle still present in a payload the transform declined to rewrite.
-    /// Every skip arm runs this, so no in-scope payload reaches the import unscanned.
+    /// Every skip arm scans, so no in-scope payload reaches the import unscanned. This
+    /// in-memory form serves the binary arm alone, whose payload the transform already
+    /// materialized to classify it; the over-limit arm streams the slice instead, having read
+    /// none of it.
     /// </summary>
     private void ScanLiteralSurvivors(byte[] payload, long mark, long length, ScopedRewriteOutcome outcome)
     {
@@ -555,12 +561,4 @@ public sealed class ScopedRewritePass
 
     private static long? ParseMarkRef(byte[] dataRef) =>
         dataRef.Length > 1 && dataRef[0] == (byte)':' && Utf8Ascii.TryParseLong(dataRef.AsSpan(1), out var m) ? m : null;
-
-    private static byte[] ReadSlice(FileStream spool, SpoolSlice slice)
-    {
-        var payload = new byte[slice.Length];
-        spool.Seek(slice.Offset, SeekOrigin.Begin);
-        spool.ReadExactly(payload);
-        return payload;
-    }
 }
