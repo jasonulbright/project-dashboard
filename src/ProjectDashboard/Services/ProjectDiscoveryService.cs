@@ -221,11 +221,9 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             HasChangelog = File.Exists(changelogPath)
         };
 
-        // Git status
-        project.GitStatus = await gitService.GetStatusAsync(dirPath, ct);
-
-        // Recent commits
-        project.RecentCommits = await gitService.GetRecentCommitsAsync(dirPath, 20, ct);
+        var card = await gitService.GetCardStateAsync(dirPath, 20, ct);
+        project.GitStatus = card.Status;
+        project.RecentCommits = card.RecentCommits;
 
         // README
         if (project.HasReadme)

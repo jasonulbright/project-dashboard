@@ -37,3 +37,10 @@ public sealed class GitStatus
     /// <summary>True when git status couldn't be read (e.g. git missing) — distinguishes "unknown" from "clean".</summary>
     public bool HasError { get; set; }
 }
+
+/// <summary>
+/// One repository's card facts. <see cref="RecentCommits"/> is the window
+/// <see cref="GitStatus.LastCommitDate"/> and <see cref="GitStatus.LastCommitMessage"/> were
+/// taken from, so the two never disagree about the tip.
+/// </summary>
+public sealed record RepoCardState(GitStatus Status, List<GitCommit> RecentCommits);

@@ -73,7 +73,28 @@ public class GitService
         return Directory.Exists(dotGit) || File.Exists(dotGit);
     }
 
-    public async Task<GitStatus> GetStatusAsync(string repoPath, CancellationToken ct = default)
+    /// <summary>
+    /// Everything a dashboard card is built from, read in one pass: the repository's status and
+    /// its recent-commit window. The window's first row IS the tip, so the summary's last-commit
+    /// date and subject are taken from it rather than from a <c>git log</c> of their own.
+    /// </summary>
+    public async Task<RepoCardState> GetCardStateAsync(string repoPath, int commitCount, CancellationToken ct = default)
+    {
+        var commits = await GetRecentCommitsAsync(repoPath, commitCount, ct);
+        return new RepoCardState(await GetStatusAsync(repoPath, commits, ct), commits);
+    }
+
+    public Task<GitStatus> GetStatusAsync(string repoPath, CancellationToken ct = default) =>
+        GetStatusAsync(repoPath, recentCommits: null, ct);
+
+    /// <summary>
+    /// <paramref name="recentCommits"/> is a window this repository's log was already read into,
+    /// walking HEAD from the tip — the same walk the tip read below performs. Null means none was
+    /// read and the tip is read here; empty means the walk found no commits, which is what a
+    /// repository with no commits yet reports and leaves the tip fields blank.
+    /// </summary>
+    private async Task<GitStatus> GetStatusAsync(
+        string repoPath, IReadOnlyList<GitCommit>? recentCommits, CancellationToken ct)
     {
         var status = new GitStatus();
 
@@ -110,39 +131,37 @@ public class GitService
         try { status.LatestTag = (await RunGitAsync(repoPath, ["describe", "--tags", "--abbrev=0"], ct)).Trim(); }
         catch { /* no tags */ }
 
-        try
+        if (recentCommits is null)
         {
-            var logLine = await RunGitAsync(repoPath, ["log", "-1", "--format=%aI|%s"], ct);
-            if (!string.IsNullOrWhiteSpace(logLine))
+            try
             {
-                var parts = logLine.Trim().Split('|', 2);
-                if (parts.Length >= 1 && DateTimeOffset.TryParse(parts[0], System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out var date))
-                    status.LastCommitDate = date;
-                if (parts.Length >= 2)
-                    status.LastCommitMessage = parts[1];
+                var logLine = await RunGitAsync(
+                    repoPath, ["log", "-1", "--format=%aI" + FieldSeparator + "%s"], ct);
+                if (!string.IsNullOrWhiteSpace(logLine))
+                {
+                    var parts = logLine.Trim().Split(FieldSeparator, 2);
+                    if (parts.Length >= 1 && DateTimeOffset.TryParse(parts[0], System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out var date))
+                        status.LastCommitDate = date;
+                    if (parts.Length >= 2)
+                        status.LastCommitMessage = parts[1];
+                }
             }
+            catch { /* no commits yet */ }
         }
-        catch { /* no commits yet */ }
-
-        try { status.RemoteUrl = (await RunGitAsync(repoPath, ["config", "--get", "remote.origin.url"], ct)).Trim(); }
-        catch { /* origin absent — fall through to the resolved default remote */ }
+        else if (recentCommits.Count > 0)
+        {
+            var tip = recentCommits[0];
+            if (tip.Date != default) status.LastCommitDate = tip.Date;
+            status.LastCommitMessage = tip.Message;
+        }
 
         // A repo whose only remote has a non-origin name (renamed, single "github"
         // remote) must not read as local: an empty RemoteUrl means cloud-off UI,
-        // no gh enrichment, and Sync All skips the repo.
-        if (status.RemoteUrl.Length == 0)
-        {
-            var remote = await ResolveDefaultRemoteAsync(repoPath, ct);
-            if (remote is not null)
-            {
-                // config --get, not `remote get-url`: get-url's legacy name-as-URL
-                // fallback exits 0 and echoes the bare remote name when
-                // remote.<name>.url is unset, which would surface here as a URL.
-                try { status.RemoteUrl = (await RunGitAsync(repoPath, ["config", "--get", $"remote.{remote}.url"], ct)).Trim(); }
-                catch { /* remote removed between listing and read */ }
-            }
-        }
+        // no gh enrichment, and Sync All skips the repo. The default remote is the
+        // first of this list, so it needs no read of its own.
+        var remotes = await ReadRemoteUrlsAsync(repoPath, ct);
+        if (remotes.Count > 0) status.RemoteUrl = remotes[0].Url;
 
         return status;
     }
@@ -193,9 +212,23 @@ public class GitService
         return Path.IsPathRooted(gitDir) ? gitDir : Path.Combine(repoPath, gitDir);
     }
 
+    /// <summary>
+    /// The git directory of a primary checkout, without launching git: a directory named .git IS
+    /// the git directory, which is the same answer `rev-parse --git-dir` gives for that layout.
+    /// Null where the answer is not the layout's — a linked worktree or submodule, whose .git is
+    /// a file naming a directory elsewhere, and an inherited GIT_DIR, which overrides discovery
+    /// altogether. Both fall back to asking git.
+    /// </summary>
+    private static string? LayoutGitDir(string repoPath)
+    {
+        if (Environment.GetEnvironmentVariable("GIT_DIR") is { Length: > 0 }) return null;
+        var dotGit = Path.Combine(repoPath, ".git");
+        return Directory.Exists(dotGit) ? dotGit : null;
+    }
+
     private async Task<RepoActivity> DetectActivityAsync(string repoPath, CancellationToken ct)
     {
-        var gitDir = await ResolveGitDirAsync(repoPath, ct);
+        var gitDir = LayoutGitDir(repoPath) ?? await ResolveGitDirAsync(repoPath, ct);
         if (gitDir is null) return RepoActivity.None;
 
         // Rebase first: a rebase stopped on a conflict has no MERGE_HEAD but does
@@ -591,21 +624,54 @@ public class GitService
     /// </summary>
     public async Task<string?> ResolveDefaultRemoteAsync(string repoPath, CancellationToken ct = default)
     {
-        var result = await RunAsync(repoPath, ["remote"], ct);
-        if (!result.Success) return null;
-        var remotes = result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(r => r.Trim()).Where(r => r.Length > 0)
-            .OrderBy(r => r == "origin" ? 0 : 1);
+        var remotes = await ReadRemoteUrlsAsync(repoPath, ct);
+        return remotes.Count > 0 ? remotes[0].Name : null;
+    }
 
-        // `git remote` also lists fetch-only stanzas (remote.<name>.fetch with no
-        // url). A URL-less remote can be neither fetched nor pushed, so it must
-        // not shadow a later remote that has a URL.
-        foreach (var remote in remotes)
+    /// <summary>
+    /// Every remote that has a URL, in one config read, ordered the way
+    /// <see cref="ResolveDefaultRemoteAsync"/> picks: origin first, then by name.
+    /// <para>
+    /// A remote with no URL is absent, not empty: `git remote` also lists fetch-only stanzas
+    /// (remote.&lt;name&gt;.fetch with no url), and a URL-less remote can be neither fetched nor
+    /// pushed, so it must not shadow a later remote that has one. A remote whose URL is set more
+    /// than once keeps the last value, which is what `git config --get` answers with.
+    /// </para>
+    /// <para>
+    /// `config --get-regexp`, not `remote get-url`: get-url's legacy name-as-URL fallback exits 0
+    /// and echoes the bare remote name when remote.&lt;name&gt;.url is unset, which would surface
+    /// as a URL. The pattern anchors a literal ".url" tail, so remote.&lt;name&gt;.pushurl does
+    /// not match and a remote whose own name ends in ".url" still parses — the name is everything
+    /// between the first "remote." and the last ".url".
+    /// </para>
+    /// </summary>
+    private async Task<List<(string Name, string Url)>> ReadRemoteUrlsAsync(string repoPath, CancellationToken ct)
+    {
+        var result = await RunAsync(repoPath, ["config", "--get-regexp", @"^remote\..*\.url$"], ct);
+        if (!result.Success) return [];
+
+        const string prefix = "remote.";
+        const string suffix = ".url";
+        var byName = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var url = await RunAsync(repoPath, ["config", "--get", $"remote.{remote}.url"], ct);
-            if (url.Success && url.StdOut.Trim().Length > 0) return remote;
+            var line = raw.TrimEnd('\r');
+            var space = line.IndexOf(' ');
+            if (space <= 0) continue;
+            var key = line[..space];
+            var url = line[(space + 1)..].Trim();
+            if (url.Length == 0) continue;
+            if (!key.StartsWith(prefix, StringComparison.Ordinal) ||
+                !key.EndsWith(suffix, StringComparison.Ordinal)) continue;
+            var name = key[prefix.Length..^suffix.Length];
+            if (name.Length == 0) continue;
+            byName[name] = url;
         }
-        return null;
+
+        return [.. byName
+            .OrderBy(e => e.Key == "origin" ? 0 : 1)
+            .ThenBy(e => e.Key, StringComparer.Ordinal)
+            .Select(e => (e.Key, e.Value))];
     }
 
     // ── Stash ───────────────────────────────────────────────────────────────
@@ -1180,14 +1246,19 @@ public class GitService
     /// <summary>
     /// The one log format behind every <see cref="GitCommit"/>. The full sha leads and
     /// the abbreviation follows it, so a commit carries an unambiguous revision as well
-    /// as the short form the lists display. Subject is last because it may contain '|'.
+    /// as the short form the lists display. Fields are separated by <see cref="FieldSeparator"/>,
+    /// which no author name and no subject can contain — a printable delimiter splits any field
+    /// carrying one, and every field after it shifts, so the subject shown against a commit
+    /// belongs to no commit at all.
     /// </summary>
-    private const string CommitLogFormat = "--format=%H|%h|%an|%aI|%s";
+    private const string CommitLogFormat =
+        "--format=%H" + FieldSeparator + "%h" + FieldSeparator + "%an" + FieldSeparator +
+        "%aI" + FieldSeparator + "%s";
 
     /// <summary>Null when a line carries fewer fields than the format emits.</summary>
     private static GitCommit? ParseCommitLine(string line)
     {
-        var parts = line.Split('|', 5);
+        var parts = line.Split(FieldSeparator, 5);
         if (parts.Length < 5) return null;
         return new GitCommit
         {
