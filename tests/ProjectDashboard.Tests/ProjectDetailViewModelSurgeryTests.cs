@@ -804,6 +804,29 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     [Fact]
+    public async Task ASuccessfulUndo_ClearsTheRecoveryMarkerTheOperationLeftPending()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var git = new GitService();
+        var vm = await VmForAsync(repo);
+        vm.Surgery = new SurgeryCoordinator(
+            new BackupService(git, new SettingsService()), new RepoBusyRegistry(), git,
+            new ThrowingRebaseDriver(git));
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        Assert.NotNull(await new RewriteJournal().ReadPendingAsync(repo.Path));
+        Assert.True(vm.SurgeryUndoVisible);
+
+        await vm.UndoLastSurgeryCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Restored", vm.SurgeryStatusText);
+        // A restored repository is whole, so nothing may report an interrupted rewrite for it.
+        Assert.Null(await new RewriteJournal().ReadPendingAsync(repo.Path));
+    }
+
+    [Fact]
     public async Task OpeningThePlanDialog_ClearsTheFailureTextAndTheOffersItExplained()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");

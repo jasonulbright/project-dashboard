@@ -50,6 +50,14 @@ public sealed class SurgeryCoordinator
     public Task<RebaseScope> LoadScopeAsync(string repoPath, int depth, CancellationToken ct = default) =>
         _driver.LoadScopeAsync(repoPath, depth, ct);
 
+    /// <summary>
+    /// Clears the recovery marker after a restore has put <paramref name="repoPath"/> back at its
+    /// backup. The operation the marker describes no longer exists in the repository, so leaving
+    /// it would report an interrupted rewrite at the next launch for history that is already whole.
+    /// </summary>
+    public Task ConcludeUndoAsync(string repoPath, CancellationToken ct = default) =>
+        _journal.CompleteAsync(repoPath, ct);
+
     public Task<SurgeryResult> ReorderAsync(
         string repoPath, int depth, IReadOnlyList<string> shasInNewOrder,
         RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>

@@ -699,6 +699,9 @@ public partial class ProjectDetailViewModel
 
             if (result.Success)
             {
+                // The restore undid the operation the recovery marker describes, so the marker goes
+                // with it: left behind it reports an interrupted rewrite at the next launch.
+                if (Surgery is not null) await Surgery.ConcludeUndoAsync(repo);
                 SurgeryStatusText = result.WorktreeWasDirty
                     ? $"Restored — {result.DiscardedChangeCount} uncommitted change(s) were discarded."
                     : "Restored.";
