@@ -1,7 +1,10 @@
+using System.Collections;
 using System.Globalization;
 using System.IO;
+using System.Resources;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -121,19 +124,63 @@ public class SurgeryViewBindingTests
         Assert.Equal(false, converter.Convert(" \t\r\n ", typeof(bool), null, CultureInfo.InvariantCulture));
         Assert.Equal(true, converter.Convert("a message", typeof(bool), null, CultureInfo.InvariantCulture));
 
-        var declaration = Regex.Match(File.ReadAllText(PromptWindowXaml()), @"<ui:Button x:Name=""SaveButton""[^>]*>").Value;
+        var declaration = Regex.Match(WindowMarkup("CommitMessagePromptWindow.xaml"), @"<ui:Button x:Name=""SaveButton""[^>]*>").Value;
         Assert.Contains(
             @"IsEnabled=""{Binding Text, ElementName=MessageInput, Converter={StaticResource HasNonWhitespaceTextConverter}}""",
             declaration);
     }
 
-    private static string PromptWindowXaml([CallerFilePath] string testFile = "")
+    /// <summary>
+    /// A drop or squash mark holds a typed reword aside and restores it when the mark is
+    /// lifted. Without a bound marker the row renders identically to one that never carried a
+    /// message, so nothing on screen separates "held, and coming back" from "never typed".
+    /// The marker's visibility resolves through a converter key the merged WPF-UI dictionary
+    /// declares, not this project, so the key is pinned alongside the binding.
+    /// </summary>
+    [Fact]
+    public void APlanRowHoldingADisplacedMessage_ShowsAMarkerBoundToThatState()
+    {
+        var marker = Regex.Match(
+            WindowMarkup("HistoryPlanWindow.xaml"),
+            @"<TextBlock[^>]*Text=""message held""[^>]*/>",
+            RegexOptions.Singleline).Value;
+
+        Assert.Contains(
+            @"Visibility=""{Binding HasDisplacedMessage, Converter={StaticResource BooleanToVisibilityConverter}}""",
+            marker);
+        Assert.Contains(@"AutomationProperties.Name=""A new message for this commit is held aside by its mark""", marker);
+        Assert.True(WpfUiDeclaresResourceKey("BooleanToVisibilityConverter"));
+    }
+
+    /// <summary>
+    /// Whether the pinned WPF-UI package still declares a resource key. Loading the dictionary
+    /// itself would need an Application for its pack: URI to resolve, so the compiled markup is
+    /// read from the assembly instead: BAML holds its strings as length-prefixed UTF-8, so a key
+    /// it declares appears verbatim in the stream.
+    /// </summary>
+    private static bool WpfUiDeclaresResourceKey(string key)
+    {
+        using var resources = typeof(Wpf.Ui.Markup.ControlsDictionary).Assembly
+            .GetManifestResourceStream("Wpf.Ui.g.resources");
+        Assert.NotNull(resources);
+        using var reader = new ResourceReader(resources);
+        foreach (DictionaryEntry entry in reader)
+        {
+            if (entry.Value is not Stream markup) continue;
+            using var buffer = new MemoryStream();
+            markup.CopyTo(buffer);
+            if (Encoding.UTF8.GetString(buffer.ToArray()).Contains(key, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    private static string WindowMarkup(string fileName, [CallerFilePath] string testFile = "")
     {
         var path = Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(testFile)!, "..", "..",
-            "src", "ProjectDashboard", "Views", "Windows", "CommitMessagePromptWindow.xaml"));
-        Assert.True(File.Exists(path), $"commit message prompt markup not found at {path}");
-        return path;
+            "src", "ProjectDashboard", "Views", "Windows", fileName));
+        Assert.True(File.Exists(path), $"window markup not found at {path}");
+        return File.ReadAllText(path);
     }
 
     private sealed class MenuHost

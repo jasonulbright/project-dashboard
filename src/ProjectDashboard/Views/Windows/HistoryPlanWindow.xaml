@@ -64,6 +64,12 @@
                                 <TextBlock DockPanel.Dock="Left" Width="76" Text="{Binding ShortSha}"
                                            FontFamily="Cascadia Code,Consolas" FontSize="12"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                <TextBlock DockPanel.Dock="Left" Margin="0,0,10,0" Text="message held" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource StatusWarnFg}"
+                                           Visibility="{Binding HasDisplacedMessage, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           ToolTip="A new message typed for this commit is held aside while the mark stands. Lifting the mark restores it; Clear row discards it."
+                                           AutomationProperties.Name="A new message for this commit is held aside by its mark" />
                                 <CheckBox DockPanel.Dock="Right" Content="squash" FontSize="11" Margin="8,0,0,0"
                                           IsChecked="{Binding SquashIntoPrevious}"
                                           AutomationProperties.Name="Fold this commit into the one above it" />
