@@ -133,7 +133,7 @@ jobs:
       # Assets are named explicitly: a wildcard would attach any stale artifact left in
       # the tree by an earlier step.
       - name: Publish release
-        if: ${{ !inputs.dry_run }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
