@@ -1,0 +1,113 @@
+#Requires -Version 7.0
+<#
+.SYNOPSIS
+    Builds the portable Project Dashboard archive.
+
+.DESCRIPTION
+    Publishes the app into installer\payload — the same directory project-dashboard.nsi
+    packs into the installer — then zips that payload plus a portable marker file into
+    ProjectDashboard-Portable-<version>.zip.
+
+    The version is read from the !define VERSION line in project-dashboard.nsi and
+    verified against <Version> in the project file; a mismatch aborts the build.
+
+.PARAMETER Configuration
+    Build configuration passed to dotnet publish. Defaults to Release.
+
+.PARAMETER OutputDirectory
+    Where the .zip is written. Defaults to the installer directory, beside the
+    installer executable.
+
+.EXAMPLE
+    pwsh -File installer\build-portable.ps1
+
+.EXAMPLE
+    pwsh -File installer\build-portable.ps1 -OutputDirectory C:\dist
+#>
+[CmdletBinding()]
+param(
+    [string] $Configuration = 'Release',
+    [string] $OutputDirectory
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$installerDir = $PSScriptRoot
+$repoRoot     = Split-Path -Parent $installerDir
+$nsiFile      = Join-Path $installerDir 'project-dashboard.nsi'
+$projectFile  = Join-Path $repoRoot 'src\ProjectDashboard\ProjectDashboard.csproj'
+$payloadDir   = Join-Path $installerDir 'payload'
+
+if (-not $OutputDirectory) { $OutputDirectory = $installerDir }
+
+# The installer's !define is the single version definition for packaging; the project
+# file stamps the binaries. A drift between them would ship a zip whose name disagrees
+# with the assembly version inside it.
+$nsiText = Get-Content -LiteralPath $nsiFile -Raw
+if ($nsiText -notmatch '(?m)^\s*!define\s+VERSION\s+"([^"]+)"') {
+    throw "No !define VERSION found in $nsiFile."
+}
+$version = $Matches[1]
+
+[xml] $projectXml = Get-Content -LiteralPath $projectFile -Raw
+$projectVersionNode = $projectXml.SelectSingleNode('/Project/PropertyGroup/Version')
+if ($null -eq $projectVersionNode) {
+    throw "No <Version> element found in $projectFile."
+}
+if ($projectVersionNode.InnerText.Trim() -ne $version) {
+    throw "Version mismatch: $nsiFile says $version, $projectFile says $($projectVersionNode.InnerText.Trim())."
+}
+
+Write-Host "Building Project Dashboard $version ($Configuration)"
+
+if (Test-Path -LiteralPath $payloadDir) {
+    Remove-Item -LiteralPath $payloadDir -Recurse -Force
+}
+
+dotnet publish $projectFile `
+    --configuration $Configuration `
+    --runtime win-x64 `
+    --self-contained false `
+    --output $payloadDir
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish failed with exit code $LASTEXITCODE."
+}
+
+$archiveName = "ProjectDashboard-Portable-$version"
+$stageDir    = Join-Path $installerDir $archiveName
+$zipPath     = Join-Path $OutputDirectory "$archiveName.zip"
+
+if (Test-Path -LiteralPath $stageDir) {
+    Remove-Item -LiteralPath $stageDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $stageDir | Out-Null
+
+# The archive carries exactly what the installer packs (payload\*.*) plus the marker.
+# The installer must never see the marker: an installed copy has to keep using the
+# per-user data location.
+Copy-Item -Path (Join-Path $payloadDir '*') -Destination $stageDir -Recurse -Force
+
+Set-Content -LiteralPath (Join-Path $stageDir 'portable.marker') -Encoding utf8 -Value @'
+This file makes Project Dashboard keep its settings, cache, log, and project
+metadata in the data folder beside ProjectDashboard.exe.
+
+Delete it to use the standard per-user location instead.
+'@
+
+if (Test-Path -LiteralPath $zipPath) {
+    Remove-Item -LiteralPath $zipPath -Force
+}
+New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $stageDir,
+    $zipPath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $true)
+
+Remove-Item -LiteralPath $stageDir -Recurse -Force
+
+$zip = Get-Item -LiteralPath $zipPath
+Write-Host ("Wrote {0} ({1:N1} MB)" -f $zip.FullName, ($zip.Length / 1MB))

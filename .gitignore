@@ -16,9 +16,10 @@ TestResults/
 *.local.*
 *.private.*
 
-# Installer build artifacts (sources are tracked: branding/*.svg, installer/*.nsi)
+# Installer build artifacts (sources are tracked: branding/*.svg, installer/*.nsi, installer/*.ps1)
 installer/payload/
 installer/*.exe
+installer/*.zip
 branding/*.png
 
 # Local working state (never shipped)
