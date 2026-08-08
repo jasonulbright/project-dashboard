@@ -75,18 +75,43 @@ public class RenderedLinkActivationTests
 
     /// <summary>
     /// The keyboard must reach the launch the mouse reaches, not a second copy of it: one
-    /// handler decides what is opened and with what target.
+    /// handler decides what is opened and with what target. The launch is swapped for the
+    /// duration — the renderer's Click hands its target to the shell, and clicking a
+    /// rendered link is how a suite run opens a browser tab.
     /// </summary>
     [Fact]
-    public void ActivatingALinkFromTheKeyboard_RaisesTheSameClickTheMouseDoes()
+    public void ActivatingALinkFromTheKeyboard_LaunchesTheRenderedTargetOnce()
     {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri("https://github.com/o/r/pull/12", out var target));
         var link = OnlyLink("see [the PR](https://github.com/o/r/pull/12) now");
-        var clicks = 0;
-        link.Click += (_, _) => clicks++;
+        var launched = new List<string>();
+        var shell = ProjectDetailPage.LaunchNavigable;
+        ProjectDetailPage.LaunchNavigable = launched.Add;
+        try
+        {
+            link.DoClick();
+        }
+        finally
+        {
+            ProjectDetailPage.LaunchNavigable = shell;
+        }
 
-        link.DoClick();
+        Assert.Equal([ProjectDetailPage.NavigationTarget(target)], launched);
+    }
 
-        Assert.Equal(1, clicks);
+    /// <summary>
+    /// The launch is read through the hook at click time. Reaching the shell straight from
+    /// the handler puts a browser tab on every suite run and leaves the launched target
+    /// unassertable.
+    /// </summary>
+    [Fact]
+    public void TheClickHandler_LaunchesThroughTheSwappableHook()
+    {
+        var page = File.ReadAllText(DetailPageSource());
+
+        var handler = Regex.Match(page, @"hyperlink\.Click \+=[^\n]*").Value;
+        Assert.Contains("LaunchNavigable(launch)", handler);
+        Assert.DoesNotContain("Process.Start", handler);
     }
 
     /// <summary>

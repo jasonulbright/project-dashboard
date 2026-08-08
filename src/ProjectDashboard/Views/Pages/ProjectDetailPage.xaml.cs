@@ -1127,6 +1127,19 @@ public partial class ProjectDetailPage
     internal static string NavigationTarget(Uri uri) => uri.AbsoluteUri;
 
     /// <summary>
+    /// What a clickable link's Click hands its target to, read at click time. The default
+    /// hands it to the shell; a test exercising the click path substitutes its own, so
+    /// clicking a rendered link never opens a browser.
+    /// </summary>
+    internal static Action<string> LaunchNavigable { get; set; } = ShellExecute;
+
+    private static void ShellExecute(string target)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true }); }
+        catch { }
+    }
+
+    /// <summary>
     /// Adds inline formatting: **bold**, *italic*, `code`, [links](url), ~~strikethrough~~
     /// </summary>
     internal static void AddFormattedInlines(InlineCollection inlines, string text)
@@ -1173,11 +1186,7 @@ public partial class ProjectDetailPage
                     var launch = NavigationTarget(target);
                     // Click is raised by the mouse and by Hyperlink.DoClick, so the keyboard
                     // path launches through this handler rather than a second copy of it.
-                    hyperlink.Click += (_, _) =>
-                    {
-                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(launch) { UseShellExecute = true }); }
-                        catch { }
-                    };
+                    hyperlink.Click += (_, _) => LaunchNavigable(launch);
                     inlines.Add(hyperlink);
                 }
             }
