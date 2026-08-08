@@ -5,12 +5,12 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// A GitHub command that cannot run says why. The two states a reader can actually be in
-/// — a project with no GitHub remote, and a command whose row is not selected — used to
-/// return silently on several commands while their siblings named the same conditions,
-/// so the same click produced a message or nothing depending on which button it was. The
-/// busy gate stays silent by design: the operation holding it already names itself on
-/// this status line.
+/// A GitHub command that cannot run says why. Two states a reader can actually be in —
+/// a project with no GitHub remote, and a command whose row is not selected — are the
+/// ones a command can hit before it spawns anything, and a silent return there makes the
+/// same click produce a message or nothing depending on which button it was. The busy
+/// gate stays silent by design: the operation holding it already names itself on this
+/// status line.
 /// </summary>
 public class GitHubCommandNoticeTests
 {

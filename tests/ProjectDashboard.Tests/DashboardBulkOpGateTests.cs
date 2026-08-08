@@ -6,12 +6,12 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// One bulk operation at a time. The gate used to be read before a clone's repository
-/// fetch and its target dialog — both arbitrarily long — and claimed only afterwards, so
-/// a Sync All could start in between: two fan-outs writing the same project list, and
-/// whichever finished first clearing a gate the other still relied on, releasing every
-/// queued re-scan into a running operation. The read and the claim have to be one step
-/// taken immediately before the work, and only the claim that took the gate may clear it.
+/// One bulk operation at a time. A clone reads the gate before its repository fetch and
+/// its target dialog, both arbitrarily long; claiming it only afterwards lets a Sync All
+/// start in that window — two fan-outs writing the same project list, and whichever
+/// finishes first clearing a gate the other still relies on, releasing every queued
+/// re-scan into a running operation. The read and the claim are therefore one step taken
+/// immediately before the work, and only the claim that took the gate may clear it.
 ///
 /// Nothing here reaches the network: every refused operation is refused before it spawns.
 /// </summary>
