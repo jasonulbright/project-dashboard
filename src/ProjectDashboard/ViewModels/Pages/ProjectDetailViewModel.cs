@@ -128,13 +128,23 @@ public partial class ProjectDetailViewModel : ObservableObject
 
     private async Task LoadIssuesLazilyAsync(ProjectInfo project)
     {
-        if (string.IsNullOrEmpty(project.GitHubSlug)) return;
+        if (string.IsNullOrEmpty(project.GitHubSlug))
+        {
+            // The list seeded from the model is whatever an earlier scan cached, and for a
+            // repository with no remote nothing ever queried one. Left unmarked, an empty
+            // list reads as "no open issues" about a repository that has none to report.
+            if (ReferenceEquals(Project, project)) IssuesError = NoRemoteStatus;
+            return;
+        }
         try
         {
             var issues = await _gitHubService.GetIssuesAsync(project.GitHubSlug, "open");
             project.Issues = issues; // cache on the model for the next visit
             if (ReferenceEquals(Project, project)) // user may have moved on mid-fetch
+            {
+                IssuesError = "";
                 Issues = new ObservableCollection<GitHubIssue>(issues);
+            }
         }
         catch (Exception ex)
         {

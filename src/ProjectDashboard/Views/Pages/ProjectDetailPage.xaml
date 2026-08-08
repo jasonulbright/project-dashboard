@@ -1721,15 +1721,32 @@
                         <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
                             <Grid>
+                                <TextBlock Text="{Binding IssuesError}" FontSize="12" TextWrapping="Wrap"
+                                           VerticalAlignment="Top" Foreground="{DynamicResource StatusBadFg}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IssuesError}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <TextBlock Text="No open issues." FontSize="12"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Issues.Count}" Value="0">
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding Issues.Count}" Value="0" />
+                                                        <Condition Binding="{Binding IssuesError}" Value="" />
+                                                    </MultiDataTrigger.Conditions>
                                                     <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
+                                                </MultiDataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
@@ -2051,15 +2068,32 @@
                         <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
                             <Grid>
+                                <TextBlock Text="{Binding PullRequestsError}" FontSize="12" TextWrapping="Wrap"
+                                           VerticalAlignment="Top" Foreground="{DynamicResource StatusBadFg}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding PullRequestsError}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <TextBlock Text="No open pull requests." FontSize="12"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding PullRequests.Count}" Value="0">
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding PullRequests.Count}" Value="0" />
+                                                        <Condition Binding="{Binding PullRequestsError}" Value="" />
+                                                    </MultiDataTrigger.Conditions>
                                                     <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
+                                                </MultiDataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>

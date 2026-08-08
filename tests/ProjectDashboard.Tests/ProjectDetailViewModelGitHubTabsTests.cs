@@ -972,6 +972,85 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Equal("", vm.RepoDeleteNotice);
     }
 
+    // ── Issues and Pull Requests without a remote ───────────────────────────────
+
+    /// <summary>
+    /// The Issues and Pull Requests surfaces answer an absent remote the way Actions,
+    /// Releases and Repo do. An empty list under no notice is a claim that the repository
+    /// has no open issues or pull requests, and a repository nothing ever queried supports
+    /// no such claim.
+    /// </summary>
+    [Fact]
+    public async Task Issues_WithoutARemote_SaySoRatherThanShowingAnEmptyList()
+    {
+        var vm = new StubTabsViewModel();
+
+        await vm.SetProjectAsync(LocalProject());
+
+        Assert.Equal("This project has no GitHub remote.", vm.IssuesError);
+        Assert.Empty(vm.Issues);
+    }
+
+    [Fact]
+    public async Task RefreshingIssues_WithoutARemote_SaysSoInsteadOfReportingNothing()
+    {
+        var vm = new StubTabsViewModel();
+        await vm.SetProjectAsync(LocalProject());
+        vm.IssuesError = "";
+
+        await vm.RefreshIssuesCommand.ExecuteAsync(null);
+
+        Assert.Equal("This project has no GitHub remote.", vm.IssuesError);
+    }
+
+    [Fact]
+    public async Task PullRequests_WithoutARemote_SaySoAndLeaveTheTabUnloaded()
+    {
+        var vm = new StubTabsViewModel();
+        await vm.SetProjectAsync(LocalProject());
+
+        await vm.LoadPullRequestsCommand.ExecuteAsync(null);
+
+        Assert.Equal("This project has no GitHub remote.", vm.PullRequestsError);
+        Assert.Empty(vm.PullRequests);
+        Assert.False(vm.PullRequestsLoaded);
+    }
+
+    /// <summary>
+    /// The compose openers refuse the same way New Release does. Left armed they walk the
+    /// reader through a form whose submit can only fail.
+    /// </summary>
+    [Fact]
+    public async Task NewIssueAndNewPullRequest_WithoutARemote_RefuseWithTheSameNotice()
+    {
+        var vm = new StubTabsViewModel();
+        await vm.SetProjectAsync(LocalProject());
+
+        await vm.ShowNewIssueCommand.ExecuteAsync(null);
+        Assert.Equal("This project has no GitHub remote.", vm.GitHubStatusText);
+        Assert.False(vm.IssueComposeVisible);
+
+        vm.GitHubStatusText = "";
+        await vm.ShowNewPrCommand.ExecuteAsync(null);
+        Assert.Equal("This project has no GitHub remote.", vm.GitHubStatusText);
+        Assert.False(vm.PullRequestComposeVisible);
+    }
+
+    [Fact]
+    public async Task TheNoRemoteNotice_DoesNotFollowTheReaderToTheNextProject()
+    {
+        var vm = new StubTabsViewModel();
+        await vm.SetProjectAsync(LocalProject());
+        await vm.LoadPullRequestsCommand.ExecuteAsync(null);
+        Assert.NotEqual("", vm.IssuesError);
+        Assert.NotEqual("", vm.PullRequestsError);
+
+        await vm.SetProjectAsync(RemoteProject());
+
+        Assert.Equal("", vm.IssuesError);
+        Assert.Equal("", vm.PullRequestsError);
+    }
+
     [Theory]
     [InlineData("https://github.com/o/r", "https://github.com/o/r")]
     [InlineData("  https://github.com/o/r  ", "https://github.com/o/r")]

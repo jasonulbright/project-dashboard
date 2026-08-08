@@ -14,6 +14,17 @@ public class ProjectDetailViewModelGitHubTests
 {
     private static ProjectDetailViewModel NewVm() => new(null!, new GitService(), null!);
 
+    /// <summary>
+    /// The repository's label list is the one remote read the new-issue form starts by
+    /// itself, and it is reached only once the form is open on a project that has a
+    /// remote. Answered as a failed fetch, so that path runs without a live gh.
+    /// </summary>
+    private sealed class LabellessViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    {
+        internal override Task<List<Label>?> FetchLabelsAsync(string slug) =>
+            Task.FromResult<List<Label>?>(null);
+    }
+
     private static ProjectInfo LocalProject()
     {
         var dir = TestEnv.NewDir("gh-vm");
@@ -38,7 +49,10 @@ public class ProjectDetailViewModelGitHubTests
     [Fact]
     public async Task ShowNewIssue_ShowsComposeAndClearsDrafts()
     {
-        var vm = NewVm();
+        // The compose opener refuses a project with no remote, so the toggle it is asked
+        // about here is only reachable on one that has one.
+        var vm = new LabellessViewModel();
+        await vm.SetProjectAsync(RemoteProject());
         vm.NewIssueTitle = "stale";
         vm.NewIssueBody = "stale";
         await vm.ShowNewIssueCommand.ExecuteAsync(null);

@@ -22,6 +22,15 @@ public partial class ProjectDetailViewModel
     private bool _labelsLoaded;
     private Task<List<Label>?>? _labelFetch;
 
+    /// <summary>
+    /// Why the Issues list is not an answer, or "" when it is one. An empty list under an
+    /// empty notice claims the repository has no open issues; a repository that was never
+    /// queried — no GitHub remote — has established nothing of the sort. Carried by the
+    /// Pull Requests surface too, on the same terms.
+    /// </summary>
+    [ObservableProperty] private string _issuesError = "";
+    [ObservableProperty] private string _pullRequestsError = "";
+
     // ── Issues detail + compose ─────────────────────────────────────────────────
     [ObservableProperty] private GitHubIssue? _selectedIssue;
     [ObservableProperty] private IssueDetail? _issueDetail;
@@ -98,6 +107,8 @@ public partial class ProjectDetailViewModel
     private void ResetGitHubState()
     {
         GitHubStatusText = "";
+        IssuesError = "";
+        PullRequestsError = "";
         AvailableLabelNames = [];
         _labelsLoaded = false;
         // The in-flight fetch belongs to the project being left; the new one refetches.
@@ -185,10 +196,15 @@ public partial class ProjectDetailViewModel
     private async Task ReloadIssueListAsync()
     {
         var slug = Slug;
-        if (slug.Length == 0) return;
+        if (slug.Length == 0)
+        {
+            IssuesError = NoRemoteStatus;
+            return;
+        }
         var gen = _generation;
         var issues = await _gitHubService.GetIssuesAsync(slug, "open");
         if (!IsCurrent(gen)) return;
+        IssuesError = "";
         Issues = new ObservableCollection<GitHubIssue>(issues);
         if (Project is not null) Project.Issues = issues;
     }
@@ -235,6 +251,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task ShowNewIssue()
     {
+        if (!HasGitHubRemote(Slug)) return;
         NewIssueTitle = "";
         NewIssueBody = "";
         NewIssueLabels = "";
