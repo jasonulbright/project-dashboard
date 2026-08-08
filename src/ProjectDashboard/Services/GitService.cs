@@ -727,6 +727,36 @@ public class GitService
     public Task<ProcessResult> PruneRemoteAsync(string repoPath, string remote, CancellationToken ct = default)
         => RunAsync(repoPath, ["remote", "prune", remote], ct, NetworkTimeout);
 
+    /// <summary>Points a local branch at a remote-tracking ref (`&lt;remote&gt;/&lt;branch&gt;`); no network runs.</summary>
+    public Task<ProcessResult> SetUpstreamAsync(string repoPath, string branch, string upstream,
+        CancellationToken ct = default)
+        => RunAsync(repoPath, ["branch", $"--set-upstream-to={upstream}", branch], ct);
+
+    /// <summary>Drops a branch's upstream. The remote-tracking ref itself stays; only the link is removed.</summary>
+    public Task<ProcessResult> UnsetUpstreamAsync(string repoPath, string branch, CancellationToken ct = default)
+        => RunAsync(repoPath, ["branch", "--unset-upstream", branch], ct);
+
+    /// <summary>
+    /// How far <paramref name="reference"/> stands from <paramref name="baseRef"/>: commits it has
+    /// that the base does not (Ahead) and commits the base has that it does not (Behind). Null when
+    /// either ref is unknown or the two have no common history — a count that was never measured
+    /// must not be reported as zero.
+    /// </summary>
+    public async Task<RefComparison?> CompareRefsAsync(string repoPath, string reference, string baseRef,
+        CancellationToken ct = default)
+    {
+        if (reference.Length == 0 || baseRef.Length == 0) return null;
+        // Left side of the range is the base, so the left count is what the reference is behind by.
+        var result = await RunAsync(repoPath,
+            ["rev-list", "--left-right", "--count", $"{baseRef}...{reference}", "--"], ct);
+        if (!result.Success) return null;
+
+        var fields = result.StdOut.Split(['\t', ' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length < 2 || !int.TryParse(fields[0], out var behind) || !int.TryParse(fields[1], out var ahead))
+            return null;
+        return new RefComparison(ahead, behind);
+    }
+
     // ── Reflog ──────────────────────────────────────────────────────────────────
 
     /// <summary>Repacking a large repository outruns every other budget here, so maintenance gets its own.</summary>
@@ -812,6 +842,43 @@ public class GitService
     {
         if (name.Length == 0 || name.StartsWith('-')) return false;
         return (await RunAsync(repoPath, ["check-ref-format", "--branch", name], ct)).Success;
+    }
+
+    /// <summary>
+    /// Whether git would accept <paramref name="name"/> as a tag name. Checked as the full ref it
+    /// becomes: --branch resolves @{...} shorthand against branches and would answer for a ref
+    /// that is not the one being created.
+    /// </summary>
+    public async Task<bool> IsValidTagNameAsync(string repoPath, string name, CancellationToken ct = default)
+    {
+        if (name.Length == 0 || name.StartsWith('-')) return false;
+        return (await RunAsync(repoPath, ["check-ref-format", "refs/tags/" + name], ct)).Success;
+    }
+
+    /// <summary>
+    /// Whether git would accept <paramref name="name"/> as a remote name, checked against the
+    /// remote-tracking ref namespace the remote would own. A name containing a slash is refused
+    /// here: git accepts it, and the resulting refs/remotes path is then ambiguous with a
+    /// branch of another remote.
+    /// </summary>
+    public async Task<bool> IsValidRemoteNameAsync(string repoPath, string name, CancellationToken ct = default)
+    {
+        if (name.Length == 0 || name.StartsWith('-') || name.Contains('/')) return false;
+        return (await RunAsync(repoPath, ["check-ref-format", $"refs/remotes/{name}/HEAD"], ct)).Success;
+    }
+
+    /// <summary>
+    /// Whether the text can be handed to git as a remote URL at all. Only the shapes that would
+    /// misfire rather than fail are refused: a leading dash git reads as an option, and embedded
+    /// whitespace or control characters, which no URL or path form carries. Everything else is
+    /// git's to accept or reject.
+    /// </summary>
+    public static bool IsPlausibleRemoteUrl(string url)
+    {
+        if (url.Length == 0 || url.StartsWith('-')) return false;
+        foreach (var c in url)
+            if (char.IsWhiteSpace(c) || char.IsControl(c)) return false;
+        return true;
     }
 
     // ── Object-store maintenance ────────────────────────────────────────────────
@@ -1169,13 +1236,20 @@ public class GitService
     /// <summary>
     /// Parses `git worktree list --porcelain`: blank-line-separated blocks of
     /// "worktree &lt;path&gt;", "HEAD &lt;sha&gt;", and one of "branch &lt;ref&gt;" / "detached" /
-    /// "bare", plus an optional "locked" line.
+    /// "bare", plus optional "locked" and "prunable &lt;reason&gt;" lines.
+    /// <para>
+    /// The first block is the main worktree — git lists it first from every checkout, including
+    /// from a linked worktree — and that position is the only thing in the listing that
+    /// identifies it. Nothing else may be removed from the record, so it is read here rather
+    /// than re-derived by a caller comparing paths.
+    /// </para>
     /// </summary>
     internal static List<WorktreeEntry> ParseWorktreePorcelain(string porcelain)
     {
         var entries = new List<WorktreeEntry>();
         string? path = null, head = null, branch = null;
-        bool bare = false, detached = false, locked = false;
+        var prunableReason = "";
+        bool bare = false, detached = false, locked = false, prunable = false;
 
         void Flush()
         {
@@ -1187,10 +1261,14 @@ public class GitService
                 Branch = branch,
                 IsBare = bare,
                 IsDetached = detached,
-                IsLocked = locked
+                IsLocked = locked,
+                IsMain = entries.Count == 0,
+                IsPrunable = prunable,
+                PrunableReason = prunableReason
             });
             path = head = branch = null;
-            bare = detached = locked = false;
+            prunableReason = "";
+            bare = detached = locked = prunable = false;
         }
 
         foreach (var raw in porcelain.Split('\n'))
@@ -1210,6 +1288,7 @@ public class GitService
                 case "bare": bare = true; break;
                 case "detached": detached = true; break;
                 case "locked": locked = true; break;
+                case "prunable": prunable = true; prunableReason = val; break;
             }
         }
         Flush();
@@ -1226,6 +1305,13 @@ public class GitService
 
     public Task<ProcessResult> RemoveWorktreeAsync(string repoPath, string path, CancellationToken ct = default)
         => RunAsync(repoPath, ["worktree", "remove", path], ct);
+
+    /// <summary>
+    /// Drops the administrative entries whose working trees are gone. Only entries git already
+    /// reports as prunable are affected; a worktree still on disk is untouched.
+    /// </summary>
+    public Task<ProcessResult> PruneWorktreesAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["worktree", "prune"], ct);
 
     // ── .gitignore (L-10) ────────────────────────────────────────────────────────
 

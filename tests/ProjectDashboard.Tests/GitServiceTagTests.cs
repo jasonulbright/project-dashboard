@@ -77,4 +77,20 @@ public class GitServiceTagTests
         Assert.Contains("bulk-a", allRefs);
         Assert.Contains("bulk-b", allRefs);
     }
+
+    [Fact]
+    public async Task IsValidTagName_AcceptsWhatGitWouldCreateAndRefusesTheRest()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tag-names");
+
+        Assert.True(await _git.IsValidTagNameAsync(repo.Path, "v1.2.3"));
+        Assert.True(await _git.IsValidTagNameAsync(repo.Path, "release/2026-08"));
+
+        Assert.False(await _git.IsValidTagNameAsync(repo.Path, ""));
+        Assert.False(await _git.IsValidTagNameAsync(repo.Path, "-delete"));
+        Assert.False(await _git.IsValidTagNameAsync(repo.Path, "has space"));
+        Assert.False(await _git.IsValidTagNameAsync(repo.Path, "two..dots"));
+        Assert.False(await _git.IsValidTagNameAsync(repo.Path, "trailing.lock"));
+        Assert.False(await _git.IsValidTagNameAsync(repo.Path, "tilde~1"));
+    }
 }

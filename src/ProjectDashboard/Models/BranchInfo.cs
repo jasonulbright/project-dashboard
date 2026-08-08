@@ -23,6 +23,9 @@ public sealed class BranchInfo
         };
 }
 
+/// <summary>Commit counts between two refs: what the first has beyond the second, and the reverse.</summary>
+public sealed record RefComparison(int Ahead, int Behind);
+
 /// <summary>One stash entry.</summary>
 public sealed class StashEntry
 {

@@ -1,3 +1,4 @@
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
@@ -99,4 +100,83 @@ public class GitServiceBranchExtraTests
         Assert.True((await _git.PruneRemoteAsync(clone.Path, "origin")).Success);
         Assert.DoesNotContain("origin/gone", await _git.GetRemoteBranchesAsync(clone.Path));
     }
+
+    [Fact]
+    public async Task SetAndUnsetUpstream_MoveTheLinkWithoutTouchingTheTrackingRef()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("ups-seed");
+        await seed.GitAsync("switch", "-c", "release");
+        seed.WriteFile("r.txt", "release\n");
+        await seed.CommitAllAsync("release work");
+        await seed.GitAsync("switch", "main");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "ups-clone");
+        await _git.FetchAsync(clone.Path);
+
+        Assert.True((await _git.SetUpstreamAsync(clone.Path, "main", "origin/release")).Success);
+        var moved = (await _git.GetBranchesAsync(clone.Path)).Single(b => b.Name == "main");
+        Assert.Equal("origin/release", moved.Upstream);
+
+        Assert.True((await _git.UnsetUpstreamAsync(clone.Path, "main")).Success);
+        var cleared = (await _git.GetBranchesAsync(clone.Path)).Single(b => b.Name == "main");
+        Assert.Equal("", cleared.Upstream);
+        // Only the link went; the remote-tracking ref is still there to relink to.
+        Assert.Contains("origin/release", await _git.GetRemoteBranchesAsync(clone.Path));
+    }
+
+    [Fact]
+    public async Task CompareRefs_CountsEachSideOfTheDivergence()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("compare");
+        await repo.GitAsync("switch", "-c", "topic");
+        repo.WriteFile("t1.txt", "one\n");
+        await repo.CommitAllAsync("topic one");
+        repo.WriteFile("t2.txt", "two\n");
+        await repo.CommitAllAsync("topic two");
+        await repo.GitAsync("switch", "main");
+        repo.WriteFile("m1.txt", "main\n");
+        await repo.CommitAllAsync("main one");
+
+        var topicVsMain = await _git.CompareRefsAsync(repo.Path, "topic", "main");
+        Assert.Equal(new RefComparison(2, 1), topicVsMain);
+
+        // The reverse reading is the same measurement with the sides swapped.
+        var mainVsTopic = await _git.CompareRefsAsync(repo.Path, "main", "topic");
+        Assert.Equal(new RefComparison(1, 2), mainVsTopic);
+    }
+
+    [Fact]
+    public async Task CompareRefs_UnknownRefIsNotMeasured_RatherThanCountedAsZero()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("compare-unknown");
+        Assert.Null(await _git.CompareRefsAsync(repo.Path, "main", "no-such-branch"));
+        Assert.Null(await _git.CompareRefsAsync(repo.Path, "main", ""));
+    }
+
+    [Fact]
+    public async Task IsValidRemoteName_RefusesWhatWouldCollideOrBeReadAsAnOption()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("remote-names");
+
+        Assert.True(await _git.IsValidRemoteNameAsync(repo.Path, "origin"));
+        Assert.True(await _git.IsValidRemoteNameAsync(repo.Path, "up-stream.2"));
+
+        Assert.False(await _git.IsValidRemoteNameAsync(repo.Path, ""));
+        Assert.False(await _git.IsValidRemoteNameAsync(repo.Path, "-force"));
+        Assert.False(await _git.IsValidRemoteNameAsync(repo.Path, "team/origin"));
+        Assert.False(await _git.IsValidRemoteNameAsync(repo.Path, "has space"));
+        Assert.False(await _git.IsValidRemoteNameAsync(repo.Path, "two..dots"));
+        Assert.False(await _git.IsValidRemoteNameAsync(repo.Path, "tilde~1"));
+    }
+
+    [Theory]
+    [InlineData("https://example.test/a.git", true)]
+    [InlineData("git@example.test:owner/repo.git", true)]
+    [InlineData(@"C:\repos\origin", true)]
+    [InlineData("", false)]
+    [InlineData("--upload-pack=cmd", false)]
+    [InlineData("https://example.test/a b.git", false)]
+    [InlineData("https://example.test/a\nb.git", false)]
+    public void IsPlausibleRemoteUrl_RefusesOnlyWhatWouldMisfire(string url, bool plausible)
+        => Assert.Equal(plausible, GitService.IsPlausibleRemoteUrl(url));
 }
