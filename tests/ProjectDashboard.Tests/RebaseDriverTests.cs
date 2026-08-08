@@ -280,6 +280,94 @@ public class RebaseDriverTests
         _output.WriteLine($"reword: shas 0-2 unchanged, 3-5 rewritten, HEAD tree still {treeBefore[..8]}");
     }
 
+    // ── combined plans ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunPlan_ReordersDropsFoldsAndRewords_InOneReplay()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d", "e");
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 5);
+        var (a, b, c, d, e) = (scope.Commits[0], scope.Commits[1], scope.Commits[2], scope.Commits[3], scope.Commits[4]);
+
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(a.Sha, RebaseStepAction.Pick, "a, reworded\n\nwith a body"),
+                new RebaseStep(b.Sha, RebaseStepAction.Fixup),
+                new RebaseStep(c.Sha, RebaseStepAction.Drop),
+                new RebaseStep(e.Sha, RebaseStepAction.Pick),
+                new RebaseStep(d.Sha, RebaseStepAction.Pick)
+            ]
+        };
+
+        var result = await driver.RunPlanAsync(scope, plan);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(["seed", "a, reworded", "e", "d"], (await repo.SubjectsAsync()).AsEnumerable().Reverse());
+        // The fold's content landed in the reworded commit, the drop's did not land at all.
+        Assert.Equal("b content\n", await repo.ShowAsync("HEAD~2", "b.txt"));
+        Assert.Equal("a, reworded\n\nwith a body", await repo.MessageAsync("HEAD~2"));
+        Assert.False(repo.Exists("c.txt"));
+        _output.WriteLine("combined plan: " + string.Join(" | ", result.Todo));
+    }
+
+    [Fact]
+    public async Task RunPlan_UnderRoot_ReplaysWithoutGraftingAParentOntoTheRoot()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("root", "a", "b");
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 3);
+        Assert.True(scope.IncludesRoot);
+
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(scope.Commits[1].Sha, RebaseStepAction.Pick, "a, first now"),
+                new RebaseStep(scope.Commits[0].Sha, RebaseStepAction.Fixup),
+                new RebaseStep(scope.Commits[2].Sha, RebaseStepAction.Pick)
+            ]
+        };
+
+        var result = await driver.RunPlanAsync(scope, plan);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(["a, first now", "b"], (await repo.SubjectsAsync()).AsEnumerable().Reverse());
+        var parentless = (await repo.GitAsync("rev-list", "--max-parents=0", "HEAD")).Trim();
+        Assert.Equal(parentless, (await repo.GitAsync("rev-parse", "HEAD~1")).Trim());
+        Assert.Equal("root content\n", repo.Read("root.txt"));
+    }
+
+    [Fact]
+    public async Task RunPlan_AContradiction_IsRefusedWithoutStartingGit()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b");
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 3);
+        var before = await repo.FullStateAsync();
+
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(scope.Commits[0].Sha, RebaseStepAction.Pick),
+                new RebaseStep(scope.Commits[1].Sha, RebaseStepAction.Drop),
+                new RebaseStep(scope.Commits[2].Sha, RebaseStepAction.Fixup)
+            ]
+        };
+
+        var result = await driver.RunPlanAsync(scope, plan);
+
+        Assert.False(result.Success);
+        Assert.Contains("a dropped commit cannot be a squash anchor", result.FailureReason);
+        Assert.True(result.RepositoryUntouched);
+        // Nothing was handed to git: no todo to audit, and the repository is byte-identical.
+        Assert.Empty(result.Todo);
+        Assert.Equal(before, await repo.FullStateAsync());
+    }
+
     // ── conflict policy ───────────────────────────────────────────────────
 
     [Fact]

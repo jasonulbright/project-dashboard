@@ -76,9 +76,6 @@ public class RebaseDriver
 
     private const string OwnerFileName = "repo-path.txt";
 
-    /// <summary>git's own floor for core.abbrev, so the shortest sha a caller can be shown.</summary>
-    private const int MinAbbreviatedShaLength = 4;
-
     private readonly GitService _git;
     private readonly string _gitExe;
     private readonly string _workRoot;
@@ -289,6 +286,42 @@ public class RebaseDriver
         }
 
         return RunTodoAsync(scope, todo, EmptyMessages, policy, ct);
+    }
+
+    /// <summary>
+    /// Replays the scope as one combined plan: reorder, drop, squash and reword in a single
+    /// todo. The plan is compiled before any git process starts, so a combination no replay can
+    /// express is a refusal naming the contradiction rather than a rebase that stops part-way.
+    /// </summary>
+    public virtual Task<RebaseRunResult> RunPlanAsync(
+        RebaseScope scope, RebaseTodo todo,
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+    {
+        var compiled = RebaseTodoCompiler.Compile(todo, scope.Commits);
+        if (!compiled.IsValid)
+            return Refuse(compiled.Refusal!);
+
+        var messageFiles = new Dictionary<string, string>(StringComparer.Ordinal);
+        var lines = new List<string>(compiled.Commands.Count);
+        foreach (var command in compiled.Commands)
+        {
+            switch (command.Kind)
+            {
+                case RebaseCommandKind.Pick:
+                    lines.Add($"pick {command.Sha} {command.Subject}".TrimEnd());
+                    break;
+                case RebaseCommandKind.Fixup:
+                    lines.Add($"fixup {command.Sha} {command.Subject}".TrimEnd());
+                    break;
+                case RebaseCommandKind.AmendMessage:
+                    var token = MessageToken("plan-" + messageFiles.Count);
+                    messageFiles[token] = command.Message!;
+                    lines.Add(AmendExec(token));
+                    break;
+            }
+        }
+
+        return RunTodoAsync(scope, lines, messageFiles, policy, ct);
     }
 
     /// <summary>Runs an explicit todo against a scope. Public so the sequence-editor mechanism itself is directly testable.</summary>
@@ -667,47 +700,7 @@ public class RebaseDriver
 
     // ── small helpers ─────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Resolves a caller's sha — full or abbreviated — against one scope. A prefix two commits
-    /// share resolves to neither, and is reported as ambiguous rather than as out of range: the
-    /// two refusals ask the caller for opposite corrections.
-    /// </summary>
-    private readonly struct ShaIndex(Dictionary<string, RebaseCommit> byId, HashSet<string> ambiguous)
-    {
-        internal RebaseCommit? Resolve(string sha) => byId.GetValueOrDefault(sha);
-
-        internal string Rejection(string sha) => ambiguous.Contains(sha)
-            ? $"commit {Short(sha)} matches more than one commit in the range — use a longer sha"
-            : $"commit {Short(sha)} is not in the editable range";
-    }
-
-    private static ShaIndex Index(RebaseScope scope)
-    {
-        var map = new Dictionary<string, RebaseCommit>(StringComparer.OrdinalIgnoreCase);
-        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var commit in scope.Commits)
-        {
-            map[commit.Sha] = commit;
-            // Abbreviations let a caller pass what the UI displays without re-resolving, and a
-            // display sha honours core.abbrev, whose floor is four characters.
-            for (var length = MinAbbreviatedShaLength; length < commit.Sha.Length; length++)
-            {
-                var prefix = commit.Sha[..length];
-                if (map.TryGetValue(prefix, out var owner))
-                {
-                    // First-wins would resolve a prefix two commits share onto the wrong one and
-                    // rewrite history the caller never named.
-                    if (!ReferenceEquals(owner, commit)) ambiguous.Add(prefix);
-                }
-                else
-                {
-                    map[prefix] = commit;
-                }
-            }
-        }
-        foreach (var prefix in ambiguous) map.Remove(prefix);
-        return new ShaIndex(map, ambiguous);
-    }
+    private static ScopeShaIndex Index(RebaseScope scope) => ScopeShaIndex.For(scope.Commits);
 
     private static int IndexOf(RebaseScope scope, string sha)
     {
@@ -716,7 +709,7 @@ public class RebaseDriver
         return -1;
     }
 
-    private static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
+    private static string Short(string sha) => SurgeryText.Short(sha);
 
     private static Task<RebaseRunResult> Refuse(string reason) => Task.FromResult(RebaseRunResult.Failed(reason));
 

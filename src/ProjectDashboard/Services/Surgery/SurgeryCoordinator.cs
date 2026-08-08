@@ -79,6 +79,16 @@ public sealed class SurgeryCoordinator
         RunRebaseAsync(repoPath, depth, (scope, token) => _driver.RewordAsync(scope, sha, newMessage, policy, token), policy, ct);
 
     /// <summary>
+    /// Applies one combined plan — reorder, drops, squashes and rewords together — on the same
+    /// rails as every other rebase here. The plan is compiled against the range this call loads,
+    /// so a plan built against history that has since moved is refused before git runs.
+    /// </summary>
+    public Task<SurgeryResult> RunPlanAsync(
+        string repoPath, int depth, RebaseTodo todo,
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
+        RunRebaseAsync(repoPath, depth, (scope, token) => _driver.RunPlanAsync(scope, todo, policy, token), policy, ct);
+
+    /// <summary>
     /// Folds the staged changes into an older commit. The tree gate here admits staged changes —
     /// they are the operation's input — while still refusing unstaged ones, which git would
     /// reject at the rebase.

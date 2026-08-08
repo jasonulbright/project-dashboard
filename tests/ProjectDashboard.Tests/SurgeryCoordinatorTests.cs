@@ -206,6 +206,209 @@ public class SurgeryCoordinatorTests
         await new RewriteJournal().ClearAllAsync();
     }
 
+    // ── combined plans take the same rails as a single operation ──────────
+
+    /// <summary>A drop, a fold, a reword and a move, all in the range's own order.</summary>
+    private static RebaseTodo MixedPlan(IReadOnlyList<string> shas) =>
+        new()
+        {
+            Steps =
+            [
+                new RebaseStep(shas[0], RebaseStepAction.Pick, "a, reworded"),
+                new RebaseStep(shas[1], RebaseStepAction.Fixup),
+                new RebaseStep(shas[2], RebaseStepAction.Drop),
+                new RebaseStep(shas[4], RebaseStepAction.Pick),
+                new RebaseStep(shas[3], RebaseStepAction.Pick)
+            ]
+        };
+
+    [Fact]
+    public async Task RunPlan_ThroughTheRails_SucceedsThenUndoRestoresRefsExactly()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d", "e");
+        var before = await repo.RefStateAsync();
+        var subjectsBefore = await repo.SubjectsAsync();
+        var shas = await repo.RangeShasAsync(6);
+
+        var result = await NewCoordinator().RunPlanAsync(repo.Path, 5, MixedPlan(shas.Skip(1).ToList()));
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(["seed", "a, reworded", "e", "d"], (await repo.SubjectsAsync()).AsEnumerable().Reverse());
+        Assert.NotNull(result.Undo);
+        // A success that concluded clears the marker, exactly as a single-operation rebase does.
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+
+        var restore = await result.Undo!.RestoreAsync();
+        Assert.True(restore.Success, restore.Message);
+        Assert.Equal(before, await repo.RefStateAsync());
+        Assert.Equal(subjectsBefore, await repo.SubjectsAsync());
+        _output.WriteLine($"combined plan round-trip: refs byte-identical after undo\n{before}");
+    }
+
+    [Fact]
+    public async Task RunPlan_DirtyWorkingTree_RefusesBeforeAnyBackupIsTaken()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d", "e");
+        var before = await repo.RefStateAsync();
+        repo.Write("a.txt", "uncommitted edit\n");
+        var shas = await repo.RangeShasAsync(6);
+
+        var result = await NewCoordinator().RunPlanAsync(repo.Path, 5, MixedPlan(shas.Skip(1).ToList()));
+
+        Assert.False(result.Success);
+        Assert.Equal(SurgeryRefusal.UncommittedChanges, result.Refusal);
+        Assert.True(result.RepositoryUntouched);
+        Assert.Contains("a.txt", result.FailureReason);
+        Assert.Equal(before, await repo.RefStateAsync());
+        Assert.Empty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+    }
+
+    [Fact]
+    public async Task RunPlan_RefusedByTheCompiler_LeavesNoRecoveryMarker()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var before = await repo.FullStateAsync();
+        var shas = await repo.RangeShasAsync(3);
+
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(shas[0], RebaseStepAction.Pick),
+                new RebaseStep(shas[1], RebaseStepAction.Drop),
+                new RebaseStep(shas[2], RebaseStepAction.Fixup)
+            ]
+        };
+
+        var result = await NewCoordinator().RunPlanAsync(repo.Path, 3, plan);
+
+        Assert.False(result.Success);
+        Assert.Contains("a dropped commit cannot be a squash anchor", result.FailureReason);
+        Assert.True(result.RepositoryUntouched);
+        Assert.Equal(before, await repo.FullStateAsync());
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+    }
+
+    [Fact]
+    public async Task RunPlan_BuiltOnHistoryThatHasSinceMoved_IsRefusedAgainstTheRangeItLoads()
+    {
+        // The plan is compiled inside the gate, against the range this call reads. A commit made
+        // after the plan was built puts a commit in the range the plan never named.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var shas = await repo.RangeShasAsync(3);
+        repo.Write("gamma.txt", "gamma content\n");
+        await repo.CommitAllAsync("gamma");
+        var before = await repo.FullStateAsync();
+
+        var plan = new RebaseTodo
+        {
+            Steps = [new RebaseStep(shas[2], RebaseStepAction.Pick), new RebaseStep(shas[1], RebaseStepAction.Pick)]
+        };
+
+        var result = await NewCoordinator().RunPlanAsync(repo.Path, 3, plan);
+
+        Assert.False(result.Success);
+        Assert.Contains("lists 2 of the 3 commit(s) in the range", result.FailureReason);
+        Assert.Equal(before, await repo.FullStateAsync());
+    }
+
+    [Fact]
+    public async Task RunPlan_ThatConflicts_AbortsAndKeepsTheBackupButClearsTheJournal()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed");
+        repo.Write("shared.txt", "a\nSHARED-ONE\n");
+        await repo.CommitAllAsync("one");
+        repo.Write("shared.txt", "a\nSHARED-TWO\n");
+        await repo.CommitAllAsync("two");
+        repo.Write("three.txt", "three content\n");
+        await repo.CommitAllAsync("three");
+
+        var stateBefore = await repo.FullStateAsync();
+        var shas = await repo.RangeShasAsync(4);
+
+        // "two" replayed before "one", with an unrelated drop and reword riding along: a mixed
+        // plan's conflict is the same conflict, reported the same way.
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(shas[2], RebaseStepAction.Pick, "two, reworded"),
+                new RebaseStep(shas[1], RebaseStepAction.Pick),
+                new RebaseStep(shas[3], RebaseStepAction.Drop)
+            ]
+        };
+
+        var result = await NewCoordinator().RunPlanAsync(repo.Path, 3, plan);
+
+        Assert.False(result.Success);
+        Assert.True(result.Rebase!.Aborted);
+        Assert.False(result.Rebase.LeftStopped);
+        Assert.True(result.RepositoryUntouched);
+        Assert.Equal(shas[2], result.Rebase.ConflictCommit);
+        Assert.Contains("aborted", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(stateBefore, await repo.FullStateAsync());
+
+        Assert.NotNull(result.Undo);
+        Assert.NotEmpty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+    }
+
+    [Fact]
+    public async Task RunPlan_ThatConflicts_UnderLeaveStopped_KeepsTheRecoveryMarker()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed");
+        repo.Write("shared.txt", "a\nSHARED-ONE\n");
+        await repo.CommitAllAsync("one");
+        repo.Write("shared.txt", "a\nSHARED-TWO\n");
+        await repo.CommitAllAsync("two");
+        repo.Write("three.txt", "three content\n");
+        await repo.CommitAllAsync("three");
+        var shas = await repo.RangeShasAsync(4);
+
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(shas[2], RebaseStepAction.Pick),
+                new RebaseStep(shas[1], RebaseStepAction.Pick),
+                new RebaseStep(shas[3], RebaseStepAction.Drop)
+            ]
+        };
+
+        var result = await NewCoordinator().RunPlanAsync(repo.Path, 3, plan, RebaseConflictPolicy.LeaveStopped);
+
+        Assert.False(result.Success);
+        Assert.True(result.Rebase!.LeftStopped);
+        Assert.False(result.RepositoryUntouched);
+        var pending = await new RewriteJournal().ReadPendingAsync();
+        Assert.NotNull(pending);
+        Assert.Equal(repo.Path, pending!.RepoPath);
+        Assert.Equal("rebase", pending.Phase);
+
+        await repo.GitAsync("rebase", "--abort");
+        await new RewriteJournal().ClearAllAsync();
+    }
+
+    [Fact]
+    public async Task RunPlan_RepoBusy_RefusesWithoutTouchingTheRepository()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d", "e");
+        var before = await repo.RefStateAsync();
+        var busy = new RepoBusyRegistry();
+        var coordinator = NewCoordinator(busy);
+        var shas = await repo.RangeShasAsync(6);
+
+        using (busy.Acquire(repo.Path))
+        {
+            var result = await coordinator.RunPlanAsync(repo.Path, 5, MixedPlan(shas.Skip(1).ToList()));
+            Assert.False(result.Success);
+            Assert.Equal(SurgeryRefusal.RepositoryBusy, result.Refusal);
+        }
+
+        Assert.Equal(before, await repo.RefStateAsync());
+        Assert.False(busy.IsBusy(repo.Path));
+    }
+
     // ── amend a fix into an older commit ─────────────────────────────────
 
     [Fact]
