@@ -657,6 +657,56 @@ public class DashboardLiveApplyTests
     }
 
     [Fact]
+    public async Task ARootChangeDuringAProjectScaffold_QueuesTheRescanAndLandsOnRelease()
+    {
+        var first = TestEnv.NewDir("live-scaffold-first");
+        var second = TestEnv.NewDir("live-scaffold-second");
+        var settings = new SettingsService();
+        settings.Save(BaseSettings(first));
+
+        using var watcher = new ProjectWatcherService();
+        var discovery = new GatedDiscovery(settings, new GitHubService(settings));
+        var dashboard = NewDashboard(settings, watcher, new RepoBusyRegistry(), discovery);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+        Assert.Equal(first, dashboard.ConfiguredRootPath);
+
+        // New Project refreshes off the command, so nothing but its own flag tells the
+        // re-scan gate that a scan owns the project list.
+        var scaffold = dashboard.ScaffoldProjectAsync(Path.Combine(first, "alpha"), "alpha");
+        await WaitUntil(() => discovery.Started == 1);
+
+        var moved = settings.Load();
+        moved.ProjectsRootPath = second;
+        settings.Save(moved);
+
+        // Coalescing onto the parked scan would hand the root change a scan that read the
+        // old root before the write existed, and drop it with nothing left to re-fire.
+        Assert.Equal(DashboardRescan.QueuedStatus, dashboard.RescanStatus);
+        Assert.True(dashboard.RescanQueued);
+        Assert.Equal(first, dashboard.ConfiguredRootPath);
+        Assert.Equal(1, discovery.Started);
+
+        discovery.Release();
+        Assert.Null(await scaffold);
+        await dashboard.PendingRescan;
+
+        Assert.Equal(2, discovery.Started);
+        Assert.Equal(second, dashboard.ConfiguredRootPath);
+        Assert.Equal("", dashboard.RescanStatus);
+    }
+
+    /// <summary>Polls until the condition holds; a scan starts on a continuation, not inline.</summary>
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the awaited condition never became true");
+            await Task.Delay(15);
+        }
+    }
+
+    [Fact]
     public async Task HidingWithTheRescanQueued_SaysTheGridHasNotCaughtUp()
     {
         var root = TestEnv.NewDir("live-hide");

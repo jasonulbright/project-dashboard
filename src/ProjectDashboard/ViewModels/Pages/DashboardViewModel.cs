@@ -534,6 +534,7 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task NewProject()
     {
+        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
         var dialog = new Wpf.Ui.Controls.MessageBox
         {
             Title = "New Project",
@@ -561,14 +562,12 @@ public partial class DashboardViewModel : ObservableObject
         var result = await dialog.ShowDialogAsync();
         if (result != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
 
-        // Extract the text from the TextBox inside the dialog
         var stack = dialog.Content as System.Windows.Controls.StackPanel;
         var textBox = stack?.Children[1] as Wpf.Ui.Controls.TextBox;
         var projectName = textBox?.Text?.Trim() ?? "";
 
         if (string.IsNullOrWhiteSpace(projectName)) return;
 
-        // Sanitize: lowercase, replace spaces with hyphens, alphanumeric + hyphens only
         projectName = System.Text.RegularExpressions.Regex.Replace(
             projectName.ToLowerInvariant().Replace(' ', '-'), @"[^a-z0-9\-]", "");
 
@@ -588,30 +587,7 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        // Create folder structure
-        Directory.CreateDirectory(projectPath);
-
-        // README
-        File.WriteAllText(Path.Combine(projectPath, "README.md"),
-            $"# {projectName}\n\n");
-
-        // CHANGELOG
-        File.WriteAllText(Path.Combine(projectPath, "CHANGELOG.md"),
-            $"# Changelog\n\n## [0.1.0] - {DateTime.Now:yyyy-MM-dd}\n\n### Added\n- Initial project scaffold\n");
-
-        // Project metadata -> stored out-of-source under AppPaths.RoamingDir, not in the repo.
-        var manifest = new ProjectManifest
-        {
-            ProjectType = "unknown",
-            Status = "experimental",
-            Category = "Uncategorized",
-            ValidationSchedule = "none",
-            Notes = ""
-        };
-        await _discoveryService.SaveManifestAsync(projectPath, manifest);
-
-        // git init + stage + first commit — resolved git, real timeouts, errors surfaced.
-        var gitError = await _gitService.InitWithFirstCommitAsync(projectPath, "Initial project scaffold");
+        var gitError = await ScaffoldProjectAsync(projectPath, projectName);
         if (gitError is not null)
         {
             await new Wpf.Ui.Controls.MessageBox
@@ -621,9 +597,43 @@ public partial class DashboardViewModel : ObservableObject
                 CloseButtonText = "OK"
             }.ShowDialogAsync();
         }
+    }
 
-        // Refresh dashboard
-        await ForceRefreshAsync();
+    /// <summary>
+    /// Seeds the new project's folder and brings it onto the grid, holding the bulk-op flag
+    /// across both. Returns git's error text when the repository was left without its first
+    /// commit, so the report reaches the user outside the flag rather than stalling every
+    /// queued re-scan behind a modal.
+    /// </summary>
+    internal async Task<string?> ScaffoldProjectAsync(string projectPath, string projectName)
+    {
+        _bulkOpRunning = true;
+        try
+        {
+            Directory.CreateDirectory(projectPath);
+
+            File.WriteAllText(Path.Combine(projectPath, "README.md"),
+                $"# {projectName}\n\n");
+
+            File.WriteAllText(Path.Combine(projectPath, "CHANGELOG.md"),
+                $"# Changelog\n\n## [0.1.0] - {DateTime.Now:yyyy-MM-dd}\n\n### Added\n- Initial project scaffold\n");
+
+            // Project metadata -> stored out-of-source under AppPaths.RoamingDir, not in the repo.
+            var manifest = new ProjectManifest
+            {
+                ProjectType = "unknown",
+                Status = "experimental",
+                Category = "Uncategorized",
+                ValidationSchedule = "none",
+                Notes = ""
+            };
+            await _discoveryService.SaveManifestAsync(projectPath, manifest);
+
+            var gitError = await _gitService.InitWithFirstCommitAsync(projectPath, "Initial project scaffold");
+            await ForceRefreshAsync();
+            return gitError;
+        }
+        finally { _bulkOpRunning = false; }
     }
 
     /// <summary>
@@ -1214,6 +1224,11 @@ public partial class DashboardViewModel : ObservableObject
     /// stops a second toolbar press, but the palette, F5, the Settings page, and the
     /// settings-driven drain all execute without consulting it; two overlapping runs each
     /// replace the project list from a git fan-out the other is still running.
+    ///
+    /// Every direct caller holds _bulkOpRunning across the call, or runs through
+    /// ForceRefreshCommand. Neither leaves the re-scan gate reading idle: a settings write
+    /// arriving during an unguarded direct call passes the gate, coalesces onto the scan
+    /// already in flight, and its change never reaches the grid.
     /// </summary>
     private Task ForceRefreshAsync() =>
         _forceRefresh.IsCompleted ? _forceRefresh = RunForceRefreshAsync() : _forceRefresh;
