@@ -98,13 +98,14 @@ jobs:
           $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
           if (-not (Test-Path -LiteralPath $makensis)) {
             $onPath = Get-Command makensis -ErrorAction SilentlyContinue
-            if ($onPath) {
-              $makensis = $onPath.Source
-            }
-            else {
+            if (-not $onPath) {
               choco install nsis --no-progress --yes
               if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed with exit code $LASTEXITCODE." }
+              # The installer edits the machine PATH; this process keeps the one it started with.
+              $env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + $env:PATH
+              $onPath = Get-Command makensis -ErrorAction SilentlyContinue
             }
+            if ($onPath) { $makensis = $onPath.Source }
           }
           if (-not (Test-Path -LiteralPath $makensis)) { throw 'makensis.exe not found after install.' }
           "MAKENSIS=$makensis" >> $env:GITHUB_ENV
