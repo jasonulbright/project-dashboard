@@ -567,7 +567,7 @@ public partial class DashboardViewModel : ObservableObject
         File.WriteAllText(Path.Combine(projectPath, "CHANGELOG.md"),
             $"# Changelog\n\n## [0.1.0] - {DateTime.Now:yyyy-MM-dd}\n\n### Added\n- Initial project scaffold\n");
 
-        // Project metadata -> stored out-of-source in %APPDATA%, not in the repo.
+        // Project metadata -> stored out-of-source under AppPaths.RoamingDir, not in the repo.
         var manifest = new ProjectManifest
         {
             ProjectType = "unknown",

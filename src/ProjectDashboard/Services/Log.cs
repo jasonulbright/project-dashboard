@@ -4,7 +4,7 @@ namespace ProjectDashboard.Services;
 
 /// <summary>
 /// Minimal best-effort logger so swallowed failures are observable instead of silent.
-/// Writes to %LOCALAPPDATA%\ProjectDashboard\log.txt and the debug output. Never throws.
+/// Writes to log.txt under AppPaths.LocalDir and the debug output. Never throws.
 /// </summary>
 public static class Log
 {

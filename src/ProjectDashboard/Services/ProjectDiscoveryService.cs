@@ -66,7 +66,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
     public Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
     {
-        // Manifests live out-of-source in %APPDATA%, not in the repo root.
+        // Manifests live out-of-source under AppPaths.RoamingDir, not in the repo root.
         manifestStore.Save(repoPath, manifest);
         return Task.CompletedTask;
     }

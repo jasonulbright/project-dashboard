@@ -6,7 +6,7 @@ namespace ProjectDashboard.Services;
 
 /// <summary>
 /// Stores per-project manifests in a single path-keyed index that lives OUTSIDE
-/// project source trees, under %APPDATA%\ProjectDashboard\manifests.json.
+/// project source trees, as manifests.json under AppPaths.RoamingDir.
 ///
 /// Shape: { "C:\\projects\\tabkit": { ...ProjectManifest... }, ... }
 /// Keys are full repo paths, compared case-insensitively (Windows). Path-keying
