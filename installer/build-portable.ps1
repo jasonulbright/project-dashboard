@@ -84,7 +84,7 @@ if (Test-Path -LiteralPath $stageDir) {
 
 # A partial zip written straight to $zipPath is an openable archive under the release
 # asset name; the staging tree left behind on failure would be picked up by a later
-# `git add -A`. The finally block clears both.
+# `git add -A`.
 $partialPath = "$zipPath.partial"
 try {
     New-Item -ItemType Directory -Path $stageDir | Out-Null
@@ -116,11 +116,15 @@ Delete it to use the standard per-user location instead.
     Move-Item -LiteralPath $partialPath -Destination $zipPath -Force
 }
 finally {
+    # A file another process holds open fails the zip and then fails this cleanup too.
+    # Under $ErrorActionPreference = 'Stop' an unguarded removal is terminating: it
+    # aborts the rest of this block, so the .partial survives beside the release asset,
+    # and on the success path it fails the script after the zip is already correct.
     if (Test-Path -LiteralPath $stageDir) {
-        Remove-Item -LiteralPath $stageDir -Recurse -Force
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $partialPath) {
-        Remove-Item -LiteralPath $partialPath -Force
+        Remove-Item -LiteralPath $partialPath -Force -ErrorAction SilentlyContinue
     }
 }
 
