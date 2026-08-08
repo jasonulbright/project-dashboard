@@ -10,13 +10,23 @@ public class GitService
 
     /// <summary>
     /// Environment for every git call: never prompt for credentials (a windowless app
-    /// would hang invisibly), never take optional index locks during reads.
+    /// would hang invisibly), never take optional index locks during reads, and emit messages in
+    /// one fixed language. Several decisions are made by matching git's own words — a rejected
+    /// lease, a held index lock, a commit a rebase emptied — and git translates those words.
     /// </summary>
-    private static readonly Dictionary<string, string> GitEnvironment = new()
+    internal static readonly Dictionary<string, string> GitEnvironment = new()
     {
         ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0"
+        ["GIT_OPTIONAL_LOCKS"] = "0",
+        ["LC_ALL"] = "C",
+        ["LANGUAGE"] = "C"
     };
+
+    /// <summary>
+    /// Field separator for every --format this app parses. A unit separator cannot occur in a ref
+    /// name, a reflog subject, or a commit subject, so no value can split a record.
+    /// </summary>
+    internal const string FieldSeparator = "\u001f";
 
     /// <summary>
     /// True when the directory is a git checkout. A primary checkout has a .git
@@ -446,6 +456,28 @@ public class GitService
 
     // ── Stash ───────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// How many entries the stash stack holds, or null when git could not answer. Distinct from
+    /// <see cref="GetStashesAsync"/>, which reports a failed read as an empty list: a caller about
+    /// to destroy the stack needs "there are none" told apart from "this could not be read".
+    ///
+    /// The probe reads refs/stash's reflog directly, because that IS the stash stack. git reports
+    /// an absent refs/stash as an unknown revision, which is the one failure that means zero.
+    /// </summary>
+    public async Task<int?> CountStashEntriesAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["reflog", "show", "--format=%gd", "refs/stash"], ct);
+        if (result.Success)
+            return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+
+        var text = result.StdErr + result.StdOut;
+        if (!result.TimedOut && text.Contains("unknown revision", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        Log.Warn($"could not read the stash stack for {repoPath}: {result.FirstError}");
+        return null;
+    }
+
     public async Task<List<StashEntry>> GetStashesAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["stash", "list", "--format=%gd|%ci|%gs"], ct);
@@ -652,9 +684,6 @@ public class GitService
     /// <summary>Repacking a large repository outruns every other budget here, so maintenance gets its own.</summary>
     private static readonly TimeSpan MaintenanceTimeout = TimeSpan.FromMinutes(30);
 
-    /// <summary>Field separator for the reflog format. A unit separator cannot occur in a ref name or a reflog subject.</summary>
-    private const string ReflogFieldSeparator = "\u001f";
-
     /// <summary>
     /// One ref's reflog, newest first. <paramref name="reference"/> is passed to git as written
     /// ("HEAD", or a branch name), and each entry's index selector is derived from its position —
@@ -666,7 +695,7 @@ public class GitService
     public async Task<List<ReflogEntry>> GetReflogAsync(
         string repoPath, string reference, int limit = 200, CancellationToken ct = default)
     {
-        var format = string.Join(ReflogFieldSeparator, "%gD", "%gs", "%H", "%cI");
+        var format = string.Join(FieldSeparator, "%gD", "%gs", "%H", "%cI");
         var result = await RunAsync(repoPath,
             ["reflog", "show", "--date=iso-strict", "--format=" + format, "-n", limit.ToString(), reference], ct);
         if (!result.Success)
@@ -680,7 +709,7 @@ public class GitService
         var entries = new List<ReflogEntry>();
         foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var parts = raw.TrimEnd('\r').Split(ReflogFieldSeparator);
+            var parts = raw.TrimEnd('\r').Split(FieldSeparator);
             if (parts.Length < 4) continue;
             var (action, subject) = SplitReflogSubject(parts[1]);
             entries.Add(new ReflogEntry(
