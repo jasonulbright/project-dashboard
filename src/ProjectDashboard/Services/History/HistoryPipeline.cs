@@ -428,18 +428,22 @@ public sealed class HistoryPipeline
     }
 
     /// <summary>
-    /// Refuses a source holding a tag object that points at another tag object:
-    /// fast-export re-emits the inner tag under the outer ref name, so nested tags can
-    /// never round-trip, and failing here beats a corrupt target plus a post-import ref
-    /// diff. Detection reads each annotated tag's own `type` header via %(type) —
-    /// %(*objecttype) is unusable for this because it peels recursively to the final
-    /// non-tag object. Tags of blobs or trees round-trip and pass.
-    /// Residual refusal class: only refs/tags is scanned, so a nested tag object
-    /// referenced from a ref outside refs/tags evades this preflight, as does an
-    /// annotated tag whose embedded tag-name header mismatches its ref basename
-    /// (fast-export emits the ref basename, so the re-imported tag object hashes
-    /// differently). Both die loudly downstream — at fast-import or as a verification
-    /// ref difference — never as a silently wrong target.
+    /// Refuses a source holding a tag object the export cannot re-emit faithfully, before any
+    /// export work, so the refusal names the ref instead of surfacing later as a corrupt target
+    /// or a verification ref difference. Two shapes qualify, and every ref is scanned for both —
+    /// not only refs/tags, because a tag object is reachable from any ref and fast-export walks
+    /// every one of them:
+    ///
+    /// A tag object pointing at another tag object. fast-export re-emits the inner tag under the
+    /// outer ref's name, so both land on one ref and the nesting is lost. Detection reads the tag
+    /// object's own `type` header via %(type); %(*objecttype) is unusable because it peels
+    /// recursively to the final non-tag object. Tags of blobs or trees round-trip and pass.
+    ///
+    /// A tag object whose embedded name header is not the name fast-export will emit — the ref
+    /// name minus `refs/tags/`, or the whole ref name outside refs/tags. The re-imported tag
+    /// object then carries a different name than the source's and hashes differently, so the ref
+    /// no longer resolves to the object it did. A second ref pointing at an existing tag object
+    /// is the ordinary way to reach this.
     /// </summary>
     private async Task RefuseNestedTagsAsync(string sourceRepository, CancellationToken ct)
     {
@@ -448,19 +452,36 @@ public sealed class HistoryPipeline
         // content instead, so a nested tag can masquerade as tag→commit and slip past
         // this check while the export still walks the original nested tag.
         var result = await RunGitCheckedAsync(sourceRepository,
-            ["--no-replace-objects", "for-each-ref", "refs/tags", "--format=%(refname) %(objecttype) %(type)"], "preflight", ct);
+            ["--no-replace-objects", "for-each-ref", "--format=%(refname)%1f%(objecttype)%1f%(type)%1f%(tag)"], "preflight", ct);
 
-        var nested = new List<string>();
+        var refusals = new List<string>();
         foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            // Ref names cannot contain SP, so the two type fields are the last tokens.
-            var fields = raw.TrimEnd('\r').Split(' ');
-            if (fields.Length == 3 && fields[1] == "tag" && fields[2] == "tag")
-                nested.Add(fields[0]);
+            var line = raw.TrimEnd('\r');
+            // A tag name is arbitrary bytes and may hold the separator, so it is the trailing
+            // remainder rather than one field; the three ahead of it cannot contain either
+            // the separator or a newline.
+            var fields = line.Split('\x1f');
+            if (fields.Length < 4)
+                throw new HistoryPipelineException(
+                    "preflight", $"for-each-ref emitted a ref record the pre-flight cannot parse: '{line}'");
+            var (refName, objectType, pointeeType) = (fields[0], fields[1], fields[2]);
+            var tagName = string.Join('\x1f', fields[3..]);
+            if (objectType != "tag") continue;
+
+            if (pointeeType == "tag")
+            {
+                refusals.Add($"{refName} is a nested tag: it points at another tag object");
+                continue;
+            }
+
+            var emitted = refName.StartsWith("refs/tags/", StringComparison.Ordinal) ? refName["refs/tags/".Length..] : refName;
+            if (!string.Equals(tagName, emitted, StringComparison.Ordinal))
+                refusals.Add($"{refName} holds a tag object named '{tagName}', which the export would re-emit as '{emitted}'");
         }
-        if (nested.Count > 0)
+        if (refusals.Count > 0)
             throw new HistoryPipelineException(
-                "preflight", $"nested tags are unsupported — {string.Join(", ", nested)} point(s) at another tag object");
+                "preflight", $"these tags cannot round-trip through fast-export — {string.Join("; ", refusals)}");
     }
 
     private async Task CreateFreshBareRepoAsync(string targetPath, CancellationToken ct)

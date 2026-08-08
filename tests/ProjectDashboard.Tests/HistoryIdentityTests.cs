@@ -224,7 +224,7 @@ public class HistoryIdentityTests(ITestOutputHelper output)
         }));
 
         Assert.Equal("preflight", ex.Phase);
-        Assert.Contains("nested tags are unsupported", ex.Message);
+        Assert.Contains("nested tag", ex.Message);
         Assert.Contains("refs/tags/outer", ex.Message);
         Assert.DoesNotContain("refs/tags/inner", ex.Message);
         // The refusal must precede export: nothing spooled, no target created.
@@ -264,7 +264,7 @@ public class HistoryIdentityTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task TagWithMismatchedInternalNameEvadesPreflightAndFailsVerification()
+    public async Task TagWithMismatchedInternalNameIsRefusedBeforeExport()
     {
         using var f = new FixtureRepo();
         f.Write("a.txt", "a\n");
@@ -274,28 +274,81 @@ public class HistoryIdentityTests(ITestOutputHelper output)
         f.Git("update-ref", "refs/tags/beta", tagOid);
         f.Git("tag", "-d", "alpha");
 
-        // Pins the residual refusal class: the tag object's embedded name (alpha)
-        // mismatches its ref basename (beta). Preflight sees tag→commit and passes;
-        // fast-export emits `tag beta`, so the re-imported tag object hashes differently
-        // and the failure surfaces as a loud verification difference, never silently.
+        // The tag object's embedded name (alpha) mismatches the name the export emits for
+        // its ref (beta), so the re-imported tag object hashes differently and refs/tags/beta
+        // stops resolving to the object it named. Caught before any export work.
         var pipeline = new HistoryPipeline(GitGuard.GitExe);
-        var result = await pipeline.RunAsync(new HistoryPipelineOptions
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => pipeline.RunAsync(new HistoryPipelineOptions
         {
             SourceRepository = f.SourcePath,
             WorkingDirectory = f.WorkDir,
             TargetBareRepository = f.TargetPath,
             ExportTimeout = TimeSpan.FromMinutes(1),
             ImportTimeout = TimeSpan.FromMinutes(1)
-        });
-        Assert.NotNull(result);
+        }));
 
-        var verify = await IdentityVerifier.VerifyAsync(
-            GitGuard.GitExe, f.SourcePath, f.TargetPath, TimeSpan.FromMinutes(1));
-        Assert.False(verify.Success);
-        var difference = Assert.Single(verify.Differences);
-        Assert.Equal("refs/tags/beta", difference.RefName);
-        Assert.Equal(tagOid, difference.SourceObjectId);
-        Assert.NotEqual(tagOid, difference.TargetObjectId);
+        Assert.Equal("preflight", ex.Phase);
+        Assert.Contains("refs/tags/beta", ex.Message);
+        Assert.Contains("alpha", ex.Message);
+        Assert.False(File.Exists(Path.Combine(f.WorkDir, "export.spool")));
+        Assert.False(Directory.Exists(f.TargetPath));
+        Assert.NotEqual("", tagOid);
+    }
+
+    [Fact]
+    public async Task SecondRefOnAnExistingTagObjectIsRefusedBeforeExport()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("tag", "-a", "v1", "-m", "annotated");
+        var tagOid = f.Git("rev-parse", "v1").Trim();
+        f.Git("update-ref", "refs/tags/w1", tagOid);
+
+        // Both refs name one tag object whose own name header is v1; the export would emit it
+        // twice, once as v1 and once as w1, so w1 cannot come back as the object it named.
+        var pipeline = new HistoryPipeline(GitGuard.GitExe);
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => pipeline.RunAsync(new HistoryPipelineOptions
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(1),
+            ImportTimeout = TimeSpan.FromMinutes(1)
+        }));
+
+        Assert.Equal("preflight", ex.Phase);
+        Assert.Contains("refs/tags/w1", ex.Message);
+        Assert.DoesNotContain("refs/tags/v1 ", ex.Message);
+    }
+
+    [Fact]
+    public async Task NestedTagOutsideRefsTagsIsRefusedBeforeExport()
+    {
+        using var f = new FixtureRepo();
+        f.Write("a.txt", "a\n");
+        f.CommitAll("base");
+        f.Git("tag", "-a", "inner", "-m", "inner tag");
+        f.Git("-c", "advice.nestedTag=false", "tag", "-a", "outer", "-m", "tag of tag", "inner");
+        var outerOid = f.Git("rev-parse", "outer").Trim();
+        f.Git("update-ref", "refs/other/outer", outerOid);
+        f.Git("tag", "-d", "outer");
+
+        // fast-export walks every ref, not only refs/tags, so a nested tag parked outside
+        // refs/tags reaches the export exactly as one inside it does.
+        var pipeline = new HistoryPipeline(GitGuard.GitExe);
+        var ex = await Assert.ThrowsAsync<HistoryPipelineException>(() => pipeline.RunAsync(new HistoryPipelineOptions
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(1),
+            ImportTimeout = TimeSpan.FromMinutes(1)
+        }));
+
+        Assert.Equal("preflight", ex.Phase);
+        Assert.Contains("nested tag", ex.Message);
+        Assert.Contains("refs/other/outer", ex.Message);
     }
 
     [Fact]

@@ -162,6 +162,8 @@ public static class RewriteScrubVerdict
             return "The working tree has uncommitted changes. Commit or stash the files listed below, then start the rewrite again. Nothing was changed.";
         if (Has("nested tag"))
             return "A tag in this repository points at another tag object, which git's export cannot round-trip. Re-create or delete the listed tag, then start again. Nothing was changed.";
+        if (Has("cannot round-trip through fast-export"))
+            return "A tag in this repository carries a name that does not match the ref holding it, so git's export cannot reproduce it. Re-create or delete the listed tag, then start again. Nothing was changed.";
         if (Has("can never check out on Windows"))
             return "The rewrite would produce a path Windows cannot check out. Change the replacement text or narrow the scope so the path stays legal. Nothing was changed.";
         if (Has("backup failed"))
