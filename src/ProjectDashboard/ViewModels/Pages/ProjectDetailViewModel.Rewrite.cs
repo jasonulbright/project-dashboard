@@ -46,8 +46,10 @@ public sealed record RewritePreviewOutcome(RewriteReport? Report, string? Failur
 
 /// <summary>
 /// One repository's rewrite, from dry run to undo. The wizard drives this rather than
-/// <see cref="RewriteCoordinator"/> directly because the coordinator's preview handle and
-/// undo handle have internal constructors, so no test could supply them.
+/// <see cref="RewriteCoordinator"/> directly because the coordinator's handles are bound to
+/// real state — a preview handle names a rewritten temp bare on disk, an undo handle names a
+/// backup bundle and the lease registry guarding it — so every wizard-behaviour test would
+/// otherwise have to run the engine over a fixture repository to reach one screen.
 /// </summary>
 public interface IRewriteSession : IDisposable
 {
