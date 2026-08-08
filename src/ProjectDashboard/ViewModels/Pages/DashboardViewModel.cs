@@ -877,6 +877,90 @@ public partial class DashboardViewModel : ObservableObject
         }
     }
 
+    // ── Portfolio export (P-08) ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Exactly what an export file will hold, shown before the reader picks a destination.
+    /// It names every column and says where the values come from: the export re-reads no
+    /// repository, so a tree changed since the last scan is described as it was scanned.
+    /// </summary>
+    internal static string ExportNotice(int projectCount) =>
+        $"Exports {projectCount} {(projectCount == 1 ? "project" : "projects")} — everything the last scan discovered, "
+        + "including repositories that exist only on the remote.\n\n"
+        + "Columns: " + string.Join(", ", PortfolioExport.Columns) + ".\n\n"
+        + "These are the values already on the cards. Nothing is re-read from git for the export, "
+        + "so a repository changed since the last scan is exported as it was scanned — refresh first "
+        + "if you need it current.";
+
+    [RelayCommand]
+    private async Task ExportPortfolio()
+    {
+        if (Projects.Count == 0)
+        {
+            OpStatusText = "Export: no projects have been discovered to export.";
+            return;
+        }
+
+        var confirmed = await new Wpf.Ui.Controls.MessageBox
+        {
+            Title = "Export project inventory",
+            // Wrapped rather than set as the content directly: a lone text block becomes the
+            // window's own automation name, which then replaces the title a reader is
+            // announced on focus.
+            Content = new System.Windows.Controls.StackPanel
+            {
+                Children =
+                {
+                    new System.Windows.Controls.TextBlock
+                    {
+                        Text = ExportNotice(Projects.Count),
+                        TextWrapping = System.Windows.TextWrapping.Wrap,
+                        MaxWidth = 520
+                    }
+                }
+            },
+            PrimaryButtonText = "Choose file…",
+            CloseButtonText = "Cancel"
+        }.ShowDialogAsync();
+        if (confirmed != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+        if (PromptForExportDestination() is not { } destination) return;
+        await WritePortfolioAsync(destination.Path, destination.Format);
+    }
+
+    /// <summary>Destination chosen by the reader, or null when the save dialog was cancelled.</summary>
+    internal virtual (string Path, PortfolioFormat Format)? PromptForExportDestination()
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Export project inventory",
+            FileName = $"projects-{DateTime.Now:yyyy-MM-dd}",
+            DefaultExt = ".csv",
+            Filter = "Comma-separated values (*.csv)|*.csv|JSON (*.json)|*.json",
+            FilterIndex = 1,
+            AddExtension = true,
+            OverwritePrompt = true
+        };
+        return dialog.ShowDialog() == true
+            ? (dialog.FileName, PortfolioExport.FormatFor(dialog.FileName, dialog.FilterIndex))
+            : null;
+    }
+
+    /// <summary>Writes the inventory and reports the outcome, whichever it is.</summary>
+    internal async Task WritePortfolioAsync(string path, PortfolioFormat format)
+    {
+        try
+        {
+            await PortfolioExport.WriteAsync(path, format, Projects);
+            OpStatusText = $"Exported {Projects.Count} projects to {path}";
+        }
+        catch (Exception ex)
+        {
+            OpStatusText = $"Export failed — {ex.Message}";
+            Log.Warn($"portfolio export to {path} failed", ex);
+        }
+    }
+
     /// <summary>
     /// Clone dialog: paste a URL or pick from the signed-in user's repositories
     /// (type-to-filter). Clones into the configured projects root, then refreshes.

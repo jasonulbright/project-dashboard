@@ -222,6 +222,12 @@
                        Command="{Binding SyncAllCommand}"
                        ToolTip="Fetch every clean repo; fast-forward the ones behind, push the ones ahead"
                        Width="96" Margin="0,0,8,0" />
+            <ui:Button Content="Export" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon ArrowExportLtr24}"
+                       Command="{Binding ExportPortfolioCommand}"
+                       ToolTip="Save the project inventory as CSV or JSON"
+                       AutomationProperties.Name="Export project inventory"
+                       Width="92" Margin="0,0,8,0" />
             <TextBlock Text="{Binding OpStatusText}" FontSize="12" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             <TextBlock Text="{Binding RescanStatus}" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"

@@ -690,7 +690,9 @@ public class DashboardLiveApplyTests
         Assert.Equal(1, discovery.Started);
 
         discovery.Release();
-        Assert.Null(await scaffold);
+        var scaffolded = await scaffold;
+        Assert.True(scaffolded.Created);
+        Assert.Null(scaffolded.Error);
         await dashboard.PendingRescan;
 
         Assert.Equal(2, discovery.Started);
