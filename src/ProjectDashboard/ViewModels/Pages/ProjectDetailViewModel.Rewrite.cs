@@ -171,6 +171,14 @@ public partial class ProjectDetailViewModel
     private Task _rewriteStepInFlight = Task.CompletedTask;
 
     /// <summary>
+    /// The session whose step raised the page's busy gate, or null while no step holds it. Only
+    /// that session's step may lower the gate: a step whose session has left both the live
+    /// wizard and the parked lanes still owns the gate it took, and a step that never took the
+    /// gate must not reopen it under whichever run holds it now.
+    /// </summary>
+    private IRewriteSession? _rewriteStepGateOwner;
+
+    /// <summary>
     /// True while the step in flight is one that writes the repository. A dry run writes
     /// nothing and holds no backup, so leaving the page ends it; a rewrite or an undo is
     /// parked instead, because ending it would drop the only restore for what it replaced.
@@ -257,6 +265,14 @@ public partial class ProjectDetailViewModel
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ExecuteRewriteCommand))]
     private bool _rewriteRunning;
+
+    /// <summary>
+    /// Bound to the IsEnabled of the dry-run re-run control, which invokes the step directly
+    /// rather than through a command whose re-entrancy guard would refuse it.
+    /// </summary>
+    public bool RewriteNotRunning => !RewriteRunning;
+
+    partial void OnRewriteRunningChanged(bool value) => OnPropertyChanged(nameof(RewriteNotRunning));
 
     // ── Step 1: operation ───────────────────────────────────────────────────────
 
@@ -570,6 +586,9 @@ public partial class ProjectDetailViewModel
         RewriteErrorText = parked.ErrorText;
         RewriteRunning = parked.Running;
         IsBusy = parked.Running;
+        // The gate comes back with the step, so the step that raised it is the one entitled to
+        // lower it; a step run for another repository while this one was parked took ownership.
+        if (parked.Running) _rewriteStepGateOwner = parked.Session;
         RewriteStep = parked.Running ? RewriteWizardStep.Running : RewriteWizardStep.Result;
         RewriteWizardVisible = true;
     }
@@ -712,6 +731,11 @@ public partial class ProjectDetailViewModel
             RewriteErrorText = "History rewriting is unavailable — the rewrite engine was not configured for this session.";
             return;
         }
+
+        // Ahead of the supersede below, not only inside the step: replacing the held session
+        // while its step is still running strands that step's busy gate, because the step then
+        // finds itself neither the live wizard's nor any parked lane's.
+        if (RefuseRewriteStepWhileBusy()) return;
 
         RewriteRequest request;
         try
@@ -1172,14 +1196,11 @@ public partial class ProjectDetailViewModel
     /// </summary>
     private async Task RunRewriteStepAsync(string label, IRewriteSession session, bool writesRepo, Func<Task> body)
     {
-        if (IsBusy)
-        {
-            RewriteStatusText = "Another operation is running on this repository — wait for it to finish.";
-            return;
-        }
+        if (RefuseRewriteStepWhileBusy()) return;
         var repo = RepoPath;
         IsBusy = true;
         RewriteRunning = true;
+        _rewriteStepGateOwner = session;
         _rewriteStepWritesRepo = writesRepo;
         RewriteStatusText = $"{label}…";
         RewriteErrorText = "";
@@ -1210,17 +1231,27 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
-            if (OwnsLiveWizard(session))
+            if (ReferenceEquals(_rewriteStepGateOwner, session))
             {
+                _rewriteStepGateOwner = null;
                 IsBusy = false;
                 RewriteRunning = false;
                 _rewriteStepWritesRepo = false;
             }
-            else if (ParkedLaneFor(session) is { } lane)
-            {
+            if (!OwnsLiveWizard(session) && ParkedLaneFor(session) is { } lane)
                 lane.Running = false;
-            }
             done.SetResult();
         }
+    }
+
+    /// <summary>
+    /// True when a step must not start because the page already has an operation in flight.
+    /// Says so on the surface: the refusal is the only feedback a click that reaches here gets.
+    /// </summary>
+    private bool RefuseRewriteStepWhileBusy()
+    {
+        if (!IsBusy) return false;
+        RewriteStatusText = "Another operation is running on this repository — wait for it to finish.";
+        return true;
     }
 }

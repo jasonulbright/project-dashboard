@@ -85,6 +85,23 @@ public class RewriteWizardViewModelTests
         public IRewriteSession Create() => session;
     }
 
+    /// <summary>
+    /// Hands out a distinct session per call, so a dry run that supersedes another is driving a
+    /// different instance — which is what makes the live-wizard and gate-owner checks meaningful.
+    /// The last session is repeated once the sequence runs out.
+    /// </summary>
+    private sealed class SequenceFactory(params StubSession[] sessions) : IRewriteSessionFactory
+    {
+        public int CreateCount { get; private set; }
+
+        public IRewriteSession Create()
+        {
+            var session = sessions[Math.Min(CreateCount, sessions.Length - 1)];
+            CreateCount++;
+            return session;
+        }
+    }
+
     private static RewriteReport NewReport(params ScrubCheckResult[] checks) => new()
     {
         SourceRepository = @"C:\repo",
@@ -1085,4 +1102,140 @@ public class RewriteWizardViewModelTests
         Assert.DoesNotContain("another operation is running", vm.SyncStatusText);
         Assert.Contains("Pull", vm.SyncStatusText);
     }
+
+    // ── Overlapping dry runs ─────────────────────────────────────────────────
+
+    /// <summary>Operation → Scope → Preview with the dry run left in flight on its gate.</summary>
+    private static async Task<Task> StartDryRunAsync(ProjectDetailViewModel vm, StubSession session)
+    {
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        var running = vm.RewriteNextCommand.ExecuteAsync(null);
+        await session.PreviewEntered;
+        return running;
+    }
+
+    private static async Task<ProjectDetailViewModel> OpenWizardOnAsync(TempRepo repo, IRewriteSessionFactory factory)
+    {
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!, factory);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        return vm;
+    }
+
+    /// <summary>
+    /// The preview panel's re-run control sits on the surface while the first dry run is still
+    /// going, and it calls the step directly, so the command's own re-entrancy guard never
+    /// applies. Superseding the running session before the busy gate refuses the step leaves the
+    /// first step owning a gate nobody releases: the wizard stays busy for the rest of the
+    /// session and every repository operation on the page is refused.
+    /// </summary>
+    [Fact]
+    public async Task ASecondDryRunWhileTheFirstIsStillRunning_LeavesTheBusyGateReleasedAndTheWizardClosable()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-overlap");
+        using var _ = repo;
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = new StubSession { PreviewGate = gate.Task };
+        var second = new StubSession();
+        var factory = new SequenceFactory(first, second);
+        var vm = await OpenWizardOnAsync(repo, factory);
+
+        var running = await StartDryRunAsync(vm, first);
+        Assert.True(vm.IsBusy);
+        // The control the click lands on is disabled while a step runs.
+        Assert.False(vm.RewriteNotRunning);
+
+        await vm.RunRewritePreviewCommand.ExecuteAsync(null);
+
+        // Refused before anything was created or dropped: the running session is still the one
+        // the wizard holds, and no second engine run was started.
+        Assert.Equal(1, factory.CreateCount);
+        Assert.Equal(0, second.PreviewCount);
+        Assert.Contains("Another operation is running", vm.RewriteStatusText);
+
+        gate.SetResult();
+        await running;
+
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.RewriteRunning);
+        Assert.True(vm.RewriteNotRunning);
+        Assert.True(vm.RewritePreviewAvailable);
+
+        vm.CloseRewriteWizardCommand.Execute(null);
+        Assert.False(vm.RewriteWizardVisible);
+    }
+
+    /// <summary>
+    /// The refusal above must not cost the ordinary re-run its supersede: a dry run started once
+    /// the previous one has returned still replaces the held session and drops the scratch tree
+    /// the superseded one kept, which is a full bare repository per edit otherwise.
+    /// </summary>
+    [Fact]
+    public async Task ASecondDryRunAfterTheFirstReturned_SupersedesAndDisposesTheFirstSession()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-supersede");
+        using var _ = repo;
+
+        var first = new StubSession();
+        var second = new StubSession();
+        var factory = new SequenceFactory(first, second);
+        var vm = await OpenWizardOnAsync(repo, factory);
+
+        await AdvanceToPreviewAsync(vm);
+        Assert.Equal(1, first.PreviewCount);
+
+        await vm.RunRewritePreviewCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, factory.CreateCount);
+        Assert.Equal(1, second.PreviewCount);
+        await vm.RewriteSessionDisposal;
+        Assert.True(first.Disposed);
+        Assert.False(second.Disposed);
+        Assert.True(vm.RewritePreviewAvailable);
+    }
+
+    /// <summary>
+    /// A dry run holds no backup, so a project switch detaches its session rather than parking
+    /// it. The step is then neither live nor parked, and releasing the page's gate from it would
+    /// reopen it underneath whatever the new project started in the meantime.
+    /// </summary>
+    [Fact]
+    public async Task ADetachedDryRunReturning_DoesNotReleaseTheGateANewerStepIsHolding()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-orphan-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-orphan-b");
+        using var __ = repoB;
+
+        var gateA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessionA = new StubSession { PreviewGate = gateA.Task };
+        var sessionB = new StubSession { PreviewGate = gateB.Task };
+        var vm = await OpenWizardOnAsync(repoA, new SequenceFactory(sessionA, sessionB));
+
+        var runningA = await StartDryRunAsync(vm, sessionA);
+
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        Assert.False(vm.IsBusy);
+
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var runningB = await StartDryRunAsync(vm, sessionB);
+        Assert.True(vm.IsBusy);
+
+        gateA.SetResult();
+        await runningA;
+
+        // A's step is gone; B's gate is still B's.
+        Assert.True(vm.IsBusy);
+        Assert.True(vm.RewriteRunning);
+
+        gateB.SetResult();
+        await runningB;
+        Assert.False(vm.IsBusy);
+        await vm.RewriteSessionDisposal;
+    }
+
 }

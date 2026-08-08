@@ -429,6 +429,7 @@
                                        HorizontalAlignment="Left"
                                        Icon="{ui:SymbolIcon Play24}"
                                        Command="{Binding RunRewritePreviewCommand}"
+                                       IsEnabled="{Binding RewriteNotRunning}"
                                        AutomationProperties.Name="Run the dry run again" />
                             <ContentControl Template="{StaticResource RewriteReportTemplate}"
                                             Visibility="{Binding RewritePreviewAvailable, Converter={StaticResource BooleanToVisibilityConverter}}" />
