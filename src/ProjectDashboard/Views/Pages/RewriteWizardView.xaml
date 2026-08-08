@@ -203,12 +203,15 @@
                             <TextBlock Style="{StaticResource WizardHint}"
                                        Text="Rewriting history replaces every affected commit with a new one. A verified backup is taken before anything is applied, and this app never pushes the result." />
 
-                            <!-- These choices, and the scope choices below, take their exclusivity
-                                 from the panel they sit in and carry no GroupName. A named group is
-                                 an application-wide one keyed by visual root, so it also matches the
-                                 buttons of any other pane bound to the same view model — and the
-                                 button it unchecks writes false back through its two-way binding,
-                                 clearing the choice and the input panel that choice renders. -->
+                            <!-- These choices, and the scope choices below, stay two-way because a
+                                 selection made through automation arrives as a write to the
+                                 property and raises no click. The framework's uncheck of a losing
+                                 button arrives the same way, so the view model refuses a false
+                                 write rather than the binding refusing to carry it. No GroupName
+                                 either: a named group is an application-wide table matched by
+                                 visual root, and every pane not connected to a window shares one,
+                                 so a second pane over the same view model unchecks the visible
+                                 one's buttons. -->
                             <RadioButton x:Name="FirstOperationChoice" Style="{StaticResource WizardChoice}"
                                          Content="Replace text in file contents"
                                          IsChecked="{Binding RewriteOperationIsReplaceText, Mode=TwoWay}"

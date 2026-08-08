@@ -793,6 +793,91 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.RewriteOverallVerdict!.ClaimsClean);
     }
 
+    // ── Choice flags ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The choice flags are views onto one field, so choosing an operation clears the rest
+    /// without the view arranging it, and there is no order of writes that reaches a state with
+    /// none chosen.
+    /// </summary>
+    [Fact]
+    public void ChoosingAnOperation_ClearsEveryOtherOperation()
+    {
+        var vm = NewVm(new StubSession());
+
+        vm.RewriteOperationIsMessages = true;
+
+        Assert.True(vm.RewriteOperationIsMessages);
+        Assert.False(vm.RewriteOperationIsReplaceText);
+        Assert.False(vm.RewriteOperationIsPurgePath);
+        Assert.False(vm.RewriteOperationIsIdentity);
+    }
+
+    [Fact]
+    public void ChoosingAScope_ClearsEveryOtherScope()
+    {
+        var vm = NewVm(new StubSession());
+
+        vm.RewriteScopeIsExplicitCommits = true;
+
+        Assert.True(vm.RewriteScopeIsExplicitCommits);
+        Assert.False(vm.RewriteScopeIsAllHistory);
+        Assert.False(vm.RewriteScopeIsGlobs);
+        Assert.False(vm.RewriteScopeIsExplicitPaths);
+        Assert.False(vm.RewriteScopeIsCommitRange);
+    }
+
+    /// <summary>
+    /// The framework unchecks a losing radio button by writing false straight to the property.
+    /// Honouring that would leave the wizard with no operation chosen, no input panel rendered,
+    /// and every button reading unchecked — so a false write clears nothing.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteOperationIsReplaceText))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteOperationIsPurgePath))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteOperationIsMessages))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteOperationIsIdentity))]
+    public void ClearingTheChosenOperationFlag_LeavesTheChoiceStanding(string chosen)
+        => AssertChoiceSurvivesItsOwnUncheck(chosen,
+        [
+            nameof(ProjectDetailViewModel.RewriteOperationIsReplaceText),
+            nameof(ProjectDetailViewModel.RewriteOperationIsPurgePath),
+            nameof(ProjectDetailViewModel.RewriteOperationIsMessages),
+            nameof(ProjectDetailViewModel.RewriteOperationIsIdentity),
+        ]);
+
+    [Theory]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteScopeIsAllHistory))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteScopeIsGlobs))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteScopeIsExplicitPaths))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteScopeIsExplicitCommits))]
+    [InlineData(nameof(ProjectDetailViewModel.RewriteScopeIsCommitRange))]
+    public void ClearingTheChosenScopeFlag_LeavesTheChoiceStanding(string chosen)
+        => AssertChoiceSurvivesItsOwnUncheck(chosen,
+        [
+            nameof(ProjectDetailViewModel.RewriteScopeIsAllHistory),
+            nameof(ProjectDetailViewModel.RewriteScopeIsGlobs),
+            nameof(ProjectDetailViewModel.RewriteScopeIsExplicitPaths),
+            nameof(ProjectDetailViewModel.RewriteScopeIsExplicitCommits),
+            nameof(ProjectDetailViewModel.RewriteScopeIsCommitRange),
+        ]);
+
+    private static void AssertChoiceSurvivesItsOwnUncheck(string chosen, string[] group)
+    {
+        var vm = NewVm(new StubSession());
+        var flags = group.ToDictionary(
+            name => name,
+            name => typeof(ProjectDetailViewModel).GetProperty(name)
+                ?? throw new InvalidOperationException($"no choice flag named {name}"));
+
+        flags[chosen].SetValue(vm, true);
+        foreach (var flag in group) flags[flag].SetValue(vm, false);
+
+        Assert.True((bool)flags[chosen].GetValue(vm)!, $"{chosen} did not survive its own uncheck");
+        foreach (var other in group.Where(name => name != chosen))
+            Assert.False((bool)flags[other].GetValue(vm)!, $"{other} is chosen alongside {chosen}");
+    }
+
     // ── Request construction ─────────────────────────────────────────────────
 
     [Fact]

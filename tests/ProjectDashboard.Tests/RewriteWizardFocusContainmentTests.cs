@@ -75,19 +75,27 @@ public class RewriteWizardFocusContainmentTests
     }
 
     /// <summary>
-    /// The detail page is transient and its view model is shared, so a navigation away and back
-    /// leaves an unrooted pane bound to the same properties as the visible one. A GroupName joins
-    /// an application-wide table matched by visual root, which every unrooted pane shares, so the
-    /// choices must not carry one.
+    /// The detail page is transient over a shared view model, so a navigation away and back
+    /// leaves an unrooted pane bound to the same properties as the visible one. A GroupName is an
+    /// application-wide table matched by visual root, which every unrooted pane shares, so that
+    /// pane's buttons uncheck the visible one's. The write path stays two-way because a selection
+    /// made through automation arrives as a property write and raises no click; refusing the
+    /// uncheck is the view model's job, which
+    /// <see cref="RewriteWizardViewModelTests.ClearingTheChosenOperationFlag_LeavesTheChoiceStanding"/>
+    /// covers.
     /// </summary>
     [Fact]
     public void TheWizardChoices_JoinNoApplicationWideRadioGroup()
     {
         var choices = Regex.Matches(File.ReadAllText(SourceFile("RewriteWizardView.xaml")),
-            @"<RadioButton\b[^>]*>", RegexOptions.Singleline);
+            @"<RadioButton\b[^>]*?/>", RegexOptions.Singleline);
 
-        Assert.NotEmpty(choices);
-        Assert.DoesNotContain(choices, choice => choice.Value.Contains("GroupName"));
+        Assert.Equal(9, choices.Count);
+        foreach (var choice in choices.Select(match => match.Value))
+        {
+            Assert.DoesNotContain("GroupName", choice);
+            Assert.Contains("Mode=TwoWay", choice);
+        }
     }
 
     /// <summary>

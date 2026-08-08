@@ -324,10 +324,53 @@ public partial class ProjectDetailViewModel
 
     // ── Step 1: operation ───────────────────────────────────────────────────────
 
-    [ObservableProperty] private bool _rewriteOperationIsReplaceText = true;
-    [ObservableProperty] private bool _rewriteOperationIsPurgePath;
-    [ObservableProperty] private bool _rewriteOperationIsMessages;
-    [ObservableProperty] private bool _rewriteOperationIsIdentity;
+    /// <summary>
+    /// The chosen operation. The four flags below are views onto this one field rather than
+    /// independent state, so no two can read true and clearing one is not a way to reach a state
+    /// with none chosen. Each flag ignores a false write: the framework unchecks a radio button
+    /// that loses its group by writing false straight to the bound property, and honouring that
+    /// would leave the wizard with no operation and no input panel while every button reads
+    /// unchecked.
+    /// </summary>
+    private RewriteOperationKind _rewriteOperation = RewriteOperationKind.ReplaceText;
+
+    internal RewriteOperationKind RewriteOperation
+    {
+        get => _rewriteOperation;
+        set
+        {
+            if (_rewriteOperation == value) return;
+            _rewriteOperation = value;
+            OnPropertyChanged(nameof(RewriteOperationIsReplaceText));
+            OnPropertyChanged(nameof(RewriteOperationIsPurgePath));
+            OnPropertyChanged(nameof(RewriteOperationIsMessages));
+            OnPropertyChanged(nameof(RewriteOperationIsIdentity));
+        }
+    }
+
+    public bool RewriteOperationIsReplaceText
+    {
+        get => RewriteOperation == RewriteOperationKind.ReplaceText;
+        set { if (value) RewriteOperation = RewriteOperationKind.ReplaceText; }
+    }
+
+    public bool RewriteOperationIsPurgePath
+    {
+        get => RewriteOperation == RewriteOperationKind.PurgePath;
+        set { if (value) RewriteOperation = RewriteOperationKind.PurgePath; }
+    }
+
+    public bool RewriteOperationIsMessages
+    {
+        get => RewriteOperation == RewriteOperationKind.RewriteMessages;
+        set { if (value) RewriteOperation = RewriteOperationKind.RewriteMessages; }
+    }
+
+    public bool RewriteOperationIsIdentity
+    {
+        get => RewriteOperation == RewriteOperationKind.RewriteIdentity;
+        set { if (value) RewriteOperation = RewriteOperationKind.RewriteIdentity; }
+    }
 
     [ObservableProperty] private string _rewriteFindText = "";
     [ObservableProperty] private string _rewriteReplacementText = "";
@@ -347,11 +390,53 @@ public partial class ProjectDetailViewModel
 
     // ── Step 2: scope ───────────────────────────────────────────────────────────
 
-    [ObservableProperty] private bool _rewriteScopeIsAllHistory = true;
-    [ObservableProperty] private bool _rewriteScopeIsGlobs;
-    [ObservableProperty] private bool _rewriteScopeIsExplicitPaths;
-    [ObservableProperty] private bool _rewriteScopeIsExplicitCommits;
-    [ObservableProperty] private bool _rewriteScopeIsCommitRange;
+    /// <summary>The chosen scope, held and guarded on the same terms as <see cref="RewriteOperation"/>.</summary>
+    private RewriteScopeChoice _rewriteScopeSelection = RewriteScopeChoice.AllHistory;
+
+    internal RewriteScopeChoice RewriteScopeSelection
+    {
+        get => _rewriteScopeSelection;
+        set
+        {
+            if (_rewriteScopeSelection == value) return;
+            _rewriteScopeSelection = value;
+            OnPropertyChanged(nameof(RewriteScopeIsAllHistory));
+            OnPropertyChanged(nameof(RewriteScopeIsGlobs));
+            OnPropertyChanged(nameof(RewriteScopeIsExplicitPaths));
+            OnPropertyChanged(nameof(RewriteScopeIsExplicitCommits));
+            OnPropertyChanged(nameof(RewriteScopeIsCommitRange));
+        }
+    }
+
+    public bool RewriteScopeIsAllHistory
+    {
+        get => RewriteScopeSelection == RewriteScopeChoice.AllHistory;
+        set { if (value) RewriteScopeSelection = RewriteScopeChoice.AllHistory; }
+    }
+
+    public bool RewriteScopeIsGlobs
+    {
+        get => RewriteScopeSelection == RewriteScopeChoice.Globs;
+        set { if (value) RewriteScopeSelection = RewriteScopeChoice.Globs; }
+    }
+
+    public bool RewriteScopeIsExplicitPaths
+    {
+        get => RewriteScopeSelection == RewriteScopeChoice.ExplicitPaths;
+        set { if (value) RewriteScopeSelection = RewriteScopeChoice.ExplicitPaths; }
+    }
+
+    public bool RewriteScopeIsExplicitCommits
+    {
+        get => RewriteScopeSelection == RewriteScopeChoice.ExplicitCommits;
+        set { if (value) RewriteScopeSelection = RewriteScopeChoice.ExplicitCommits; }
+    }
+
+    public bool RewriteScopeIsCommitRange
+    {
+        get => RewriteScopeSelection == RewriteScopeChoice.CommitRange;
+        set { if (value) RewriteScopeSelection = RewriteScopeChoice.CommitRange; }
+    }
 
     [ObservableProperty] private string _rewriteScopeGlobsText = "";
     [ObservableProperty] private string _rewriteScopePathsText = "";
@@ -426,24 +511,7 @@ public partial class ProjectDetailViewModel
         HandleHistoryDepthPropertyChanged(e);
     }
 
-    // ── Derived selections ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// The chosen operation. The radio buttons own the booleans; a fixed priority keeps the
-    /// answer deterministic even if two were ever set at once.
-    /// </summary>
-    internal RewriteOperationKind RewriteOperation =>
-        RewriteOperationIsPurgePath ? RewriteOperationKind.PurgePath
-        : RewriteOperationIsMessages ? RewriteOperationKind.RewriteMessages
-        : RewriteOperationIsIdentity ? RewriteOperationKind.RewriteIdentity
-        : RewriteOperationKind.ReplaceText;
-
-    internal RewriteScopeChoice RewriteScopeSelection =>
-        RewriteScopeIsGlobs ? RewriteScopeChoice.Globs
-        : RewriteScopeIsExplicitPaths ? RewriteScopeChoice.ExplicitPaths
-        : RewriteScopeIsExplicitCommits ? RewriteScopeChoice.ExplicitCommits
-        : RewriteScopeIsCommitRange ? RewriteScopeChoice.CommitRange
-        : RewriteScopeChoice.AllHistory;
+    // ── Step flags ──────────────────────────────────────────────────────────────
 
     partial void OnRewriteStepChanged(RewriteWizardStep value) => ApplyRewriteStep(value);
 
@@ -526,10 +594,7 @@ public partial class ProjectDetailViewModel
         RewriteCanCancel = false;
         RewriteCancelLabel = "";
 
-        RewriteOperationIsReplaceText = true;
-        RewriteOperationIsPurgePath = false;
-        RewriteOperationIsMessages = false;
-        RewriteOperationIsIdentity = false;
+        RewriteOperation = RewriteOperationKind.ReplaceText;
         RewriteFindText = "";
         RewriteReplacementText = "";
         RewriteUseRegex = false;
@@ -543,11 +608,7 @@ public partial class ProjectDetailViewModel
         RewriteNewName = "";
         RewriteNewEmail = "";
 
-        RewriteScopeIsAllHistory = true;
-        RewriteScopeIsGlobs = false;
-        RewriteScopeIsExplicitPaths = false;
-        RewriteScopeIsExplicitCommits = false;
-        RewriteScopeIsCommitRange = false;
+        RewriteScopeSelection = RewriteScopeChoice.AllHistory;
         RewriteScopeGlobsText = "";
         RewriteScopePathsText = "";
         RewriteScopeCommits = [];
