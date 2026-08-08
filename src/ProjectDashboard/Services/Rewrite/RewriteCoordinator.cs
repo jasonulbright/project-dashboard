@@ -132,6 +132,7 @@ public sealed class RewriteCoordinator
 
         string? ownedScratch = null;
         UndoHandle? undo = null;
+        var journalled = false;
         try
         {
             phase?.Report(RewritePhase.Preparing);
@@ -180,6 +181,7 @@ public sealed class RewriteCoordinator
                 Phase = "swap",
                 UtcStamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")
             }, ct);
+            journalled = true;
 
             // 5. Engine rewrite → temp bare + report (reuse the preview's bare when provided).
             RewriteReport report;
@@ -238,8 +240,12 @@ public sealed class RewriteCoordinator
             // no ref moved. The journal records operations that were INTERRUPTED and may need
             // recovery; a run that stopped at a safe point is neither, and leaving the entry
             // would raise a crash-recovery prompt at the next launch over a repository nothing
-            // touched. Cleared under an uncancellable token, or the clear would be cancelled too.
-            await _journal.CompleteAsync(repo, CancellationToken.None);
+            // touched. Only a run that wrote its own entry clears one: the journal is keyed per
+            // repository, so a cancellation before the Begin above would otherwise delete an
+            // earlier crashed run's entry and orphan the backup it names. Cleared under an
+            // uncancellable token, or the clear would be cancelled too.
+            if (journalled)
+                await _journal.CompleteAsync(repo, CancellationToken.None);
             return RewriteExecutionResult.CancelledBeforeApply();
         }
         finally

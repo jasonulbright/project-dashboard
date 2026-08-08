@@ -270,6 +270,61 @@ public class RewriteCancellationTests
     }
 
     /// <summary>
+    /// The journal is keyed per repository, so one run's entry occupies the slot an earlier
+    /// crashed run left pending. A cancellation before this run writes its own entry must leave
+    /// that one alone: clearing it takes down both the dashboard and the project banner and
+    /// leaves nothing pointing at the bundle the crashed run took.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_CancelledDuringTheBackup_LeavesAnEarlierRunsJournalEntry()
+    {
+        using var f = new FixtureRepo(bareSource: false, prefix: "cancel-journal-");
+        SeedSecretHistory(f);
+
+        var journal = new RewriteJournal();
+        await journal.BeginAsync(new RewriteJournalEntry
+        {
+            RepoPath = f.SourcePath,
+            BackupHandle = new BackupHandle { RepoPath = f.SourcePath, UtcStamp = "19990101-000000000" },
+            Phase = "swap",
+            UtcStamp = "19990101-000000000"
+        });
+
+        using var cts = new CancellationTokenSource();
+        var git = new CancellingBackup(cts);
+        var coordinator = new RewriteCoordinator(
+            new BackupService(git, new SettingsService()),
+            new RepoBusyRegistry(),
+            git,
+            new SwapService(git, GitGuard.GitExe),
+            gitExecutable: GitGuard.GitExe);
+
+        var result = await coordinator.ExecuteAsync(Request(f), cts.Token);
+
+        Assert.True(result.Cancelled);
+        var pending = await journal.ReadPendingAsync(f.SourcePath);
+        Assert.NotNull(pending);
+        Assert.Equal("19990101-000000000", pending!.UtcStamp);
+        Assert.Equal("19990101-000000000", pending.BackupHandle!.UtcStamp);
+        _output.WriteLine("cancelled during the backup: the earlier run's pending entry survives");
+    }
+
+    /// <summary>
+    /// A git service that cancels the run while the backup's bundle is being written, so the
+    /// cancellation lands before the coordinator has written a journal entry of its own.
+    /// </summary>
+    private sealed class CancellingBackup(CancellationTokenSource source) : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            if (list.Contains("bundle")) source.Cancel();
+            return base.RunAsync(repoPath, list, ct, timeout);
+        }
+    }
+
+    /// <summary>
     /// A swap that cancels the run's own token at its entry, so the cancellation lands after the
     /// backup and the journal entry but before any ref could move — the window the coordinator's
     /// cancelled outcome exists for.
