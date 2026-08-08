@@ -67,6 +67,13 @@ public partial class ProjectDetailViewModel
     private string RepoPath => Project?.FullPath ?? "";
 
     /// <summary>
+    /// The app-wide record of repositories under a destructive operation. <see cref="IsBusy"/>
+    /// serializes this page's ops against each other only; a rewrite runs under a lease on the
+    /// repository, outlives this page, and is reachable from surfaces this flag knows nothing of.
+    /// </summary>
+    private readonly Services.Safety.RepoBusyRegistry _busyRegistry;
+
+    /// <summary>
     /// Bumped every time a different project is applied. Async continuations capture it
     /// and bail if it changed while they awaited — a slow op on project A must never write
     /// to (or mutate a file in) project B after the user switched. Guarding on RepoPath
@@ -546,10 +553,22 @@ public partial class ProjectDetailViewModel
     /// while the new project's op is mid-flight, letting two mutating git ops overlap
     /// on one repository (index.lock / FETCH_HEAD.lock collisions). A stale op also
     /// returns false and writes no status, so caller continuations are skipped.
+    ///
+    /// The repository lease is the gate that holds across pages: a rewrite's swap runs under
+    /// one, and an op that consulted only this page's flag would run `git pull` into the middle
+    /// of it, merging the un-rewritten remote history back over the rewrite. Held for the whole
+    /// op in both directions, so a rewrite started while an op runs is refused rather than
+    /// interleaved.
     /// </summary>
     private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label, string repo, int gen)
     {
         if (!IsCurrent(gen) || IsBusy) return false;
+        if (repo.Length == 0) return false;
+        if (!_busyRegistry.TryAcquire(repo, out var lease))
+        {
+            SyncStatusText = $"{label} refused: another operation is running on this repository.";
+            return false;
+        }
         IsBusy = true;
         SyncStatusText = $"{label}…";
         StaleLockRetryVisible = false;
@@ -589,6 +608,7 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
+            lease.Dispose();
             if (IsCurrent(gen)) IsBusy = false;
         }
     }

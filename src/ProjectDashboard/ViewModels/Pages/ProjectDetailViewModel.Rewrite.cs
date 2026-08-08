@@ -170,6 +170,42 @@ public partial class ProjectDetailViewModel
     /// <summary>Completes when the step in flight returns. A session detached mid-run waits on it before disposal.</summary>
     private Task _rewriteStepInFlight = Task.CompletedTask;
 
+    /// <summary>
+    /// True while the step in flight is one that writes the repository. A dry run writes
+    /// nothing and holds no backup, so leaving the page ends it; a rewrite or an undo is
+    /// parked instead, because ending it would drop the only restore for what it replaced.
+    /// </summary>
+    private bool _rewriteStepWritesRepo;
+
+    /// <summary>
+    /// Rewrites whose repository is not the one on screen, keyed by <see cref="RepoKey"/>. A
+    /// session that has taken a backup owns the only one-click restore for the history it
+    /// replaced, and the wizard's result screen is the only surface offering it, so leaving the
+    /// page parks the session here instead of disposing it. Sessions leave the park only by
+    /// being restored and then closed.
+    /// </summary>
+    private readonly Dictionary<string, ParkedRewrite> _parkedRewrites = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// One repository's rewrite while its page is not on screen: the session plus the result
+    /// screen it is entitled to when the reader comes back. Only what the result screen renders
+    /// is held — the operation and scope inputs describe a run that already happened, and the
+    /// confirm message they built is carried as text.
+    /// </summary>
+    private sealed class ParkedRewrite
+    {
+        public required IRewriteSession Session { get; init; }
+        public required Task StepInFlight { get; set; }
+        public bool Running { get; set; }
+        public RewriteReport? Report { get; set; }
+        public bool Succeeded { get; set; }
+        public bool UndoAvailable { get; set; }
+        public string UndoText { get; set; } = "";
+        public string StatusText { get; set; } = "";
+        public string ErrorText { get; set; } = "";
+        public string ConfirmPhrase { get; set; } = "";
+    }
+
     /// <summary>The off-thread disposal of the last detached session; held so a headless test can await it.</summary>
     internal Task RewriteSessionDisposal { get; private set; } = Task.CompletedTask;
 
@@ -484,6 +520,73 @@ public partial class ProjectDetailViewModel
         RewriteSessionDisposal = DisposeAfterAsync(pending, session);
     }
 
+    /// <summary>
+    /// Moves this repository's rewrite out of the page's way without ending it. A session that
+    /// has reached execution holds a backup and the only undo for it; a project switch is not
+    /// consent to give that up, so it is parked rather than disposed and the reader gets its
+    /// result screen back on return. A dry-run-only session took no backup and changed nothing,
+    /// so it is left for <see cref="ResetRewriteState"/> to dispose.
+    /// </summary>
+    private void ParkRewriteSessionForThisRepo()
+    {
+        var repo = RepoPath;
+        var session = _rewriteSession;
+        if (repo.Length == 0 || session is null) return;
+        if (!session.CanUndo && !(RewriteRunning && _rewriteStepWritesRepo)) return;
+
+        _rewriteSession = null;
+        _parkedRewrites[RepoKey.For(repo)] = new ParkedRewrite
+        {
+            Session = session,
+            StepInFlight = _rewriteStepInFlight,
+            Running = RewriteRunning,
+            Report = _rewriteReport,
+            Succeeded = RewriteResultSucceeded,
+            UndoAvailable = RewriteUndoAvailable,
+            UndoText = RewriteUndoText,
+            StatusText = RewriteStatusText,
+            ErrorText = RewriteErrorText,
+            ConfirmPhrase = RewriteConfirmPhrase,
+        };
+    }
+
+    /// <summary>
+    /// Puts this repository's parked rewrite back on screen. The wizard reopens over the work
+    /// area it was covering, so the surfaces the scrim disables stay disabled for a run that is
+    /// still going, and the busy gate comes back with it.
+    /// </summary>
+    private void RestoreParkedRewrite()
+    {
+        if (RepoPath.Length == 0 || !_parkedRewrites.Remove(RepoKey.For(RepoPath), out var parked)) return;
+
+        _rewriteSession = parked.Session;
+        _rewriteStepInFlight = parked.StepInFlight;
+        RewriteConfirmPhrase = parked.ConfirmPhrase;
+        if (parked.Report is { } report) ShowReport(report);
+        RewriteResultSucceeded = parked.Succeeded;
+        RewriteUndoAvailable = parked.UndoAvailable;
+        RewriteUndoText = parked.UndoText;
+        RewriteStatusText = parked.StatusText;
+        RewriteErrorText = parked.ErrorText;
+        RewriteRunning = parked.Running;
+        IsBusy = parked.Running;
+        RewriteStep = parked.Running ? RewriteWizardStep.Running : RewriteWizardStep.Result;
+        RewriteWizardVisible = true;
+    }
+
+    /// <summary>The parked lane a step's own session sits in, or null when that session is not parked.</summary>
+    private ParkedRewrite? ParkedLaneFor(IRewriteSession session) =>
+        _parkedRewrites.Values.FirstOrDefault(p => ReferenceEquals(p.Session, session));
+
+    /// <summary>
+    /// Whether a step that ran on <paramref name="session"/> may still write the live surface.
+    /// Session identity, not the page generation: a rewrite outlives a project switch, so the
+    /// generation moves twice on a switch away and back while the step is still the one this
+    /// wizard is showing. Restoring a parked rewrite re-attaches the same instance, which is
+    /// what makes that round trip land on screen instead of in a lane nobody reads.
+    /// </summary>
+    private bool OwnsLiveWizard(IRewriteSession session) => ReferenceEquals(_rewriteSession, session);
+
     private static async Task DisposeAfterAsync(Task pending, IRewriteSession session)
     {
         try
@@ -621,16 +724,19 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        await RunRewriteStepAsync("Dry run", async gen =>
+        // Off-thread for the same reason a detach is: the superseded session's disposal
+        // deletes its scratch tree, with a sleeping retry while handles are still held.
+        if (_rewriteSession is { } superseded)
+            RewriteSessionDisposal = Task.Run(superseded.Dispose);
+        var session = factory.Create();
+        _rewriteSession = session;
+
+        await RunRewriteStepAsync("Dry run", session, writesRepo: false, async () =>
         {
-            // Off-thread for the same reason a detach is: the superseded session's disposal
-            // deletes its scratch tree, with a sleeping retry while handles are still held.
-            if (_rewriteSession is { } superseded)
-                RewriteSessionDisposal = Task.Run(superseded.Dispose);
-            var session = factory.Create();
-            _rewriteSession = session;
             var outcome = await session.PreviewAsync(request);
-            if (!IsCurrent(gen)) return;
+            // A dry run is never parked — it holds no backup — so a session that has left the
+            // live wizard has been disposed, and its report describes a scratch tree that is gone.
+            if (!OwnsLiveWizard(session)) return;
 
             if (outcome.Report is null)
             {
@@ -701,12 +807,17 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var gen = _generation;
         RewriteStep = RewriteWizardStep.Running;
-        await RunRewriteStepAsync("Rewrite", async runGen =>
+        await RunRewriteStepAsync("Rewrite", session, writesRepo: true, async () =>
         {
             var result = await session.ExecuteAsync();
-            if (!IsCurrent(runGen)) return;
+            if (!OwnsLiveWizard(session))
+            {
+                // The reader left mid-rewrite. The outcome — and the undo it carries — belongs
+                // to the repository it ran against, so it waits on that repository's lane.
+                if (ParkedLaneFor(session) is { } lane) ApplyExecuteResult(lane, result, session);
+                return;
+            }
 
             RewriteResultSucceeded = result.Success;
             RewriteUndoAvailable = session.CanUndo;
@@ -731,10 +842,33 @@ public partial class ProjectDetailViewModel
             }
         });
 
-        if (IsCurrent(gen))
+        if (OwnsLiveWizard(session))
         {
             RewritePreviewAvailable = false; // the held bare is spent; a further run needs a fresh dry run
             RewriteStep = RewriteWizardStep.Result;
+        }
+    }
+
+    /// <summary>
+    /// The same outcome the live result screen would show, written onto a parked lane. A failed
+    /// run drops the report for the reason the live path does: it describes history that was
+    /// never applied, and beside a failure banner it reads as a description of the repository.
+    /// </summary>
+    private static void ApplyExecuteResult(ParkedRewrite lane, RewriteExecutionResult result, IRewriteSession session)
+    {
+        lane.Succeeded = result.Success;
+        lane.UndoAvailable = session.CanUndo;
+        if (result.Success)
+        {
+            lane.Report = result.Report ?? lane.Report;
+            lane.ErrorText = "";
+            lane.StatusText = "History rewritten. The remote still holds the old history.";
+        }
+        else
+        {
+            lane.Report = null;
+            lane.ErrorText = RewriteScrubVerdict.DescribeRefusal(result.FailureReason);
+            lane.StatusText = "The rewrite did not complete.";
         }
     }
 
@@ -759,7 +893,7 @@ public partial class ProjectDetailViewModel
             "Restore");
         if (!confirmed) return;
 
-        await RunRewriteStepAsync("Undo", async gen =>
+        await RunRewriteStepAsync("Undo", session, writesRepo: true, async () =>
         {
             RestoreResult restore;
             try
@@ -772,7 +906,18 @@ public partial class ProjectDetailViewModel
                 // refusal, whose guidance ends in "Nothing was changed" — a claim a throw from
                 // either side of the restore's ref transaction cannot support.
                 Log.Warn($"Undo threw for {RepoPath}", ex);
-                if (!IsCurrent(gen)) return;
+                if (!OwnsLiveWizard(session))
+                {
+                    if (ParkedLaneFor(session) is { } threwLane)
+                    {
+                        threwLane.Report = null;
+                        threwLane.Succeeded = false;
+                        threwLane.UndoText = "Undo failed before it could report where it stopped, so the refs may be " +
+                                             $"pre-rewrite, rewritten, or partly restored. {ex.Message}";
+                        threwLane.StatusText = "Undo failed. Check this repository's refs before running anything else against it.";
+                    }
+                    return;
+                }
                 ClearRewriteReport();
                 RewriteResultSucceeded = false;
                 RewriteUndoText = "Undo failed before it could report where it stopped, so the refs may be " +
@@ -782,7 +927,22 @@ public partial class ProjectDetailViewModel
                 await SafeRefreshWorkingStateAsync();
                 return;
             }
-            if (!IsCurrent(gen)) return;
+            if (!OwnsLiveWizard(session))
+            {
+                if (ParkedLaneFor(session) is { } lane)
+                {
+                    lane.Report = null;
+                    lane.Succeeded = false;
+                    if (restore.Success) lane.UndoAvailable = false;
+                    lane.UndoText = DescribeRestore(restore);
+                    lane.StatusText = restore.Success
+                        ? "History restored. The rewrite was undone."
+                        : restore.RefsRestored
+                            ? "Undo did not finish: the pre-rewrite refs are back, but the working tree was not reset to them."
+                            : "Undo failed. The repository was left as the rewrite made it.";
+                }
+                return;
+            }
 
             // Retired before the outcome is read, for every outcome: a restore that put the
             // refs back makes the executed run's verification describe discarded history, and
@@ -1004,32 +1164,35 @@ public partial class ProjectDetailViewModel
     // ── Shared plumbing ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Runs one wizard step under the page's generation-owned busy gate. The body receives the
-    /// generation captured at entry and must check it before writing UI state: a rewrite
-    /// outlives a project switch, and its result belongs to the repository it ran against.
+    /// Runs one wizard step for <paramref name="session"/> under the page's busy gate. The body
+    /// must consult <see cref="OwnsLiveWizard"/> before writing UI state: a rewrite outlives a
+    /// project switch, and its result belongs to the repository it ran against. A step whose
+    /// session is parked releases the gate on the parked lane instead, so returning to that
+    /// repository finds a finished rewrite finished rather than permanently busy.
     /// </summary>
-    private async Task RunRewriteStepAsync(string label, Func<int, Task> body)
+    private async Task RunRewriteStepAsync(string label, IRewriteSession session, bool writesRepo, Func<Task> body)
     {
         if (IsBusy)
         {
             RewriteStatusText = "Another operation is running on this repository — wait for it to finish.";
             return;
         }
-        var gen = _generation;
+        var repo = RepoPath;
         IsBusy = true;
         RewriteRunning = true;
+        _rewriteStepWritesRepo = writesRepo;
         RewriteStatusText = $"{label}…";
         RewriteErrorText = "";
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _rewriteStepInFlight = done.Task;
         try
         {
-            await body(gen);
+            await body();
         }
         catch (Exception ex)
         {
-            Log.Warn($"{label} failed for {RepoPath}", ex);
-            if (IsCurrent(gen))
+            Log.Warn($"{label} failed for {repo}", ex);
+            if (OwnsLiveWizard(session))
             {
                 // Where the throw left the step is unknown, so nothing derived from a report
                 // may stay on screen and no Execute may stay armed behind the failure.
@@ -1037,13 +1200,25 @@ public partial class ProjectDetailViewModel
                 RewriteErrorText = RewriteScrubVerdict.DescribeRefusal(ex.Message);
                 RewriteStatusText = $"{label} failed.";
             }
+            else if (ParkedLaneFor(session) is { } lane)
+            {
+                lane.Report = null;
+                lane.Succeeded = false;
+                lane.ErrorText = RewriteScrubVerdict.DescribeRefusal(ex.Message);
+                lane.StatusText = $"{label} failed.";
+            }
         }
         finally
         {
-            if (IsCurrent(gen))
+            if (OwnsLiveWizard(session))
             {
                 IsBusy = false;
                 RewriteRunning = false;
+                _rewriteStepWritesRepo = false;
+            }
+            else if (ParkedLaneFor(session) is { } lane)
+            {
+                lane.Running = false;
             }
             done.SetResult();
         }

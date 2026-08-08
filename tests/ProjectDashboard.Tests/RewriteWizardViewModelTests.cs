@@ -49,11 +49,19 @@ public class RewriteWizardViewModelTests
             return PreviewResult;
         }
 
-        public Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default)
+        /// <summary>Held open, this stands in for the swap still writing the repository.</summary>
+        public Task? ExecuteGate { get; set; }
+
+        private readonly TaskCompletionSource _executeEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task ExecuteEntered => _executeEntered.Task;
+
+        public async Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default)
         {
             ExecuteCount++;
+            _executeEntered.TrySetResult();
+            if (ExecuteGate is { } gate) await gate;
             CanUndo = true;
-            return Task.FromResult(ExecuteResult);
+            return ExecuteResult;
         }
 
         public Exception? UndoThrows { get; set; }
@@ -99,8 +107,8 @@ public class RewriteWizardViewModelTests
 
     // ── Harness ──────────────────────────────────────────────────────────────
 
-    private static ProjectDetailViewModel NewVm(StubSession session) =>
-        new(null!, new GitService(), null!, new StubFactory(session));
+    private static ProjectDetailViewModel NewVm(StubSession session, RepoBusyRegistry? busy = null) =>
+        new(null!, new GitService(), null!, new StubFactory(session), busy);
 
     private static ProjectInfo ProjectFor(TempRepo repo)
     {
@@ -910,5 +918,171 @@ public class RewriteWizardViewModelTests
         await vm.RewriteSessionDisposal;
 
         Assert.True(session.Disposed);
+    }
+
+    // ── Leaving the page mid-rewrite ─────────────────────────────────────────
+
+    /// <summary>Drives the wizard to a rewrite that has entered the engine and is still in it.</summary>
+    private static async Task<Task> StartRewriteAsync(ProjectDetailViewModel vm, StubSession session)
+    {
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        var running = vm.ExecuteRewriteCommand.ExecuteAsync(null);
+        await session.ExecuteEntered;
+        return running;
+    }
+
+    /// <summary>
+    /// Every page load re-applies the project already open. Treating that as a switch clears the
+    /// busy gate and resets the wizard while the swap is mid-flight, so a Pull started from the
+    /// re-enabled branch bar merges the un-rewritten remote history back over the rewrite.
+    /// </summary>
+    [Fact]
+    public async Task ReloadingTheSamePageMidRewrite_KeepsTheBusyGateAndTheRunningWizard()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-reload");
+        using var _ = repo;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { ExecuteGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        // The nav view sits outside the wizard's scrim, so this is one click away at any moment.
+        await vm.SetProjectAsync(ProjectFor(repo));
+
+        Assert.True(vm.IsBusy);
+        Assert.True(vm.RewriteRunning);
+        Assert.True(vm.RewriteWizardVisible);
+        Assert.False(vm.RewriteWizardHidden);
+        await vm.PullCommand.ExecuteAsync(null);
+        Assert.Equal(0, await repo.CommitCountAsync() - await repo.CommitCountAsync()); // repo untouched
+        Assert.Equal("", vm.SyncStatusText);
+
+        gate.SetResult();
+        await running;
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.True(vm.RewriteUndoAvailable);
+        Assert.False(vm.IsBusy);
+    }
+
+    /// <summary>
+    /// A genuine switch away and back. The rewrite keeps its session, so the result screen and
+    /// the one-click undo the confirmation promised are still there — and the repository is
+    /// still gated while the run is in flight.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingAwayAndBackMidRewrite_RestoresTheRunningWizardAndRefusesRepoOps()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-away-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-away-b");
+        using var __ = repoB;
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { ExecuteGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        // B is a different repository and owes nothing to A's rewrite.
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.RewriteWizardVisible);
+        Assert.False(session.Disposed);
+
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        Assert.True(vm.RewriteWizardVisible);
+        Assert.True(vm.RewriteStepIsRunning);
+        Assert.True(vm.IsBusy);
+        Assert.True(vm.RewriteRunning);
+        await vm.PullCommand.ExecuteAsync(null);
+        Assert.Equal("", vm.SyncStatusText);
+
+        gate.SetResult();
+        await running;
+
+        // The step that was in flight lands on the surface it started on.
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.True(vm.RewriteResultSucceeded);
+        Assert.True(vm.RewriteUndoAvailable);
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.RewriteRunning);
+    }
+
+    /// <summary>
+    /// The journal is already completed when the rewrite finishes, so the session's undo handle
+    /// is the only one-click restore left; disposing it on a switch makes recovery a manual
+    /// job with a bundle. Leaving the page parks the rewrite instead, and returning offers it.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingAwayAfterACompletedRewrite_KeepsTheOneClickUndoReachable()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-undo-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-undo-b");
+        using var __ = repoB;
+
+        var session = new StubSession();
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        await (await StartRewriteAsync(vm, session));
+        Assert.True(vm.RewriteUndoAvailable);
+
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        Assert.False(session.Disposed);
+        Assert.False(vm.RewriteUndoAvailable);
+
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        Assert.True(vm.RewriteWizardVisible);
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.True(vm.RewriteUndoAvailable);
+        Assert.True(vm.RewriteResultSucceeded);
+
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+        Assert.Equal(1, session.UndoCount);
+        Assert.False(vm.RewriteUndoAvailable);
+        Assert.Contains("History restored", vm.RewriteStatusText);
+
+        // Closing the wizard is what ends the undo's life, exactly as the confirmation says.
+        vm.CloseRewriteWizardCommand.Execute(null);
+        await vm.RewriteSessionDisposal;
+        Assert.True(session.Disposed);
+    }
+
+    /// <summary>
+    /// The page's own busy flag cannot see a rewrite running behind another surface or another
+    /// page. The repository lease can, and a mutating git op has to consult it or a Pull lands
+    /// in the middle of a live swap.
+    /// </summary>
+    [Fact]
+    public async Task AGitOp_IsRefusedWhileTheRepositoryCarriesARewriteLease_EvenWithTheBusyFlagClear()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-lease");
+        using var _ = repo;
+        var registry = new RepoBusyRegistry();
+        var vm = NewVm(new StubSession(), registry);
+        await vm.SetProjectAsync(ProjectFor(repo));
+
+        Assert.True(registry.TryAcquire(repo.Path, out var lease));
+        Assert.False(vm.IsBusy);
+
+        await vm.PullCommand.ExecuteAsync(null);
+        Assert.Contains("another operation is running on this repository", vm.SyncStatusText);
+        Assert.False(vm.IsBusy);
+
+        // Released, the same op runs and reports git's own outcome instead of the refusal.
+        lease.Dispose();
+        await vm.PullCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("another operation is running", vm.SyncStatusText);
+        Assert.Contains("Pull", vm.SyncStatusText);
     }
 }

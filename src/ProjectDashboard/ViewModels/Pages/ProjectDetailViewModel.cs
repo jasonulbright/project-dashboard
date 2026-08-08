@@ -39,12 +39,14 @@ public partial class ProjectDetailViewModel : ObservableObject
         ProjectDiscoveryService discoveryService,
         GitService gitService,
         GitHubService gitHubService,
-        IRewriteSessionFactory? rewriteSessions = null)
+        IRewriteSessionFactory? rewriteSessions = null,
+        Services.Safety.RepoBusyRegistry? busyRegistry = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
         _gitHubService = gitHubService;
         _rewriteSessions = rewriteSessions;
+        _busyRegistry = busyRegistry ?? new Services.Safety.RepoBusyRegistry();
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);
@@ -121,6 +123,20 @@ public partial class ProjectDetailViewModel : ObservableObject
 
     private void ApplyProject(ProjectInfo p)
     {
+        // Every page load re-applies the project already open, so this is a reload far more
+        // often than a switch. Running the teardown for a reload clears the busy gate and
+        // resets the wizard out from under a rewrite that is still running or still holding
+        // the only one-click undo for the history it replaced.
+        if (IsSameRepo(p))
+        {
+            Project = p;
+            ApplyProjectContent(p);
+            return;
+        }
+
+        // Reads the OUTGOING repository, so it runs before the swap below.
+        ParkRewriteSessionForThisRepo();
+
         // Invalidate any in-flight async op from the previous project before swapping.
         BumpGeneration();
 
@@ -161,9 +177,18 @@ public partial class ProjectDetailViewModel : ObservableObject
         StateBannerText = "";
         ResetGitHubState();
         // A held dry run belongs to the repository it ran against; carrying it across a switch
-        // would arm Execute on the new project with the previous one's report on screen.
+        // would arm Execute on the new project with the previous one's report on screen. The
+        // park above already took anything with an undo behind it, so this disposes only a
+        // dry run, which changed nothing and is re-runnable.
         ResetRewriteState();
+        RestoreParkedRewrite();
 
+        ApplyProjectContent(p);
+    }
+
+    /// <summary>Everything the page renders straight from the project model, re-read on every load.</summary>
+    private void ApplyProjectContent(ProjectInfo p)
+    {
         WorkingStateRefresh = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
@@ -176,6 +201,16 @@ public partial class ProjectDetailViewModel : ObservableObject
         ValidationSchedule = p.Manifest.ValidationSchedule;
         Notes = p.Manifest.Notes;
     }
+
+    /// <summary>
+    /// Whether the incoming project is the one already open. Compared on the normalized
+    /// repository key rather than the model instance: discovery hands out a fresh
+    /// <see cref="ProjectInfo"/> per scan, so instance identity would call every reload a switch.
+    /// </summary>
+    private bool IsSameRepo(ProjectInfo p) =>
+        RepoPath.Length > 0
+        && p.FullPath.Length > 0
+        && string.Equals(Services.Safety.RepoKey.For(RepoPath), Services.Safety.RepoKey.For(p.FullPath), StringComparison.Ordinal);
 
     private async Task LoadDetailsAsync()
     {
