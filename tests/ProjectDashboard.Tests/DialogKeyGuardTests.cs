@@ -1,5 +1,7 @@
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
+using System.Windows.Controls;
 using System.Windows.Input;
 using ProjectDashboard.Helpers;
 
@@ -40,6 +42,32 @@ public class DialogKeyGuardTests
     }
 
     /// <summary>
+    /// A dialog with a text box in it types into that box, and a held space there is a run of
+    /// spaces — not an answer to the dialog. The typed-confirmation prompt is exactly that
+    /// dialog: dropping the repeat leaves a reader who holds space unable to type one.
+    /// </summary>
+    [Theory]
+    [InlineData(Key.Space)]
+    [InlineData(Key.Enter)]
+    public void AHeldKeyInADialogsTextBox_ReachesTheBox(Key key) =>
+        RunSta(() => Assert.False(DialogKeyGuard.ShouldDrop(key, isRepeat: true, new TextBox())));
+
+    /// <summary>The drop still stands where a repeat can activate: the buttons.</summary>
+    [Theory]
+    [InlineData(Key.Space)]
+    [InlineData(Key.Enter)]
+    public void AHeldActivationKeyOnAButton_IsStillDropped(Key key) =>
+        RunSta(() => Assert.True(DialogKeyGuard.ShouldDrop(key, isRepeat: true, new Button())));
+
+    [Fact]
+    public void AFirstPressInATextBox_IsUntouchedEitherWay() =>
+        RunSta(() =>
+        {
+            Assert.False(DialogKeyGuard.ShouldDrop(Key.Space, isRepeat: false, new TextBox()));
+            Assert.False(DialogKeyGuard.ShouldDrop(Key.Space, isRepeat: false, new Button()));
+        });
+
+    /// <summary>
     /// The predicate decides nothing on its own: a dialog that never installs it answers a
     /// held key exactly as before. IsRepeat comes from the raw input stream and cannot be
     /// synthesized, so the wiring is asserted at the source.
@@ -49,6 +77,24 @@ public class DialogKeyGuardTests
     [InlineData("Views/Windows/TextPromptWindow.xaml.cs")]
     public void EveryConfirmationSurface_InstallsTheGuard(string relativePath) =>
         Assert.Contains("DialogKeyGuard.Install(", File.ReadAllText(SourceFile(relativePath)));
+
+    /// <summary>A WPF control cannot be constructed off an STA thread; no window is needed.</summary>
+    private static void RunSta(Action action)
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try { action(); }
+            catch (Exception ex) { error = ex; }
+        });
+        thread.IsBackground = true;
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(30)))
+            throw new TimeoutException("STA test body did not complete");
+        if (error is not null)
+            ExceptionDispatchInfo.Capture(error).Throw();
+    }
 
     private static string SourceFile(string relativePath, [CallerFilePath] string testFile = "")
     {
