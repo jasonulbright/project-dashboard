@@ -291,10 +291,14 @@ public partial class ProjectDetailPage
 
     /// <summary>
     /// The close command of the pane currently drawn on top, or null when none is up. The Backups
-    /// browser is absent because nothing draws over it and its own key binding closes it.
+    /// browser is absent because nothing draws over it and its own key binding closes it. The two
+    /// read-only panes refuse to open while any other is up, so their position here is only about
+    /// which command Esc reaches, never about a stack.
     /// </summary>
     private System.Windows.Input.ICommand? TopmostOverlayClose() =>
-        _viewModel.ForcePushVisible ? _viewModel.CloseForcePushCommand
+        _viewModel.CommitGraphVisible ? _viewModel.CloseCommitGraphCommand
+        : _viewModel.FileHistoryVisible ? _viewModel.CloseFileHistoryCommand
+        : _viewModel.ForcePushVisible ? _viewModel.CloseForcePushCommand
         : _viewModel.TagsVisible ? _viewModel.CloseTagsCommand
         : _viewModel.ReflogVisible ? _viewModel.CloseReflogCommand
         : _viewModel.RewriteWizardVisible ? _viewModel.CloseRewriteWizardCommand
@@ -1305,9 +1309,31 @@ public partial class ProjectDetailPage
     /// command acts on the selection, so without this the menu could name one commit and
     /// operate on another.
     /// </summary>
-    private void OnCommitListRightButtonDown(object sender, MouseButtonEventArgs e)
+    private void OnListRightButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not ListBox list || e.OriginalSource is not DependencyObject source) return;
         if (ItemsControl.ContainerFromElement(list, source) is ListBoxItem item) item.IsSelected = true;
+    }
+
+    /// <summary>
+    /// Keeps the diff pane on the row the view model re-selected after a hunk operation. The
+    /// refresh that follows one rebuilds every row, and a list left at offset zero throws the
+    /// reader back to the top of a long diff on every stage.
+    /// </summary>
+    private void OnWorkingDiffSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ListBox { SelectedItem: { } row } list) list.ScrollIntoView(row);
+    }
+
+    /// <summary>
+    /// Double-click moves a hunk across the index, never out of the working tree: the pointer
+    /// gesture is the easiest one to make by accident, and discarding a hunk cannot be undone.
+    /// </summary>
+    private void OnWorkingDiffDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBox list || e.OriginalSource is not DependencyObject source) return;
+        if (ItemsControl.ContainerFromElement(list, source) is not ListBoxItem) return;
+        if (_viewModel.ToggleHunkStagingCommand.CanExecute(null))
+            _viewModel.ToggleHunkStagingCommand.Execute(null);
     }
 }

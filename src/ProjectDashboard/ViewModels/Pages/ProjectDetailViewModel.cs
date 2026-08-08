@@ -180,6 +180,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         DiffLines = [];
         DiffTitle = "";
         DiffIsBinary = false;
+        DiffIsCombined = false;
+        SelectedDiffLine = null;
         CommitMessage = "";
         AmendMode = false;
         IsBusy = false;
@@ -217,6 +219,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedCommit = null;
         CommitFiles = [];
         CommitDiffLines = [];
+        ResetHistoryWindow();
+        CloseFileHistoryOnProjectSwitch();
+        CloseCommitGraphOnProjectSwitch();
         PullRequests = [];
         PullRequestsLoaded = false;
         StateBannerVisible = false;
@@ -241,6 +246,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
         Commits = new ObservableCollection<GitCommit>(p.RecentCommits ?? []);
+        // The seeded list is whatever the last scan cached, so its depth is unknown here.
+        // The first page load reads the answer from git with one commit of overlap.
+        HistoryHasMore = Commits.Count > 0;
         Issues = new ObservableCollection<GitHubIssue>(p.Issues ?? []);
 
         SelectedProjectType = p.Manifest.ProjectType;

@@ -155,12 +155,19 @@ public partial class ProjectDetailViewModel
 
     // ── Stage / unstage / discard / diff ────────────────────────────────────
 
+    /// <summary>
+    /// The diff read a selection started and did not await. Held so a caller — and a headless
+    /// test — can wait for the rows the selection asked for; polling the collection cannot tell
+    /// the previous file's rows from the new file's.
+    /// </summary>
+    internal Task DiffRefresh { get; private set; } = Task.CompletedTask;
+
     partial void OnSelectedUnstagedFileChanged(WorkingFile? value)
     {
         if (value is not null)
         {
             SelectedStagedFile = null;
-            _ = ShowDiffAsync(value, staged: false);
+            DiffRefresh = ShowDiffAsync(value, staged: false);
         }
         else if (SelectedStagedFile is null)
         {
@@ -173,7 +180,7 @@ public partial class ProjectDetailViewModel
         if (value is not null)
         {
             SelectedUnstagedFile = null;
-            _ = ShowDiffAsync(value, staged: true);
+            DiffRefresh = ShowDiffAsync(value, staged: true);
         }
         else if (SelectedUnstagedFile is null)
         {
@@ -187,6 +194,9 @@ public partial class ProjectDetailViewModel
         DiffLines = [];
         DiffTitle = "";
         DiffIsBinary = false;
+        DiffIsCombined = false;
+        SelectedDiffLine = null;
+        _diffFocusHunk = null;
     }
 
     private async Task ShowDiffAsync(WorkingFile file, bool staged)
@@ -200,12 +210,15 @@ public partial class ProjectDetailViewModel
             if (!IsCurrent(gen) || !ReferenceEquals(staged ? SelectedStagedFile : SelectedUnstagedFile, file))
                 return; // selection or project changed mid-await
             DiffIsBinary = diff?.IsBinary ?? false;
+            DiffIsCombined = diff?.IsCombined ?? false;
+            SelectedDiffLine = null;
             DiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
+            RestoreDiffFocus();
         }
         catch (Exception ex)
         {
             Log.Warn($"diff load failed for {file.Path}", ex);
-            if (IsCurrent(gen)) DiffLines = [];
+            if (IsCurrent(gen)) { DiffLines = []; _diffFocusHunk = null; }
         }
     }
 
@@ -675,10 +688,14 @@ public partial class ProjectDetailViewModel
     private async Task ReloadCommitsAsync()
     {
         var gen = _generation;
-        var commits = await _gitService.GetRecentCommitsAsync(RepoPath, 50);
+        // Re-read the window the list has been paged out to, not the default one: collapsing
+        // back to the recent page would drop every page the reader loaded, and with it any
+        // selection deeper than that page.
+        var commits = await _gitService.GetRecentCommitsAsync(RepoPath, _historyWindowSize);
         if (!IsCurrent(gen)) return;
         var selectedSha = SelectedCommit?.Ref;
         Commits = new ObservableCollection<GitCommit>(commits);
+        HistoryHasMore = WindowMayHaveMore(commits.Count, _historyWindowSize);
         if (Project is not null) Project.RecentCommits = commits;
         SelectedCommit = selectedSha is null
             ? null

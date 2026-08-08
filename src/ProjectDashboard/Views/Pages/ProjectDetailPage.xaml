@@ -45,7 +45,8 @@
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
-                                    <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                    <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}"
+                                            BorderThickness="2,0,0,0" BorderBrush="Transparent">
                                         <ContentPresenter />
                                     </Border>
                                     <ControlTemplate.Triggers>
@@ -58,6 +59,13 @@
                                         <DataTrigger Binding="{Binding Kind}" Value="HunkHeader">
                                             <Setter TargetName="Row" Property="Background" Value="{StaticResource StatusInfoBg}" />
                                         </DataTrigger>
+                                        <!-- Last, so it wins over the per-kind backgrounds: the hunk
+                                             actions run on the selected row's hunk, and a selection
+                                             that is invisible makes them look like they fire at random. -->
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource StatusInfoFg}" />
+                                            <Setter TargetName="Row" Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                        </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>
                             </Setter.Value>
@@ -533,7 +541,18 @@
                                          SelectedItem="{Binding SelectedUnstagedFile}"
                                          ItemTemplate="{StaticResource WorkingFileTemplate}"
                                          Background="Transparent" BorderThickness="0"
-                                         AutomationProperties.Name="Unstaged files" />
+                                         PreviewMouseRightButtonDown="OnListRightButtonDown"
+                                         AutomationProperties.Name="Unstaged files">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu ToolTipService.ShowOnDisabled="True"
+                                                     AutomationProperties.Name="Unstaged file actions">
+                                            <MenuItem Header="History and blame for this file…"
+                                                      Command="{Binding OpenFileHistoryCommand}"
+                                                      CommandParameter="{Binding SelectedUnstagedFile.Path}"
+                                                      AutomationProperties.Name="Open this file's history and blame" />
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+                                </ListBox>
                                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                                     <ui:Button Content="Stage" FontSize="11" Padding="8,2" Margin="0,0,6,0"
                                                Command="{Binding StageFileCommand}"
@@ -566,7 +585,18 @@
                                          SelectedItem="{Binding SelectedStagedFile}"
                                          ItemTemplate="{StaticResource StagedFileTemplate}"
                                          Background="Transparent" BorderThickness="0"
-                                         AutomationProperties.Name="Staged files" />
+                                         PreviewMouseRightButtonDown="OnListRightButtonDown"
+                                         AutomationProperties.Name="Staged files">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu ToolTipService.ShowOnDisabled="True"
+                                                     AutomationProperties.Name="Staged file actions">
+                                            <MenuItem Header="History and blame for this file…"
+                                                      Command="{Binding OpenFileHistoryCommand}"
+                                                      CommandParameter="{Binding SelectedStagedFile.Path}"
+                                                      AutomationProperties.Name="Open this file's history and blame" />
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+                                </ListBox>
                                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                                     <ui:Button Content="Unstage" FontSize="11" Padding="8,2"
                                                Command="{Binding UnstageFileCommand}"
@@ -605,18 +635,67 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="{Binding DiffTitle}" Style="{StaticResource PaneHeader}"
                                        FontFamily="Cascadia Code,Consolas" />
-                            <TextBlock Grid.Row="1" Text="Binary file — no text diff." FontSize="12"
+
+                            <!-- Hunk actions apply to the hunk the selected row belongs to. Each
+                                 tooltip carries the reason its button is unavailable, so a refused
+                                 action never reads as a broken one. -->
+                            <DockPanel Grid.Row="1" Margin="0,0,0,6">
+                                <ui:Button DockPanel.Dock="Left" Content="Stage hunk" FontSize="11" Padding="8,2"
+                                           Margin="0,0,6,0"
+                                           Command="{Binding StageHunkCommand}"
+                                           ToolTip="{Binding StageHunkBlockedReason}"
+                                           AutomationProperties.Name="Stage the selected hunk" />
+                                <ui:Button DockPanel.Dock="Left" Content="Unstage hunk" FontSize="11" Padding="8,2"
+                                           Margin="0,0,6,0"
+                                           Command="{Binding UnstageHunkCommand}"
+                                           ToolTip="{Binding UnstageHunkBlockedReason}"
+                                           AutomationProperties.Name="Unstage the selected hunk" />
+                                <ui:Button DockPanel.Dock="Left" Content="Discard hunk…" FontSize="11" Padding="8,2"
+                                           Appearance="Caution"
+                                           Command="{Binding DiscardHunkCommand}"
+                                           ToolTip="{Binding DiscardHunkBlockedReason}"
+                                           AutomationProperties.Name="Discard the selected hunk" />
+                                <TextBlock Margin="12,0,0,0" FontSize="11" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                           Text="Select a line to choose its hunk; double-click a hunk header to stage or unstage it." />
+                            </DockPanel>
+
+                            <TextBlock Grid.Row="2" Text="Binary file — no text diff." FontSize="12"
                                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                        Visibility="{Binding DiffIsBinary, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             <!-- Binary diffs parse to zero lines, so the empty list simply
                                  sits behind the binary note above. -->
-                            <ListBox Grid.Row="1" ItemsSource="{Binding DiffLines}"
+                            <ListBox x:Name="WorkingDiffRows" Grid.Row="2" ItemsSource="{Binding DiffLines}"
+                                     SelectedItem="{Binding SelectedDiffLine}"
                                      Style="{StaticResource DiffListStyle}"
-                                     AutomationProperties.Name="File diff" />
+                                     SelectionChanged="OnWorkingDiffSelectionChanged"
+                                     MouseDoubleClick="OnWorkingDiffDoubleClick"
+                                     PreviewMouseRightButtonDown="OnListRightButtonDown"
+                                     AutomationProperties.Name="File diff">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu ToolTipService.ShowOnDisabled="True"
+                                                 AutomationProperties.Name="Hunk actions">
+                                        <MenuItem Header="Stage this hunk"
+                                                  Command="{Binding StageHunkCommand}"
+                                                  ToolTip="{Binding StageHunkBlockedReason}"
+                                                  AutomationProperties.Name="Stage the selected hunk" />
+                                        <MenuItem Header="Unstage this hunk"
+                                                  Command="{Binding UnstageHunkCommand}"
+                                                  ToolTip="{Binding UnstageHunkBlockedReason}"
+                                                  AutomationProperties.Name="Unstage the selected hunk" />
+                                        <MenuItem Header="Discard this hunk…"
+                                                  Command="{Binding DiscardHunkCommand}"
+                                                  ToolTip="{Binding DiscardHunkBlockedReason}"
+                                                  AutomationProperties.Name="Discard the selected hunk" />
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                            </ListBox>
                         </Grid>
                     </Border>
                 </Grid>
@@ -662,6 +741,12 @@
                                        Command="{Binding OpenReflogCommand}"
                                        ToolTip="Every position this repository's refs have held, and a way to check one out as a new branch"
                                        AutomationProperties.Name="Open the reflog viewer" />
+                            <ui:Button DockPanel.Dock="Right" Content="Commit graph…" FontSize="12" Padding="12,4"
+                                       Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon BranchFork24}"
+                                       Command="{Binding OpenCommitGraphCommand}"
+                                       ToolTip="Draw this repository's branch lanes, with paging and selection shared with the list below"
+                                       AutomationProperties.Name="Open the commit graph" />
                             <ui:Button DockPanel.Dock="Right" Content="Deep clean…" Appearance="Danger"
                                        FontSize="12" Padding="12,4" Margin="0,0,8,0"
                                        Icon="{ui:SymbolIcon Broom24}"
@@ -709,7 +794,7 @@
                             <ListBox Grid.Row="1" ItemsSource="{Binding Commits}"
                                      SelectedItem="{Binding SelectedCommit}"
                                      Background="Transparent" BorderThickness="0"
-                                     PreviewMouseRightButtonDown="OnCommitListRightButtonDown"
+                                     PreviewMouseRightButtonDown="OnListRightButtonDown"
                                      AutomationProperties.Name="Commit history">
                                 <ListBox.ContextMenu>
                                     <ContextMenu ToolTipService.ShowOnDisabled="True"
@@ -782,6 +867,20 @@
                             </ListBox>
 
                             <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                <!-- Paging keeps the list a contiguous walk from HEAD: the depth a
+                                     history edit is planned over is this list's row position, so a
+                                     page that did not continue the same walk is refused, not appended. -->
+                                <DockPanel Margin="0,0,0,6">
+                                    <ui:Button DockPanel.Dock="Left" Content="Load older commits" FontSize="11" Padding="8,3"
+                                               Margin="0,0,8,0"
+                                               Command="{Binding LoadOlderCommitsCommand}"
+                                               Visibility="{Binding HistoryHasMore, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                               AutomationProperties.Name="Load older commits into the history list" />
+                                    <TextBlock Text="{Binding HistoryPagingStatusText}" FontSize="11" TextWrapping="Wrap"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               AutomationProperties.AutomationId="HistoryPagingStatusText" />
+                                </DockPanel>
                                 <ui:Button Content="Plan a reorder from the selected commit…" FontSize="11" Padding="8,3"
                                            HorizontalAlignment="Left" Margin="0,0,0,6"
                                            Command="{Binding PlanHistoryEditCommand}"
@@ -850,7 +949,17 @@
                             <ListBox Grid.Row="1" ItemsSource="{Binding CommitFiles}"
                                      SelectedItem="{Binding SelectedCommitFile}"
                                      Background="Transparent" BorderThickness="0"
+                                     PreviewMouseRightButtonDown="OnListRightButtonDown"
                                      AutomationProperties.Name="Files changed in commit">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu ToolTipService.ShowOnDisabled="True"
+                                                 AutomationProperties.Name="Changed file actions">
+                                        <MenuItem Header="History and blame for this file…"
+                                                  Command="{Binding OpenFileHistoryCommand}"
+                                                  CommandParameter="{Binding SelectedCommitFile.Path}"
+                                                  AutomationProperties.Name="Open this file's history and blame" />
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:CommitFile}">
                                         <DockPanel>
@@ -864,10 +973,18 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <ui:Button Grid.Row="2" Content="View commit on GitHub" FontSize="11" Padding="8,3"
-                                       Margin="0,6,0,0" HorizontalAlignment="Left"
-                                       Command="{Binding OpenCommitCommand}"
-                                       CommandParameter="{Binding SelectedCommit}" />
+                            <StackPanel Grid.Row="2" Margin="0,6,0,0">
+                                <ui:Button Content="History and blame for this file…" FontSize="11" Padding="8,3"
+                                           HorizontalAlignment="Left" Margin="0,0,0,6"
+                                           Command="{Binding OpenFileHistoryCommand}"
+                                           CommandParameter="{Binding SelectedCommitFile.Path}"
+                                           ToolTip="Every commit that touched this path, followed across renames, beside a blame of its current content"
+                                           AutomationProperties.Name="Open this file's history and blame" />
+                                <ui:Button Content="View commit on GitHub" FontSize="11" Padding="8,3"
+                                           HorizontalAlignment="Left"
+                                           Command="{Binding OpenCommitCommand}"
+                                           CommandParameter="{Binding SelectedCommit}" />
+                            </StackPanel>
                         </Grid>
                     </Border>
 
@@ -3212,5 +3329,17 @@
         <pages:ForcePushView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                              Visibility="{Binding ForcePushVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                              AutomationProperties.Name="Push rewritten history" />
+
+        <!-- ═══ FILE HISTORY AND BLAME ═══
+             Read-only, and it refuses to open while any pane above is up, so nothing here can
+             draw over one that is holding an undo. -->
+        <pages:FileHistoryView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                               Visibility="{Binding FileHistoryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               AutomationProperties.Name="File history and blame" />
+
+        <!-- ═══ COMMIT GRAPH ═══ -->
+        <pages:CommitGraphView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                               Visibility="{Binding CommitGraphVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               AutomationProperties.Name="Commit graph" />
     </Grid>
 </Page>

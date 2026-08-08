@@ -4,6 +4,10 @@ namespace ProjectDashboard.Models;
 public sealed class BlameLine
 {
     public string Sha { get; init; } = "";
+
+    /// <summary>Display form only; the gutter shows this and every lookup uses <see cref="Sha"/>.</summary>
+    public string ShortSha => Sha.Length > 8 ? Sha[..8] : Sha;
+
     public string Author { get; init; } = "";
     public DateTimeOffset? Date { get; init; }
     /// <summary>1-based line number in the final file.</summary>

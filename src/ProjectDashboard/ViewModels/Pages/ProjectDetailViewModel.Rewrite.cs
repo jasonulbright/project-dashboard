@@ -422,6 +422,8 @@ public partial class ProjectDetailViewModel
             RefreshRewriteInputValidity();
         }
         HandleSurgeryPropertyChanged(e);
+        HandleHunkPropertyChanged(e);
+        HandleHistoryDepthPropertyChanged(e);
     }
 
     // ── Derived selections ──────────────────────────────────────────────────────

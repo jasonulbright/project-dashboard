@@ -1,0 +1,235 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.FileHistoryView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseFileHistoryCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <helpers:RelativeTimeConverter x:Key="FileHistoryRelativeTime" />
+        <Style x:Key="FileHistoryHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <!-- Every navigation mode cycles inside the pane: the scrim stops the mouse but no
+             keystroke, and the page's sync buttons sit directly behind it. -->
+        <Border MaxWidth="1320" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{StaticResource StatusInfoFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseFileHistoryCommand}"
+                               ToolTip="Close the file viewer (Esc)"
+                               AutomationProperties.Name="Close the file history and blame viewer" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="DocumentSearch24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{StaticResource StatusInfoFg}" />
+                            <TextBlock Text="File history and blame" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding FileHistoryPath}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding FileHistoryPath}"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource FileHistoryHint}" Margin="0,2,0,0"
+                                   Text="Read-only. The history follows this path across renames; the blame is of its current content, and selecting a line selects the commit that last touched it." />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ BODY ═══ -->
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="440" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Commits that touched this path -->
+                    <Grid Grid.Column="0" Margin="0,0,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="Commits" FontSize="13" FontWeight="SemiBold"
+                                   Margin="0,0,0,6"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+
+                        <Border Grid.Row="1" CornerRadius="6" Padding="12,10" VerticalAlignment="Top"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                Visibility="{Binding FileHistoryLoading, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="Reading this path's history…" FontSize="13"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </Border>
+
+                        <Border Grid.Row="1" CornerRadius="6" Padding="12,10" VerticalAlignment="Top"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                Visibility="{Binding FileHistoryEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="No commit in this branch touches this path."
+                                           FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource FileHistoryHint}" Margin="0,6,0,0"
+                                           Text="A file that is untracked, or one added but never committed, has no history to read — an empty list is not proof the path has never existed." />
+                            </StackPanel>
+                        </Border>
+
+                        <ListBox x:Name="FileHistoryRows" Grid.Row="1"
+                                 ItemsSource="{Binding FileHistoryCommits}"
+                                 SelectedItem="{Binding SelectedFileHistoryCommit}"
+                                 Background="Transparent" HorizontalContentAlignment="Stretch"
+                                 VirtualizingPanel.VirtualizationMode="Recycling"
+                                 AutomationProperties.Name="Commits that touched this file">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:GitCommit}">
+                                    <DockPanel Margin="0,3">
+                                        <TextBlock DockPanel.Dock="Left" Width="72" Text="{Binding ShortHash}"
+                                                   FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                        <TextBlock DockPanel.Dock="Right" MinWidth="66"
+                                                   Text="{Binding Date, Converter={StaticResource FileHistoryRelativeTime}}"
+                                                   FontSize="11" HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock DockPanel.Dock="Right" Width="110" Text="{Binding Author}"
+                                                   FontSize="11" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Author}" Margin="8,0,8,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock Text="{Binding Message}" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <ui:Button Grid.Row="2" Margin="0,10,0,0" HorizontalAlignment="Left"
+                                   Content="Select this commit in History" FontSize="12" Padding="12,4"
+                                   Command="{Binding SelectFileHistoryCommitInListCommand}"
+                                   ToolTip="Close this viewer with the selected commit selected in the page's History list"
+                                   AutomationProperties.Name="Select this commit in the History list" />
+                    </Grid>
+
+                    <!-- Blame -->
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="Blame" FontSize="13" FontWeight="SemiBold"
+                                   Margin="0,0,0,6"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+
+                        <Border Grid.Row="1" CornerRadius="6" Padding="12,10" VerticalAlignment="Top"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                Visibility="{Binding BlameLoading, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="Blaming this file…" FontSize="13"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </Border>
+
+                        <Border Grid.Row="1" CornerRadius="6" Padding="12,10" VerticalAlignment="Top"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                Visibility="{Binding BlameEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="Nothing to blame here."
+                                           FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource FileHistoryHint}" Margin="0,6,0,0"
+                                           Text="git blame reports no lines for a file that is empty, binary, untracked, or absent from the working tree." />
+                            </StackPanel>
+                        </Border>
+
+                        <ListBox x:Name="BlameRows" Grid.Row="1" ItemsSource="{Binding BlameLines}"
+                                 SelectedItem="{Binding SelectedBlameLine}"
+                                 Background="Transparent" HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 VirtualizingPanel.VirtualizationMode="Recycling"
+                                 AutomationProperties.Name="Blame lines">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="4,0" />
+                                    <Setter Property="MinHeight" Value="18" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:BlameLine}">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left" Width="72" Text="{Binding ShortSha}"
+                                                   FontFamily="Cascadia Code,Consolas" FontSize="11"
+                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                        <TextBlock DockPanel.Dock="Left" Width="104" Text="{Binding Author}"
+                                                   FontSize="11" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Author}"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock DockPanel.Dock="Left" Width="62"
+                                                   Text="{Binding Date, Converter={StaticResource FileHistoryRelativeTime}}"
+                                                   FontSize="11"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock DockPanel.Dock="Left" Width="48" Text="{Binding LineNumber}"
+                                                   FontFamily="Cascadia Code,Consolas" FontSize="11"
+                                                   HorizontalAlignment="Right" Margin="0,0,10,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock Text="{Binding Text}" FontFamily="Cascadia Code,Consolas"
+                                                   FontSize="12" TextWrapping="NoWrap"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+
+                <!-- ═══ FOOTER ═══ -->
+                <StackPanel Grid.Row="2" Margin="0,12,0,0">
+                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FileHistoryErrorText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding FileHistoryErrorText}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="FileHistoryErrorText" />
+                    </Border>
+
+                    <TextBlock Text="{Binding FileHistoryStatusText}" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.AutomationId="FileHistoryStatusText" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

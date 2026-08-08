@@ -85,9 +85,14 @@ public partial class ProjectDetailViewModel
     /// <summary>The exact text the reader must type: the repository folder name, never a generic word.</summary>
     [ObservableProperty] private string _backupsConfirmPhrase = "";
 
-    /// <summary>True when no full-page safety overlay is up. Bound to the IsEnabled of every page surface they cover.</summary>
+    /// <summary>
+    /// True when no full-page overlay is up. Bound to the IsEnabled of every page surface they
+    /// cover, and read by each pane's open command: a scrim stops the mouse but no keystroke, so
+    /// two panes must never be up at once.
+    /// </summary>
     public bool SafetyOverlayHidden =>
-        !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible && !TagsVisible;
+        !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible
+        && !TagsVisible && !FileHistoryVisible && !CommitGraphVisible;
 
     /// <summary>
     /// True when neither maintenance pane is up. The force-push pane opens from the rewrite
