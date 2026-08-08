@@ -646,6 +646,14 @@
                                        Command="{Binding OpenBackupsCommand}"
                                        ToolTip="Browse the backups taken before this repository's history operations, and restore one"
                                        AutomationProperties.Name="Browse backups" />
+                            <!-- Tags name commits in this list, and a new one lands on whichever
+                                 commit is selected here. -->
+                            <ui:Button DockPanel.Dock="Right" Content="Tags…" FontSize="12" Padding="12,4"
+                                       Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon Tag24}"
+                                       Command="{Binding OpenTagsCommand}"
+                                       ToolTip="This repository's tags, and a way to create, delete, or check one out — all local"
+                                       AutomationProperties.Name="Open the tag viewer" />
                             <!-- Where a replaced history is still reachable from, which is why it
                                  sits beside the action that expires it. -->
                             <ui:Button DockPanel.Dock="Right" Content="Reflog…" FontSize="12" Padding="12,4"
@@ -2614,6 +2622,13 @@
         <pages:ReflogView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                           Visibility="{Binding ReflogVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                           AutomationProperties.Name="Reflog viewer" />
+
+        <!-- ═══ TAGS ═══
+             Draws over the reflog viewer, and refuses to open while one is up, so only one
+             ref-level surface is ever live. -->
+        <pages:TagsView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                        Visibility="{Binding TagsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                        AutomationProperties.Name="Tag viewer" />
 
         <!-- ═══ PUSH REWRITTEN HISTORY ═══
              Last in the Grid, so opening it from the wizard's result screen draws over the wizard

@@ -87,7 +87,7 @@ public partial class ProjectDetailViewModel
 
     /// <summary>True when no full-page safety overlay is up. Bound to the IsEnabled of every page surface they cover.</summary>
     public bool SafetyOverlayHidden =>
-        !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible;
+        !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible && !TagsVisible;
 
     /// <summary>
     /// True when neither maintenance pane is up. The force-push pane opens from the rewrite
@@ -95,7 +95,7 @@ public partial class ProjectDetailViewModel
     /// only one-click undo — and this disables the wizard's controls underneath, because a scrim
     /// stops the mouse and no keystroke.
     /// </summary>
-    public bool MaintenanceOverlayHidden => !ForcePushVisible && !ReflogVisible;
+    public bool MaintenanceOverlayHidden => !ForcePushVisible && !ReflogVisible && !TagsVisible;
 
     [RelayCommand]
     private async Task OpenBackups()

@@ -1,0 +1,290 @@
+using ProjectDashboard.Models;
+using ProjectDashboard.Services;
+
+namespace ProjectDashboard.ViewModels.Pages;
+
+/// <summary>
+/// The tag viewer, opened from History because every tag names a commit in that list and the
+/// one it creates lands on whichever commit is selected there.
+///
+/// Everything here is local. Creating, deleting, and checking a tag out touch refs in this
+/// repository only; no path pushes, and no path deletes a tag on a remote. A delete is therefore
+/// reported for what it is — the local ref is gone and a remote's copy of it is not — rather than
+/// as the tag having been removed.
+/// </summary>
+public partial class ProjectDetailViewModel
+{
+    [ObservableProperty] private bool _tagsVisible;
+
+    partial void OnTagsVisibleChanged(bool value)
+    {
+        OnPropertyChanged(nameof(SafetyOverlayHidden));
+        OnPropertyChanged(nameof(MaintenanceOverlayHidden));
+    }
+
+    [ObservableProperty] private ObservableCollection<TagInfo> _tags = [];
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DeleteTagCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CheckOutTagAsBranchCommand))]
+    private TagInfo? _selectedTag;
+
+    /// <summary>True once a read has finished and found none. The empty state must not show before that.</summary>
+    [ObservableProperty] private bool _tagsEmpty;
+
+    [ObservableProperty] private string _tagsStatusText = "";
+    [ObservableProperty] private string _tagsErrorText = "";
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CreateTagCommand))]
+    private string _newTagName = "";
+
+    /// <summary>Non-empty makes the new tag annotated; empty makes it lightweight.</summary>
+    [ObservableProperty] private string _newTagMessage = "";
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CheckOutTagAsBranchCommand))]
+    private string _tagBranchName = "";
+
+    /// <summary>Names of this repository's remotes, read when the viewer opens; empty when it has none.</summary>
+    [ObservableProperty] private ObservableCollection<string> _tagRemoteNames = [];
+
+    /// <summary>The read the viewer started and did not await, so a caller can wait for the list rather than poll.</summary>
+    internal Task TagsRefresh { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// The commit a new tag would land on: whichever the History list has selected, or the
+    /// checked-out commit when it has none. Stated on the surface, because a tag created against
+    /// the wrong commit looks identical to one created against the right one.
+    /// </summary>
+    public string TagTargetLabel =>
+        SelectedCommit is { } commit
+            ? $"{commit.ShortHash} — {commit.Message}"
+            : "the checked-out commit (HEAD)";
+
+    /// <summary>The revision a new tag is created at; null means HEAD, which is what git tags by default.</summary>
+    private string? NewTagTarget => SelectedCommit?.Ref;
+
+    [RelayCommand]
+    private async Task OpenTags()
+    {
+        if (RepoPath.Length == 0 || ForcePushVisible || ReflogVisible) return;
+        TagsErrorText = "";
+        TagsStatusText = "";
+        NewTagName = "";
+        NewTagMessage = "";
+        TagBranchName = "";
+        SelectedTag = null;
+        TagsVisible = true;
+        OnPropertyChanged(nameof(TagTargetLabel));
+        TagsRefresh = LoadTags();
+        await TagsRefresh;
+    }
+
+    [RelayCommand]
+    private void CloseTags()
+    {
+        TagsVisible = false;
+        Tags = [];
+        TagRemoteNames = [];
+        SelectedTag = null;
+        NewTagName = "";
+        NewTagMessage = "";
+        TagBranchName = "";
+        TagsStatusText = "";
+        TagsErrorText = "";
+        TagsEmpty = false;
+    }
+
+    /// <summary>Drops the viewer as the page leaves this repository; the tags it lists are that repository's.</summary>
+    private void CloseTagsOnProjectSwitch()
+    {
+        if (!TagsVisible) return;
+        CloseTags();
+    }
+
+    [RelayCommand]
+    private async Task LoadTags()
+    {
+        var repo = RepoPath;
+        if (repo.Length == 0) return;
+        var gen = _generation;
+
+        var keep = SelectedTag?.Name;
+        List<TagInfo> tags;
+        List<RemoteEntry> remotes;
+        try
+        {
+            tags = await _gitService.GetTagsAsync(repo);
+            remotes = await _gitService.GetRemotesAsync(repo);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not read the tags of {repo}", ex);
+            if (IsCurrent(gen)) TagsErrorText = $"Could not read this repository's tags: {ex.Message}";
+            return;
+        }
+        if (!IsCurrent(gen)) return;
+
+        TagsErrorText = "";
+        Tags = new ObservableCollection<TagInfo>(tags.OrderByDescending(t => t.DisplayDate ?? DateTimeOffset.MinValue)
+                                                     .ThenBy(t => t.Name, StringComparer.Ordinal));
+        TagsEmpty = Tags.Count == 0;
+        TagRemoteNames = new ObservableCollection<string>(remotes.Select(r => r.Name));
+        SelectedTag = Tags.FirstOrDefault(t => t.Name == keep) ?? Tags.FirstOrDefault();
+    }
+
+    // ── Create ──────────────────────────────────────────────────────────────────
+
+    private bool CanCreateTag() => NewTagName.Trim().Length > 0 && !IsBusy && RepoPath.Length > 0;
+
+    [RelayCommand(CanExecute = nameof(CanCreateTag))]
+    private async Task CreateTag()
+    {
+        var name = NewTagName.Trim();
+        var message = NewTagMessage.Trim();
+        var repo = RepoPath;
+        var gen = _generation;
+        var target = NewTagTarget;
+        var targetLabel = TagTargetLabel;
+        if (name.Length == 0 || repo.Length == 0 || IsBusy) return;
+
+        if (!await _gitService.IsValidTagNameAsync(repo, name))
+        {
+            if (IsCurrent(gen)) TagsErrorText = InvalidTagNameMessage(name);
+            return;
+        }
+        if (!IsCurrent(gen)) return;
+        if (Tags.Any(t => string.Equals(t.Name, name, StringComparison.Ordinal)))
+        {
+            TagsErrorText = $"A tag called “{name}” already exists here. Delete it first or choose another name.";
+            return;
+        }
+
+        TagsErrorText = "";
+        var ok = await RunOp(r => _gitService.CreateTagAsync(r, name, message.Length > 0 ? message : null, target),
+            $"Create tag {name}", repo, gen);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            TagsErrorText = SyncStatusText;
+            TagsStatusText = "The tag was not created.";
+            return;
+        }
+
+        var kind = message.Length > 0 ? "Annotated tag" : "Lightweight tag";
+        TagsStatusText = $"{kind} {name} created at {targetLabel}. It exists here only — nothing was pushed.";
+        NewTagName = "";
+        NewTagMessage = "";
+        await LoadTags();
+    }
+
+    /// <summary>What git will not accept, said in the terms a reader can act on.</summary>
+    internal static string InvalidTagNameMessage(string name) =>
+        $"“{name}” is not a valid tag name. Tag names cannot contain spaces, “..”, “~”, “^”, “:”, “?”, “*”, " +
+        "“[”, a leading dash, or a trailing “/”, “.” or “.lock”.";
+
+    // ── Delete ──────────────────────────────────────────────────────────────────
+
+    private bool CanDeleteTag() => SelectedTag is not null && !IsBusy && RepoPath.Length > 0;
+
+    [RelayCommand(CanExecute = nameof(CanDeleteTag))]
+    private async Task DeleteTag()
+    {
+        var tag = SelectedTag;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (tag is null || repo.Length == 0 || IsBusy) return;
+
+        var remoteNote = RemoteTagNotice(TagRemoteNames);
+        var confirmed = await ConfirmPrompt("Delete this tag?",
+            $"Delete the tag {tag.Name}, which points at {tag.TargetSubject}?\n\n{remoteNote}", "Delete tag");
+        if (!confirmed) return;
+        if (!IsCurrent(gen))
+        {
+            TagsStatusText = ProjectSwitchedNotice("Tag delete");
+            return;
+        }
+
+        TagsErrorText = "";
+        var ok = await RunOp(r => _gitService.DeleteTagAsync(r, tag.Name), $"Delete tag {tag.Name}", repo, gen);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            TagsErrorText = SyncStatusText;
+            TagsStatusText = "The tag was not deleted.";
+            return;
+        }
+
+        TagsStatusText = $"Deleted {tag.Name} here. {remoteNote}";
+        await LoadTags();
+    }
+
+    /// <summary>
+    /// What a local delete leaves standing. A tag on a remote is a separate ref that only a push
+    /// can remove, and this app performs no such push — so the reader is told which remotes could
+    /// still be carrying the tag rather than left to assume it is gone everywhere.
+    /// </summary>
+    internal static string RemoteTagNotice(IReadOnlyCollection<string> remoteNames) =>
+        remoteNames.Count == 0
+            ? "This repository has no remotes, so the tag exists nowhere else."
+            : $"The delete is local. If {string.Join(", ", remoteNames)} also carries this tag, it still will — " +
+              "removing a tag from a remote takes a push, and this app never pushes tags.";
+
+    // ── Check out as a branch ───────────────────────────────────────────────────
+
+    private bool CanCheckOutTagAsBranch() =>
+        SelectedTag is not null && TagBranchName.Trim().Length > 0 && !IsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Creates a branch at the selected tag's commit and switches to it. Nothing existing moves,
+    /// and the tag is left where it is — this is the way onto a tagged state that does not leave
+    /// the checkout detached.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCheckOutTagAsBranch))]
+    private async Task CheckOutTagAsBranch()
+    {
+        var tag = SelectedTag;
+        var name = TagBranchName.Trim();
+        var repo = RepoPath;
+        var gen = _generation;
+        if (tag is null || name.Length == 0 || repo.Length == 0 || IsBusy) return;
+
+        if (!await _gitService.IsValidBranchNameAsync(repo, name))
+        {
+            if (IsCurrent(gen)) TagsErrorText = InvalidBranchNameMessage(name);
+            return;
+        }
+        if (!IsCurrent(gen)) return;
+        if (Branches.Any(b => string.Equals(b.Name, name, StringComparison.Ordinal)))
+        {
+            TagsErrorText = $"A branch called “{name}” already exists here. Choose another name.";
+            return;
+        }
+
+        TagsErrorText = "";
+        // Bound to the tag's commit rather than its name: a tag can be moved between the read
+        // and this click, and the row named a commit.
+        var ok = await RunOp(r => _gitService.CreateBranchAtAsync(r, name, tag.TargetSha),
+            $"Create {name} at {tag.Name}", repo, gen);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            TagsErrorText = SyncStatusText;
+            TagsStatusText = "The branch was not created.";
+            return;
+        }
+
+        TagsStatusText = $"Created {name} at {tag.Name} and switched to it. The tag itself did not move.";
+        TagBranchName = "";
+        await ReloadCommitsAsync();
+        await LoadBranches();
+    }
+
+    internal static string InvalidBranchNameMessage(string name) =>
+        $"“{name}” is not a valid branch name. Branch names cannot contain spaces, “..”, “~”, “^”, “:”, “?”, " +
+        "“*”, “[”, a leading dash, or a trailing “/” or “.lock”.";
+}

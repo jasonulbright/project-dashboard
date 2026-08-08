@@ -343,7 +343,7 @@ public class ProjectDetailViewModelGitHubTabsTests
         // head — a release pointing at code the tag never named.
         var vm = new StubTabsViewModel
         {
-            Tags = [new TagInfo { Name = "v1.0.0", TargetSha = "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3" },
+            SeedTags = [new TagInfo { Name = "v1.0.0", TargetSha = "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3" },
                     new TagInfo { Name = "v0.9.0", TargetSha = "1111111111111111111111111111111111111111" }]
         };
         await vm.SetProjectAsync(RemoteProject());
@@ -360,7 +360,7 @@ public class ProjectDetailViewModelGitHubTabsTests
     [Fact]
     public async Task SubmitRelease_WithNoCommitResolvedForTheTag_SendsNoTarget()
     {
-        var vm = new StubTabsViewModel { Tags = [new TagInfo { Name = "v1.0.0", TargetSha = "" }] };
+        var vm = new StubTabsViewModel { SeedTags = [new TagInfo { Name = "v1.0.0", TargetSha = "" }] };
         await vm.SetProjectAsync(RemoteProject());
         await vm.ShowNewReleaseCommand.ExecuteAsync(null);
         vm.NewReleaseTag = "v1.0.0";
@@ -377,7 +377,7 @@ public class ProjectDetailViewModelGitHubTabsTests
     {
         var vm = new StubTabsViewModel
         {
-            Tags = [new TagInfo { Name = "v1.0.0", TargetSha = "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3" }]
+            SeedTags = [new TagInfo { Name = "v1.0.0", TargetSha = "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3" }]
         };
         await vm.SetProjectAsync(RemoteProject());
         await vm.ShowNewReleaseCommand.ExecuteAsync(null);
@@ -987,7 +987,7 @@ public class ProjectDetailViewModelGitHubTabsTests
         public List<Release>? SeedReleases { get; init; }
         public RepoSettings? Settings { get; init; }
         public List<GitHubNotification>? SeedNotifications { get; init; }
-        public List<TagInfo> Tags { get; init; } = [];
+        public List<TagInfo> SeedTags { get; init; } = [];
         public string? SavePath { get; init; }
         public string? TypedConfirmation { get; init; }
         public ProcessResult DeleteResult { get; init; } = new(0, "", "", TimedOut: false);
@@ -1028,7 +1028,7 @@ public class ProjectDetailViewModelGitHubTabsTests
         internal override Task<List<GitHubNotification>?> FetchNotificationsAsync(string slug)
             => NotificationGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(SeedNotifications);
 
-        internal override Task<List<TagInfo>> FetchReleaseTagsAsync(string repoPath) => Task.FromResult(Tags);
+        internal override Task<List<TagInfo>> FetchReleaseTagsAsync(string repoPath) => Task.FromResult(SeedTags);
 
         internal override Task<ProcessResult> CreateReleaseRemoteAsync(string repoPath, string tag, string title,
             string body, bool draft, bool prerelease, string targetSha)

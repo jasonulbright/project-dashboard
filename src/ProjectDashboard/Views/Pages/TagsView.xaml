@@ -1,0 +1,214 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.TagsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseTagsCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <helpers:RelativeTimeConverter x:Key="TagRelativeTime" />
+        <Style x:Key="TagHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <Border MaxWidth="1040" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{StaticResource StatusInfoFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseTagsCommand}"
+                               ToolTip="Close the tag viewer (Esc)"
+                               AutomationProperties.Name="Close the tag viewer" />
+                    <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="0,0,8,0"
+                               Icon="{ui:SymbolIcon ArrowSync24}"
+                               Command="{Binding LoadTagsCommand}"
+                               AutomationProperties.Name="Reload the tag list" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="Tag24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{StaticResource StatusInfoFg}" />
+                            <TextBlock Text="Tags" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="Every tag in this repository, newest first" FontSize="12" Margin="0,2,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ BODY ═══ -->
+                <Grid Grid.Row="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Style="{StaticResource TagHint}"
+                               Text="Everything here is local. Creating, deleting, or checking out a tag changes refs in this repository only — no action on this surface pushes to a remote or removes a tag from one." />
+
+                    <Grid Grid.Row="1">
+                        <Border CornerRadius="6" Padding="12,10"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                VerticalAlignment="Top"
+                                AutomationProperties.AutomationId="TagsEmptyState"
+                                Visibility="{Binding TagsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="This repository has no tags."
+                                           FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource TagHint}" Margin="0,6,0,0"
+                                           Text="A clone fetches tags from its remote, so an empty list here can also mean none have been fetched yet." />
+                            </StackPanel>
+                        </Border>
+
+                        <ListBox x:Name="TagRows" ItemsSource="{Binding Tags}"
+                                 SelectedItem="{Binding SelectedTag}"
+                                 Background="Transparent" HorizontalContentAlignment="Stretch"
+                                 AutomationProperties.Name="Tags">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:TagInfo}">
+                                    <DockPanel Margin="0,3">
+                                        <TextBlock DockPanel.Dock="Left" Width="200" Text="{Binding Name}"
+                                                   FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <Border DockPanel.Dock="Left" Background="{StaticResource StatusInfoBg}"
+                                                CornerRadius="4" Padding="6,1" Margin="0,0,10,0"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding KindLabel}" FontSize="10"
+                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                        </Border>
+                                        <TextBlock DockPanel.Dock="Right" MinWidth="72"
+                                                   Text="{Binding DisplayDate, Converter={StaticResource TagRelativeTime}}"
+                                                   FontSize="11" HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock Text="{Binding TargetSubject}" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding TargetSubject}"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+
+                    <Grid Grid.Row="2" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                            <TextBlock Text="Create a tag at the selected commit" FontSize="13"
+                                       FontWeight="SemiBold" Margin="0,0,0,4"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource TagHint}"
+                                       Text="{Binding TagTargetLabel, StringFormat=Lands on {0}. A message makes it annotated; leave it empty for a lightweight tag.}"
+                                       AutomationProperties.AutomationId="TagTargetLabel" />
+                            <ui:TextBox Text="{Binding NewTagName, UpdateSourceTrigger=PropertyChanged}"
+                                        PlaceholderText="tag-name" Margin="0,0,0,6"
+                                        FontSize="12" FontFamily="Cascadia Code,Consolas"
+                                        AutomationProperties.Name="Name for the new tag">
+                                <ui:TextBox.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding CreateTagCommand}" />
+                                </ui:TextBox.InputBindings>
+                            </ui:TextBox>
+                            <DockPanel>
+                                <ui:Button DockPanel.Dock="Right" Content="Create tag" FontSize="12" Padding="12,4"
+                                           Margin="8,0,0,0" Appearance="Primary"
+                                           Command="{Binding CreateTagCommand}"
+                                           AutomationProperties.Name="Create the tag" />
+                                <ui:TextBox Text="{Binding NewTagMessage, UpdateSourceTrigger=PropertyChanged}"
+                                            PlaceholderText="message (optional — makes it annotated)"
+                                            FontSize="12"
+                                            AutomationProperties.Name="Message for an annotated tag">
+                                    <ui:TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Command="{Binding CreateTagCommand}" />
+                                    </ui:TextBox.InputBindings>
+                                </ui:TextBox>
+                            </DockPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="What to do with the selected tag" FontSize="13"
+                                       FontWeight="SemiBold" Margin="0,0,0,4"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource TagHint}"
+                                       Text="Checking a tag out creates a branch at its commit and switches to it, so the checkout is not left detached. The tag itself does not move." />
+                            <DockPanel Margin="0,0,0,6">
+                                <ui:Button DockPanel.Dock="Right" Content="Check out as branch" FontSize="12" Padding="12,4"
+                                           Margin="8,0,0,0"
+                                           Command="{Binding CheckOutTagAsBranchCommand}"
+                                           AutomationProperties.Name="Create a branch at the selected tag" />
+                                <ui:TextBox Text="{Binding TagBranchName, UpdateSourceTrigger=PropertyChanged}"
+                                            PlaceholderText="new-branch-name"
+                                            FontSize="12" FontFamily="Cascadia Code,Consolas"
+                                            AutomationProperties.Name="Name for the branch created at the tag">
+                                    <ui:TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Command="{Binding CheckOutTagAsBranchCommand}" />
+                                    </ui:TextBox.InputBindings>
+                                </ui:TextBox>
+                            </DockPanel>
+                            <ui:Button Content="Delete tag" FontSize="12" Padding="12,4" Appearance="Danger"
+                                       HorizontalAlignment="Left"
+                                       Command="{Binding DeleteTagCommand}"
+                                       ToolTip="Delete the selected tag from this repository only"
+                                       AutomationProperties.Name="Delete the selected tag" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- ═══ FOOTER ═══ -->
+                <StackPanel Grid.Row="2" Margin="0,12,0,0">
+                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TagsErrorText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding TagsErrorText}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="TagsErrorText" />
+                    </Border>
+
+                    <TextBlock Text="{Binding TagsStatusText}" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.AutomationId="TagsStatusText" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -68,7 +68,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task OpenReflog()
     {
-        if (RepoPath.Length == 0 || ForcePushVisible) return;
+        if (RepoPath.Length == 0 || ForcePushVisible || TagsVisible) return;
         ReflogErrorText = "";
         ReflogStatusText = "";
         ReflogBranchName = "";
@@ -172,8 +172,7 @@ public partial class ProjectDetailViewModel
 
         if (!await _gitService.IsValidBranchNameAsync(repo, name))
         {
-            ReflogErrorText = $"“{name}” is not a valid branch name. Branch names cannot contain spaces, “..”, “~”, " +
-                              "“^”, “:”, “?”, “*”, “[”, a leading dash, or a trailing “/” or “.lock”.";
+            ReflogErrorText = InvalidBranchNameMessage(name);
             return;
         }
         if (Branches.Any(b => string.Equals(b.Name, name, StringComparison.Ordinal)))

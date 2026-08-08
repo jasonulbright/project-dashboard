@@ -468,6 +468,7 @@ public partial class ProjectDetailViewModel
         CommitFiles = [];
         CommitDiffLines = [];
         SelectedCommitFile = null;
+        OnPropertyChanged(nameof(TagTargetLabel));
         if (value is not null)
             _ = LoadCommitFilesAsync(value);
     }

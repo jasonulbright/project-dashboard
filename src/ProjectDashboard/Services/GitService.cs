@@ -585,14 +585,17 @@ public class GitService
 
     public async Task<List<TagInfo>> GetTagsAsync(string repoPath, CancellationToken ct = default)
     {
-        // %(objecttype) is "tag" for an annotated tag, "commit" for a lightweight one.
-        // TargetSha must be the COMMIT: %(*objectname) dereferences an annotated tag to
-        // its commit and is empty for a lightweight tag whose %(objectname) already is
-        // the commit. Tab-separated: none of the leading fields can contain a tab, and
-        // the subject stays last so delimiters inside it never split a field.
-        var result = await RunAsync(repoPath,
-            ["for-each-ref", "refs/tags",
-             "--format=%(refname:short)%09%(objecttype)%09%(objectname)%09%(*objectname)%09%(taggerdate:iso8601-strict)%09%(contents:subject)"], ct);
+        // %(objecttype) is "tag" for an annotated tag, "commit" for a lightweight one, and the
+        // "*" atoms are the dereferenced form — populated for an annotated tag, empty for a
+        // lightweight one whose ref already names the commit. So every fact about the target
+        // commit is read from the "*" atom when annotated and the plain atom when not.
+        // %(creatordate) is the tagger date on a tag object and the commit date on a commit.
+        // Separated by the unit separator: a commit subject may contain a tab.
+        var format = string.Join(FieldSeparator,
+            "%(refname:short)", "%(objecttype)", "%(objectname)", "%(*objectname)",
+            "%(taggerdate:iso8601-strict)", "%(*creatordate:iso8601-strict)", "%(creatordate:iso8601-strict)",
+            "%(contents:subject)", "%(*contents:subject)");
+        var result = await RunAsync(repoPath, ["for-each-ref", "refs/tags", "--format=" + format], ct);
         if (!result.Success)
         {
             Log.Warn($"git for-each-ref tags failed for {repoPath}: {result.FirstError}");
@@ -602,23 +605,26 @@ public class GitService
         var tags = new List<TagInfo>();
         foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var f = raw.TrimEnd('\r').Split('\t');
-            if (f.Length < 3) continue;
+            var f = raw.TrimEnd('\r').Split(FieldSeparator);
+            if (f.Length < 9) continue;
             var annotated = f[1] == "tag";
-            var deref = f.Length > 3 ? f[3] : "";
             tags.Add(new TagInfo
             {
                 Name = f[0],
                 IsAnnotated = annotated,
-                TargetSha = annotated ? deref : f[2],
-                Subject = annotated && f.Length > 5 ? f[5] : null,
-                TaggerDate = annotated && f.Length > 4 && DateTimeOffset.TryParse(f[4],
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.None, out var d) ? d : null
+                TargetSha = annotated ? f[3] : f[2],
+                Subject = annotated ? f[7] : null,
+                TaggerDate = annotated ? ParseIsoStrict(f[4]) : null,
+                TargetSubject = annotated ? f[8] : f[7],
+                TargetDate = ParseIsoStrict(annotated ? f[5] : f[6])
             });
         }
         return tags;
     }
+
+    private static DateTimeOffset? ParseIsoStrict(string value) =>
+        DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d) ? d : null;
 
     /// <summary>Creates a tag: annotated when <paramref name="message"/> is non-null, else lightweight.</summary>
     public Task<ProcessResult> CreateTagAsync(string repoPath, string name, string? message = null,

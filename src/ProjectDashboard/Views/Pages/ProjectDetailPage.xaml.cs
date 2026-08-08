@@ -295,6 +295,7 @@ public partial class ProjectDetailPage
     /// </summary>
     private System.Windows.Input.ICommand? TopmostOverlayClose() =>
         _viewModel.ForcePushVisible ? _viewModel.CloseForcePushCommand
+        : _viewModel.TagsVisible ? _viewModel.CloseTagsCommand
         : _viewModel.ReflogVisible ? _viewModel.CloseReflogCommand
         : _viewModel.RewriteWizardVisible ? _viewModel.CloseRewriteWizardCommand
         : null;

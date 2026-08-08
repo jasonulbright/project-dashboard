@@ -93,4 +93,31 @@ public class GitServiceTagTests
         Assert.False(await _git.IsValidTagNameAsync(repo.Path, "trailing.lock"));
         Assert.False(await _git.IsValidTagNameAsync(repo.Path, "tilde~1"));
     }
+
+    [Fact]
+    public async Task GetTags_ReportsTheTargetCommitsSubjectAndDate_ForBothKinds()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tag-target");
+        repo.WriteFile("file.txt", "second\n");
+        await repo.CommitAllAsync("the commit\tbehind the tag");
+
+        await _git.CreateTagAsync(repo.Path, "light");
+        await _git.CreateTagAsync(repo.Path, "annot", "the tag's own message");
+
+        var tags = await _git.GetTagsAsync(repo.Path);
+
+        var light = tags.Single(t => t.Name == "light");
+        // A tab inside the subject must not split a field — the format is unit-separated.
+        Assert.Equal("the commit\tbehind the tag", light.TargetSubject);
+        Assert.NotNull(light.TargetDate);
+        Assert.Equal(light.TargetDate, light.DisplayDate);
+        Assert.Equal("lightweight", light.KindLabel);
+
+        var annot = tags.Single(t => t.Name == "annot");
+        Assert.Equal("the commit\tbehind the tag", annot.TargetSubject);
+        Assert.Equal("the tag's own message", annot.Subject);
+        Assert.NotNull(annot.TargetDate);
+        Assert.Equal(annot.TaggerDate, annot.DisplayDate);
+        Assert.Equal("annotated", annot.KindLabel);
+    }
 }
