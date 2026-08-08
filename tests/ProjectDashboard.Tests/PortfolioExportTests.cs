@@ -139,13 +139,118 @@ public class PortfolioExportTests
     }
 
     [Fact]
-    public void TheJsonAndCsvExports_DescribeTheSameRowsInTheSameOrder()
+    public void TheJsonCsvAndHtmlExports_DescribeTheSameRowsInTheSameOrder()
     {
         var projects = new[] { NewProject("charlie"), NewProject("alpha") };
+        var expected = PortfolioExport.Rows(projects);
 
         var fromJson = JsonSerializer.Deserialize<List<PortfolioRow>>(PortfolioExport.ToJson(projects))!;
+        Assert.Equal(expected, fromJson);
 
-        Assert.Equal(PortfolioExport.Rows(projects), fromJson);
+        var name = PortfolioExport.Columns.ToList().IndexOf("Name");
+        var path = PortfolioExport.Columns.ToList().IndexOf("Path");
+
+        var fromCsv = PortfolioExport.ToCsv(projects)
+            .Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Select(SplitCsvLine)
+            .ToList();
+        var fromHtml = HtmlBodyRows(PortfolioExport.ToHtml(projects));
+
+        Assert.Equal(expected.Count, fromCsv.Count);
+        Assert.Equal(expected.Count, fromHtml.Count);
+        for (var i = 0; i < expected.Count; i++)
+        {
+            Assert.Equal(expected[i].Name, fromCsv[i][name]);
+            Assert.Equal(expected[i].Name, fromHtml[i][name]);
+            Assert.Equal(expected[i].Path, fromCsv[i][path]);
+            Assert.Equal(expected[i].Path, fromHtml[i][path]);
+        }
+    }
+
+    [Fact]
+    public void TheHtmlTable_HasOneCellPerColumnForEveryProject()
+    {
+        var html = PortfolioExport.ToHtml([NewProject("alpha"), NewProject("bravo"), NewProject("charlie")]);
+
+        Assert.Equal(PortfolioExport.Columns.Count, CountOccurrences(html, "<th>"));
+        Assert.Equal(3 * PortfolioExport.Columns.Count, CountOccurrences(html, "<td>"));
+        foreach (var row in HtmlBodyRows(html))
+            Assert.Equal(PortfolioExport.Columns.Count, row.Count);
+    }
+
+    [Fact]
+    public void AProjectNameHoldingMarkup_IsEscapedRatherThanRendered()
+    {
+        var hostile = "<script>alert(\"x\")</script> & co";
+        var project = NewProject(hostile);
+
+        var html = PortfolioExport.ToHtml([project]);
+
+        Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("&lt;script&gt;", html, StringComparison.Ordinal);
+        Assert.Contains("&amp;", html, StringComparison.Ordinal);
+        Assert.Contains("&quot;", html, StringComparison.Ordinal);
+
+        var cells = HtmlBodyRows(html).Single();
+        Assert.Equal(PortfolioExport.Columns.Count, cells.Count);
+        Assert.Equal(hostile, cells[PortfolioExport.Columns.ToList().IndexOf("Name")]);
+    }
+
+    [Fact]
+    public void TheHtmlPage_CarriesItsOwnStylesAndReferencesNoOtherFile()
+    {
+        var html = PortfolioExport.ToHtml([NewProject("alpha")]);
+
+        Assert.Contains("<style>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<link", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("src=", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("@import", html, StringComparison.OrdinalIgnoreCase);
+        // No project here has a remote, so any scheme in the page would be the page's own.
+        Assert.DoesNotContain("http", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TheHtmlPage_NamesTheAppAndWhenItWasExported()
+    {
+        var html = PortfolioExport.ToHtml([NewProject("alpha")]);
+
+        Assert.Contains("Project Dashboard", html, StringComparison.Ordinal);
+        Assert.Contains($"exported {DateTime.Now:yyyy-MM-dd}", html, StringComparison.Ordinal);
+        Assert.Contains("1 project ", html, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("=HYPERLINK(\"http://x\",\"y\")")]
+    [InlineData("+1-800-repo")]
+    [InlineData("-release")]
+    [InlineData("@everyone")]
+    [InlineData("\tindented")]
+    [InlineData("\rreturned")]
+    public void ABranchStartingLikeAFormula_IsQuotedInCsvAndLeftAloneElsewhere(string branch)
+    {
+        var project = NewProject("alpha");
+        project.GitStatus = new GitStatus { Branch = branch };
+        var column = PortfolioExport.Columns.ToList().IndexOf("Branch");
+
+        var csvCell = SplitCsvLine(PortfolioExport.ToCsv([project]).Split("\r\n")[1])[column];
+        Assert.Equal("'" + branch, csvCell);
+
+        var fromJson = JsonSerializer.Deserialize<List<PortfolioRow>>(PortfolioExport.ToJson([project]))!;
+        Assert.Equal(branch, fromJson.Single().Branch);
+        Assert.Equal(branch, HtmlBodyRows(PortfolioExport.ToHtml([project])).Single()[column]);
+    }
+
+    [Fact]
+    public void ABranchWithAnOrdinaryFirstCharacter_GainsNoApostrophe()
+    {
+        var project = NewProject("alpha");
+        project.GitStatus = new GitStatus { Branch = "main" };
+
+        var cells = SplitCsvLine(PortfolioExport.ToCsv([project]).Split("\r\n")[1]);
+
+        Assert.Equal("main", cells[PortfolioExport.Columns.ToList().IndexOf("Branch")]);
     }
 
     [Fact]
@@ -159,12 +264,17 @@ public class PortfolioExportTests
     [Theory]
     [InlineData(@"C:\out\projects.csv", 1, PortfolioFormat.Csv)]
     [InlineData(@"C:\out\projects.json", 2, PortfolioFormat.Json)]
+    [InlineData(@"C:\out\projects.html", 3, PortfolioFormat.Html)]
+    [InlineData(@"C:\out\projects.htm", 3, PortfolioFormat.Html)]
     // A typed extension outranks the filter that was left selected.
     [InlineData(@"C:\out\projects.json", 1, PortfolioFormat.Json)]
     [InlineData(@"C:\out\projects.csv", 2, PortfolioFormat.Csv)]
+    [InlineData(@"C:\out\projects.html", 1, PortfolioFormat.Html)]
+    [InlineData(@"C:\out\projects.csv", 3, PortfolioFormat.Csv)]
     // No extension to go on: the filter decides.
     [InlineData(@"C:\out\projects", 2, PortfolioFormat.Json)]
     [InlineData(@"C:\out\projects", 1, PortfolioFormat.Csv)]
+    [InlineData(@"C:\out\projects", 3, PortfolioFormat.Html)]
     public void TheChosenFormat_FollowsTheExtensionAndFallsBackToTheFilter(
         string path, int filterIndex, PortfolioFormat expected)
     {
@@ -177,6 +287,39 @@ public class PortfolioExportTests
         DisplayName = name,
         FullPath = $@"C:\projects\{name}",
     };
+
+    private static int CountOccurrences(string text, string token)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(token, StringComparison.Ordinal); i >= 0;
+             i = text.IndexOf(token, i + token.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    /// <summary>
+    /// The table body as cells, so the escaping is asserted by reading it back rather than by
+    /// matching the markup the writer happened to emit.
+    /// </summary>
+    internal static List<List<string>> HtmlBodyRows(string html)
+    {
+        var body = html[(html.IndexOf("<tbody>", StringComparison.Ordinal) + "<tbody>".Length)..
+                        html.IndexOf("</tbody>", StringComparison.Ordinal)];
+
+        return [.. System.Text.RegularExpressions.Regex
+            .Matches(body, "<tr>(.*?)</tr>", System.Text.RegularExpressions.RegexOptions.Singleline)
+            .Select(row => System.Text.RegularExpressions.Regex
+                .Matches(row.Groups[1].Value, "<td>(.*?)</td>", System.Text.RegularExpressions.RegexOptions.Singleline)
+                .Select(cell => HtmlUnescape(cell.Groups[1].Value))
+                .ToList())];
+    }
+
+    /// <summary>The ampersand is restored last, mirroring the writer's order.</summary>
+    private static string HtmlUnescape(string value) =>
+        value.Replace("&lt;", "<", StringComparison.Ordinal)
+             .Replace("&gt;", ">", StringComparison.Ordinal)
+             .Replace("&quot;", "\"", StringComparison.Ordinal)
+             .Replace("&amp;", "&", StringComparison.Ordinal);
 
     /// <summary>A minimal RFC 4180 reader, so the escaping is asserted by reading it back.</summary>
     private static List<string> SplitCsvLine(string line)
@@ -245,6 +388,56 @@ public class DashboardPortfolioExportTests
     }
 
     [Fact]
+    public async Task AnExportedHtmlPage_HoldsARowPerProjectAndStandsAlone()
+    {
+        var (dashboard, root) = await NewDashboardAsync("export-html");
+        dashboard.Projects.Add(NewProject("alpha"));
+        dashboard.Projects.Add(NewProject("bravo"));
+        var target = Path.Combine(root, "projects.html");
+
+        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Html);
+
+        var html = await File.ReadAllTextAsync(target);
+        Assert.StartsWith("<!DOCTYPE html>", html);
+        Assert.EndsWith("</html>\n", html);
+        Assert.DoesNotContain("src=", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            dashboard.Projects.Select(p => p.DisplayName),
+            PortfolioExportTests.HtmlBodyRows(html).Select(cells => cells[0]));
+        Assert.Equal($"Exported 2 projects to {target}", dashboard.OpStatusText);
+    }
+
+    [Fact]
+    public async Task AnExportOfASingleProject_CountsItInTheSingular()
+    {
+        var (dashboard, root) = await NewDashboardAsync("export-one");
+        dashboard.Projects.Add(NewProject("alpha"));
+        var target = Path.Combine(root, "projects.csv");
+
+        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv);
+
+        Assert.Equal($"Exported 1 project to {target}", dashboard.OpStatusText);
+    }
+
+    [Fact]
+    public async Task AnExportThatFailsToWrite_LeavesThePreviousFileIntactAndStagesNothing()
+    {
+        var (dashboard, root) = await NewDashboardAsync("export-atomic");
+        dashboard.Projects.Add(NewProject("alpha"));
+        var target = Path.Combine(root, "projects.csv");
+        await File.WriteAllTextAsync(target, "an earlier export\r\n");
+
+        // Opened without sharing: the staged file cannot replace it, which is the failure a
+        // direct write would have met only after truncating the destination.
+        using (new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.None))
+            await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv);
+
+        Assert.StartsWith("Export failed — ", dashboard.OpStatusText);
+        Assert.Equal("an earlier export\r\n", await File.ReadAllTextAsync(target));
+        Assert.False(File.Exists(target + ".tmp"), "the staged file was left beside the destination");
+    }
+
+    [Fact]
     public async Task AnExportThatCannotBeWritten_ReportsInsteadOfThrowing()
     {
         var (dashboard, root) = await NewDashboardAsync("export-fail");
@@ -277,6 +470,19 @@ public class DashboardPortfolioExportTests
         foreach (var column in PortfolioExport.Columns)
             Assert.Contains(column, notice);
         Assert.Contains("Nothing is re-read from git", notice);
+        Assert.Contains("(= + - @)", notice);
+        Assert.Contains("apostrophe", notice);
+    }
+
+    [Fact]
+    public void TheSaveDialogFilter_OffersOneFormatPerFilterIndex()
+    {
+        var entries = DashboardViewModel.ExportFilter.Split('|');
+
+        Assert.Equal(["*.csv", "*.json", "*.html"], entries.Where((_, i) => i % 2 == 1));
+        Assert.Equal(PortfolioFormat.Csv, PortfolioExport.FormatFor(@"C:\out\projects", 1));
+        Assert.Equal(PortfolioFormat.Json, PortfolioExport.FormatFor(@"C:\out\projects", 2));
+        Assert.Equal(PortfolioFormat.Html, PortfolioExport.FormatFor(@"C:\out\projects", 3));
     }
 
     [Fact]

@@ -225,7 +225,7 @@
             <ui:Button Content="Export" FontSize="12" Padding="8,6"
                        Icon="{ui:SymbolIcon ArrowExportLtr24}"
                        Command="{Binding ExportPortfolioCommand}"
-                       ToolTip="Save the project inventory as CSV or JSON"
+                       ToolTip="Save the project inventory as CSV, JSON or an HTML page"
                        AutomationProperties.Name="Export project inventory"
                        Width="92" Margin="0,0,8,0" />
             <TextBlock Text="{Binding OpStatusText}" FontSize="12" VerticalAlignment="Center"

@@ -187,9 +187,10 @@ public partial class DashboardViewModel : ObservableObject
         // A full scan in flight owns the project list; a second one replaces it underneath.
         if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning)
         {
-            // The full-refresh signal names no repositories, and the watcher cleared its
-            // pending set to raise it: refusing it here loses the overflow it reports with
-            // nothing left to replay, so it queues on the drain instead.
+            // A signal naming repositories is dropped: a bulk op that changed one ends in
+            // ForceRefreshAsync while still holding the gate, and a scan in flight is already
+            // re-reading every repository. The overflow signal names none, so nothing replays
+            // it — it queues on the drain instead.
             if (repoDirs.Count == 0) RequestRescan();
             return;
         }
@@ -647,6 +648,28 @@ public partial class DashboardViewModel : ObservableObject
         System.Text.RegularExpressions.Regex.Replace(
             typed.Trim().ToLowerInvariant().Replace(' ', '-'), @"[^a-z0-9\-]", "");
 
+    private static string NoFolderNameReason(string typed) =>
+        $"\"{typed.Trim()}\" leaves no folder name once the characters a folder cannot hold are removed.";
+
+    /// <summary>
+    /// What the picker shows for a typed name and a chosen layout: the folder that name
+    /// reduces to and the paths it would receive. A name that reduces to nothing says so
+    /// here rather than at the create button, and an untyped name is not yet a refusal.
+    /// </summary>
+    internal static string CreatesPreview(ProjectTemplate template, string typed)
+    {
+        var name = SanitizeProjectName(typed);
+        if (name.Length > 0) return $"Folder: {name}\n{template.CreatesLine(name)}";
+
+        return typed.Trim().Length == 0
+            ? $"Folder: <name>\n{template.CreatesLine("<name>")}"
+            : "Folder: none — " + NoFolderNameReason(typed);
+    }
+
+    /// <summary>Why Create produced nothing, for a name that sanitizes away entirely.</summary>
+    internal static string EmptyNameNotice(string typed) =>
+        "New project: nothing was created — " + NoFolderNameReason(typed);
+
     [RelayCommand]
     private async Task NewProject()
     {
@@ -709,8 +732,8 @@ public partial class DashboardViewModel : ObservableObject
             new System.Windows.Data.Binding(nameof(ProjectTemplate.Name))));
         templateList.ItemContainerStyle = rowStyle;
 
-        // The preview names the paths for the name actually typed, so what the reader is
-        // shown before agreeing is what lands on disk.
+        // The preview names the folder and the paths for the name actually typed, so what the
+        // reader is shown before agreeing is what lands on disk.
         void DescribeSelection()
         {
             if (templateList.SelectedItem is not ProjectTemplate selected)
@@ -719,9 +742,8 @@ public partial class DashboardViewModel : ObservableObject
                 createsText.Text = "";
                 return;
             }
-            var preview = SanitizeProjectName(nameBox.Text);
             summaryText.Text = selected.Summary;
-            createsText.Text = selected.CreatesLine(preview.Length == 0 ? "<name>" : preview);
+            createsText.Text = CreatesPreview(selected, nameBox.Text);
         }
 
         templateList.SelectionChanged += (_, _) => DescribeSelection();
@@ -760,7 +782,11 @@ public partial class DashboardViewModel : ObservableObject
 
         var template = templateList.SelectedItem as ProjectTemplate ?? offered[0];
         var projectName = SanitizeProjectName(nameBox.Text);
-        if (projectName.Length == 0) return;
+        if (projectName.Length == 0)
+        {
+            OpStatusText = EmptyNameNotice(nameBox.Text);
+            return;
+        }
 
         var settings = _settingsService.Load();
         var projectPath = Path.Combine(settings.ProjectsRootPath, projectName);
@@ -890,7 +916,9 @@ public partial class DashboardViewModel : ObservableObject
         + "Columns: " + string.Join(", ", PortfolioExport.Columns) + ".\n\n"
         + "These are the values already on the cards. Nothing is re-read from git for the export, "
         + "so a repository changed since the last scan is exported as it was scanned — refresh first "
-        + "if you need it current.";
+        + "if you need it current.\n\n"
+        + "CSV, JSON or a standalone HTML page. In CSV, spreadsheet-hostile leading characters "
+        + "(= + - @) are quoted with an apostrophe so a cell is read as text rather than run as a formula.";
 
     [RelayCommand]
     private async Task ExportPortfolio()
@@ -928,6 +956,14 @@ public partial class DashboardViewModel : ObservableObject
         await WritePortfolioAsync(destination.Path, destination.Format);
     }
 
+    /// <summary>
+    /// Save-dialog filter. Entry order is the one-based filter index
+    /// <see cref="PortfolioExport.FormatFor"/> falls back to when a destination is named
+    /// without an extension.
+    /// </summary>
+    internal const string ExportFilter =
+        "Comma-separated values (*.csv)|*.csv|JSON (*.json)|*.json|HTML page (*.html)|*.html";
+
     /// <summary>Destination chosen by the reader, or null when the save dialog was cancelled.</summary>
     internal virtual (string Path, PortfolioFormat Format)? PromptForExportDestination()
     {
@@ -936,7 +972,7 @@ public partial class DashboardViewModel : ObservableObject
             Title = "Export project inventory",
             FileName = $"projects-{DateTime.Now:yyyy-MM-dd}",
             DefaultExt = ".csv",
-            Filter = "Comma-separated values (*.csv)|*.csv|JSON (*.json)|*.json",
+            Filter = ExportFilter,
             FilterIndex = 1,
             AddExtension = true,
             OverwritePrompt = true
@@ -952,7 +988,7 @@ public partial class DashboardViewModel : ObservableObject
         try
         {
             await PortfolioExport.WriteAsync(path, format, Projects);
-            OpStatusText = $"Exported {Projects.Count} projects to {path}";
+            OpStatusText = $"Exported {Projects.Count} {(Projects.Count == 1 ? "project" : "projects")} to {path}";
         }
         catch (Exception ex)
         {

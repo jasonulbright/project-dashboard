@@ -84,6 +84,42 @@ public class ProjectTemplateCatalogueTests
     {
         Assert.Equal(expected, DashboardViewModel.SanitizeProjectName(typed));
     }
+
+    [Fact]
+    public void ThePreview_NamesTheFolderTheTypedNameReducesTo()
+    {
+        var preview = DashboardViewModel.CreatesPreview(ProjectTemplates.ById("powershell")!, "My New Project");
+
+        Assert.Equal("Folder: my-new-project\nCreates: README.md, CHANGELOG.md, .gitignore, my-new-project.ps1", preview);
+    }
+
+    [Fact]
+    public void ThePreviewForAnUntypedName_ShowsTheLayoutRatherThanARefusal()
+    {
+        var preview = DashboardViewModel.CreatesPreview(ProjectTemplates.ById("empty")!, "   ");
+
+        Assert.StartsWith("Folder: <name>\n", preview);
+        Assert.Contains("Creates: README.md", preview);
+    }
+
+    [Fact]
+    public void ThePreviewForANameThatSanitizesAway_SaysNoFolderWouldBeCreated()
+    {
+        var preview = DashboardViewModel.CreatesPreview(ProjectTemplates.ById("empty")!, "...");
+
+        Assert.StartsWith("Folder: none — ", preview);
+        Assert.Contains("\"...\"", preview);
+        Assert.DoesNotContain("Creates:", preview);
+    }
+
+    [Fact]
+    public void TheNoticeForANameThatSanitizesAway_SaysNothingWasCreatedAndWhy()
+    {
+        var notice = DashboardViewModel.EmptyNameNotice("  ///  ");
+
+        Assert.StartsWith("New project: nothing was created — ", notice);
+        Assert.Contains("\"///\"", notice);
+    }
 }
 
 /// <summary>
@@ -266,7 +302,9 @@ public class ProjectScaffoldTemplateTests
     /// <summary>
     /// The folder holds what the template promised and nothing else. Both halves matter: the
     /// promise is what the reader agreed to before the scaffold ran, so an unlisted file is
-    /// as much a broken promise as a missing one. The repository git creates is exempt.
+    /// as much a broken promise as a missing one. The walk is recursive — a top-level-only
+    /// check accepts anything a template drops inside a folder it promised. The repository
+    /// git creates is exempt.
     /// </summary>
     private static void AssertPromisedPathsExist(ProjectTemplate template, string projectPath, string projectName)
     {
@@ -281,20 +319,27 @@ public class ProjectScaffoldTemplateTests
         var promisedDirs = promised
             .Select(Path.GetDirectoryName)
             .Where(d => !string.IsNullOrEmpty(d))
+            .Select(d => d!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var full in Directory.EnumerateFileSystemEntries(projectPath))
+        foreach (var dir in Directory.EnumerateDirectories(projectPath, "*", SearchOption.AllDirectories))
         {
-            var name = Path.GetFileName(full);
-            if (name == ".git") continue;
-            if (Directory.Exists(full))
-            {
-                Assert.True(promisedDirs.Contains(name), $"{template.Id} created an unlisted folder: {name}");
-                continue;
-            }
-            Assert.True(promised.Contains(name), $"{template.Id} created an unlisted file: {name}");
+            var relative = Path.GetRelativePath(projectPath, dir);
+            if (IsUnderGit(relative)) continue;
+            Assert.True(promisedDirs.Contains(relative), $"{template.Id} created an unlisted folder: {relative}");
+        }
+
+        foreach (var file in Directory.EnumerateFiles(projectPath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(projectPath, file);
+            if (IsUnderGit(relative)) continue;
+            Assert.True(promised.Contains(relative), $"{template.Id} created an unlisted file: {relative}");
         }
     }
+
+    private static bool IsUnderGit(string relativePath) =>
+        relativePath == ".git"
+        || relativePath.StartsWith(".git" + Path.DirectorySeparatorChar, StringComparison.Ordinal);
 
     /// <summary>The scaffold's first commit tracks every promised path.</summary>
     private static async Task AssertCommittedAsync(string projectPath, IReadOnlyList<string> promised)

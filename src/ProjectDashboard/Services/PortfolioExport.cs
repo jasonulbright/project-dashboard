@@ -11,11 +11,12 @@ public enum PortfolioFormat
 {
     Csv,
     Json,
+    Html,
 }
 
 /// <summary>
-/// One project as the export describes it. Declaration order is the column order, and both
-/// formats are built from these same rows, so a CSV and a JSON export of one dashboard
+/// One project as the export describes it. Declaration order is the column order, and every
+/// format is built from these same rows, so a CSV, a JSON and an HTML export of one dashboard
 /// describe the same inventory in the same order.
 /// </summary>
 public sealed record PortfolioRow(
@@ -85,16 +86,71 @@ public static class PortfolioExport
     public static string ToJson(IEnumerable<ProjectInfo> projects) =>
         JsonSerializer.Serialize(Rows(projects), JsonOptions) + "\n";
 
-    public static string Render(IEnumerable<ProjectInfo> projects, PortfolioFormat format) =>
-        format == PortfolioFormat.Json ? ToJson(projects) : ToCsv(projects);
+    /// <summary>
+    /// A standalone page: the stylesheet is inline and no element references a second file,
+    /// so the export opens the same from a mail attachment as from the folder it was written
+    /// to. Colours are inherited rather than stated, so the table stays legible under either
+    /// browser theme.
+    /// </summary>
+    public static string ToHtml(IEnumerable<ProjectInfo> projects)
+    {
+        var rows = Rows(projects);
+        var sb = new StringBuilder();
+        sb.Append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+          .Append("<title>").Append(HtmlEscape(AppName)).Append(" — project inventory</title>\n")
+          .Append("<style>\n").Append(HtmlStyle).Append("</style>\n</head>\n<body>\n")
+          .Append("<h1>").Append(HtmlEscape(AppName)).Append(" — project inventory</h1>\n")
+          .Append("<p class=\"meta\">")
+          .Append(HtmlEscape($"{rows.Count} {(rows.Count == 1 ? "project" : "projects")}"))
+          .Append(" · exported ")
+          .Append(HtmlEscape(DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)))
+          .Append("</p>\n<table>\n<thead>\n<tr>");
+
+        foreach (var column in Columns)
+            sb.Append("<th>").Append(HtmlEscape(column)).Append("</th>");
+        sb.Append("</tr>\n</thead>\n<tbody>\n");
+
+        foreach (var row in rows)
+        {
+            sb.Append("<tr>");
+            foreach (var cell in Fields(row))
+                sb.Append("<td>").Append(HtmlEscape(cell)).Append("</td>");
+            sb.Append("</tr>\n");
+        }
+
+        return sb.Append("</tbody>\n</table>\n</body>\n</html>\n").ToString();
+    }
+
+    public static string Render(IEnumerable<ProjectInfo> projects, PortfolioFormat format) => format switch
+    {
+        PortfolioFormat.Json => ToJson(projects),
+        PortfolioFormat.Html => ToHtml(projects),
+        _ => ToCsv(projects),
+    };
 
     /// <summary>
     /// Writes the inventory as UTF-8 without a byte-order mark, matching every other file
-    /// this app produces.
+    /// this app produces. The content lands in a sibling temporary file that replaces the
+    /// destination once it is whole: a write that fails part way through would otherwise
+    /// leave the reader with a truncated file where a previous export used to be.
     /// </summary>
-    public static Task WriteAsync(
-        string path, PortfolioFormat format, IEnumerable<ProjectInfo> projects, CancellationToken ct = default) =>
-        File.WriteAllTextAsync(path, Render(projects, format), Utf8NoBom, ct);
+    public static async Task WriteAsync(
+        string path, PortfolioFormat format, IEnumerable<ProjectInfo> projects, CancellationToken ct = default)
+    {
+        var staged = path + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(staged, Render(projects, format), Utf8NoBom, ct);
+            File.Move(staged, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(staged); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            throw;
+        }
+    }
 
     /// <summary>
     /// The format a chosen destination gets. A named extension outranks the picker's filter:
@@ -106,8 +162,14 @@ public static class PortfolioExport
         System.IO.Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".json" => PortfolioFormat.Json,
+            ".html" or ".htm" => PortfolioFormat.Html,
             ".csv" => PortfolioFormat.Csv,
-            _ => filterIndex == 2 ? PortfolioFormat.Json : PortfolioFormat.Csv,
+            _ => filterIndex switch
+            {
+                2 => PortfolioFormat.Json,
+                3 => PortfolioFormat.Html,
+                _ => PortfolioFormat.Csv,
+            },
         };
 
     private static PortfolioRow ToRow(ProjectInfo p) => new(
@@ -163,11 +225,47 @@ public static class PortfolioExport
     ];
 
     /// <summary>
-    /// RFC 4180 field: quoted when it holds a comma, a quote, or a line break, with embedded
-    /// quotes doubled. A project path may hold every one of those.
+    /// Leading characters a spreadsheet reads as the start of a formula rather than as text.
+    /// A branch or project name may legitimately begin with any of them.
     /// </summary>
-    private static string Escape(string value) =>
-        value.IndexOfAny(['"', ',', '\r', '\n']) < 0
+    private static readonly char[] FormulaLeaders = ['=', '+', '-', '@', '\t', '\r'];
+
+    /// <summary>
+    /// RFC 4180 field: quoted when it holds a comma, a quote, or a line break, with embedded
+    /// quotes doubled. A project path may hold every one of those. A value whose first
+    /// character would start a formula gains a leading apostrophe first, so opening the file
+    /// in a spreadsheet displays the value instead of evaluating it.
+    /// </summary>
+    private static string Escape(string value)
+    {
+        if (value.Length > 0 && Array.IndexOf(FormulaLeaders, value[0]) >= 0)
+            value = "'" + value;
+
+        return value.IndexOfAny(['"', ',', '\r', '\n']) < 0
             ? value
             : $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+    }
+
+    private const string AppName = "Project Dashboard";
+
+    private const string HtmlStyle = """
+        :root { color-scheme: light dark; }
+        body { font-family: "Segoe UI", system-ui, sans-serif; margin: 2rem; line-height: 1.4; }
+        h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+        .meta { margin: 0 0 1.25rem; opacity: .7; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid; padding: .35rem .6rem; text-align: left; vertical-align: top; }
+        th { white-space: nowrap; }
+        tbody tr:nth-child(even) { background: rgba(127, 127, 127, .12); }
+        """;
+
+    /// <summary>
+    /// Markup-safe text. The ampersand is replaced first: doing it after the others would
+    /// re-escape the ampersands they just introduced.
+    /// </summary>
+    private static string HtmlEscape(string value) =>
+        value.Replace("&", "&amp;", StringComparison.Ordinal)
+             .Replace("<", "&lt;", StringComparison.Ordinal)
+             .Replace(">", "&gt;", StringComparison.Ordinal)
+             .Replace("\"", "&quot;", StringComparison.Ordinal);
 }
