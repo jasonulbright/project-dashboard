@@ -258,6 +258,8 @@ public class FileDiffTests
         Assert.StartsWith("\\ No newline", marker.Text);
         Assert.Equal("", marker.OldNumber);
         Assert.Equal("", marker.NewNumber);
+        Assert.True(marker.IsNoNewlineMarker);
+        Assert.DoesNotContain(diff.Lines.Take(diff.Lines.Count - 1), l => l.IsNoNewlineMarker);
     }
 
     [Fact]

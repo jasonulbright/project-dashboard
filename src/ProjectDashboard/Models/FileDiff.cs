@@ -13,6 +13,14 @@ public sealed class DiffLine
     public string NewNumber { get; init; } = "";
 
     /// <summary>
+    /// True only for git's "\ No newline at end of file" note, which the parser carries as an
+    /// unnumbered context row. The backslash is not a discriminator once a row's status column
+    /// is stripped — a line of the file can begin with one — so the marker is flagged where the
+    /// raw status column still distinguishes it.
+    /// </summary>
+    public bool IsNoNewlineMarker { get; init; }
+
+    /// <summary>
     /// Zero-based position of the hunk this row belongs to WITHIN ITS FILE, counted over the
     /// same column-0 "@@" headers <see cref="Services.GitService.ExtractHunkPatch"/> counts, so
     /// the two agree on which hunk an index names. Negative for a row that precedes the file's
@@ -112,6 +120,11 @@ public sealed class FileDiff
                 {
                     // Pre-hunk metadata, or the blank artifact of a trailing newline.
                 }
+                else if (line.StartsWith('\\'))
+                    current.Lines.Add(new DiffLine
+                    {
+                        Kind = DiffLineKind.Context, Text = line, HunkIndex = hunkIndex, IsNoNewlineMarker = true
+                    });
                 else if (line.StartsWith('+'))
                     current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line, HunkIndex = hunkIndex });
                 else if (line.StartsWith('-'))
@@ -178,8 +191,10 @@ public sealed class FileDiff
             }
             else if (line.StartsWith('\\'))
             {
-                // "\ No newline at end of file"
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line, HunkIndex = hunkIndex });
+                current.Lines.Add(new DiffLine
+                {
+                    Kind = DiffLineKind.Context, Text = line, HunkIndex = hunkIndex, IsNoNewlineMarker = true
+                });
             }
         }
 

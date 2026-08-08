@@ -171,6 +171,68 @@ public class SideBySideDiffTests
             Assert.Single(rows, r => r.Covers(line));
     }
 
+    /// <summary>
+    /// The parser strips a context row's leading status space, so a line of the file can itself
+    /// begin with a backslash. Such a line belongs to both files: it keeps its position and its
+    /// two line numbers instead of being gathered up as a marker and reprinted as a header.
+    /// </summary>
+    private const string BackslashContextLines = """
+        diff --git a/paper.tex b/paper.tex
+        --- a/paper.tex
+        +++ b/paper.tex
+        @@ -1,4 +1,4 @@
+         \documentclass{article}
+         \begin{document}
+        -\section{Old}
+        +\section{New}
+         \end{document}
+        """;
+
+    [Fact]
+    public void AContextLineBeginningWithABackslash_KeepsItsPositionAndLineNumbers()
+    {
+        var rows = SideBySideDiff.Build(Parse(BackslashContextLines));
+
+        var body = rows.Where(r => !r.IsHeader).ToList();
+        Assert.Equal(
+            ["\\documentclass{article}", "\\begin{document}", "\\section{Old}", "\\end{document}"],
+            body.Select(r => r.Source.Text));
+        Assert.DoesNotContain(rows, r => r.IsHeader && r.HeaderText.StartsWith('\\'));
+
+        var first = body[0];
+        Assert.Same(first.Left, first.Right);
+        Assert.Equal("1", first.LeftNumber);
+        Assert.Equal("1", first.RightNumber);
+    }
+
+    /// <summary>
+    /// A context line ends the run of changed lines that precedes it whatever it begins with.
+    /// Skipping one pairs a removed line with an added line git never matched it to, and word-
+    /// diffs two lines that share no edit.
+    /// </summary>
+    [Fact]
+    public void AContextLineBeginningWithABackslash_EndsTheRunOfChangedLines()
+    {
+        var rows = SideBySideDiff.Build(Parse("""
+            diff --git a/paper.tex b/paper.tex
+            --- a/paper.tex
+            +++ b/paper.tex
+            @@ -1,2 +1,2 @@
+            -Hello
+             \bigskip
+            +Goodbye
+            """));
+
+        var body = rows.Where(r => !r.IsHeader).ToList();
+        Assert.Equal(3, body.Count);
+        Assert.Equal("Hello", body[0].Left!.Text);
+        Assert.True(body[0].RightAbsent);
+        Assert.Equal("\\bigskip", body[1].Left!.Text);
+        Assert.Same(body[1].Left, body[1].Right);
+        Assert.True(body[2].LeftAbsent);
+        Assert.Equal("Goodbye", body[2].Right!.Text);
+    }
+
     [Fact]
     public void EveryRow_CarriesTheHunkIndexOfTheLineItWasBuiltFrom()
     {

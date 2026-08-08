@@ -109,10 +109,11 @@ public static class SideBySideDiff
     /// <summary>
     /// A line git writes about the file rather than from it — "\ No newline at end of file",
     /// which the unified parser carries as context because it sits inside the hunk. It belongs
-    /// to no side, so it neither pairs nor ends the run of changed lines it interrupts.
+    /// to no side, so it neither pairs nor ends the run of changed lines it interrupts. The
+    /// parser flags it; a context row's own text cannot be tested for the marker's backslash,
+    /// which a line of the file may also begin with.
     /// </summary>
-    private static bool IsFileNote(DiffLine line) =>
-        line.Kind == DiffLineKind.Context && line.Text.StartsWith('\\');
+    private static bool IsFileNote(DiffLine line) => line.IsNoNewlineMarker;
 
     /// <summary>
     /// Pairs a run of removed lines with the run of added lines that follows it, in order.
