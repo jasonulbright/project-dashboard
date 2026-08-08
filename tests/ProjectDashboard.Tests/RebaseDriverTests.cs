@@ -72,6 +72,12 @@ public class RebaseDriverTests
     [InlineData("git version 2.39.2", "ask")]
     [InlineData("", "ask")]
     [InlineData("not a version line", "ask")]
+    // Only the token after the literal `version` decides it: a dotted-numeric token anywhere
+    // else on the line belongs to something that is not git's version.
+    [InlineData("C:\\tools\\git-2.99.0\\bin\\git.exe: git version 2.39.2", "ask")]
+    [InlineData("warning: 9.9.9 something\ngit version 2.44.0", "ask")]
+    [InlineData("git version notanumber", "ask")]
+    [InlineData("2.53.0", "ask")]
     public void EmptyMode_FollowsTheGitVersion(string versionOutput, string expected) =>
         Assert.Equal(expected, RebaseDriver.EmptyModeFor(versionOutput));
 
