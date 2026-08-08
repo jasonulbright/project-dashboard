@@ -57,16 +57,47 @@ public partial class DashboardViewModel : ObservableObject
     public int TotalWaitCount => Projects.Sum(p => p.WaitCount);
     public int TotalTaskCount => Projects.Sum(p => p.TaskCount);
     public int IssueCount => Projects.Sum(p => p.OpenIssueCount ?? 0);
-    public int HiddenCount
+    /// <summary>
+    /// Hidden repositories under the projects root, served from the last completed count.
+    /// Deriving it needs a settings file read plus an existence probe and a repository
+    /// probe per excluded entry — disk work, on a property the summary bar re-reads for
+    /// every notification, and the watcher notifies on every file saved in every
+    /// repository. Recomputed by <see cref="RefreshHiddenCount"/>.
+    /// </summary>
+    public int HiddenCount => _hiddenCount;
+
+    private int _hiddenCount;
+
+    /// <summary>
+    /// Recounts the hidden repositories off the UI thread and publishes the result
+    /// through the UI post. A count one notification stale is what the summary bar shows
+    /// meanwhile, which is what it showed before the disk answered anyway.
+    /// </summary>
+    private void RefreshHiddenCount()
     {
-        get
+        _ = Task.Run(() =>
         {
-            var s = _settingsService.Load();
-            var root = s.ProjectsRootPath;
-            return s.ExcludedDirectories.Count(d =>
-                Directory.Exists(Path.Combine(root, d)) &&
-                GitService.IsGitRepo(Path.Combine(root, d)));
-        }
+            var count = CountHiddenRepos(_settingsService.Load());
+            _uiPost(() =>
+            {
+                if (_hiddenCount == count) return;
+                _hiddenCount = count;
+                OnPropertyChanged(nameof(HiddenCount));
+            });
+        });
+    }
+
+    /// <summary>
+    /// Excluded directories that are really repositories on disk. An excluded name with
+    /// no repository behind it is not a hidden project — the Hidden view would have
+    /// nothing to show for it.
+    /// </summary>
+    internal static int CountHiddenRepos(AppSettings settings)
+    {
+        var root = settings.ProjectsRootPath;
+        return settings.ExcludedDirectories.Count(d =>
+            Directory.Exists(Path.Combine(root, d)) &&
+            GitService.IsGitRepo(Path.Combine(root, d)));
     }
 
     public int MismatchCount => Projects.Count(p => !p.IsRemoteOnly && p.HasRemoteMismatch);
@@ -1188,7 +1219,12 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         if (SettingsDelta.RediscoveryRequired(change))
+        {
+            // The excluded set and the root are both inputs to the hidden count, and a
+            // re-scan that finds the same projects raises no summary notification.
+            RefreshHiddenCount();
             RequestRescan();
+        }
     }
 
     private void OnRepoBusyChanged(string repoPath)
@@ -1422,7 +1458,8 @@ public partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(TotalBugCount));
         OnPropertyChanged(nameof(TotalWaitCount));
         OnPropertyChanged(nameof(IssueCount));
-        OnPropertyChanged(nameof(HiddenCount));
+        // Off-thread: it raises its own notification, and only when the count moved.
+        RefreshHiddenCount();
         OnPropertyChanged(nameof(MismatchCount));
         OnPropertyChanged(nameof(IncompleteCount));
         OnPropertyChanged(nameof(HasMismatches));
