@@ -346,7 +346,7 @@ public partial class ProjectDetailPage
     {
         if (WorkTabs.SelectedItem is not TabItem { Tag: Models.DetailTab tab }) return;
         var load = ProjectDetailTabs.LoadForTab(tab, new DetailTabLoadState(
-            Branches: _viewModel.Branches.Count > 0,
+            Branches: _viewModel.BranchesTabLoaded,
             Stashes: _viewModel.StashesLoaded,
             PullRequests: _viewModel.PullRequestsLoaded,
             WorkflowRuns: _viewModel.WorkflowRunsLoaded,
@@ -355,7 +355,7 @@ public partial class ProjectDetailPage
         switch (load)
         {
             case DetailTabLoad.Branches:
-                _viewModel.LoadBranchesCommand.Execute(null);
+                _viewModel.LoadBranchesTabCommand.Execute(null);
                 break;
             case DetailTabLoad.Stashes:
                 _viewModel.LoadStashesCommand.Execute(null);
