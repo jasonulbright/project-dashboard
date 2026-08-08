@@ -89,6 +89,102 @@ public class RenderedLinkActivationTests
         Assert.Equal(1, clicks);
     }
 
+    /// <summary>
+    /// The mouse path discloses a link's real target on hover. A caret has no hover, so a
+    /// label naming a destination the link does not carry would otherwise launch from the
+    /// keyboard with the target never shown — the lookalike-host case the disclosure exists
+    /// for. The disclosure travels on the link the renderer built.
+    /// </summary>
+    [Fact]
+    public void ALookalikeLink_CarriesItsDisclosureForTheKeyboardPath()
+    {
+        var link = OnlyLink("see [https://github.com/o/r/pull/12](http://\u0430pple.com/login) now");
+
+        Assert.Equal("http://xn--pple-43d.com/login", link.Tag);
+        Assert.Equal("http://xn--pple-43d.com/login", link.ToolTip);
+    }
+
+    [Fact]
+    public void AnHonestLink_CarriesNoKeyboardDisclosure()
+    {
+        Assert.Null(OnlyLink("see [the PR](https://github.com/o/r/pull/12) now").Tag);
+        Assert.Null(OnlyLink("[https://ok.example/x](https://ok.example/x)").Tag);
+    }
+
+    [Fact]
+    public async Task ALinkCarryingADisclosure_LaunchesNothingUntilItIsConfirmed()
+    {
+        var link = Disclosing("http://xn--pple-43d.com/login");
+        var clicks = 0;
+        link.Click += (_, _) => clicks++;
+        var shown = new List<string>();
+
+        var launched = await ProjectDetailPage.ActivateFromKeyboardAsync(link, disclosure =>
+        {
+            shown.Add(disclosure);
+            return Task.FromResult(false);
+        });
+
+        Assert.False(launched);
+        Assert.Equal(0, clicks);
+        Assert.Equal(["http://xn--pple-43d.com/login"], shown);
+    }
+
+    [Fact]
+    public async Task AConfirmedDisclosure_LaunchesTheLinkOnce()
+    {
+        var link = Disclosing("http://xn--pple-43d.com/login");
+        var clicks = 0;
+        link.Click += (_, _) => clicks++;
+
+        var launched = await ProjectDetailPage.ActivateFromKeyboardAsync(link, _ => Task.FromResult(true));
+
+        Assert.True(launched);
+        Assert.Equal(1, clicks);
+    }
+
+    /// <summary>
+    /// A link whose label states no other destination costs one keystroke, not two: a
+    /// confirmation on every honest link is a prompt readers learn to dismiss unread.
+    /// </summary>
+    [Fact]
+    public async Task ALinkCarryingNoDisclosure_LaunchesOnTheOneKeystroke()
+    {
+        var link = Disclosing(null);
+        var clicks = 0;
+        link.Click += (_, _) => clicks++;
+        var confirms = 0;
+
+        var launched = await ProjectDetailPage.ActivateFromKeyboardAsync(link, _ =>
+        {
+            confirms++;
+            return Task.FromResult(true);
+        });
+
+        Assert.True(launched);
+        Assert.Equal(1, clicks);
+        Assert.Equal(0, confirms);
+    }
+
+    [Fact]
+    public void TheKeyHandler_RoutesEnterThroughTheDisclosureGate()
+    {
+        var page = File.ReadAllText(DetailPageSource());
+
+        var handler = Regex.Match(page,
+            @"private async void RenderedText_PreviewKeyDown\(.*?\n    \}", RegexOptions.Singleline).Value;
+        Assert.Contains("ActivateFromKeyboardAsync(link, ConfirmLinkAsync)", handler);
+        Assert.DoesNotContain("link.DoClick()", handler);
+    }
+
+    /// <summary>A link built as the renderer builds one, minus the launch its Click carries.</summary>
+    private static Hyperlink Disclosing(string? disclosure)
+    {
+        var link = new Hyperlink(new Run("label")) { Tag = disclosure };
+        _ = new FlowDocument(new Paragraph(link));
+        return link;
+    }
+
     private static Hyperlink OnlyLink(string markdown) =>
         Assert.Single(Render(markdown).Inlines.OfType<Hyperlink>());
 
@@ -108,11 +204,17 @@ public class RenderedLinkActivationTests
     }
 
     private static string DetailPageXaml([CallerFilePath] string testFile = "")
+        => DetailPageFile("ProjectDetailPage.xaml", testFile);
+
+    private static string DetailPageSource([CallerFilePath] string testFile = "")
+        => DetailPageFile("ProjectDetailPage.xaml.cs", testFile);
+
+    private static string DetailPageFile(string name, string testFile)
     {
         var path = Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(testFile)!, "..", "..",
-            "src", "ProjectDashboard", "Views", "Pages", "ProjectDetailPage.xaml"));
-        Assert.True(File.Exists(path), $"detail page markup not found at {path}");
+            "src", "ProjectDashboard", "Views", "Pages", name));
+        Assert.True(File.Exists(path), $"detail page file not found at {path}");
         return path;
     }
 }

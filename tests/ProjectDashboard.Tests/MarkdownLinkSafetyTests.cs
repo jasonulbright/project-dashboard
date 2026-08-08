@@ -92,6 +92,46 @@ public class MarkdownLinkSafetyTests
         Assert.DoesNotContain("\u0430", tooltip);
     }
 
+    /// <summary>
+    /// The mouse discloses a link's target on hover; a caret has no hover, so the keyboard
+    /// path discloses through a confirmation instead. It is owed only where the label makes
+    /// a claim about the destination that the launch does not keep — a label naming another
+    /// host, and a label whose own characters are a host the reader cannot tell from an
+    /// ASCII one. A label that names no destination contradicts nothing and costs no
+    /// second keystroke.
+    /// </summary>
+    [Theory]
+    [InlineData("the PR", "https://github.com/o/r/pull/12")]
+    [InlineData("here", "https://evil.example/x")]
+    [InlineData("v1.2.0", "https://github.com/o/r/releases/tag/v1.2.0")]
+    [InlineData("see github.com for more", "https://evil.example/x")]
+    [InlineData("https://github.com/o/r/pull/12", "https://github.com/o/r/pull/12")]
+    [InlineData("github.com/o/r/pull/12", "https://github.com/o/r/pull/12")]
+    [InlineData("example.com", "https://example.com")]
+    [InlineData("https://example.com", "https://example.com")]
+    public void ALabelClaimingNoOtherDestination_ActivatesWithoutADisclosure(string label, string url)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var target));
+        Assert.Null(ProjectDetailPage.KeyboardDisclosure(label, target));
+    }
+
+    [Theory]
+    // The label names one host and the link carries another.
+    [InlineData("https://github.com/o/r/pull/12", "http://\u0430pple.com/login", "http://xn--pple-43d.com/login")]
+    [InlineData("github.com", "https://evil.example/x", "https://evil.example/x")]
+    [InlineData("github.com/o/r/pull/12", "https://github.com.evil.example/o/r/pull/12",
+        "https://github.com.evil.example/o/r/pull/12")]
+    // The label IS the target, and renders as a host it is not: the punycode is the point.
+    [InlineData("\u0430pple.com", "https://\u0430pple.com", "https://xn--pple-43d.com/")]
+    [InlineData("https://\u0430pple.com/login", "https://\u0430pple.com/login", "https://xn--pple-43d.com/login")]
+    // Userinfo hides the host in a label that reads as an honest one.
+    [InlineData("https://github.com/x", "https://github.com@evil.example/x", "https://github.com@evil.example/x")]
+    public void ALabelNamingAnotherDestination_IsDisclosedInPunycode(string label, string url, string expected)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var target));
+        Assert.Equal(expected, ProjectDetailPage.KeyboardDisclosure(label, target));
+    }
+
     [Theory]
     [InlineData("https://github.com/o/r/pull/12", "https://github.com/o/r/pull/12")]
     [InlineData("HTTPS://Example.COM/x", "https://example.com/x")]

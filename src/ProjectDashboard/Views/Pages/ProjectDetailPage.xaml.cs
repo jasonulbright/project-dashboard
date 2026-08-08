@@ -1035,6 +1035,49 @@ public partial class ProjectDetailPage
     }
 
     /// <summary>
+    /// The disclosure a keyboard activation shows before it launches, or null when the
+    /// link's own label already states where it goes. The mouse discloses on hover and a
+    /// caret has no hover, so the label is what a keyboard reader has: a label that names
+    /// a destination the launch does not keep must reach them first, and a label that
+    /// names no destination has nothing to contradict. Comparison is against the punycode
+    /// disclosure, so a label spelled in lookalike characters is never its own match.
+    /// </summary>
+    internal static string? KeyboardDisclosure(string linkText, Uri target)
+    {
+        var label = linkText.Trim();
+        if (!NamesADestination(label)) return null;
+        var disclosure = LinkDisclosure(target);
+        var scheme = $"{target.Scheme}://";
+        var bare = disclosure.StartsWith(scheme, StringComparison.Ordinal)
+            ? disclosure[scheme.Length..]
+            : disclosure;
+        // A bare host is disclosed with the "/" that spells its empty path; a label
+        // naming that host is the same destination without it.
+        if (label == disclosure || label == bare || $"{label}/" == disclosure || $"{label}/" == bare)
+            return null;
+        return disclosure;
+    }
+
+    /// <summary>
+    /// Whether a link label reads as a destination rather than as prose. A run of
+    /// host-shaped text with no whitespace, with or without a scheme, is a claim about
+    /// where the link goes; a version or a file name is not, and neither is a sentence.
+    /// </summary>
+    private static bool NamesADestination(string label)
+    {
+        if (label.Length == 0 || label.Any(char.IsWhiteSpace)) return false;
+        if (label.Contains("://", StringComparison.Ordinal)) return true;
+        var host = label.Split('/', 2)[0];
+        return HostShapedLabel.IsMatch(host) || Uri.CheckHostName(host) == UriHostNameType.IPv4;
+    }
+
+    /// <summary>
+    /// Dotted labels ending in a name, not a number: a release label such as v1.2.0 is
+    /// not a host claim. Matches non-ASCII letters, which is where the lookalikes live.
+    /// </summary>
+    private static readonly Regex HostShapedLabel = new(@"^(?:[\w-]+\.)+\w{2,}$", RegexOptions.Compiled);
+
+    /// <summary>
     /// The exact string handed to ShellExecute for a navigable link. The raw capture is
     /// not it: a target such as https://host/&lt;CR&gt;foo, an embedded tab, or one padded
     /// with spaces passes the allow-list and would otherwise reach the shell with those
@@ -1082,7 +1125,9 @@ public partial class ProjectDetailPage
                     {
                         Foreground = new SolidColorBrush(Color.FromRgb(108, 164, 217)),
                         TextDecorations = TextDecorations.Underline,
-                        ToolTip = LinkDisclosure(target)
+                        ToolTip = LinkDisclosure(target),
+                        // Read back by the keyboard path, which has no hover to disclose with.
+                        Tag = KeyboardDisclosure(linkText, target)
                     };
                     var launch = NavigationTarget(target);
                     // Click is raised by the mouse and by Hyperlink.DoClick, so the keyboard
@@ -1134,18 +1179,42 @@ public partial class ProjectDetailPage
     }
 
     /// <summary>
+    /// Launches a link the caret addresses, showing its disclosure first when it carries
+    /// one. A link the reader declines is not launched; every other link opens on the one
+    /// keystroke the mouse path costs one click.
+    /// </summary>
+    internal static async Task<bool> ActivateFromKeyboardAsync(Hyperlink link, Func<string, Task<bool>> confirm)
+    {
+        if (link.Tag is string disclosure && !await confirm(disclosure)) return false;
+        link.DoClick();
+        return true;
+    }
+
+    /// <summary>
     /// Enter opens the link the caret addresses. A Hyperlink inside a RichTextBox never
     /// takes keyboard focus — the text editor owns the keyboard and the caret is its
     /// cursor — so without this a rendered markdown link is reachable by mouse only.
     /// </summary>
-    private void RenderedText_PreviewKeyDown(object sender, KeyEventArgs e)
+    private async void RenderedText_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None) return;
         if (sender is not System.Windows.Controls.RichTextBox rtb) return;
         if (HyperlinkAt(rtb.CaretPosition) is not { } link) return;
-        link.DoClick();
+        // Set before the await: the key is consumed whether or not the launch is confirmed.
         e.Handled = true;
+        await ActivateFromKeyboardAsync(link, ConfirmLinkAsync);
     }
+
+    /// <summary>
+    /// Names the destination a link's own text does not. The label is attacker-chosen in a
+    /// rendered issue body, so the disclosure is the punycode form and the reader answers
+    /// before anything is launched.
+    /// </summary>
+    private Task<bool> ConfirmLinkAsync(string disclosure) =>
+        _viewModel.ConfirmAsync(
+            "Open this link?",
+            $"The link text does not match where this link goes. It opens:\n\n{disclosure}",
+            "Open link");
 
     /// <summary>
     /// Selects the commit under a right-click before its context menu opens. Every surgery
