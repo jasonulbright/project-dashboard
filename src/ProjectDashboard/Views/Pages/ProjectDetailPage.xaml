@@ -174,7 +174,7 @@
                         </StackPanel>
                         <TextBlock Text="{Binding RecoveryBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
-                                   AutomationProperties.Name="Interrupted history operation" />
+                                   AutomationProperties.AutomationId="RecoveryBannerText" />
                     </DockPanel>
 
                     <!-- Discarding abandons the only record that this repository may be

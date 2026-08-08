@@ -69,7 +69,7 @@
                         <Border CornerRadius="6" Padding="12,8" Margin="0,0,0,10"
                                 Background="{StaticResource StatusWarnBg}" BorderThickness="1"
                                 BorderBrush="{StaticResource StatusWarnFg}"
-                                AutomationProperties.Name="Interrupted operation recorded for this repository">
+                                AutomationProperties.AutomationId="BackupsJournalNote">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Visible" />
@@ -160,7 +160,7 @@
                         </Border.Style>
                         <TextBlock Text="{Binding BackupsErrorText}" FontSize="12" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                   AutomationProperties.Name="Backup problem" />
+                                   AutomationProperties.AutomationId="BackupsErrorText" />
                     </Border>
 
                     <DockPanel>
@@ -181,7 +181,7 @@
                             <TextBlock Text="{Binding BackupsStatusText}" FontSize="12" TextWrapping="Wrap"
                                        VerticalAlignment="Center" MaxWidth="520"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       AutomationProperties.Name="Backup status" />
+                                       AutomationProperties.AutomationId="BackupsStatusText" />
                         </StackPanel>
                     </DockPanel>
                 </StackPanel>
