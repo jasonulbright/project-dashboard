@@ -717,14 +717,26 @@ public class RewriteCoordinatorTests
         }
     }
 
+    private static RewriteCoordinator SweepingCoordinator(string workRoot)
+    {
+        var git = new GitService();
+        return new RewriteCoordinator(
+            new BackupService(git, new SettingsService()),
+            new RepoBusyRegistry(),
+            git,
+            new SwapService(git),
+            gitExecutable: GitGuard.GitExe,
+            workRoot: workRoot);
+    }
+
     /// <summary>
     /// The scratch release is best effort and dies with the process, so a kill mid-rewrite
     /// leaves a bare repo per abandoned run under the work root forever. A coordinator reclaims
-    /// them when it is built, and holds back anything young enough to belong to a rewrite
-    /// another process is still running.
+    /// them, and holds back anything young enough to belong to a rewrite another process is
+    /// still running.
     /// </summary>
     [Fact]
-    public void ConstructingACoordinator_ReclaimsAbandonedScratchTreesButNotYoungOnes()
+    public async Task ANewCoordinator_ReclaimsAbandonedScratchTreesButNotYoungOnes()
     {
         var workRoot = Path.Combine(Path.GetTempPath(), "pd-fixtures", "rewrite-sweep-" + Guid.NewGuid().ToString("N")[..8]);
         var abandoned = Path.Combine(workRoot, "abandoned-" + Guid.NewGuid().ToString("N")[..12]);
@@ -736,14 +748,7 @@ public class RewriteCoordinatorTests
             Directory.CreateDirectory(Path.Combine(live, "target.git"));
             Directory.SetLastWriteTimeUtc(abandoned, DateTime.UtcNow - TimeSpan.FromDays(3));
 
-            var git = new GitService();
-            _ = new RewriteCoordinator(
-                new BackupService(git, new SettingsService()),
-                new RepoBusyRegistry(),
-                git,
-                new SwapService(git),
-                gitExecutable: GitGuard.GitExe,
-                workRoot: workRoot);
+            await SweepingCoordinator(workRoot).ScratchSweep;
 
             Assert.False(Directory.Exists(abandoned));
             Assert.True(Directory.Exists(live));
@@ -751,6 +756,45 @@ public class RewriteCoordinatorTests
         }
         finally
         {
+            RewriteScratch.TryDeleteTree(workRoot);
+        }
+    }
+
+    /// <summary>
+    /// The sweep is disk work whose cost scales with a work root nobody has cleaned, and a tree
+    /// holding an open file costs a retry sleep on top of a failed recursive delete. Construction
+    /// is what a container resolves on the dispatcher the moment a project page first asks for
+    /// the wizard, so none of that may be charged to the constructing thread.
+    ///
+    /// The held file guarantees the sweep cannot finish inside one retry interval, which is what
+    /// makes a constructor that returns sooner proof the work is somewhere else.
+    /// </summary>
+    [Fact]
+    public async Task ANewCoordinator_DoesNotPayForTheSweepOnTheConstructingThread()
+    {
+        var workRoot = Path.Combine(Path.GetTempPath(), "pd-fixtures", "rewrite-sweep-" + Guid.NewGuid().ToString("N")[..8]);
+        var held = Path.Combine(workRoot, "held-" + Guid.NewGuid().ToString("N")[..12]);
+        Directory.CreateDirectory(Path.Combine(held, "target.git"));
+        var lockedPath = Path.Combine(held, "target.git", "pack.idx");
+        File.WriteAllText(lockedPath, "x");
+        Directory.SetLastWriteTimeUtc(held, DateTime.UtcNow - TimeSpan.FromDays(3));
+
+        var locked = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var coordinator = SweepingCoordinator(workRoot);
+            var constructionMs = clock.Elapsed.TotalMilliseconds;
+
+            Assert.True(constructionMs < 200,
+                $"construction blocked for {constructionMs:F0} ms — the sweep is back on the caller's thread");
+
+            await coordinator.ScratchSweep;
+            _output.WriteLine($"construction took {constructionMs:F0} ms; the sweep finished separately");
+        }
+        finally
+        {
+            locked.Dispose();
             RewriteScratch.TryDeleteTree(workRoot);
         }
     }
