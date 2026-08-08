@@ -517,7 +517,7 @@ public class GitService
     /// rename — an error, not repository corruption. Returns true only when a
     /// lock file was deleted.
     /// </summary>
-    public async Task<bool> TryCleanStaleLockAsync(string repoPath, TimeSpan? minAge = null,
+    public virtual async Task<bool> TryCleanStaleLockAsync(string repoPath, TimeSpan? minAge = null,
         TimeSpan? recheckDelay = null, CancellationToken ct = default)
     {
         var gitDir = await ResolveGitDirAsync(repoPath, ct);

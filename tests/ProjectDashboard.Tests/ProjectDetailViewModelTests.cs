@@ -307,6 +307,38 @@ public class ProjectDetailViewModelTests
         Assert.Equal("", vm.CommitMessage);
     }
 
+    /// <summary>
+    /// Lands a project switch inside the stale-lock cleanup the retry is waiting on. The callback
+    /// runs once, ahead of the cleanup it wraps, so the retry's generation check is ordered after
+    /// the switch by the call itself. Racing the switch against the cleanup's own re-check window
+    /// instead makes the interleave a wall-clock bet that a stalled test thread loses.
+    /// </summary>
+    private sealed class SwitchDuringLockCleanupGitService : GitService
+    {
+        private Func<Task>? _beforeCleanup;
+
+        public Func<Task>? BeforeCleanup
+        {
+            set => Interlocked.Exchange(ref _beforeCleanup, value);
+        }
+
+        /// <summary>What happened, in the order it happened.</summary>
+        public List<string> Steps { get; } = [];
+
+        public override async Task<bool> TryCleanStaleLockAsync(string repoPath, TimeSpan? minAge = null,
+            TimeSpan? recheckDelay = null, CancellationToken ct = default)
+        {
+            if (Interlocked.Exchange(ref _beforeCleanup, null) is { } callback)
+            {
+                await callback();
+                Steps.Add("project switched");
+            }
+            var removed = await base.TryCleanStaleLockAsync(repoPath, minAge, recheckDelay, ct);
+            Steps.Add("lock cleanup finished");
+            return removed;
+        }
+    }
+
     [Fact]
     public async Task StaleLockRetry_SwitchDuringCleanup_AbandonsTheRetryAndTouchesNeitherRepo()
     {
@@ -315,7 +347,8 @@ public class ProjectDetailViewModelTests
         repoA.WriteFile("a-new.txt", "a\n");
         repoB.WriteFile("b-new.txt", "b\n");
 
-        var vm = NewVm();
+        var probe = new SwitchDuringLockCleanupGitService();
+        var vm = new ProjectDetailViewModel(null!, probe, null!);
         await vm.SetProjectAsync(ProjectFor(repoA));
 
         var lockPath = System.IO.Path.Combine(repoA.Path, ".git", "index.lock");
@@ -327,14 +360,12 @@ public class ProjectDetailViewModelTests
         File.SetCreationTimeUtc(lockPath, old);
         File.SetLastWriteTimeUtc(lockPath, old);
 
-        // The retry parks at the cleanup's 500 ms re-check delay on its first
-        // yielding await, so the synchronous switch below lands mid-cleanup,
-        // before the wrapper's generation check can run.
-        var retry = vm.RemoveStaleLockAndRetryCommand.ExecuteAsync(null);
-        await vm.SetProjectAsync(ProjectFor(repoB));
-        Assert.False(retry.IsCompleted); // interleave landed inside the cleanup window
+        probe.BeforeCleanup = () => vm.SetProjectAsync(ProjectFor(repoB));
+        await vm.RemoveStaleLockAndRetryCommand.ExecuteAsync(null);
 
-        await retry;
+        // The switch is inside the cleanup, so the wrapper's generation check runs
+        // after it rather than after whichever of the two the machine finished first.
+        Assert.Equal(["project switched", "lock cleanup finished"], probe.Steps);
 
         // The cleanup finishes against A (the lock it was pointed at goes away),
         // but the moved generation abandons the replay: the stage-all reruns in
