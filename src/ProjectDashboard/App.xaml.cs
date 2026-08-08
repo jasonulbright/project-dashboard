@@ -43,6 +43,16 @@ public partial class App : Application
                 $"Unhandled domain exception (terminating={args.IsTerminating})",
                 args.ExceptionObject as Exception);
 
+        if (AppPaths.StartupNotice is { } notice)
+        {
+            ProjectDashboard.Services.Log.Warn(notice);
+            System.Windows.MessageBox.Show(
+                notice,
+                "Project Dashboard",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
+
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
