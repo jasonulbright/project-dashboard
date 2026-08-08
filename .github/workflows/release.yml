@@ -65,7 +65,7 @@ jobs:
       # build-portable.ps1 publishes into installer\payload, which is exactly what the
       # installer script packs, so the portable archive is built before makensis runs.
       - name: Build portable archive
-        run: pwsh -File installer/build-portable.ps1 -OutputDirectory dist
+        run: pwsh -File installer/build-portable.ps1
 
       - name: Resolve makensis
         run: |
@@ -89,8 +89,10 @@ jobs:
           & $env:MAKENSIS project-dashboard.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
 
+      # Written outside the checkout: every path the build writes to inside it is
+      # already covered by .gitignore, and a stray tracked-tree file is not.
       - name: Extract release notes
-        run: pwsh -File installer/extract-changelog.ps1 -Version $env:VERSION -OutputPath dist/release-notes.md
+        run: pwsh -File installer/extract-changelog.ps1 -Version $env:VERSION -OutputPath "$env:RUNNER_TEMP/release-notes.md"
 
       # Assets are named explicitly: a wildcard would attach any stale artifact left in
       # the tree by an earlier step.
@@ -99,13 +101,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $installer = "installer/ProjectDashboard-Setup-$env:VERSION.exe"
-          $portable  = "dist/ProjectDashboard-Portable-$env:VERSION.zip"
+          $portable  = "installer/ProjectDashboard-Portable-$env:VERSION.zip"
           foreach ($asset in @($installer, $portable)) {
             if (-not (Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset." }
           }
           gh release create '${{ github.ref_name }}' `
             --verify-tag `
             --title "Project Dashboard $env:VERSION" `
-            --notes-file dist/release-notes.md `
+            --notes-file "$env:RUNNER_TEMP/release-notes.md" `
             $installer $portable
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
