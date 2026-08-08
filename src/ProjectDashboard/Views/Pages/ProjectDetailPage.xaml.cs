@@ -195,16 +195,13 @@ public partial class ProjectDetailPage
 
         RenderDocuments();
 
-        // Ahead of the load below, so the deep-linked surface is the one whose data is
-        // fetched rather than the default tab's.
-        if (RequestedTab is { } requested)
-        {
-            RequestedTab = null;
-            SelectTab(requested);
-        }
+        var requested = RequestedTab;
+        RequestedTab = null;
 
-        // Project switched while a lazy tab was active: its data was reset, reload it.
-        LoadDataForActiveTab();
+        // The deep-linked surface is the one whose data is fetched, rather than the
+        // default tab's. Without a deep link the load stands on its own: a project
+        // switched to while a lazy tab was active reset that tab's data.
+        ApplyPendingTab(WorkTabs, requested, LoadDataForActiveTab);
 
         // Take keyboard focus so the tab hotkeys (Ctrl+digit) and page key handling work
         // immediately — navigation from a card, the sidebar, or the palette leaves focus
@@ -311,14 +308,29 @@ public partial class ProjectDetailPage
     public static Models.DetailTab? RequestedTab { get; set; }
 
     /// <summary>
-    /// Selects the work-area tab tagged <paramref name="tab"/>. A tab this page does not
-    /// host leaves the selection where it is.
+    /// Selects the work-area tab tagged <paramref name="tab"/>, reporting whether the
+    /// selection moved. A tab the page does not host, and a tab already selected, leave
+    /// the selection where it is.
     /// </summary>
-    public void SelectTab(Models.DetailTab tab)
+    internal static bool SelectTab(TabControl tabs, Models.DetailTab tab)
     {
-        var tags = WorkTabs.Items.OfType<TabItem>().Select(item => item.Tag as Models.DetailTab?);
-        if (ProjectDetailTabs.IndexOfTab(tags, tab) is { } index)
-            WorkTabs.SelectedIndex = index;
+        var tags = tabs.Items.OfType<TabItem>().Select(item => item.Tag as Models.DetailTab?);
+        if (ProjectDetailTabs.IndexOfTab(tags, tab) is not { } index || index == tabs.SelectedIndex)
+            return false;
+        tabs.SelectedIndex = index;
+        return true;
+    }
+
+    /// <summary>
+    /// Applies a deep-linked tab and loads the active surface exactly once. A selection
+    /// that moves raises SelectionChanged, whose handler already loads the surface it
+    /// moved to; loading again spawns a second read of that surface, and the later reply
+    /// replaces the collection the first one filled, dropping the selection in it.
+    /// </summary>
+    internal static void ApplyPendingTab(TabControl tabs, Models.DetailTab? requested, Action loadActiveTab)
+    {
+        if (requested is { } tab && SelectTab(tabs, tab)) return;
+        loadActiveTab();
     }
 
     /// <summary>Lazy-loads tab data the first time a surface is opened for the current project.</summary>
