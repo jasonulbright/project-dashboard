@@ -228,10 +228,12 @@ public sealed class RewriteCoordinator
 
     /// <summary>
     /// The source's ref layout as the swap sees it: every non-remote ref, sorted, plus the oid
-    /// HEAD resolves to so a detached-HEAD move that leaves no ref behind still registers.
-    /// Remote-tracking refs are excluded because the swap never reconciles them, so a fetch
-    /// between the dry run and the execute is not a reason to refuse. Null when git could not
-    /// read the repository.
+    /// HEAD resolves to so a detached-HEAD move that leaves no ref behind still registers, plus
+    /// HEAD's symbolic target — two branches on one commit resolve to the same oid and leave
+    /// the ref list identical, so a checkout between the dry run and the execute is invisible to
+    /// the oids alone while the swap installs the export's HEAD over it. Remote-tracking refs
+    /// are excluded because the swap never reconciles them, so a fetch between the dry run and
+    /// the execute is not a reason to refuse. Null when git could not read the repository.
     /// </summary>
     private async Task<string?> ReadSourceStateAsync(string repo, CancellationToken ct)
     {
@@ -250,6 +252,9 @@ public sealed class RewriteCoordinator
         lines.Sort(StringComparer.Ordinal);
         var head = await _git.RunAsync(repo, ["rev-parse", "--verify", "-q", "HEAD"], ct, RefTimeout);
         lines.Add("HEAD " + head.StdOut.Trim());
+        // Empty output is a detached HEAD, which is itself a state the execute must not cross.
+        var symbolic = await _git.RunAsync(repo, ["symbolic-ref", "-q", "HEAD"], ct, RefTimeout);
+        lines.Add("HEAD-symbolic " + (symbolic.Success ? symbolic.StdOut.Trim() : ""));
         return string.Join("\n", lines);
     }
 

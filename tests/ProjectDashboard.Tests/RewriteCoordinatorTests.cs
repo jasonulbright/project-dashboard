@@ -500,6 +500,54 @@ public class RewriteCoordinatorTests
     }
 
     /// <summary>
+    /// Two branches on one commit resolve HEAD to the same object and leave the ref list
+    /// identical, so a checkout between the dry run and the execute moves nothing the object
+    /// ids can see. The swap installs the export's HEAD, which reattaches to the branch the dry
+    /// run was on — the reader's checked-out branch silently changes.
+    /// </summary>
+    [Fact]
+    public async Task ExecutingAPreview_RefusesWhenHeadMovedToAnotherBranchOnTheSameCommit()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+        f.Git("branch", "parallel");
+
+        var coordinator = NewCoordinator();
+        using var preview = await coordinator.PreviewAsync(Request(f));
+
+        f.Git("switch", "-q", "parallel");
+        var beforeExecute = RefState(f.SourcePath);
+        Assert.Equal("refs/heads/parallel", f.Git("symbolic-ref", "HEAD").Trim());
+
+        var result = await coordinator.ExecuteAsync(preview);
+
+        Assert.False(result.Success);
+        Assert.Contains("changed after the dry run", result.FailureReason);
+        Assert.Null(result.Undo);
+        Assert.Equal(beforeExecute, RefState(f.SourcePath));
+        Assert.Equal("refs/heads/parallel", f.Git("symbolic-ref", "HEAD").Trim());
+        Assert.True(GrepHits(f.SourcePath, AllCommits(f.SourcePath), Needle) >= 5);
+    }
+
+    /// <summary>A detached HEAD carries no branch, and detaching onto the same commit is still a change the swap would undo.</summary>
+    [Fact]
+    public async Task ExecutingAPreview_RefusesWhenHeadWasDetachedOntoTheSameCommit()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var coordinator = NewCoordinator();
+        using var preview = await coordinator.PreviewAsync(Request(f));
+
+        f.Git("switch", "-q", "--detach", "HEAD");
+
+        var result = await coordinator.ExecuteAsync(preview);
+
+        Assert.False(result.Success);
+        Assert.Contains("changed after the dry run", result.FailureReason);
+    }
+
+    /// <summary>
     /// Executing a session resumes on the thread the step was started from. Deleting a spent
     /// preview's scratch tree enumerates every file, rewrites the attributes of each, deletes
     /// recursively, and sleeps between retries while a just-exited git still holds handles —
