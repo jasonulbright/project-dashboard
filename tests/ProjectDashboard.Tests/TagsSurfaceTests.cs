@@ -217,10 +217,16 @@ public class TagsSurfaceTests
         Assert.Empty(vm.Tags);
     }
 
+    /// <summary>
+    /// With no remotes configured, this repository knows of no other copy — which is not the same
+    /// as there being none, and the wording claims only the former.
+    /// </summary>
     [Fact]
-    public void TheRemoteNotice_SaysNowhereElseOnlyWhenThereIsNowhereElse()
+    public void TheRemoteNotice_ClaimsOnlyWhatThisRepositoryKnows()
     {
-        Assert.Contains("exists nowhere else", ProjectDetailViewModel.RemoteTagNotice([]));
+        var noRemotes = ProjectDetailViewModel.RemoteTagNotice([]);
+        Assert.Contains("nothing here knows of another copy", noRemotes);
+        Assert.DoesNotContain("nowhere else", noRemotes);
         var withRemotes = ProjectDetailViewModel.RemoteTagNotice(["origin", "mirror"]);
         Assert.Contains("origin, mirror", withRemotes);
         Assert.Contains("takes a push", withRemotes);

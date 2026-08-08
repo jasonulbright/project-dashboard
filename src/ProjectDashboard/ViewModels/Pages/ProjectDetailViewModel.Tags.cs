@@ -229,7 +229,7 @@ public partial class ProjectDetailViewModel
     /// </summary>
     internal static string RemoteTagNotice(IReadOnlyCollection<string> remoteNames) =>
         remoteNames.Count == 0
-            ? "This repository has no remotes, so the tag exists nowhere else."
+            ? "This repository has no remotes, so nothing here knows of another copy."
             : $"The delete is local. If {string.Join(", ", remoteNames)} also carries this tag, it still will — " +
               "removing a tag from a remote takes a push, and this app never pushes tags.";
 
