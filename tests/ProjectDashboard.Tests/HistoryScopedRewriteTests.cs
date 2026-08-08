@@ -171,6 +171,14 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
 
     private static FixtureRepo Fixture(bool bareSource = false) => new(bareSource, prefix: "engine2b-");
 
+    /// <summary>
+    /// A scoped rewrite run, verified by fsck, the content that came out, and the report's own
+    /// scrub checks. The identity proofs in <see cref="HistoryTestSupport.RoundTripAsync"/> — the
+    /// byte-identical re-emit and the ref-for-ref object-id comparison — do not apply and must not
+    /// be folded in: a rewrite changes payload bytes, so the emitted stream differs from the spool
+    /// and every commit downstream of a changed blob gets a new object id. They are used here only
+    /// where a scoped run provably changed nothing.
+    /// </summary>
     private static Task<RewriteReport> RewriteAsync(FixtureRepo f, RewriteOptions rewrite, long ceiling = HistoryRewriter.DefaultChangedPayloadCeiling) =>
         new HistoryRewriter(GitGuard.GitExe, changedPayloadCeiling: ceiling).RunAsync(new HistoryRewriteRequest
         {

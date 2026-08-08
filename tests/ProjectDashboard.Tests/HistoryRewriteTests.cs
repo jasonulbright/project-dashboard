@@ -214,6 +214,16 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         }]
     };
 
+    /// <summary>
+    /// A rewrite run, verified the only way a rewrite can be: fsck, the content that came out,
+    /// and the report's own scrub checks. The identity proofs in
+    /// <see cref="HistoryTestSupport.RoundTripAsync"/> — the byte-identical re-emit and the
+    /// ref-for-ref object-id comparison — do not apply here and must not be folded in: a rewrite
+    /// changes payload bytes, so the emitted stream differs from the spool and every commit
+    /// downstream of a changed blob gets a new object id. Those proofs hold only for the no-op
+    /// round trip, and one test in this file (<c>NoOpTransformReproducesIdenticalRefs</c>) uses
+    /// them for exactly that.
+    /// </summary>
     private static Task<RewriteReport> RewriteAsync(FixtureRepo f, RewriteOptions rewrite, string? reportPath = null) =>
         new HistoryRewriter(GitGuard.GitExe).RunAsync(new HistoryRewriteRequest
         {
