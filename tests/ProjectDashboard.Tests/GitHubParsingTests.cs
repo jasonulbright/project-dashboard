@@ -209,6 +209,7 @@ public class GitHubReleaseParsingTests
             [
               {
                 "id": 1, "tag_name": "v1.2.0", "name": "Project Dashboard 1.2.0",
+                "body": "## Added\n\n- The Releases tab",
                 "draft": false, "prerelease": false,
                 "created_at": "2026-07-17T20:00:00Z", "published_at": "2026-07-17T20:05:00Z",
                 "html_url": "https://github.com/o/r/releases/tag/v1.2.0",
@@ -228,6 +229,9 @@ public class GitHubReleaseParsingTests
 
         Assert.Equal("v1.2.0", releases[0].TagName);
         Assert.Equal("Project Dashboard 1.2.0", releases[0].Name);
+        Assert.Equal("v1.2.0 — Project Dashboard 1.2.0", releases[0].DisplayTitle);
+        Assert.Equal("", releases[0].StateLabel);
+        Assert.Contains("The Releases tab", releases[0].Body);
         Assert.False(releases[0].IsDraft);
         Assert.Equal(new DateTimeOffset(2026, 7, 17, 20, 5, 0, TimeSpan.Zero), releases[0].PublishedAt);
         var asset = Assert.Single(releases[0].Assets);
@@ -237,6 +241,12 @@ public class GitHubReleaseParsingTests
 
         Assert.True(releases[1].IsDraft);
         Assert.True(releases[1].IsPrerelease);
+        // A draft outranks the prerelease flag: one chip, and "draft" is the one that
+        // decides whether anybody else can see it.
+        Assert.Equal("draft", releases[1].StateLabel);
+        // Untitled: the tag is the whole title rather than a trailing dash.
+        Assert.Equal("v1.3.0-rc1", releases[1].DisplayTitle);
+        Assert.Equal("", releases[1].Body);
         // A draft has no publish moment — null, not a zero date.
         Assert.Null(releases[1].PublishedAt);
         Assert.Empty(releases[1].Assets);
@@ -275,6 +285,7 @@ public class GitHubWorkflowRunParsingTests
             [
               {"conclusion":"success","databaseId":16752341890,"displayTitle":"Fix crash on empty repo",
                "event":"push","headBranch":"master","name":"CI","startedAt":"2026-08-05T14:00:05Z",
+               "updatedAt":"2026-08-05T14:04:35Z",
                "status":"completed","url":"https://github.com/o/r/actions/runs/16752341890","workflowName":"CI"},
               {"conclusion":"","databaseId":16752341999,"displayTitle":"Bump version",
                "event":"workflow_dispatch","headBranch":"release","name":"Release",
@@ -294,12 +305,48 @@ public class GitHubWorkflowRunParsingTests
         Assert.Equal("completed", runs[0].Status);
         Assert.Equal("success", runs[0].Conclusion);
         Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 0, 5, TimeSpan.Zero), runs[0].StartedAt);
+        Assert.True(runs[0].IsCompleted);
+        Assert.Equal("success", runs[0].OutcomeLabel);
+        // A finished run's elapsed is fixed by its own timestamps, not the clock.
+        Assert.Equal("4m 30s", runs[0].ElapsedLabel);
 
         Assert.Equal("queued", runs[1].Status);
         Assert.Equal("", runs[1].Conclusion);
+        Assert.Equal("queued", runs[1].OutcomeLabel);
         // gh serializes a not-yet-started run with the year-1 zero time — read as null.
         Assert.Null(runs[1].StartedAt);
+        Assert.Equal("", runs[1].ElapsedLabel);
     }
+
+    [Fact]
+    public void CompletedRunWithoutAConclusion_StillReadsAsFinished()
+    {
+        var runs = GitHubService.ParseWorkflowRuns("""[{"databaseId":5,"workflowName":"CI","status":"completed","conclusion":""}]""");
+        Assert.NotNull(runs);
+        Assert.Equal("completed", Assert.Single(runs).OutcomeLabel);
+    }
+
+    [Theory]
+    // Ended before it started (runner clock skew): a duration is never negative.
+    [InlineData("2026-08-05T14:05:00Z", "2026-08-05T14:00:00Z", "0s")]
+    [InlineData("2026-08-05T14:00:00Z", "2026-08-05T14:00:07Z", "7s")]
+    [InlineData("2026-08-05T14:00:00Z", "2026-08-05T14:02:03Z", "2m 3s")]
+    [InlineData("2026-08-05T14:00:00Z", "2026-08-05T17:30:00Z", "3h 30m")]
+    public void Elapsed_FormatsToTheLargestUsefulUnit(string started, string ended, string expected)
+        => Assert.Equal(expected, Models.WorkflowRun.FormatElapsed(
+            DateTimeOffset.Parse(started), DateTimeOffset.Parse(ended), DateTimeOffset.Parse(ended)));
+
+    [Fact]
+    public void Elapsed_OfARunningRun_IsMeasuredToNow()
+    {
+        var started = DateTimeOffset.Parse("2026-08-05T14:00:00Z");
+        Assert.Equal("5m 0s",
+            Models.WorkflowRun.FormatElapsed(started, null, started.AddMinutes(5)));
+    }
+
+    [Fact]
+    public void Elapsed_OfANeverStartedRun_IsBlank()
+        => Assert.Equal("", Models.WorkflowRun.FormatElapsed(null, null, DateTimeOffset.Now));
 
     [Fact]
     public void NullConclusion_ReadsEmpty()
@@ -331,7 +378,10 @@ public class GitHubRepoSettingsParsingTests
               "visibility": "PRIVATE",
               "isArchived": false,
               "defaultBranchRef": {"name":"master"},
-              "parent": null
+              "parent": null,
+              "hasIssuesEnabled": true,
+              "hasWikiEnabled": false,
+              "hasProjectsEnabled": true
             }
             """);
 
@@ -345,6 +395,31 @@ public class GitHubRepoSettingsParsingTests
         Assert.Equal("master", settings.DefaultBranch);
         Assert.Equal("", settings.ParentSlug);
         Assert.False(settings.IsFork);
+        Assert.True(settings.HasIssues);
+        Assert.False(settings.HasWiki);
+        Assert.True(settings.HasProjects);
+        Assert.Equal("wpf, dashboard", settings.TopicsText);
+    }
+
+    [Fact]
+    public void AbsentFeatureFlags_ReadNull_NotOff()
+    {
+        // Null is "the response didn't say", which the editor must not save back as
+        // a deliberate "off".
+        var settings = GitHubService.ParseRepoSettings("""{"name":"bare","visibility":"PUBLIC"}""");
+
+        Assert.NotNull(settings);
+        Assert.Null(settings.HasIssues);
+        Assert.Null(settings.HasWiki);
+        Assert.Null(settings.HasProjects);
+    }
+
+    [Fact]
+    public void NonBooleanFeatureFlag_ReadsNull()
+    {
+        var settings = GitHubService.ParseRepoSettings("""{"name":"bare","hasIssuesEnabled":"yes"}""");
+        Assert.NotNull(settings);
+        Assert.Null(settings.HasIssues);
     }
 
     [Fact]
@@ -494,4 +569,158 @@ public class GitHubDraftProbeParsingTests
     [InlineData("")]
     public void MissingOrMalformed_ReportsUnknown(string json)
         => Assert.False(GitHubService.TryParseIsDraft(json, out _));
+}
+
+public class GitHubWorkflowJobParsingTests
+{
+    [Fact]
+    public void JobsAndSteps_Parse()
+    {
+        var jobs = GitHubService.ParseWorkflowJobs("""
+            {
+              "total_count": 2,
+              "jobs": [
+                {
+                  "id": 47536432101, "run_id": 16752341890, "name": "build",
+                  "status": "completed", "conclusion": "success",
+                  "started_at": "2026-08-05T14:00:10Z", "completed_at": "2026-08-05T14:03:40Z",
+                  "html_url": "https://github.com/o/r/actions/runs/16752341890/job/47536432101",
+                  "steps": [
+                    {"name":"Set up job","status":"completed","conclusion":"success","number":1},
+                    {"name":"Run tests","status":"completed","conclusion":"failure","number":2}
+                  ]
+                },
+                {
+                  "id": 47536432102, "name": "package",
+                  "status": "in_progress", "conclusion": null,
+                  "started_at": "2026-08-05T14:03:41Z", "completed_at": null,
+                  "steps": []
+                }
+              ]
+            }
+            """);
+
+        Assert.NotNull(jobs);
+        Assert.Equal(2, jobs.Count);
+
+        Assert.Equal(47536432101L, jobs[0].Id);
+        Assert.Equal("build", jobs[0].Name);
+        Assert.Equal("completed", jobs[0].Status);
+        Assert.Equal("success", jobs[0].Conclusion);
+        Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 0, 10, TimeSpan.Zero), jobs[0].StartedAt);
+        Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 3, 40, TimeSpan.Zero), jobs[0].CompletedAt);
+        Assert.Equal(2, jobs[0].Steps.Count);
+        Assert.Equal("Run tests", jobs[0].Steps[1].Name);
+        Assert.Equal(2, jobs[0].Steps[1].Number);
+        Assert.Equal("failure", jobs[0].Steps[1].Conclusion);
+
+        Assert.Equal("in_progress", jobs[1].Status);
+        Assert.Equal("", jobs[1].Conclusion);
+        // Still running: no completion moment, and the label falls back to the status.
+        Assert.Null(jobs[1].CompletedAt);
+        Assert.Equal("in progress", jobs[1].OutcomeLabel);
+        Assert.Empty(jobs[1].Steps);
+    }
+
+    [Fact]
+    public void StepsKeyAbsent_ReadsEmptySteps()
+    {
+        var jobs = GitHubService.ParseWorkflowJobs("""{"total_count":1,"jobs":[{"id":1,"name":"solo","status":"completed"}]}""");
+        Assert.NotNull(jobs);
+        Assert.Empty(Assert.Single(jobs).Steps);
+    }
+
+    [Fact]
+    public void NoJobs_ReadsEmptyList()
+    {
+        var jobs = GitHubService.ParseWorkflowJobs("""{"total_count":0,"jobs":[]}""");
+        Assert.NotNull(jobs);
+        Assert.Empty(jobs);
+    }
+
+    [Theory]
+    [InlineData("""{"message":"Not Found","status":"404"}""")]   // error payload carries no jobs array
+    [InlineData("[]")]
+    [InlineData("{ bad")]
+    [InlineData("")]
+    public void ErrorPayloadOrMalformed_ReturnsNull(string json)
+        => Assert.Null(GitHubService.ParseWorkflowJobs(json));
+}
+
+public class GitHubNotificationParsingTests
+{
+    [Fact]
+    public void UnreadThreads_Parse()
+    {
+        var notifications = GitHubService.ParseNotifications("""
+            [
+              {
+                "id": "14231733865", "unread": true, "reason": "review_requested",
+                "updated_at": "2026-08-06T09:12:00Z",
+                "subject": {"title":"Add the Releases tab","url":"https://api.github.com/repos/o/r/pulls/12","type":"PullRequest"},
+                "repository": {"full_name":"o/r"}
+              },
+              {
+                "id": "14231733900", "unread": true, "reason": "mention",
+                "updated_at": "2026-08-06T10:00:00Z",
+                "subject": {"title":"Crash on empty repo","url":"https://api.github.com/repos/o/r/issues/41","type":"Issue"}
+              }
+            ]
+            """);
+
+        Assert.NotNull(notifications);
+        Assert.Equal(2, notifications.Count);
+
+        Assert.Equal("14231733865", notifications[0].ThreadId);
+        Assert.Equal("review_requested", notifications[0].Reason);
+        Assert.Equal("review requested", notifications[0].ReasonLabel);
+        Assert.True(notifications[0].Unread);
+        Assert.Equal("Add the Releases tab", notifications[0].Title);
+        Assert.Equal("PullRequest", notifications[0].SubjectType);
+        Assert.Equal("https://github.com/o/r/pull/12", notifications[0].WebUrl);
+        Assert.Equal(new DateTimeOffset(2026, 8, 6, 9, 12, 0, TimeSpan.Zero), notifications[0].UpdatedAt);
+
+        Assert.Equal("https://github.com/o/r/issues/41", notifications[1].WebUrl);
+    }
+
+    [Fact]
+    public void SubjectWithNoWebEquivalent_KeepsAnEmptyLink()
+    {
+        var notifications = GitHubService.ParseNotifications("""
+            [{"id":"7","unread":true,"reason":"subscribed",
+              "subject":{"title":"v2.0.0","url":"https://api.github.com/repos/o/r/releases/99","type":"Release"}}]
+            """);
+
+        Assert.NotNull(notifications);
+        var notification = Assert.Single(notifications);
+        Assert.Equal("v2.0.0", notification.Title);
+        // No guessed address: the caller opens the repository instead.
+        Assert.Equal("", notification.WebUrl);
+    }
+
+    [Fact]
+    public void SubjectAbsent_ReadsAsDefaults()
+    {
+        var notifications = GitHubService.ParseNotifications("""[{"id":"7","unread":false,"reason":"subscribed"}]""");
+        Assert.NotNull(notifications);
+        var notification = Assert.Single(notifications);
+        Assert.Equal("", notification.Title);
+        Assert.Equal("", notification.WebUrl);
+        Assert.False(notification.Unread);
+    }
+
+    [Fact]
+    public void EmptyArray_ReadsEmptyList()
+    {
+        var notifications = GitHubService.ParseNotifications("[]");
+        Assert.NotNull(notifications);
+        Assert.Empty(notifications);
+    }
+
+    [Theory]
+    [InlineData("""{"message":"Requires authentication","status":"401"}""")]
+    [InlineData("{ bad")]
+    [InlineData("")]
+    public void ErrorPayloadOrMalformed_ReturnsNull(string json)
+        => Assert.Null(GitHubService.ParseNotifications(json));
 }

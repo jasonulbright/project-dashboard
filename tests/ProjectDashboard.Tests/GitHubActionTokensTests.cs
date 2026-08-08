@@ -47,4 +47,37 @@ public class GitHubActionTokensTests
         foreach (var a in Enum.GetValues<ReviewAction>())
             _ = GitHubService.BuildReviewArgs("o/r", 1, a.Token(), "");
     }
+
+    [Theory]
+    [InlineData(RepoVisibility.Public, "public")]
+    [InlineData(RepoVisibility.Private, "private")]
+    [InlineData(RepoVisibility.Internal, "internal")]
+    public void RepoVisibility_MapsToServiceToken(RepoVisibility visibility, string token)
+    {
+        Assert.Equal(token, visibility.Token());
+        Assert.Contains(token, GitHubService.BuildVisibilityArgs("o/r", visibility.Token()));
+    }
+
+    [Fact]
+    public void EveryRepoVisibility_IsAccepted()
+    {
+        foreach (var v in Enum.GetValues<RepoVisibility>())
+            _ = GitHubService.BuildVisibilityArgs("o/r", v.Token());
+    }
+
+    [Fact]
+    public void RepoVisibility_RoundTripsThroughTheParsedForm()
+    {
+        // The Repo tab seeds its picker from gh's lowercase reading; a value that did
+        // not round-trip would show the wrong current visibility.
+        foreach (var v in Enum.GetValues<RepoVisibility>())
+            Assert.Equal(v, GitHubActionTokens.ParseVisibility(v.Token()));
+    }
+
+    [Theory]
+    [InlineData("PUBLIC")]
+    [InlineData("secret")]
+    [InlineData("")]
+    public void UnknownVisibilityString_ParsesToNull(string visibility)
+        => Assert.Null(GitHubActionTokens.ParseVisibility(visibility));
 }

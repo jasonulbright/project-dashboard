@@ -418,6 +418,7 @@ public class GitHubService(SettingsService settingsService)
                 {
                     TagName = Str(el, "tag_name"),
                     Name = Str(el, "name"),
+                    Body = Str(el, "body"),
                     IsDraft = Bool(el, "draft"),
                     IsPrerelease = Bool(el, "prerelease"),
                     PublishedAt = Date(el, "published_at"),
@@ -439,7 +440,7 @@ public class GitHubService(SettingsService settingsService)
     {
         var run = await RunAsync(
             ["run", "list", "--repo", repoSlug, "--limit", limit.ToString(),
-             "--json", "databaseId,workflowName,displayTitle,headBranch,event,status,conclusion,startedAt,url"],
+             "--json", "databaseId,workflowName,displayTitle,headBranch,event,status,conclusion,startedAt,updatedAt,url"],
             ct, ReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
@@ -469,6 +470,7 @@ public class GitHubService(SettingsService settingsService)
                     Status = Str(el, "status").ToLowerInvariant(),
                     Conclusion = Str(el, "conclusion").ToLowerInvariant(),
                     StartedAt = Date(el, "startedAt"),
+                    UpdatedAt = Date(el, "updatedAt"),
                     Url = Str(el, "url")
                 });
             }
@@ -481,12 +483,186 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
+    /// <summary>
+    /// Jobs and steps of one run, in GitHub's own order. REST — `gh run view --json jobs`
+    /// carries no per-step detail. Null = fetch failed.
+    /// </summary>
+    public async Task<List<WorkflowJob>?> GetWorkflowRunJobsAsync(string repoSlug, long runId, CancellationToken ct = default)
+    {
+        var run = await RunAsync(["api", $"repos/{repoSlug}/actions/runs/{runId}/jobs?per_page=100"], ct, ReadTimeout);
+        if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
+        {
+            Log.Warn($"gh api run jobs {runId} failed for {repoSlug}: {run.FirstError}");
+            return null;
+        }
+        return ParseWorkflowJobs(run.StdOut);
+    }
+
+    internal static List<WorkflowJob>? ParseWorkflowJobs(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            // The payload wraps the list: {"total_count":n,"jobs":[...]}. An error
+            // payload is an object too, but carries no jobs array.
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("jobs", out var arr) ||
+                arr.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var jobs = new List<WorkflowJob>();
+            foreach (var el in arr.EnumerateArray())
+            {
+                if (el.ValueKind != JsonValueKind.Object) continue;
+                var steps = new List<WorkflowStep>();
+                if (el.TryGetProperty("steps", out var stepArr) && stepArr.ValueKind == JsonValueKind.Array)
+                    foreach (var s in stepArr.EnumerateArray())
+                        if (s.ValueKind == JsonValueKind.Object)
+                            steps.Add(new WorkflowStep
+                            {
+                                Number = Int(s, "number") ?? 0,
+                                Name = Str(s, "name"),
+                                Status = Str(s, "status").ToLowerInvariant(),
+                                Conclusion = Str(s, "conclusion").ToLowerInvariant()
+                            });
+
+                jobs.Add(new WorkflowJob
+                {
+                    Id = Long(el, "id") ?? 0,
+                    Name = Str(el, "name"),
+                    Status = Str(el, "status").ToLowerInvariant(),
+                    Conclusion = Str(el, "conclusion").ToLowerInvariant(),
+                    StartedAt = Date(el, "started_at"),
+                    CompletedAt = Date(el, "completed_at"),
+                    Steps = steps,
+                    Url = Str(el, "html_url")
+                });
+            }
+            return jobs;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh api run jobs response unparseable", ex);
+            return null;
+        }
+    }
+
+    // ── Notifications (G-12) ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Notification threads for one repo, unread only unless <paramref name="includeRead"/>.
+    /// Null = fetch failed, never an empty inbox.
+    /// </summary>
+    public async Task<List<GitHubNotification>?> GetNotificationsAsync(string repoSlug,
+        bool includeRead = false, CancellationToken ct = default)
+    {
+        var run = await RunAsync(BuildNotificationsArgs(repoSlug, includeRead), ct, ReadTimeout);
+        if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
+        {
+            Log.Warn($"gh api notifications failed for {repoSlug}: {run.FirstError}");
+            return null;
+        }
+        return ParseNotifications(run.StdOut);
+    }
+
+    internal static List<string> BuildNotificationsArgs(string repoSlug, bool includeRead) =>
+        ["api", $"repos/{repoSlug}/notifications?all={(includeRead ? "true" : "false")}&per_page=50"];
+
+    internal static List<GitHubNotification>? ParseNotifications(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+            var notifications = new List<GitHubNotification>();
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                if (el.ValueKind != JsonValueKind.Object) continue;
+                var subject = el.TryGetProperty("subject", out var s) && s.ValueKind == JsonValueKind.Object
+                    ? s : default;
+                notifications.Add(new GitHubNotification
+                {
+                    ThreadId = Str(el, "id"),
+                    Reason = Str(el, "reason").ToLowerInvariant(),
+                    Unread = Bool(el, "unread"),
+                    UpdatedAt = Date(el, "updated_at"),
+                    Title = subject.ValueKind == JsonValueKind.Object ? Str(subject, "title") : "",
+                    SubjectType = subject.ValueKind == JsonValueKind.Object ? Str(subject, "type") : "",
+                    WebUrl = subject.ValueKind == JsonValueKind.Object
+                        ? NotificationWebUrl(Str(subject, "url")) : ""
+                });
+            }
+            return notifications;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh api notifications response unparseable", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Browser URL for a notification subject, or "" when the REST url names no web page.
+    /// The API url is the only link the payload carries and it is not navigable: it
+    /// answers JSON, and its "pulls" collection is "pull" on the site. Anything that is
+    /// not an exact three-segment issues/pulls resource under api.github.com maps to ""
+    /// rather than a guess, so a crafted url cannot become a link somewhere else.
+    /// </summary>
+    internal static string NotificationWebUrl(string apiUrl)
+    {
+        const string prefix = "https://api.github.com/repos/";
+        if (!apiUrl.StartsWith(prefix, StringComparison.Ordinal)) return "";
+        var parts = apiUrl[prefix.Length..].Split('/');
+        if (parts.Length != 4) return "";
+        var (owner, name, collection, number) = (parts[0], parts[1], parts[2], parts[3]);
+        if (!IsRepoPathSegment(owner) || !IsRepoPathSegment(name)) return "";
+        if (number.Length == 0 || !number.All(char.IsAsciiDigit)) return "";
+        var path = collection switch
+        {
+            "issues" => "issues",
+            "pulls" => "pull",
+            _ => "",
+        };
+        return path.Length == 0 ? "" : $"https://github.com/{owner}/{name}/{path}/{number}";
+    }
+
+    /// <summary>
+    /// A GitHub owner or repository name. Dot-only segments are excluded: ".." in a
+    /// crafted payload would resolve the composed link to a different page on the site.
+    /// </summary>
+    private static bool IsRepoPathSegment(string segment) =>
+        segment.Length > 0 && segment.Trim('.').Length > 0 &&
+        segment.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
+
+    /// <summary>Marks one thread read. Never automatic — the caller acts on an explicit request.</summary>
+    public Task<ProcessResult> MarkNotificationReadAsync(string threadId, CancellationToken ct = default)
+        => RunMutationAsync($"gh api PATCH notifications/threads/{threadId}",
+            BuildMarkNotificationReadArgs(threadId), ct: ct);
+
+    internal static List<string> BuildMarkNotificationReadArgs(string threadId)
+    {
+        // The id lands inside a REST path; anything but digits could address a
+        // different endpoint entirely.
+        if (threadId.Length == 0 || !threadId.All(char.IsAsciiDigit))
+            throw new ArgumentException($"thread id '{threadId}' is not a notification id", nameof(threadId));
+        return ["api", "--method", "PATCH", $"notifications/threads/{threadId}"];
+    }
+
+    /// <summary>Marks every thread on one repo read.</summary>
+    public Task<ProcessResult> MarkRepoNotificationsReadAsync(string repoSlug, CancellationToken ct = default)
+        => RunMutationAsync($"gh api PUT repos/{repoSlug}/notifications",
+            BuildMarkRepoNotificationsReadArgs(repoSlug), ct: ct);
+
+    internal static List<string> BuildMarkRepoNotificationsReadArgs(string repoSlug) =>
+        ["api", "--method", "PUT", $"repos/{repoSlug}/notifications"];
+
     /// <summary>Repo settings for the Repo tab. Null = fetch failed.</summary>
     public async Task<RepoSettings?> GetRepoSettingsAsync(string repoSlug, CancellationToken ct = default)
     {
         var run = await RunAsync(
             ["repo", "view", repoSlug,
-             "--json", "name,description,homepageUrl,repositoryTopics,visibility,isArchived,defaultBranchRef,parent"],
+             "--json", "name,description,homepageUrl,repositoryTopics,visibility,isArchived,defaultBranchRef,parent," +
+                       "hasIssuesEnabled,hasWikiEnabled,hasProjectsEnabled"],
             ct, ReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
@@ -536,7 +712,10 @@ public class GitHubService(SettingsService settingsService)
                 IsArchived = Bool(el, "isArchived"),
                 DefaultBranch = el.TryGetProperty("defaultBranchRef", out var db) && db.ValueKind == JsonValueKind.Object
                     ? Str(db, "name") : "",
-                ParentSlug = parentSlug
+                ParentSlug = parentSlug,
+                HasIssues = BoolOrNull(el, "hasIssuesEnabled"),
+                HasWiki = BoolOrNull(el, "hasWikiEnabled"),
+                HasProjects = BoolOrNull(el, "hasProjectsEnabled")
             };
         }
         catch (Exception ex)
@@ -638,6 +817,11 @@ public class GitHubService(SettingsService settingsService)
 
     private static bool Bool(JsonElement el, string name) =>
         el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    /// <summary>Null for an absent or non-boolean flag — distinguishes "unread" from "off".</summary>
+    private static bool? BoolOrNull(JsonElement el, string name) =>
+        el.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? v.ValueKind == JsonValueKind.True : null;
 
     /// <summary>Null for absent or zero timestamps — gh serializes "not yet" times as the year-1 zero value.</summary>
     private static DateTimeOffset? Date(JsonElement el, string name) =>
@@ -905,6 +1089,61 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
+    /// <summary>
+    /// Writes one release asset to <paramref name="destinationPath"/>, replacing whatever
+    /// is there. gh selects assets by glob and Go's matcher has no escape on Windows, so a
+    /// name carrying glob metacharacters cannot be expressed as a pattern that matches
+    /// itself: those fall back to fetching the release into a scratch directory and moving
+    /// the exact name out of it. Both paths end with the asset at the requested path or a
+    /// failed result.
+    /// </summary>
+    public async Task<ProcessResult> DownloadReleaseAssetAsync(string repoSlug, string tag, string assetName,
+        string destinationPath, CancellationToken ct = default)
+    {
+        if (!NeedsFullReleaseFetch(assetName))
+            return await RunMutationAsync($"gh release download {tag} ({assetName})",
+                BuildAssetDownloadArgs(repoSlug, tag, assetName, destinationPath), timeout: LogFetchTimeout, ct: ct);
+
+        var scratch = Path.Combine(Path.GetTempPath(), $"pd-release-asset-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(scratch);
+            var fetch = await RunMutationAsync($"gh release download {tag} (whole release)",
+                BuildReleaseDirDownloadArgs(repoSlug, tag, scratch), timeout: LogFetchTimeout, ct: ct);
+            if (!fetch.Success) return fetch;
+
+            var fetched = Path.Combine(scratch, assetName);
+            if (!File.Exists(fetched))
+                return new ProcessResult(1, "", $"{assetName} was not among the release's downloaded assets.", TimedOut: false);
+
+            File.Move(fetched, destinationPath, overwrite: true);
+            return fetch;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"gh release download {tag} ({assetName}) failed for {repoSlug}", ex);
+            return new ProcessResult(1, "", ex.Message, TimedOut: false);
+        }
+        finally
+        {
+            try { Directory.Delete(scratch, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// True when the asset name contains a glob metacharacter, which no gh --pattern can
+    /// match literally: `[1]` selects the character 1, never the three characters typed.
+    /// </summary>
+    internal static bool NeedsFullReleaseFetch(string assetName) =>
+        assetName.AsSpan().IndexOfAny('*', '?', '[') >= 0;
+
+    internal static List<string> BuildAssetDownloadArgs(string repoSlug, string tag, string assetName, string destinationPath) =>
+        ["release", "download", tag, "--repo", repoSlug, "--pattern", assetName,
+         "--output", destinationPath, "--clobber"];
+
+    internal static List<string> BuildReleaseDirDownloadArgs(string repoSlug, string tag, string directory) =>
+        ["release", "download", tag, "--repo", repoSlug, "--dir", directory, "--clobber"];
+
     /// <summary>--failed on a run with no failed jobs is a gh error, surfaced as a failed result.</summary>
     public Task<ProcessResult> RerunWorkflowAsync(string repoSlug, long runId, bool failedOnly = false, CancellationToken ct = default)
         => RunMutationAsync($"gh run rerun {runId} ({repoSlug})",
@@ -1041,6 +1280,89 @@ public class GitHubService(SettingsService settingsService)
         if (visibility is not ("public" or "private" or "internal"))
             throw new ArgumentException($"unknown visibility '{visibility}'", nameof(visibility));
         return ["repo", "edit", repoSlug, "--visibility", visibility, "--accept-visibility-change-consequences"];
+    }
+
+    /// <summary>
+    /// Repoints HEAD on the remote. The branch must already exist there; gh reports an
+    /// unknown branch as a failed result.
+    /// </summary>
+    public Task<ProcessResult> SetDefaultBranchAsync(string repoSlug, string branch, CancellationToken ct = default)
+        => RunMutationAsync($"gh repo edit --default-branch {branch} ({repoSlug})",
+            BuildDefaultBranchArgs(repoSlug, branch), ct: ct);
+
+    internal static List<string> BuildDefaultBranchArgs(string repoSlug, string branch)
+    {
+        // A blank value reaches gh as a flag with a missing argument, which consumes the
+        // next token instead of failing.
+        if (branch.Trim().Length == 0)
+            throw new ArgumentException("default branch cannot be blank", nameof(branch));
+        return ["repo", "edit", repoSlug, "--default-branch", branch];
+    }
+
+    /// <summary>Null for a feature means "leave unchanged".</summary>
+    public Task<ProcessResult> SetRepoFeaturesAsync(string repoSlug, bool? issues = null, bool? wiki = null,
+        bool? projects = null, CancellationToken ct = default)
+    {
+        var args = BuildRepoFeatureArgs(repoSlug, issues, wiki, projects);
+        // A flagless `gh repo edit` is an interactive prompt (hard failure) — skip the spawn.
+        return args.Count == 3
+            ? Task.FromResult(NoOpSuccess())
+            : RunMutationAsync($"gh repo edit features ({repoSlug})", args, ct: ct);
+    }
+
+    internal static List<string> BuildRepoFeatureArgs(string repoSlug, bool? issues, bool? wiki, bool? projects)
+    {
+        var args = new List<string> { "repo", "edit", repoSlug };
+        // gh's feature switches are boolean flags: the value has to ride on the same
+        // token, because a bare --enable-issues means true and never false.
+        if (issues is { } i) args.Add($"--enable-issues={FlagValue(i)}");
+        if (wiki is { } w) args.Add($"--enable-wiki={FlagValue(w)}");
+        if (projects is { } p) args.Add($"--enable-projects={FlagValue(p)}");
+        return args;
+    }
+
+    private static string FlagValue(bool value) => value ? "true" : "false";
+
+    /// <summary>
+    /// Irreversible on GitHub, and nothing here touches the local clone: the working copy
+    /// and its origin remote survive a repository that no longer exists. Callers gate this
+    /// behind the danger-zone setting and a typed repo-name confirmation.
+    /// </summary>
+    public Task<ProcessResult> DeleteRepoAsync(string repoSlug, CancellationToken ct = default)
+        => RunMutationAsync($"gh repo delete ({repoSlug})", ["repo", "delete", repoSlug, "--yes"], ct: ct);
+
+    /// <summary>
+    /// True when a delete failed for want of the delete_repo scope rather than for want of
+    /// rights. gh names the scope and the refresh command in that error and in no other.
+    /// </summary>
+    internal static bool NeedsDeleteRepoScope(string error) =>
+        error.Contains("delete_repo", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Shown verbatim when a delete fails for the missing scope.</summary>
+    public const string DeleteRepoScopeInstructions =
+        "The signed-in GitHub CLI lacks the delete_repo scope. Grant it, then retry the delete:\n\n" +
+        "gh auth refresh -h github.com -s delete_repo";
+
+    /// <summary>
+    /// Launches the delete_repo scope grant interactively in its own console, the same
+    /// way sign-in is delegated. Returns the process, or null if gh couldn't be started.
+    /// </summary>
+    public Process? StartInteractiveDeleteScopeGrant()
+    {
+        try
+        {
+            return Process.Start(new ProcessStartInfo
+            {
+                FileName = ResolveGhExe(),
+                Arguments = "auth refresh -h github.com -s delete_repo",
+                UseShellExecute = true   // give gh a real console for its interactive prompts
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh auth refresh could not be launched", ex);
+            return null;
+        }
     }
 
     public Task<ProcessResult> ArchiveRepoAsync(string repoSlug, CancellationToken ct = default)

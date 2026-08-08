@@ -172,4 +172,167 @@ public class GitHubArgBuilderTests
             : ["run", "rerun", "16752341890", "--repo", "o/r"];
         Assert.Equal(expected, GitHubService.BuildRerunArgs("o/r", 16752341890L, failedOnly));
     }
+
+    [Fact]
+    public void DefaultBranch_CarriesTheBranchName()
+    {
+        Assert.Equal(
+            ["repo", "edit", "o/r", "--default-branch", "main"],
+            GitHubService.BuildDefaultBranchArgs("o/r", "main"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void DefaultBranch_BlankValue_Throws(string branch)
+    {
+        // A blank flag argument makes gh consume the next token instead of failing.
+        Assert.Throws<ArgumentException>(() => GitHubService.BuildDefaultBranchArgs("o/r", branch));
+    }
+
+    [Fact]
+    public void RepoFeatures_ValueRidesOnTheFlagToken()
+    {
+        // A bare --enable-issues means true; false can only be expressed as =false.
+        Assert.Equal(
+            ["repo", "edit", "o/r", "--enable-issues=false", "--enable-wiki=true"],
+            GitHubService.BuildRepoFeatureArgs("o/r", issues: false, wiki: true, projects: null));
+    }
+
+    [Fact]
+    public void RepoFeatures_AllUnset_BuildsBareArgs()
+    {
+        Assert.Equal(
+            ["repo", "edit", "o/r"],
+            GitHubService.BuildRepoFeatureArgs("o/r", null, null, null));
+    }
+
+    [Theory]
+    [InlineData(false, "false")]
+    [InlineData(true, "true")]
+    public void RepoFeatures_ProjectsFlagCarriesItsOwnValue(bool projects, string value)
+    {
+        Assert.Equal(
+            ["repo", "edit", "o/r", $"--enable-projects={value}"],
+            GitHubService.BuildRepoFeatureArgs("o/r", null, null, projects));
+    }
+
+    [Theory]
+    [InlineData(false, "false")]
+    [InlineData(true, "true")]
+    public void Notifications_UnreadOnlyUnlessAllRequested(bool includeRead, string all)
+    {
+        Assert.Equal(
+            ["api", $"repos/o/r/notifications?all={all}&per_page=50"],
+            GitHubService.BuildNotificationsArgs("o/r", includeRead));
+    }
+
+    [Fact]
+    public void MarkNotificationRead_PatchesTheThread()
+    {
+        Assert.Equal(
+            ["api", "--method", "PATCH", "notifications/threads/14231733865"],
+            GitHubService.BuildMarkNotificationReadArgs("14231733865"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("../../repos/o/r")]
+    [InlineData("123abc")]
+    [InlineData(" 123")]
+    public void MarkNotificationRead_NonDigitThreadId_Throws(string threadId)
+    {
+        // The id lands inside a REST path; anything else could address another endpoint.
+        Assert.Throws<ArgumentException>(() => GitHubService.BuildMarkNotificationReadArgs(threadId));
+    }
+
+    [Fact]
+    public void MarkRepoNotificationsRead_PutsTheRepoCollection()
+    {
+        Assert.Equal(
+            ["api", "--method", "PUT", "repos/o/r/notifications"],
+            GitHubService.BuildMarkRepoNotificationsReadArgs("o/r"));
+    }
+
+    [Fact]
+    public void AssetDownload_WritesTheChosenPathAndReplaces()
+    {
+        Assert.Equal(
+            ["release", "download", "v2.0.0", "--repo", "o/r", "--pattern", "setup.exe",
+             "--output", @"C:\downloads\setup.exe", "--clobber"],
+            GitHubService.BuildAssetDownloadArgs("o/r", "v2.0.0", "setup.exe", @"C:\downloads\setup.exe"));
+    }
+
+    [Fact]
+    public void ReleaseDirDownload_TargetsTheScratchDirectory()
+    {
+        Assert.Equal(
+            ["release", "download", "v2.0.0", "--repo", "o/r", "--dir", @"C:\scratch", "--clobber"],
+            GitHubService.BuildReleaseDirDownloadArgs("o/r", "v2.0.0", @"C:\scratch"));
+    }
+
+    [Theory]
+    [InlineData("setup.exe")]
+    [InlineData("Project Dashboard 2.0.0.msi")]
+    [InlineData("sha256sums.txt")]
+    public void PlainAssetNames_DownloadByPattern(string name)
+        => Assert.False(GitHubService.NeedsFullReleaseFetch(name));
+
+    [Theory]
+    [InlineData("build[1].zip")]
+    [InlineData("report*.txt")]
+    [InlineData("what?.bin")]
+    public void GlobbedAssetNames_FallBackToTheWholeRelease(string name)
+    {
+        // gh selects assets with filepath.Match, which has no escape on Windows: the
+        // pattern "build[1].zip" matches "build1.zip" and never the literal name.
+        Assert.True(GitHubService.NeedsFullReleaseFetch(name));
+    }
+
+    [Theory]
+    [InlineData("HTTP 403: Must have admin rights to Repository.")]
+    [InlineData("")]
+    [InlineData("failed to delete repository: network unreachable")]
+    public void DeleteFailure_WithoutTheScopeName_IsNotAScopeProblem(string error)
+        => Assert.False(GitHubService.NeedsDeleteRepoScope(error));
+
+    [Theory]
+    [InlineData("needs the \"delete_repo\" scope")]
+    [InlineData("gh auth refresh -h github.com -s DELETE_REPO")]
+    public void DeleteFailure_NamingTheScope_IsAScopeProblem(string error)
+        => Assert.True(GitHubService.NeedsDeleteRepoScope(error));
+}
+
+/// <summary>
+/// A notification's only link is its REST url, which answers JSON and names the
+/// pull-request collection differently from the site. Anything the mapping cannot
+/// vouch for reads as "" so the UI falls back to the repository page rather than
+/// launching a guessed address.
+/// </summary>
+public class GitHubNotificationUrlTests
+{
+    [Fact]
+    public void IssueUrl_MapsToTheIssuePage()
+        => Assert.Equal("https://github.com/o/r/issues/41",
+            GitHubService.NotificationWebUrl("https://api.github.com/repos/o/r/issues/41"));
+
+    [Fact]
+    public void PullsUrl_MapsToTheSingularPullPath()
+        => Assert.Equal("https://github.com/o/r/pull/12",
+            GitHubService.NotificationWebUrl("https://api.github.com/repos/o/r/pulls/12"));
+
+    [Theory]
+    [InlineData("https://api.github.com/repos/o/r/releases/99")]        // no web equivalent by id
+    [InlineData("https://api.github.com/repos/o/r/issues/comments/5")]  // too many segments
+    [InlineData("https://api.github.com/repos/o/r/issues/notanumber")]
+    [InlineData("https://api.github.com/repos/o/r/issues")]
+    [InlineData("https://evil.example.com/repos/o/r/issues/1")]
+    [InlineData("http://api.github.com/repos/o/r/issues/1")]
+    [InlineData("https://api.github.com/repos/../r/issues/1")]  // would resolve elsewhere on the site
+    [InlineData("https://api.github.com/repos/o/../issues/1")]
+    [InlineData("https://api.github.com/repos//r/issues/1")]
+    [InlineData("https://api.github.com/repos/o/r/issues/41?x=1")]
+    [InlineData("")]
+    public void AnythingElse_MapsToNothing(string apiUrl)
+        => Assert.Equal("", GitHubService.NotificationWebUrl(apiUrl));
 }

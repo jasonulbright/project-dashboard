@@ -16,13 +16,38 @@ public enum ReviewAction
     Comment,
 }
 
+/// <summary>Repository visibility the UI offers; maps to the exact gh flag token.</summary>
+public enum RepoVisibility
+{
+    Public,
+    Private,
+    Internal,
+}
+
 /// <summary>
 /// Enum → exact gh token. The UI binds enums, never free text, so the token that
-/// reaches GitHubService.BuildMergeArgs / BuildReviewArgs is always one those
-/// methods map — their unmapped-token throw is unreachable from the UI.
+/// reaches GitHubService.BuildMergeArgs / BuildReviewArgs / BuildVisibilityArgs is
+/// always one those methods map — their unmapped-token throw is unreachable from the UI.
 /// </summary>
 public static class GitHubActionTokens
 {
+    public static string Token(this RepoVisibility visibility) => visibility switch
+    {
+        RepoVisibility.Public => "public",
+        RepoVisibility.Private => "private",
+        RepoVisibility.Internal => "internal",
+        _ => throw new ArgumentOutOfRangeException(nameof(visibility)),
+    };
+
+    /// <summary>Parses gh's lowercase visibility back to the enum the picker binds.</summary>
+    public static RepoVisibility? ParseVisibility(string visibility) => visibility switch
+    {
+        "public" => RepoVisibility.Public,
+        "private" => RepoVisibility.Private,
+        "internal" => RepoVisibility.Internal,
+        _ => null,
+    };
+
     public static string Token(this MergeStrategy strategy) => strategy switch
     {
         MergeStrategy.Merge => "merge",
