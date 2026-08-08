@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -18,7 +17,7 @@ namespace ProjectDashboard.Tests;
 /// misspelled brush or a style declared in the wrong scope builds cleanly and throws the first
 /// time a reader opens the page.
 /// </summary>
-[Collection("detail-page-markup")]
+[Collection("shipped-markup")]
 public class DetailPageMarkupTests
 {
     /// <summary>
@@ -27,7 +26,7 @@ public class DetailPageMarkupTests
     /// </summary>
     [Fact]
     public void TheDetailPageAndItsOverlays_ResolveEveryResourceTheirMarkupNames()
-        => RunSta(() =>
+        => StaHost.Run(() =>
         {
             var page = new ProjectDetailPage(NewViewModel());
             Assert.NotNull(page.Content);
@@ -235,43 +234,4 @@ public class DetailPageMarkupTests
 
     private static ProjectDetailViewModel NewViewModel() =>
         new(null!, new GitService(), null!);
-
-    /// <summary>
-    /// WPF needs an STA thread, and the page's markup reaches app-level resources, so the
-    /// Application and its merged dictionaries have to exist before anything is parsed.
-    /// </summary>
-    private static void RunSta(Action action)
-    {
-        Exception? error = null;
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                var app = Application.Current as ProjectDashboard.App ?? new ProjectDashboard.App();
-                app.InitializeComponent();
-                // The shipped mode shuts the Application down when the first window closes, and
-                // a window opened after that never lays out — so later assertions would read an
-                // empty visual tree rather than fail on what they are checking.
-                app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-                action();
-            }
-            catch (Exception ex) { error = ex; }
-        });
-        // A body that wedges must not outlive the run: the Join below gives up, and a foreground
-        // thread would keep the test host alive after it does.
-        thread.IsBackground = true;
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (!thread.Join(TimeSpan.FromSeconds(60)))
-            throw new TimeoutException("STA test body did not complete");
-        if (error is not null)
-            ExceptionDispatchInfo.Capture(error).Throw();
-    }
 }
-
-/// <summary>
-/// One Application per process is a WPF invariant, and each of these tests creates one on its
-/// own thread — serializing them keeps two from racing to be it.
-/// </summary>
-[CollectionDefinition("detail-page-markup", DisableParallelization = true)]
-public sealed class DetailPageMarkupCollection;
