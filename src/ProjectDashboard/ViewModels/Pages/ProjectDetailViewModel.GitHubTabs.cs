@@ -260,9 +260,10 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task RerunWorkflowRun()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var run = SelectedWorkflowRun;
-        if (!HasGitHubTarget(slug, run, "a workflow run") || IsBusy) return;
+        if (!HasGitHubTarget(slug, run, "a workflow run")) return;
         var failedOnly = RerunFailedJobsOnly;
         var gen = _generation;
         var scope = failedOnly ? "the failed jobs of" : "every job in";
@@ -283,9 +284,10 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task CancelWorkflowRun()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var run = SelectedWorkflowRun;
-        if (!HasGitHubTarget(slug, run, "a workflow run") || IsBusy) return;
+        if (!HasGitHubTarget(slug, run, "a workflow run")) return;
         if (run.IsCompleted)
         {
             GitHubStatusText = "That run has already finished — there is nothing to cancel.";
@@ -380,6 +382,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task SubmitNewRelease()
     {
+        if (IsBusy) return;
         var repo = RepoPath;
         var tag = NewReleaseTag?.Trim() ?? "";
         var title = NewReleaseTitle.Trim();
@@ -399,7 +402,7 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = "Enter a release title first.";
             return;
         }
-        if (repo.Length == 0 || IsBusy) return;
+        if (repo.Length == 0) return;
 
         var body = NewReleaseBody;
         var draft = NewReleaseDraft;
@@ -424,9 +427,10 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task DeleteRelease()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var release = SelectedRelease;
-        if (!HasGitHubTarget(slug, release, "a release") || IsBusy) return;
+        if (!HasGitHubTarget(slug, release, "a release")) return;
         // Read before the dialog: the confirmation names this release's published state,
         // and the command below decides on the same reading.
         var tag = release.TagName;
@@ -464,9 +468,10 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task DownloadReleaseAsset(ReleaseAsset? asset)
     {
+        if (IsBusy) return;
         var slug = Slug;
         var release = SelectedRelease;
-        if (!HasGitHubTarget(slug, release, "a release") || asset is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, release, "a release") || asset is null) return;
 
         var tag = release.TagName;
         var gen = _generation;
@@ -546,10 +551,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task SaveRepoDetails()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var loaded = RepoSettings;
         if (!HasGitHubRemote(slug)) return;
-        if (!HasRepoSettings(loaded) || IsBusy) return;
+        if (!HasRepoSettings(loaded)) return;
 
         var description = RepoDescriptionDraft.Trim();
         var homepage = RepoHomepageDraft.Trim();
@@ -595,10 +601,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task SaveRepoFeatures()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var loaded = RepoSettings;
         if (!HasGitHubRemote(slug)) return;
-        if (!HasRepoSettings(loaded) || IsBusy) return;
+        if (!HasRepoSettings(loaded)) return;
 
         var issues = FeatureChange(loaded.HasIssues, RepoIssuesEnabled);
         var wiki = FeatureChange(loaded.HasWiki, RepoWikiEnabled);
@@ -626,11 +633,12 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task ChangeDefaultBranch()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var loaded = RepoSettings;
         var branch = RepoDefaultBranchDraft.Trim();
         if (!HasGitHubRemote(slug)) return;
-        if (!HasRepoSettings(loaded) || IsBusy) return;
+        if (!HasRepoSettings(loaded)) return;
         if (branch.Length == 0)
         {
             GitHubStatusText = "Enter the branch to make default.";
@@ -660,10 +668,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task ChangeRepoVisibility()
     {
+        if (IsBusy) return;
         var slug = Slug;
         var loaded = RepoSettings;
         if (!HasGitHubRemote(slug)) return;
-        if (!HasRepoSettings(loaded) || IsBusy) return;
+        if (!HasRepoSettings(loaded)) return;
 
         var visibility = SelectedRepoVisibility;
         var token = visibility.Token(); // enum → exact gh token; BuildVisibilityArgs can't see a bad value
@@ -776,7 +785,8 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task MarkNotificationRead(GitHubNotification? notification)
     {
-        if (notification is null || !HasGitHubRemote(Slug) || IsBusy) return;
+        if (IsBusy) return;
+        if (notification is null || !HasGitHubRemote(Slug)) return;
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.MarkNotificationReadAsync(notification.ThreadId),
             "Mark notification read");
@@ -786,8 +796,9 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task MarkAllNotificationsRead()
     {
+        if (IsBusy) return;
         var slug = Slug;
-        if (!HasGitHubRemote(slug) || IsBusy) return;
+        if (!HasGitHubRemote(slug)) return;
         var count = Notifications.Count;
         if (count == 0)
         {
@@ -835,6 +846,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task DeleteRepo()
     {
+        if (IsBusy) return;
         var slug = Slug;
         if (!HasGitHubRemote(slug)) return;
         // Re-read, not the bound property: the panel's visibility is a rendering
@@ -846,7 +858,6 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = DangerZoneOffNotice;
             return;
         }
-        if (IsBusy) return;
 
         var gen = _generation;
         var typed = await PromptForTextAsync("Delete this repository?", RepoDeleteMessage(slug), "Delete repository");

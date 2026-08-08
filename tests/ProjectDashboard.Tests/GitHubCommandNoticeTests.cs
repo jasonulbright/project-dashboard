@@ -136,6 +136,31 @@ public class GitHubCommandNoticeTests
     }
 
     /// <summary>
+    /// The busy gate's silence is the whole point of leaving it out of the refusal helpers:
+    /// the operation holding the gate names itself on this one status line. A refusal
+    /// evaluated before the gate writes over that line, so the reader watching a merge
+    /// sees "Select a pull request first." while the merge is still running.
+    /// </summary>
+    [Fact]
+    public async Task WhileAnOperationRuns_ARefusedCommandLeavesItsStatusLineAlone()
+    {
+        const string running = "Merge #9…";
+
+        foreach (var (name, run) in Commands)
+        {
+            var vm = NewVm();
+            await vm.SetProjectAsync(LocalProject());
+            vm.IsBusy = true;
+            vm.GitHubStatusText = running;
+
+            await run(vm);
+
+            Assert.True(running == vm.GitHubStatusText,
+                $"{name} overwrote the running operation's status with \"{vm.GitHubStatusText}\"");
+        }
+    }
+
+    /// <summary>
     /// The Repo tab's saves compare against settings the tab fetched. Reached before that
     /// fetch lands — the surface is keyboard-reachable the moment the tab opens — they
     /// have nothing to compare and must say so.
