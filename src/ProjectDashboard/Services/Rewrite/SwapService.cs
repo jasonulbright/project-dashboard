@@ -32,6 +32,13 @@ public sealed record SwapResult(
 /// pre-flight guards the checkout before any ref moves, and the ref reconciliation is a
 /// single all-or-nothing `git update-ref --stdin`.
 ///
+/// The clean-tree gate is read twice: once at entry, and again immediately before the ref
+/// transaction, because the pre-scan, the fsck and the fetch sit between them and the closing
+/// `reset --hard` discards whatever was written in that window. What remains is the span from
+/// that second read to the reset — the ref transaction and two ref writes, no unbounded step
+/// among them — during which an edit is still discarded with no backup holding it. A backup
+/// bundles refs, not working-tree bytes, so no stage of this pipeline can restore them.
+///
 /// Cancellation is honoured only up to the point of no return marked inside
 /// <see cref="ApplySwapAsync"/>: everything before it is pre-flight and a scratch-namespace
 /// fetch, everything after it moves the source's own refs and runs under
@@ -131,6 +138,19 @@ public class SwapService
             ], FetchTimeout, ct);
             if (!fetch.Success)
                 return SwapResult.Refused($"fetching rewritten objects failed — nothing changed: {fetch.FirstError}");
+
+            // (d) Re-read the working tree. The gate at (a) is as old as the pre-scan, the fsck
+            // and the fetch together — minutes on a large repository — and the `reset --hard`
+            // below discards anything written since, which no backup holds because the backup
+            // bundles refs, not the working tree. This is the last point at which a refusal
+            // still changes nothing.
+            var atSwap = await _git.GetWorkingStateAsync(sourceRepo, ct);
+            if (atSwap is null)
+                return SwapResult.Refused($"source repository '{sourceRepo}' became unreadable while the swap was preparing — refusing the swap");
+            if (atSwap.IsDirty)
+                return SwapResult.Refused(
+                    $"the working tree gained {atSwap.Files.Count} uncommitted change(s) while the swap was preparing — " +
+                    "refusing the swap (the reset would discard them, and no backup holds them)");
 
             // ── Point of no return ──────────────────────────────────────────────────────
             // Everything above is pre-flight plus a fetch into a scratch namespace the finally

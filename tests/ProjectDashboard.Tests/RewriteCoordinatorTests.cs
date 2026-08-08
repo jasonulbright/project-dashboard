@@ -448,6 +448,51 @@ public class RewriteCoordinatorTests
         _output.WriteLine("core.longpaths=true lifts the whole-path budget");
     }
 
+    /// <summary>Writes into the source's working tree the moment the swap's object fetch returns — the widest part of the window between the entry clean-tree gate and the ref transaction.</summary>
+    private sealed class DirtiesTreeAfterFetch(string repoPath) : GitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repo, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            var result = await base.RunAsync(repo, argv, ct, timeout);
+            if (argv.Contains("fetch"))
+                await File.WriteAllTextAsync(Path.Combine(repoPath, "a.txt"), "edited during the swap\n", ct);
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task ApplySwap_TreeDirtiedWhileThePrepareRan_RefusesInsteadOfDiscardingIt()
+    {
+        using var f = NewFixture();
+        f.Write("a.txt", $"{Needle}\n");
+        f.CommitAll("one");
+
+        var rewriter = new HistoryRewriter(GitGuard.GitExe);
+        await rewriter.RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = LiteralScrub(),
+            GitExecutable = GitGuard.GitExe
+        });
+
+        var before = RefState(f.SourcePath);
+        var swap = new SwapService(new DirtiesTreeAfterFetch(f.SourcePath), GitGuard.GitExe);
+        var result = await swap.ApplySwapAsync(f.SourcePath, f.TargetPath);
+
+        Assert.False(result.Success);
+        Assert.Contains("while the swap was preparing", result.RefusalReason, StringComparison.Ordinal);
+        Assert.Equal(before, RefState(f.SourcePath));
+        // The edit the entry gate never saw is still on disk, not reset away.
+        Assert.Equal("edited during the swap\n", await File.ReadAllTextAsync(Path.Combine(f.SourcePath, "a.txt")));
+        _output.WriteLine($"mid-prepare dirty refusal: {result.RefusalReason}");
+    }
+
     [Fact]
     public async Task ApplySwap_UpdateRefTransactionFails_LeavesEverySourceRefUnchanged()
     {
