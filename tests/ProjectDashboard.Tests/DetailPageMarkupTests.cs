@@ -48,6 +48,9 @@ public class DetailPageMarkupTests
             }
             catch (Exception ex) { error = ex; }
         });
+        // A body that wedges must not outlive the run: the Join below gives up, and a foreground
+        // thread would keep the test host alive after it does.
+        thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         if (!thread.Join(TimeSpan.FromSeconds(60)))
