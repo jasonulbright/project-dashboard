@@ -47,10 +47,12 @@ public partial class ProjectDetailViewModel
         DiffTarget is not { } target ? "Select a changed file first."
         : IsBusy ? "Another git operation is running."
         : target.File.IsUntracked ? "An untracked file has no hunks — stage the whole file instead."
-        // The pane reads a rename with both of its paths and gets the rename diff; a slice is
-        // read with the new path alone and gets a whole-file add, whose reverse would unstage
-        // the rename rather than one hunk. No header can match across the two.
-        : target.File.OrigPath is not null ? "This is a staged rename — unstage the file to work on its hunks."
+        // On the staged side the pane reads a rename with both of its paths and gets the rename
+        // diff; a slice is read with the new path alone and gets a whole-file add, whose reverse
+        // would unstage the rename rather than one hunk. No header can match across the two. The
+        // unstaged side of the same file carries only the worktree edit — the rename is in the
+        // index, contributes nothing to either read, and its hunks slice normally.
+        : target.Staged && target.File.OrigPath is not null ? "This is a staged rename — unstage the file to work on its hunks."
         : DiffIsBinary ? "Binary file — there are no hunks to stage."
         : DiffIsCombined ? "This is a merge diff — resolve the conflict and stage the file."
         : SelectedDiffLine is not { HunkIndex: >= 0 } ? "Select a line inside a hunk first."

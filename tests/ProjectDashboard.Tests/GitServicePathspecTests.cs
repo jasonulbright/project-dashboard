@@ -155,8 +155,8 @@ public class GitServicePathspecTests
         repo.WriteFile("spare1.txt", "");
         repo.WriteFile("spare[1].txt", "");
 
-        Assert.True(await _git.CheckIgnoreAsync(repo.Path, "spare1.txt"));
-        Assert.False(await _git.CheckIgnoreAsync(repo.Path, "spare[1].txt"));
+        Assert.Equal(IgnoreState.Ignored, (await _git.CheckIgnoreAsync(repo.Path, "spare1.txt")).State);
+        Assert.Equal(IgnoreState.NotIgnored, (await _git.CheckIgnoreAsync(repo.Path, "spare[1].txt")).State);
 
         var blame = await _git.GetBlameAsync(repo.Path, BracketPath);
         Assert.Equal(["bracket TWO"], blame.Lines.Select(l => l.Text));

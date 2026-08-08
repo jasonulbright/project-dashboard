@@ -340,6 +340,57 @@ public class ProjectDetailViewModelHunkTests
         Assert.False(vm.UnstageHunkCommand.CanExecute(null));
     }
 
+    /// <summary>Rename staged on its own, then edited again: one file on both sides at once.</summary>
+    private static async Task<TempRepo> RenamedAndEditedRepoAsync(string prefix)
+    {
+        var repo = await TempRepo.CreateWithCommitAsync(prefix);
+        repo.WriteFile("before.txt", FifteenLines);
+        await repo.CommitAllAsync("fifteen lines");
+        await repo.GitAsync("mv", "before.txt", "after.txt");
+        repo.WriteFile("after.txt", FifteenEdited);
+        return repo;
+    }
+
+    /// <summary>
+    /// The rename lives in the index, so the unstaged side of the same file is the worktree edit
+    /// and nothing else: its pane read and its slice read return the same diff, and the headers
+    /// match. Refusing there would offer advice — unstage the file — that undoes the rename.
+    /// </summary>
+    [Fact]
+    public async Task HunkActions_AreAllowedOnTheUnstagedSideOfAStagedRename()
+    {
+        using var repo = await RenamedAndEditedRepoAsync("vm-hunk-rename-unstaged");
+        var git = new GitService();
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        var renamed = vm.UnstagedFiles.First(f => f.Path == "after.txt");
+        Assert.Equal("before.txt", renamed.OrigPath);
+        Assert.Contains(vm.StagedFiles, f => f.Path == "after.txt");
+
+        vm.SelectedUnstagedFile = renamed;
+        await vm.DiffRefresh;
+        vm.SelectedDiffLine = vm.DiffLines.First(l => l.IsHunkStart && l.HunkIndex == 0);
+
+        Assert.Null(vm.StageHunkBlockedReason);
+        Assert.Null(vm.DiscardHunkBlockedReason);
+        // The one reason left on this side is the direction, not the rename.
+        Assert.Equal("This hunk is not staged yet.", vm.UnstageHunkBlockedReason);
+
+        await vm.StageHunkCommand.ExecuteAsync(null);
+
+        var state = await git.GetWorkingStateAsync(repo.Path);
+        var staged = state!.Staged.Single(f => f.Path == "after.txt");
+        Assert.Equal("before.txt", staged.OrigPath);
+        var stagedDiff = await git.GetFileDiffAsync(repo.Path, staged, staged: true);
+        Assert.True(DiffTouches(stagedDiff!.Lines, "L1"));
+        Assert.False(DiffTouches(stagedDiff.Lines, "L15"));
+
+        var unstagedDiff = await git.GetFileDiffAsync(repo.Path, state.Unstaged.Single(f => f.Path == "after.txt"), staged: false);
+        Assert.True(DiffTouches(unstagedDiff!.Lines, "L15"));
+    }
+
     /// <summary>
     /// The hunk a refresh should land on belongs to one file and one side. A quick switch to
     /// another file must not consume it: the same index there names a change the reader never
