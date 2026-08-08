@@ -22,6 +22,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _ghPath = "";
     [ObservableProperty] private bool _enableGitHubDiscovery = true;
     [ObservableProperty] private bool _enableAutoRefresh = true;
+    [ObservableProperty] private bool _dangerZoneEnabled;
     [ObservableProperty] private string _syncStatus = "";
     [ObservableProperty] private string _saveStatus = "";
 
@@ -51,6 +52,7 @@ public partial class SettingsViewModel : ObservableObject
         GhPath = settings.GhPath;
         EnableGitHubDiscovery = settings.EnableGitHubDiscovery;
         EnableAutoRefresh = settings.EnableAutoRefresh;
+        DangerZoneEnabled = settings.DangerZoneEnabled;
 
         if (Enum.TryParse<ApplicationTheme>(settings.Theme, out var theme))
         {
@@ -101,6 +103,7 @@ public partial class SettingsViewModel : ObservableObject
         settings.GhPath = GhPath.Trim();
         settings.EnableGitHubDiscovery = EnableGitHubDiscovery;
         settings.EnableAutoRefresh = EnableAutoRefresh;
+        settings.DangerZoneEnabled = DangerZoneEnabled;
 
         // The startup probe covers only a location unwritable at launch. A volume that
         // turns read-only mid-session fails here, and an unreported failure loses the

@@ -143,6 +143,17 @@
                        FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
 
+            <!-- Danger zone opt-in -->
+            <TextBlock Text="Danger Zone" FontSize="16" Margin="0,24,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <CheckBox Content="Show the danger zone on a project's Repo tab"
+                      IsChecked="{Binding DangerZoneEnabled}"
+                      Margin="0,0,0,4"
+                      AutomationProperties.Name="Show the danger zone on a project's Repo tab" />
+            <TextBlock Text="Off by default. When on, the Repo tab offers deleting the repository on GitHub — irreversible, and still guarded by typing the full owner/name. Local files are never touched. Takes effect the next time a project page loads."
+                       FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
             <!-- About -->
             <TextBlock Text="About" FontSize="16" Margin="0,24,0,8"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
