@@ -126,6 +126,10 @@ public partial class ProjectDetailViewModel
     /// </summary>
     private void CloseBackupsOnProjectSwitch()
     {
+        // Lowered whatever the overlay was showing: the running restore's own clear is
+        // generation-guarded, so a flag carried into the next repository is never lowered again
+        // and every later browser opens refusing to close.
+        BackupsBusy = false;
         if (!BackupsVisible) return;
         BackupsVisible = false;
         BackupList = [];
@@ -293,14 +297,19 @@ public partial class ProjectDetailViewModel
         try
         {
             var restore = await service.RestoreAsync(entry.Handle);
+            var landed = restore.Success || restore.RefsRestored;
+
+            // The marker exists to say an operation was interrupted; the repository is now back
+            // at the state that operation started from, so it no longer is. Cleared for the
+            // captured repository ahead of the generation check, which governs writes to a page
+            // that has moved on — a switch during the restore must not leave the marker set for
+            // a repository that was just restored.
+            if (landed && _recovery is not null) await _recovery.ClearAsync(repo);
             if (!IsCurrent(gen)) return;
 
             BackupsStatusText = DescribeRestore(restore);
-            if (restore.Success || restore.RefsRestored)
+            if (landed)
             {
-                // The marker exists to say an operation was interrupted; the repository is now
-                // back at the state that operation started from, so it no longer is.
-                if (_recovery is not null) await _recovery.ClearAsync(repo);
                 RefreshRecoveryBanner();
                 await ReloadCommitsAsync();
                 await SafeRefreshWorkingStateAsync();
@@ -319,7 +328,9 @@ public partial class ProjectDetailViewModel
         finally
         {
             lease.Dispose();
-            BackupsBusy = false;
+            // A restore started after a project switch raises this flag on a newer generation;
+            // lowering it from here would let that one's overlay close mid-restore.
+            if (IsCurrent(gen)) BackupsBusy = false;
             if (ReferenceEquals(_busyGateHolder, holder))
             {
                 _busyGateHolder = null;

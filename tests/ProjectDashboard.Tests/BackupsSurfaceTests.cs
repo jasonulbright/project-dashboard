@@ -448,6 +448,80 @@ public class BackupsSurfaceTests
     }
 
     /// <summary>
+    /// A restore runs against the repository it captured, so a project switch mid-restore does
+    /// not stop it — and the marker it clears belongs to that repository, not to the page. The
+    /// page has moved on, so nothing else it would have written may land; and the busy flag the
+    /// restore raised must not follow the reader onto the next repository, where it would refuse
+    /// every close of a browser that has no restore of its own.
+    /// </summary>
+    [Fact]
+    public async Task ARestoreLandingAfterAProjectSwitch_ClearsTheMarkerAndStrandsNoBrowser()
+    {
+        using var repo = await RailsRepo.CreateAsync("restore-switch-a");
+        using var other = await RailsRepo.CreateAsync("restore-switch-b");
+        var handle = await NewBackups().CreateBackupAsync(repo.Path, "History rewrite");
+        var before = await repo.RefStateAsync();
+        repo.Write("later.txt", "landed after the backup\n");
+        await repo.CommitAllAsync("after the backup");
+
+        var recovery = await DetectedRecoveryAsync(new RewriteJournalEntry
+        {
+            RepoPath = repo.Path, BackupHandle = handle, Phase = "swap", UtcStamp = handle.UtcStamp,
+        });
+
+        var git = new SwitchWhileRestoring();
+        var vm = NewVm(new BackupService(git, new SettingsService()), recovery);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsForRecoveryCommand.ExecuteAsync(null);
+        vm.BackupsConfirmInput = vm.BackupsConfirmPhrase;
+
+        var busyDuringRestore = true;
+        var closedDuringRestore = false;
+        git.OnRestoreEntry = async () =>
+        {
+            await vm.SetProjectAsync(ProjectFor(other));
+            busyDuringRestore = vm.BackupsBusy;
+            await vm.OpenBackupsCommand.ExecuteAsync(null);
+            vm.CloseBackupsCommand.Execute(null);
+            closedDuringRestore = !vm.BackupsVisible;
+        };
+
+        await vm.RestoreSelectedBackupCommand.ExecuteAsync(null);
+
+        // The other repository's browser was neither busy nor stuck open while the restore ran.
+        Assert.False(busyDuringRestore);
+        Assert.True(closedDuringRestore);
+        Assert.False(vm.BackupsBusy);
+
+        // The restore still landed, and the record it made obsolete is gone with it.
+        Assert.Equal(before, await repo.RefStateAsync());
+        Assert.Null(await new RewriteJournal().ReadPendingAsync(repo.Path));
+        Assert.Empty(recovery.Pending);
+
+        // Nothing else was written onto the page that had moved on.
+        Assert.Equal("", vm.BackupsStatusText);
+        Assert.Equal("", vm.BackupsErrorText);
+        _output.WriteLine("restore landed after the switch: marker cleared, next repository's browser free");
+    }
+
+    /// <summary>Runs a callback once, at the first git call the restore makes, so the switch lands inside it.</summary>
+    private sealed class SwitchWhileRestoring : GitService
+    {
+        private int _fired;
+
+        public Func<Task>? OnRestoreEntry { get; set; }
+
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            if (list.Contains("verify") && Interlocked.Exchange(ref _fired, 1) == 0 && OnRestoreEntry is not null)
+                await OnRestoreEntry();
+            return await base.RunAsync(repoPath, list, ct, timeout);
+        }
+    }
+
+    /// <summary>
     /// A reader who never opens the affected project would otherwise never learn the operation
     /// was interrupted, so the dashboard names the repositories — and offers no action, because
     /// every gate lives on the project's own page.
