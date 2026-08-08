@@ -111,8 +111,8 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
 
         var keep = SelectedTag?.Name;
-        List<TagInfo> tags;
-        List<RemoteEntry> remotes;
+        TagsResult tags;
+        RemotesResult remotes;
         try
         {
             tags = await _gitService.GetTagsAsync(repo);
@@ -121,16 +121,30 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn($"could not read the tags of {repo}", ex);
-            if (IsCurrent(gen)) TagsErrorText = $"Could not read this repository's tags: {ex.Message}";
+            if (IsCurrent(gen))
+            {
+                TagsErrorText = $"Could not read this repository's tags: {ex.Message}";
+                TagsEmpty = false;
+            }
             return;
         }
         if (!IsCurrent(gen)) return;
 
+        // "No tags" is a fact about the repository; a ref read that failed establishes no such
+        // fact, and the empty state would claim one.
+        if (tags.HasError || remotes.HasError)
+        {
+            TagsErrorText = "Could not read this repository's tags: " +
+                (tags.HasError ? tags.ErrorText : remotes.ErrorText);
+            TagsEmpty = false;
+            return;
+        }
+
         TagsErrorText = "";
-        Tags = new ObservableCollection<TagInfo>(tags.OrderByDescending(t => t.DisplayDate ?? DateTimeOffset.MinValue)
-                                                     .ThenBy(t => t.Name, StringComparer.Ordinal));
+        Tags = new ObservableCollection<TagInfo>(tags.Tags.OrderByDescending(t => t.DisplayDate ?? DateTimeOffset.MinValue)
+                                                          .ThenBy(t => t.Name, StringComparer.Ordinal));
         TagsEmpty = Tags.Count == 0;
-        TagRemoteNames = new ObservableCollection<string>(remotes.Select(r => r.Name));
+        TagRemoteNames = new ObservableCollection<string>(remotes.Remotes.Select(r => r.Name));
         SelectedTag = Tags.FirstOrDefault(t => t.Name == keep) ?? Tags.FirstOrDefault();
     }
 

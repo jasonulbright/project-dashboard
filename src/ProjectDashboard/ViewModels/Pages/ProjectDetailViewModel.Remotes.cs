@@ -92,8 +92,8 @@ public partial class ProjectDetailViewModel
 
         var keepRemote = SelectedRemote?.Name;
         var keepBranch = SelectedRemoteBranch;
-        List<RemoteEntry> remotes;
-        List<string> remoteBranches;
+        RemotesResult remotes;
+        RemoteBranchesResult remoteBranches;
         try
         {
             remotes = await _gitService.GetRemotesAsync(repo);
@@ -112,10 +112,21 @@ public partial class ProjectDetailViewModel
         }
         if (!IsCurrent(gen)) return;
 
+        // A read that failed and a repository with nothing configured produce the same empty
+        // list; showing the empty state for the first states a fact the read never established.
+        if (remotes.HasError || remoteBranches.HasError)
+        {
+            RemotesErrorText = "Could not read this repository's remotes: " +
+                (remotes.HasError ? remotes.ErrorText : remoteBranches.ErrorText);
+            RemotesEmpty = false;
+            RemoteBranchesEmpty = false;
+            return;
+        }
+
         RemotesErrorText = "";
-        Remotes = new ObservableCollection<RemoteEntry>(remotes);
+        Remotes = new ObservableCollection<RemoteEntry>(remotes.Remotes);
         RemotesEmpty = Remotes.Count == 0;
-        RemoteBranches = new ObservableCollection<string>(remoteBranches);
+        RemoteBranches = new ObservableCollection<string>(remoteBranches.Branches);
         RemoteBranchesEmpty = RemoteBranches.Count == 0;
         SelectedRemote = Remotes.FirstOrDefault(r => r.Name == keepRemote) ?? Remotes.FirstOrDefault();
         SelectedRemoteBranch = keepBranch is not null && RemoteBranches.Contains(keepBranch) ? keepBranch : null;

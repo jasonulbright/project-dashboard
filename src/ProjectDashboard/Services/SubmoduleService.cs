@@ -24,11 +24,18 @@ public sealed class SubmoduleService
     /// superproject (.gitmodules and the index); each INITIALIZED submodule costs one
     /// further status read for its HEAD, branch, and dirty state. Nested submodules are
     /// reported, never entered.
+    /// <para>
+    /// A .gitmodules that does not exist is "nothing declared", but an index git could not read
+    /// is not "nothing recorded": the listing would be a confident empty state for a read that
+    /// never happened, so that failure is reported instead of listed.
+    /// </para>
     /// </summary>
-    public async Task<List<SubmoduleEntry>> GetSubmodulesAsync(string repoPath, CancellationToken ct = default)
+    public async Task<SubmodulesResult> GetSubmodulesAsync(string repoPath, CancellationToken ct = default)
     {
         var declared = await ReadGitmodulesAsync(repoPath, ct);
-        var recorded = await ReadGitlinksAsync(repoPath, ct);
+        var read = await ReadGitlinksAsync(repoPath, ct);
+        if (read.Error is { } failure) return new SubmodulesResult([], true, failure);
+        var recorded = read.Links;
 
         var order = new List<string>();
         foreach (var d in declared) order.Add(d.Path);
@@ -100,7 +107,7 @@ public sealed class SubmoduleService
                 HasNestedSubmodules = initialized && File.Exists(Path.Combine(full!, ".gitmodules"))
             });
         }
-        return entries;
+        return new SubmodulesResult(entries);
     }
 
     /// <summary>
@@ -321,15 +328,18 @@ public sealed class SubmoduleService
     /// <param name="Conflicted">The index holds unmerged stages for this path.</param>
     internal sealed record Gitlink(string Sha, bool Conflicted);
 
-    private async Task<Dictionary<string, Gitlink>> ReadGitlinksAsync(string repoPath, CancellationToken ct)
+    /// <summary>The gitlinks the index records, or why the index could not be read.</summary>
+    private sealed record GitlinkRead(Dictionary<string, Gitlink> Links, string? Error);
+
+    private async Task<GitlinkRead> ReadGitlinksAsync(string repoPath, CancellationToken ct)
     {
         var result = await _git.RunAsync(repoPath, ["ls-files", "-z", "--stage"], ct, ReadTimeout);
         if (!result.Success)
         {
             Log.Warn($"git ls-files --stage failed for {repoPath}: {result.FirstError}");
-            return [];
+            return new GitlinkRead([], GitService.ReadFailureText(result, ReadTimeout));
         }
-        return ParseGitlinks(result.StdOut);
+        return new GitlinkRead(ParseGitlinks(result.StdOut), null);
     }
 
     /// <summary>

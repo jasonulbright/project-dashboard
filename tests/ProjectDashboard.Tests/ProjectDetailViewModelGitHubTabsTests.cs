@@ -372,6 +372,24 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Equal("", vm.CreatedTargetSha);
     }
 
+    /// <summary>
+    /// An empty picker after a refused ref read reads as "this repository has no tags", and the
+    /// only remaining guidance — "pick an existing tag" — points at a list nothing could fill.
+    /// The failure is reported instead so the reader knows the list is unread, not empty.
+    /// </summary>
+    [Fact]
+    public async Task ShowNewRelease_WhenTheTagReadFails_SaysSoRatherThanOfferingAnEmptyPicker()
+    {
+        var vm = new StubTabsViewModel { TagReadError = "refused by the fixture" };
+        await vm.SetProjectAsync(RemoteProject());
+
+        await vm.ShowNewReleaseCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.AvailableTagNames);
+        Assert.Contains("Could not read this repository's tags", vm.GitHubStatusText);
+        Assert.Contains("refused by the fixture", vm.GitHubStatusText);
+    }
+
     [Fact]
     public async Task ProjectSwitch_DropsTheResolvedTagCommits()
     {
@@ -988,6 +1006,7 @@ public class ProjectDetailViewModelGitHubTabsTests
         public RepoSettings? Settings { get; init; }
         public List<GitHubNotification>? SeedNotifications { get; init; }
         public List<TagInfo> SeedTags { get; init; } = [];
+        public string? TagReadError { get; init; }
         public string? SavePath { get; init; }
         public string? TypedConfirmation { get; init; }
         public ProcessResult DeleteResult { get; init; } = new(0, "", "", TimedOut: false);
@@ -1028,7 +1047,8 @@ public class ProjectDetailViewModelGitHubTabsTests
         internal override Task<List<GitHubNotification>?> FetchNotificationsAsync(string slug)
             => NotificationGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(SeedNotifications);
 
-        internal override Task<List<TagInfo>> FetchReleaseTagsAsync(string repoPath) => Task.FromResult(SeedTags);
+        internal override Task<TagsResult> FetchReleaseTagsAsync(string repoPath) => Task.FromResult(
+            TagReadError is { } failure ? new TagsResult([], true, failure) : new TagsResult(SeedTags));
 
         internal override Task<ProcessResult> CreateReleaseRemoteAsync(string repoPath, string tag, string title,
             string body, bool draft, bool prerelease, string targetSha)

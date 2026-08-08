@@ -26,3 +26,10 @@ public sealed class TagInfo
 
     public string KindLabel => IsAnnotated ? "annotated" : "lightweight";
 }
+
+/// <summary>
+/// A repository's tags, or why they could not be read. A ref read git could not perform exits
+/// non-zero rather than throwing, so an empty list alone cannot be told apart from a repository
+/// that has never been tagged.
+/// </summary>
+public sealed record TagsResult(List<TagInfo> Tags, bool HasError = false, string ErrorText = "");

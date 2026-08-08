@@ -158,7 +158,7 @@ public partial class ProjectDetailViewModel
     internal virtual Task<List<GitHubNotification>?> FetchNotificationsAsync(string slug)
         => _gitHubService.GetNotificationsAsync(slug);
 
-    internal virtual Task<List<TagInfo>> FetchReleaseTagsAsync(string repoPath)
+    internal virtual Task<TagsResult> FetchReleaseTagsAsync(string repoPath)
         => _gitService.GetTagsAsync(repoPath);
 
     /// <summary>
@@ -367,9 +367,20 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
         var tags = await FetchReleaseTagsAsync(repo);
         if (!IsCurrent(gen)) return;
-        AvailableTagNames = new ObservableCollection<string>(tags.Select(t => t.Name));
+
+        // An empty picker after a failed read reads as "this repository has no tags", which is
+        // the one thing a read that never completed cannot establish.
+        if (tags.HasError)
+        {
+            AvailableTagNames = [];
+            _releaseTagTargets.Clear();
+            GitHubStatusText = $"Could not read this repository's tags: {tags.ErrorText}";
+            return;
+        }
+
+        AvailableTagNames = new ObservableCollection<string>(tags.Tags.Select(t => t.Name));
         _releaseTagTargets.Clear();
-        foreach (var tag in tags)
+        foreach (var tag in tags.Tags)
             _releaseTagTargets[tag.Name] = tag.TargetSha;
     }
 

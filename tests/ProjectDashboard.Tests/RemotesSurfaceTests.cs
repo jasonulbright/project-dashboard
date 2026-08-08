@@ -131,6 +131,51 @@ public class RemotesSurfaceTests
     }
 
     /// <summary>
+    /// The failure git actually produces is a non-zero exit, not a throw: the process runner
+    /// returns it as an unsuccessful result. Only the throwing shape was caught before, so a
+    /// refused listing reached the pane as a plain empty list and the tab claimed the repository
+    /// has no remotes configured.
+    /// </summary>
+    [Theory]
+    [InlineData("remote")]
+    [InlineData("remote-branches")]
+    public async Task ARemoteReadThatExitsNonZero_ReportsTheFailureInsteadOfClaimingNoneAreConfigured(string failing)
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync($"remotes-exit-{failing}");
+        await repo.GitAsync("remote", "add", "origin", "https://example.test/a.git");
+
+        var vm = new RemotesViewModel(git: new RemoteReadRefusingGit(failing));
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.LoadBranchesTabCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Remotes);
+        Assert.False(vm.RemotesEmpty);
+        Assert.False(vm.RemoteBranchesEmpty);
+        Assert.Contains("Could not read this repository's remotes", vm.RemotesErrorText);
+        Assert.Contains("refused by the fixture", vm.RemotesErrorText);
+    }
+
+    /// <summary>Exits one listing non-zero the way git does, leaving every other read real.</summary>
+    private sealed class RemoteReadRefusingGit(string failing) : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            var refused = failing switch
+            {
+                "remote" => list is ["remote", "-v"],
+                _ => list is ["for-each-ref", "refs/remotes", ..],
+            };
+            return refused
+                ? Task.FromResult(new ProcessResult(128, "", "refused by the fixture", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
+    /// <summary>
     /// A read still in flight when the reader moves on carries the previous repository's answer.
     /// Marking the tab loaded from that continuation asserts the NEW repository's empty lists as
     /// fact — nothing has been read about it yet.

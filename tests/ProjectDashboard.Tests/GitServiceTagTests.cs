@@ -16,7 +16,7 @@ public class GitServiceTagTests
         Assert.True((await _git.CreateTagAsync(repo.Path, "v1-light")).Success);
         Assert.True((await _git.CreateTagAsync(repo.Path, "v1-annot", "annotated release")).Success);
 
-        var tags = await _git.GetTagsAsync(repo.Path);
+        var tags = (await _git.GetTagsAsync(repo.Path)).Tags;
         Assert.Equal(2, tags.Count);
 
         var light = tags.Single(t => t.Name == "v1-light");
@@ -43,7 +43,7 @@ public class GitServiceTagTests
 
         Assert.True((await _git.CreateTagAsync(repo.Path, "at-first", message: null, targetCommit: firstCommit)).Success);
 
-        var tag = Assert.Single(await _git.GetTagsAsync(repo.Path));
+        var tag = Assert.Single((await _git.GetTagsAsync(repo.Path)).Tags);
         Assert.Equal(firstCommit, tag.TargetSha);
     }
 
@@ -52,10 +52,10 @@ public class GitServiceTagTests
     {
         using var repo = await TempRepo.CreateWithCommitAsync("tag-del");
         await _git.CreateTagAsync(repo.Path, "temp");
-        Assert.Single(await _git.GetTagsAsync(repo.Path));
+        Assert.Single((await _git.GetTagsAsync(repo.Path)).Tags);
 
         Assert.True((await _git.DeleteTagAsync(repo.Path, "temp")).Success);
-        Assert.Empty(await _git.GetTagsAsync(repo.Path));
+        Assert.Empty((await _git.GetTagsAsync(repo.Path)).Tags);
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class GitServiceTagTests
         await _git.CreateTagAsync(repo.Path, "light");
         await _git.CreateTagAsync(repo.Path, "annot", "the tag's own message");
 
-        var tags = await _git.GetTagsAsync(repo.Path);
+        var tags = (await _git.GetTagsAsync(repo.Path)).Tags;
 
         var light = tags.Single(t => t.Name == "light");
         // A tab inside the subject must not split a field — the format is unit-separated.
@@ -119,5 +119,26 @@ public class GitServiceTagTests
         Assert.NotNull(annot.TargetDate);
         Assert.Equal(annot.TaggerDate, annot.DisplayDate);
         Assert.Equal("annotated", annot.KindLabel);
+    }
+
+    /// <summary>
+    /// The Tags tab shows "no tags yet" off an empty list, which is a claim about the
+    /// repository. A ref read that could not run produces the same empty list and supports no
+    /// such claim, so the two are separated at the read.
+    /// </summary>
+    [Fact]
+    public async Task GetTags_SeparatesAnUntaggedRepositoryFromAReadThatFailed()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tags-none");
+
+        var untagged = await _git.GetTagsAsync(repo.Path);
+        Assert.Empty(untagged.Tags);
+        Assert.False(untagged.HasError);
+        Assert.Equal("", untagged.ErrorText);
+
+        var refused = await _git.GetTagsAsync(TestEnv.NewDir("tags-not-a-repo"));
+        Assert.Empty(refused.Tags);
+        Assert.True(refused.HasError);
+        Assert.NotEqual("", refused.ErrorText);
     }
 }

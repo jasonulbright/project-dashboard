@@ -23,13 +23,24 @@ public class SubmoduleServiceTests
     private static string Full(TempRepo super, string path) =>
         Path.Combine(super.Path, path.Replace('/', Path.DirectorySeparatorChar));
 
+    /// <summary>
+    /// The listing, asserting the read reached the index. Every fixture below has a readable
+    /// one, so a tri-state error here means the fixture broke, not the case under test.
+    /// </summary>
+    private async Task<List<SubmoduleEntry>> ListAsync(string repoPath)
+    {
+        var result = await _subs.GetSubmodulesAsync(repoPath);
+        Assert.False(result.HasError, result.ErrorText);
+        return result.Submodules;
+    }
+
     // ── Listing matrix ───────────────────────────────────────────────────────
 
     [Fact]
     public async Task GetSubmodules_NoSubmodules_ReturnsEmpty()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("sub-none");
-        Assert.Empty(await _subs.GetSubmodulesAsync(repo.Path));
+        Assert.Empty(await ListAsync(repo.Path));
     }
 
     [Fact]
@@ -39,7 +50,7 @@ public class SubmoduleServiceTests
         using var super = await TempRepo.CreateWithCommitAsync("sub-super");
         await AddSubmoduleAsync(super, child, "lib");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal("lib", entry.Name);
         Assert.Equal("lib", entry.Path);
         Assert.Equal(child.FileUrl, entry.Url);
@@ -66,7 +77,7 @@ public class SubmoduleServiceTests
         File.WriteAllText(Path.Combine(Full(super, "lib"), "file.txt"), "edited\n");
         File.WriteAllText(Path.Combine(Full(super, "lib"), "extra.txt"), "new\n");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.True(entry.HasModifiedContent);
         Assert.True(entry.HasUntrackedContent);
         Assert.True(entry.IsDirty);
@@ -85,7 +96,7 @@ public class SubmoduleServiceTests
         File.WriteAllText(Path.Combine(sub, "file.txt"), "local work\n");
         await Git.RunAsync(sub, "commit", "-am", "local work");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal(recorded, entry.RecordedSha);
         Assert.NotEqual(recorded, entry.CurrentSha);
         Assert.True(entry.CommitDiffersFromRecorded);
@@ -105,7 +116,7 @@ public class SubmoduleServiceTests
         await AddSubmoduleAsync(super, child, "lib");
         await super.GitAsync("submodule", "deinit", "-f", "--", "lib");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.True(entry.DeclaredInGitmodules);
         Assert.True(entry.RecordedInIndex);
         Assert.True(entry.WorkingTreeExists);
@@ -126,7 +137,7 @@ public class SubmoduleServiceTests
         await AddSubmoduleAsync(super, child, "lib");
         TestEnv.TryDeleteTree(Full(super, "lib"));
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.True(entry.DeclaredInGitmodules);
         Assert.True(entry.RecordedInIndex);
         Assert.False(entry.WorkingTreeExists);
@@ -154,7 +165,7 @@ public class SubmoduleServiceTests
             $"160000 {mergeBase} 1\tlib\n160000 {ours} 2\tlib\n160000 {theirs} 3\tlib\n",
             "update-index", "--index-info");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.True(entry.IsConflicted);
         Assert.True(entry.RecordedInIndex);
         Assert.Equal(ours, entry.RecordedSha);
@@ -171,7 +182,7 @@ public class SubmoduleServiceTests
         using var super = await TempRepo.CreateWithCommitAsync("unconflicted-super");
         await AddSubmoduleAsync(super, child, "lib");
 
-        Assert.False(Assert.Single(await _subs.GetSubmodulesAsync(super.Path)).IsConflicted);
+        Assert.False(Assert.Single(await ListAsync(super.Path)).IsConflicted);
     }
 
     [Fact]
@@ -182,7 +193,7 @@ public class SubmoduleServiceTests
         await AddSubmoduleAsync(super, child, "lib");
         await super.GitAsync("config", "-f", ".gitmodules", "submodule.lib.path", "./lib");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal("lib", entry.Path);
         Assert.True(entry.DeclaredInGitmodules);
         Assert.True(entry.RecordedInIndex);
@@ -197,7 +208,7 @@ public class SubmoduleServiceTests
         await AddSubmoduleAsync(super, child, "vendor libs/sub-ünïcodé");
         await AddSubmoduleAsync(super, child, "plain");
 
-        var entries = await _subs.GetSubmodulesAsync(super.Path);
+        var entries = await ListAsync(super.Path);
         Assert.Equal(2, entries.Count);
 
         var spaced = entries.Single(e => e.Path == "vendor libs/sub-ünïcodé");
@@ -220,7 +231,7 @@ public class SubmoduleServiceTests
 
         // One level only: the listing names the superproject's submodule, never the
         // submodule's own.
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal("lib", entry.Path);
         Assert.True(entry.HasNestedSubmodules);
     }
@@ -237,7 +248,7 @@ public class SubmoduleServiceTests
         await super.GitAsync("add", "embedded");
         await super.CommitAllAsync("embed a clone");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal("embedded", entry.Path);
         Assert.Equal("embedded", entry.Name);
         Assert.False(entry.DeclaredInGitmodules);
@@ -255,7 +266,7 @@ public class SubmoduleServiceTests
         await AddSubmoduleAsync(super, child, "lib");
         await super.GitAsync("config", "-f", ".gitmodules", "submodule.lib.branch", "main");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal("main", entry.TrackedBranch);
     }
 
@@ -267,7 +278,7 @@ public class SubmoduleServiceTests
         await AddSubmoduleAsync(super, child, "lib");
         await Git.RunAsync(Full(super, "lib"), "checkout", "--detach", "HEAD");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.True(entry.IsDetached);
         Assert.Null(entry.CheckedOutBranch);
     }
@@ -281,12 +292,12 @@ public class SubmoduleServiceTests
         using var super = await TempRepo.CreateWithCommitAsync("upd-super");
         await AddSubmoduleAsync(super, child, "lib");
         await super.GitAsync("submodule", "deinit", "-f", "--", "lib");
-        Assert.False((await _subs.GetSubmodulesAsync(super.Path))[0].IsInitialized);
+        Assert.False((await ListAsync(super.Path))[0].IsInitialized);
 
         var result = await _subs.UpdateAsync(super.Path, new SubmoduleUpdateRequest { Init = true, Path = "lib" });
         Assert.True(result.Success, result.FirstError);
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.True(entry.IsInitialized);
         Assert.Equal(entry.RecordedSha, entry.CurrentSha);
     }
@@ -358,7 +369,7 @@ public class SubmoduleServiceTests
 
         var url = (await super.GitAsync("config", "--get", "submodule.lib.url")).Trim();
         Assert.Equal(child.FileUrl, url);
-        Assert.False((await _subs.GetSubmodulesAsync(super.Path))[0].IsInitialized);
+        Assert.False((await ListAsync(super.Path))[0].IsInitialized);
     }
 
     [Fact]
@@ -388,7 +399,7 @@ public class SubmoduleServiceTests
         Assert.False(result.Success);
         Assert.Contains("ConfirmDiscard", result.FirstError);
         Assert.True(File.Exists(Path.Combine(Full(super, "lib"), "file.txt")));
-        Assert.True((await _subs.GetSubmodulesAsync(super.Path))[0].IsInitialized);
+        Assert.True((await ListAsync(super.Path))[0].IsInitialized);
     }
 
     [Fact]
@@ -402,7 +413,7 @@ public class SubmoduleServiceTests
             new SubmoduleDeinitRequest { Path = "lib", ConfirmDiscard = true });
         Assert.True(result.Success, result.FirstError);
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.False(entry.IsInitialized);
         Assert.False(File.Exists(Path.Combine(Full(super, "lib"), "file.txt")));
     }
@@ -418,12 +429,12 @@ public class SubmoduleServiceTests
         var unforced = await _subs.DeinitAsync(super.Path,
             new SubmoduleDeinitRequest { Path = "lib", ConfirmDiscard = true });
         Assert.False(unforced.Success);
-        Assert.True((await _subs.GetSubmodulesAsync(super.Path))[0].IsInitialized);
+        Assert.True((await ListAsync(super.Path))[0].IsInitialized);
 
         var forced = await _subs.DeinitAsync(super.Path,
             new SubmoduleDeinitRequest { Path = "lib", ConfirmDiscard = true, Force = true });
         Assert.True(forced.Success, forced.FirstError);
-        Assert.False((await _subs.GetSubmodulesAsync(super.Path))[0].IsInitialized);
+        Assert.False((await ListAsync(super.Path))[0].IsInitialized);
     }
 
     [Fact]
@@ -436,7 +447,7 @@ public class SubmoduleServiceTests
         var result = await _subs.DeinitAsync(super.Path,
             new SubmoduleDeinitRequest { Path = "   ", ConfirmDiscard = true });
         Assert.False(result.Success);
-        Assert.True((await _subs.GetSubmodulesAsync(super.Path))[0].IsInitialized);
+        Assert.True((await ListAsync(super.Path))[0].IsInitialized);
     }
 
     [Fact]
@@ -574,7 +585,7 @@ public class SubmoduleServiceTests
             """);
         await super.CommitAllAsync("hand-written .gitmodules");
 
-        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        var entry = Assert.Single(await ListAsync(super.Path));
         Assert.Equal("../outside", entry.Path);
         Assert.True(entry.DeclaredInGitmodules);
         Assert.False(entry.WorkingTreeExists);

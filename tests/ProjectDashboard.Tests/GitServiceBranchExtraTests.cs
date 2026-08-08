@@ -35,7 +35,7 @@ public class GitServiceBranchExtraTests
         using var clone = await TempRepo.CloneFromAsync(bare, "rb-clone");
         await _git.FetchAsync(clone.Path);
 
-        var remoteBranches = await _git.GetRemoteBranchesAsync(clone.Path);
+        var remoteBranches = (await _git.GetRemoteBranchesAsync(clone.Path)).Branches;
         Assert.Contains("origin/release", remoteBranches);
         Assert.Contains("origin/main", remoteBranches);
         Assert.DoesNotContain(remoteBranches, b => b.EndsWith("/HEAD"));
@@ -92,13 +92,13 @@ public class GitServiceBranchExtraTests
         using var bare = await TempRepo.CreateBareFromAsync(seed);
         using var clone = await TempRepo.CloneFromAsync(bare, "prune-clone");
         await _git.FetchAsync(clone.Path);
-        Assert.Contains("origin/gone", await _git.GetRemoteBranchesAsync(clone.Path));
+        Assert.Contains("origin/gone", (await _git.GetRemoteBranchesAsync(clone.Path)).Branches);
 
         // Delete the branch straight on the bare origin, leaving the clone's tracking ref stale.
         await Git.RunAsync(bare.Path, "branch", "-D", "gone");
 
         Assert.True((await _git.PruneRemoteAsync(clone.Path, "origin")).Success);
-        Assert.DoesNotContain("origin/gone", await _git.GetRemoteBranchesAsync(clone.Path));
+        Assert.DoesNotContain("origin/gone", (await _git.GetRemoteBranchesAsync(clone.Path)).Branches);
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public class GitServiceBranchExtraTests
         var cleared = (await _git.GetBranchesAsync(clone.Path)).Single(b => b.Name == "main");
         Assert.Equal("", cleared.Upstream);
         // Only the link went; the remote-tracking ref is still there to relink to.
-        Assert.Contains("origin/release", await _git.GetRemoteBranchesAsync(clone.Path));
+        Assert.Contains("origin/release", (await _git.GetRemoteBranchesAsync(clone.Path)).Branches);
     }
 
     [Fact]

@@ -611,7 +611,7 @@ public class GitService
 
     // ── Tags (L-01) ───────────────────────────────────────────────────────────
 
-    public async Task<List<TagInfo>> GetTagsAsync(string repoPath, CancellationToken ct = default)
+    public async Task<TagsResult> GetTagsAsync(string repoPath, CancellationToken ct = default)
     {
         // %(objecttype) is "tag" for an annotated tag, "commit" for a lightweight one, and the
         // "*" atoms are the dereferenced form — populated for an annotated tag, empty for a
@@ -627,7 +627,7 @@ public class GitService
         if (!result.Success)
         {
             Log.Warn($"git for-each-ref tags failed for {repoPath}: {result.FirstError}");
-            return [];
+            return new TagsResult([], true, ReadFailureText(result, Timeout));
         }
 
         var tags = new List<TagInfo>();
@@ -647,7 +647,7 @@ public class GitService
                 TargetDate = ParseIsoStrict(annotated ? f[5] : f[6])
             });
         }
-        return tags;
+        return new TagsResult(tags);
     }
 
     private static DateTimeOffset? ParseIsoStrict(string value) =>
@@ -676,13 +676,13 @@ public class GitService
 
     // ── Remotes (L-02) ─────────────────────────────────────────────────────────
 
-    public async Task<List<RemoteEntry>> GetRemotesAsync(string repoPath, CancellationToken ct = default)
+    public async Task<RemotesResult> GetRemotesAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["remote", "-v"], ct);
         if (!result.Success)
         {
             Log.Warn($"git remote -v failed for {repoPath}: {result.FirstError}");
-            return [];
+            return new RemotesResult([], true, ReadFailureText(result, Timeout));
         }
 
         // Lines are "<name>\t<url> (fetch)" and "<name>\t<url> (push)"; fetch and push
@@ -711,7 +711,7 @@ public class GitService
             var (fetch, push) = byName[name];
             remotes.Add(new RemoteEntry { Name = name, FetchUrl = fetch, PushUrl = push.Length > 0 ? push : fetch });
         }
-        return remotes;
+        return new RemotesResult(remotes);
     }
 
     public Task<ProcessResult> AddRemoteAsync(string repoPath, string name, string url, CancellationToken ct = default)
@@ -732,18 +732,18 @@ public class GitService
         => RunAsync(repoPath, ["branch", "-m", oldName, newName], ct);
 
     /// <summary>Remote-tracking branches (refs/remotes) for a checkout picker; the symbolic "&lt;remote&gt;/HEAD" pointer is dropped.</summary>
-    public async Task<List<string>> GetRemoteBranchesAsync(string repoPath, CancellationToken ct = default)
+    public async Task<RemoteBranchesResult> GetRemoteBranchesAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["for-each-ref", "refs/remotes", "--format=%(refname:short)"], ct);
         if (!result.Success)
         {
             Log.Warn($"git for-each-ref remotes failed for {repoPath}: {result.FirstError}");
-            return [];
+            return new RemoteBranchesResult([], true, ReadFailureText(result, Timeout));
         }
-        return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        return new RemoteBranchesResult(result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(r => r.TrimEnd('\r'))
             .Where(r => r.Length > 0 && !r.EndsWith("/HEAD", StringComparison.Ordinal))
-            .ToList();
+            .ToList());
     }
 
     /// <summary>Creates a local tracking branch for a remote-tracking ref (strips the leading "&lt;remote&gt;/").</summary>
@@ -1002,12 +1002,13 @@ public class GitService
     }
 
     /// <summary>
-    /// What to tell a reader about a read that did not run. A timeout carries no stderr, so
-    /// <see cref="ProcessResult.FirstError"/> alone would report it as a bare exit code.
+    /// What to tell a reader about a read that did not run, in the terms a surface states. A
+    /// timeout carries no stderr, so <see cref="ProcessResult.FirstError"/> alone would report it
+    /// as a bare exit code; the caller's own budget names it instead.
     /// </summary>
-    private static string ReadFailureText(ProcessResult result) =>
+    internal static string ReadFailureText(ProcessResult result, TimeSpan? budget = null) =>
         result.TimedOut
-            ? $"the read timed out after {PathReadTimeout.TotalSeconds:0} seconds"
+            ? $"the read timed out after {(budget ?? PathReadTimeout).TotalSeconds:0} seconds"
             : result.FirstError;
 
     /// <summary>
@@ -1481,11 +1482,22 @@ public class GitService
         return new IgnoreAnswer(IgnoreState.NotIgnored, await IsTrackedAsync(repoPath, path, ct), "");
     }
 
-    /// <summary>Whether the index holds the path. `ls-files` prints it when it does and exits 0 either way.</summary>
+    /// <summary>
+    /// Whether the index holds this exact path. `ls-files` exits 0 either way and prints every
+    /// index entry the pathspec covers, which for a directory is the files UNDER it — so any
+    /// output at all would report a directory containing tracked files as itself tracked. Only
+    /// an entry equal to the path answers the question that was asked. -z keeps a path holding a
+    /// quote, a backslash, or a non-ASCII byte byte-exact instead of returning it C-quoted.
+    /// </summary>
     public async Task<bool> IsTrackedAsync(string repoPath, string path, CancellationToken ct = default)
     {
-        var result = await RunAsync(repoPath, ["ls-files", "--", path], ct);
-        return result.Success && result.StdOut.Trim().Length > 0;
+        // The index records forward slashes, and so does every entry ls-files prints; a path
+        // typed with the platform separator has to be asked for in the form git holds it.
+        var wanted = path.Replace('\\', '/');
+        var result = await RunAsync(repoPath, ["ls-files", "-z", "--", LiteralPathspec(wanted)], ct);
+        if (!result.Success) return false;
+        return result.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Any(entry => string.Equals(entry, wanted, StringComparison.Ordinal));
     }
 
     // ── Clone ───────────────────────────────────────────────────────────────

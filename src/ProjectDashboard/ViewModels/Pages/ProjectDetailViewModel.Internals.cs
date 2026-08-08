@@ -366,7 +366,7 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
 
         var keep = SelectedSubmodule?.Path;
-        List<SubmoduleEntry> entries;
+        SubmodulesResult entries;
         try
         {
             entries = await _submoduleService.GetSubmodulesAsync(repo);
@@ -383,8 +383,16 @@ public partial class ProjectDetailViewModel
         }
         if (!IsCurrent(gen)) return;
 
+        // An index the read never got through says nothing about whether submodules exist.
+        if (entries.HasError)
+        {
+            SubmodulesErrorText = $"Could not read this repository's submodules: {entries.ErrorText}";
+            SubmodulesEmpty = false;
+            return;
+        }
+
         SubmodulesErrorText = "";
-        Submodules = new ObservableCollection<SubmoduleEntry>(entries);
+        Submodules = new ObservableCollection<SubmoduleEntry>(entries.Submodules);
         SubmodulesEmpty = Submodules.Count == 0;
         SelectedSubmodule = Submodules.FirstOrDefault(s => s.Path == keep) ?? Submodules.FirstOrDefault();
     }

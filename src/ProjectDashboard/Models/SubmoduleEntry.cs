@@ -76,6 +76,13 @@ public sealed class SubmoduleEntry
 /// <summary>Commit counts between a submodule's checkout and the sha its superproject records.</summary>
 public sealed record SubmoduleDivergence(int Ahead, int Behind);
 
+/// <summary>
+/// A superproject's submodules, or why they could not be read. The index read that finds
+/// recorded gitlinks exits non-zero rather than throwing when it fails, so an empty list alone
+/// cannot be told apart from a repository that has no submodules.
+/// </summary>
+public sealed record SubmodulesResult(List<SubmoduleEntry> Submodules, bool HasError = false, string ErrorText = "");
+
 /// <summary>Arguments for `git submodule update`.</summary>
 public sealed class SubmoduleUpdateRequest
 {

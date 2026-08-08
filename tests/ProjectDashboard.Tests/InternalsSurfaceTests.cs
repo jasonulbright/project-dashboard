@@ -305,6 +305,40 @@ public class InternalsSurfaceTests
         Assert.DoesNotContain("Submodules.Count", empty);
     }
 
+    /// <summary>
+    /// The index read that finds recorded gitlinks exits non-zero rather than throwing when git
+    /// refuses it, so the listing arrived empty and the pane stated that this repository declares
+    /// no submodules — about an index it never got through.
+    /// </summary>
+    [Fact]
+    public async Task AnIndexReadThatExitsNonZero_ReportsTheFailureInsteadOfClaimingNoSubmodules()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("sub-vm-exit-child");
+        using var super = await TempRepo.CreateWithCommitAsync("sub-vm-exit-super");
+        await AddSubmoduleAsync(super, child, "lib");
+
+        var vm = await OpenedOn(super.Path, submodules: new SubmoduleService(new IndexReadRefusingGit()));
+
+        Assert.Empty(vm.Submodules);
+        Assert.False(vm.SubmodulesEmpty);
+        Assert.Contains("Could not read this repository's submodules", vm.SubmodulesErrorText);
+        Assert.Contains("refused by the fixture", vm.SubmodulesErrorText);
+    }
+
+    /// <summary>Exits the staged index read non-zero the way git does, leaving every other read real.</summary>
+    private sealed class IndexReadRefusingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list is ["ls-files", "-z", "--stage"]
+                ? Task.FromResult(new ProcessResult(128, "", "refused by the fixture", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
     [Fact]
     public async Task WithNoSubmoduleService_TheSurfaceRefusesRatherThanReportingNone()
     {

@@ -79,6 +79,42 @@ public class GitServiceGitignoreTests
         Assert.False(await _git.IsTrackedAsync(repo.Path, "never-added.log"));
     }
 
+    /// <summary>
+    /// `ls-files` prints every index entry a pathspec covers, so a directory pathspec prints the
+    /// files UNDER it. Treating any output as a hit made a directory holding tracked files read
+    /// as tracked itself, and the probe then told the reader the index outranks the ignore rules
+    /// for a path the index does not hold.
+    /// </summary>
+    [Fact]
+    public async Task IsTracked_ADirectoryHoldingTrackedFiles_IsNotItselfTracked()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-tracked-dir");
+        repo.WriteFile("lib/inner.txt", "x\n");
+        await repo.GitAsync("add", "--", "lib/inner.txt");
+        await repo.CommitAllAsync("track a file under a directory");
+
+        Assert.True(await _git.IsTrackedAsync(repo.Path, "lib/inner.txt"));
+        Assert.False(await _git.IsTrackedAsync(repo.Path, "lib"));
+        Assert.False(await _git.IsTrackedAsync(repo.Path, "lib/"));
+
+        // The probe reports what the index holds, so the directory gets the plain answer.
+        var answer = await _git.CheckIgnoreAsync(repo.Path, "lib");
+        Assert.Equal(IgnoreState.NotIgnored, answer.State);
+        Assert.False(answer.Tracked);
+    }
+
+    /// <summary>A path typed with the platform separator asks about the entry git records.</summary>
+    [Fact]
+    public async Task IsTracked_AcceptsTheWindowsSeparatorForAPathTheIndexHolds()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-tracked-sep");
+        repo.WriteFile("lib/inner.txt", "x\n");
+        await repo.GitAsync("add", "--", "lib/inner.txt");
+        await repo.CommitAllAsync("track a file under a directory");
+
+        Assert.True(await _git.IsTrackedAsync(repo.Path, @"lib\inner.txt"));
+    }
+
     /// <summary>Exit 128 is git refusing the question; answering "not ignored" would invent an answer.</summary>
     [Fact]
     public async Task CheckIgnore_APathGitRefuses_IsUnknownRatherThanNotIgnored()

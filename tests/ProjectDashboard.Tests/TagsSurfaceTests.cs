@@ -27,8 +27,8 @@ public class TagsSurfaceTests
     }
 
     /// <summary>Answers the confirmation without a window and records what it was asked.</summary>
-    private sealed class TagViewModel(bool confirm = true)
-        : ProjectDetailViewModel(null!, new GitService(), null!, null, new RepoBusyRegistry())
+    private sealed class TagViewModel(bool confirm = true, GitService? git = null)
+        : ProjectDetailViewModel(null!, git ?? new GitService(), null!, null, new RepoBusyRegistry())
     {
         public int Confirmations { get; private set; }
         public string LastConfirmMessage { get; private set; } = "";
@@ -89,6 +89,43 @@ public class TagsSurfaceTests
         Assert.True(vm.TagsEmpty);
         var markup = await File.ReadAllTextAsync(ViewSource("TagsView.xaml"));
         Assert.Contains("none have been fetched yet", markup);
+    }
+
+    /// <summary>
+    /// A ref read git refuses exits non-zero rather than throwing, so the list arrives empty and
+    /// the viewer used to state "no tags" about a repository it never read. The empty state
+    /// belongs to a read that answered; a refused one gets the error instead.
+    /// </summary>
+    [Fact]
+    public async Task ATagReadThatExitsNonZero_ReportsTheFailureInsteadOfClaimingTheRepositoryHasNoTags()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tags-exit");
+        await repo.GitAsync("tag", "v1");
+
+        var vm = new TagViewModel(git: new TagReadRefusingGit());
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(await ProjectForAsync(repo));
+        await vm.LoadBranchesCommand.ExecuteAsync(null);
+        await vm.OpenTagsCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Tags);
+        Assert.False(vm.TagsEmpty);
+        Assert.Contains("Could not read this repository's tags", vm.TagsErrorText);
+        Assert.Contains("refused by the fixture", vm.TagsErrorText);
+    }
+
+    /// <summary>Exits the tag listing non-zero the way git does, leaving every other read real.</summary>
+    private sealed class TagReadRefusingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list is ["for-each-ref", "refs/tags", ..]
+                ? Task.FromResult(new ProcessResult(128, "", "refused by the fixture", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
     }
 
     [Fact]
