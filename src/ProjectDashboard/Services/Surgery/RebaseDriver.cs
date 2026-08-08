@@ -76,6 +76,9 @@ public class RebaseDriver
 
     private const string OwnerFileName = "repo-path.txt";
 
+    /// <summary>git's own floor for core.abbrev, so the shortest sha a caller can be shown.</summary>
+    private const int MinAbbreviatedShaLength = 4;
+
     private readonly GitService _git;
     private readonly string _gitExe;
     private readonly string _workRoot;
@@ -660,13 +663,28 @@ public class RebaseDriver
     private static Dictionary<string, RebaseCommit> Index(RebaseScope scope)
     {
         var map = new Dictionary<string, RebaseCommit>(StringComparer.OrdinalIgnoreCase);
+        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var commit in scope.Commits)
         {
             map[commit.Sha] = commit;
-            // Abbreviations let a caller pass what the UI displays without re-resolving.
-            for (var length = 7; length < commit.Sha.Length; length++)
-                map.TryAdd(commit.Sha[..length], commit);
+            // Abbreviations let a caller pass what the UI displays without re-resolving, and a
+            // display sha honours core.abbrev, whose floor is four characters.
+            for (var length = MinAbbreviatedShaLength; length < commit.Sha.Length; length++)
+            {
+                var prefix = commit.Sha[..length];
+                if (map.TryGetValue(prefix, out var owner))
+                {
+                    // First-wins would resolve a prefix two commits share onto the wrong one and
+                    // rewrite history the caller never named.
+                    if (!ReferenceEquals(owner, commit)) ambiguous.Add(prefix);
+                }
+                else
+                {
+                    map[prefix] = commit;
+                }
+            }
         }
+        foreach (var prefix in ambiguous) map.Remove(prefix);
         return map;
     }
 

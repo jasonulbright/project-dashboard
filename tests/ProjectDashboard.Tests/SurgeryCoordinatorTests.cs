@@ -147,6 +147,24 @@ public class SurgeryCoordinatorTests
     }
 
     [Fact]
+    public async Task Drop_ByTheDisplayShaOfARepoWithAShorterCoreAbbrev_StillResolves()
+    {
+        // core.abbrev bottoms out at four characters and every short sha the UI hands back is a
+        // %h read, so a range index that only knows seven-character prefixes refuses commits that
+        // are in it — after a backup and a journal write.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        await repo.GitAsync("config", "core.abbrev", "5");
+        var shortSha = (await repo.GitAsync("log", "-1", "--format=%h", "HEAD~1")).Trim();
+        Assert.True(shortSha.Length < 7, $"expected an abbreviation shorter than seven, got '{shortSha}'");
+
+        var result = await NewCoordinator().DropAsync(repo.Path, 2, [shortSha]);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(["beta", "seed"], await repo.SubjectsAsync());
+        _output.WriteLine($"core.abbrev=5 yielded '{shortSha}' ({shortSha.Length} chars); the drop resolved it");
+    }
+
+    [Fact]
     public async Task Squash_RefusedByValidation_LeavesNoRecoveryMarker()
     {
         // A driver refusal never reaches git, so a pending marker would train the user to
