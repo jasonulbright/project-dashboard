@@ -1,5 +1,62 @@
 # Changelog
 
+## [2.0.0] - 2026-08-08
+
+Full repository management -- deliberate, guarded history rewriting and commit surgery, GitHub administration in-app, and the local git depth earlier releases left to the terminal.
+
+### Added
+- **History rewrite wizard** -- replace text across history (literal or regex), purge a file or folder from every commit, rewrite commit and tag messages, and correct an author/committer identity. Scope a run to all history, a glob, explicit paths, specific commits, or a commit range. Built on a native `git fast-export` → transform → `git fast-import` engine: no new runtime dependencies, binary payloads left untouched, and shared blobs split so a scoped edit changes only the paths it names
+- **Dry run before every rewrite** -- the run is rehearsed in a scratch copy and reports the commits, files, and match counts it would change; the wizard stays disarmed until a dry run has passed
+- **Honest verification report** -- after a rewrite the result is re-read from the rewritten objects and reported as clean only where coverage was total. A search that could not run, a message that would not decode, or a scope the check could not answer for is reported as a gap, never as "clean"
+- **Backups, undo, and crash recovery** -- a verified `git bundle` of every ref is taken before any history-altering operation, kept under a retention limit, and browsable; undo is offered the moment the rewrite lands, and a run interrupted by a crash is detected on the next launch and offers the same restore
+- **Plan a history edit** -- reorder, drop, squash, and reword commits across a range as one replay, with a preview of the resulting history and an explicit refusal, with the reason, for any plan git cannot produce
+- **Commit surgery from the History tab** -- reword any commit (not only `HEAD`), squash into the previous commit, drop a commit, inject staged changes into an older one, and reset (soft / mixed / hard), revert, or cherry-pick
+- **Force push with lease** -- publish a rewritten branch per branch with `--force-with-lease`, at the object id the plan produced, after reviewing exactly what diverged and typing the repository name. Branches that are only behind are excluded and named. The app never pushes on its own
+- **Reflog viewer and deep clean** -- browse every position the refs have held as restore points, then optionally expire the reflogs and prune the object store so replaced history stops being reachable locally. Its own typed confirmation, the backup bundle retained, and the reclaimed size reported (or reported as unmeasured)
+- **Actions tab** -- workflow runs with status, conclusion, branch, event, and elapsed time; per-run jobs and steps; re-run all or only failed jobs and cancel a running run (both confirmed); open on GitHub
+- **Releases tab** -- releases with draft/prerelease state, date, and asset count; release notes rendered natively; create a release from an existing tag (title, notes, draft/prerelease); delete a release (confirmed); download an asset to a location you choose
+- **Repo tab** -- description, homepage, and topics; issues / wiki / projects toggles; default-branch change (confirmed) and visibility change (confirmed by typing the full `owner/name`); and this repository's unread notifications with explicit mark-read
+- **Danger zone** -- deleting the repository on GitHub, reachable only after a Settings opt-in and then only behind a typed `owner/name` confirmation. Local files are never touched
+- **Tags** -- annotated and lightweight tags listed with their messages, created, deleted, and pushed one at a time or all at once, with the name validated by git before the write
+- **Remotes** -- add, rename, remove, and re-point remotes from the Branches tab
+- **Branch extras** -- rename a branch, set or clear its upstream, compare two branches, and delete a branch on the remote behind a typed confirmation
+- **File history and blame** -- per-file history and a blame view with jump-through to the commit, reachable from a file row in Changes or from the History tab
+- **Hunk staging** -- stage, unstage, or discard an individual hunk from the diff viewer, including the unstaged side of a staged rename
+- **Stash depth** -- stash with a message and optionally include untracked files, and read a stash's diff before applying it
+- **Internals tab** -- worktrees (add, remove, prune stale entries), submodules (init, update, sync, deinitialize), and a `.gitignore` editor with a path tester that says which rule decides a path
+- **Commit graph** -- branch-lane visualization of history, paged without the lanes shifting under you
+- **History paging** -- load older commits beyond the first page
+- **Side-by-side diff** -- a two-column layout with word-level intra-line highlights, toggled from the diff viewer and remembered across sessions; both layouts share one hunk numbering and one selection
+- **Multi-select file operations** -- stage, unstage, or discard several files at once in Changes, with the file count named in the confirmation and the outcome reported per action
+- **Commit message helper** -- live subject and body counters against the 50/72 guides, reported and never enforced: no message is truncated or refused
+- **Project templates** -- New Project offers empty, documentation, PowerShell script, .NET console app, and .NET class library layouts, each naming exactly the files it will create
+- **Portfolio export** -- export every discovered project as CSV, JSON, or a standalone HTML page, written atomically to a path you choose
+- **Dashboard pinning, density, and quick actions** -- pin projects to the top of the grid, switch card density, run Fetch / Pull / Push inline on a card, and deep-link from a card chip to the matching detail tab
+- **Command palette verbs and cross-repo search** -- per-project Fetch / Pull / Push / Open actions from `Ctrl+K`, plus a bounded `git grep` fan-out that finds text and filenames across every repository
+- **Shortcut cheat sheet** -- `?` lists every keyboard gesture the app registers, from one table that is also what the app binds
+- **First-run empty states** -- distinct guidance for a missing projects folder, a folder with no repositories, and a filter that matches nothing
+- **Live-apply settings** -- theme, refresh interval, watcher toggle, and root path take effect on save instead of on the next launch, and a rescan a refresh request overtook is re-queued and reported
+- **Portable archive** -- a zip alongside the installer. A `portable.marker` beside the executable keeps all app state in a `data` folder next to it; when that folder is not writable the app says so and falls back to the per-user locations for that session
+- **Safety rails under every destructive operation** -- a clean-tree gate that offers to stash first, typed confirmation for whole-history rewrites / force pushes / repository deletion / remote-branch deletion, a crash journal, and a repository lease that keeps the file watcher, refresh timer, discovery scan, and Sync All out of a repository while a long operation runs
+- **MIT license** and a third-party notices file covering every binary the installer and the portable archive redistribute; the packaging step fails when a redistributed component is unlisted
+- Build-and-test on every push and pull request, and a release workflow that publishes the installer and the portable archive for a tag
+
+### Changed
+- The per-repository work area is eleven tabs -- Overview, Changes, History, Branches, Issues, Pull Requests, Stashes, Actions, Releases, Repo, Internals -- with `Ctrl+1`–`Ctrl+9` and `Ctrl+0` switching the first ten
+- **Accessibility** -- every list row, outcome, and state is announced: cards are named list items in a grid with no decorative chrome in the keyboard path, a file's status is announced as a word rather than a letter, bulk-operation tallies are announced separately from polite progress milestones, and every status color holds a 4.5:1 contrast floor (the large-text floor in dark theme)
+- **Performance** -- a card's state now costs four git processes instead of seven, repository triage and the hidden-repository count run off the UI thread, the projects root is read once per scan, each repository spends one timeout budget rather than one per git call, and the rewrite engine streams to disk rather than holding a repository in memory
+- Every git invocation runs through one non-interactive environment with the message locale pinned, so git's output is parsed as the app expects on any machine
+- Every operation reports what it did; a silent list refresh is no longer how success or failure is communicated
+
+### Fixed
+- A repository with no remote no longer reports "No remote" over uncommitted changes -- both states are shown
+- Window position and size restore correctly on mixed-DPI setups: the rect is saved and clamped in device pixels, re-asserted when a DPI change overwrites it, and captured from whatever state the window is closed in
+- A confirmed operation is bound to the repository the confirmation named, so switching projects mid-confirmation can no longer apply it elsewhere, and a dropped operation says so
+- A repository whose history cannot be walked reports that instead of reading as a repository with no commits
+- Links in rendered README and CHANGELOG markdown are clickable and reachable from the keyboard, and open the parsed target after disclosing its real host
+- A repository's `commit.cleanup` setting no longer rewrites a commit message typed in the app
+- The command palette keeps its selection when search results arrive late
+
 ## [1.2.0] - 2026-07-17
 
 The desktop client release — the dashboard becomes a full local git client.
