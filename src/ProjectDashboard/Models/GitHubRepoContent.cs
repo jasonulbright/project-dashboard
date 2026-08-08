@@ -42,6 +42,12 @@ public sealed class Release
 
     /// <summary>"draft", "prerelease", or "" — a draft outranks the prerelease flag.</summary>
     public string StateLabel => IsDraft ? "draft" : IsPrerelease ? "prerelease" : "";
+
+    /// <summary>
+    /// <see cref="StateLabel"/> carrying its own leading separator; empty for a published release,
+    /// which a composed name would otherwise end a separator on.
+    /// </summary>
+    public string StateSuffix => StateLabel.Length == 0 ? "" : $" {StateLabel}";
 }
 
 /// <summary>One workflow run from the Actions list.</summary>
@@ -68,6 +74,12 @@ public sealed class WorkflowRun
     /// <summary>Conclusion once the run is over, else its status — never both, never blank.</summary>
     public string OutcomeLabel => IsCompleted ? (Conclusion.Length > 0 ? Conclusion : "completed")
         : Status.Length > 0 ? Status.Replace('_', ' ') : "unknown";
+
+    /// <summary>
+    /// <see cref="Branch"/> carrying its own leading separator and preposition; empty when the run
+    /// reports no head branch, which a composed name would otherwise end a preposition on.
+    /// </summary>
+    public string BranchSuffix => Branch.Length == 0 ? "" : $", on {Branch}";
 
     /// <summary>
     /// Wall-clock the run has taken. A run still going is measured to now, so the value

@@ -2514,10 +2514,10 @@
                                             <Setter Property="Padding" Value="4,4" />
                                             <Setter Property="AutomationProperties.Name">
                                                 <Setter.Value>
-                                                    <MultiBinding StringFormat="{}{0}, {1}, on {2}">
+                                                    <MultiBinding StringFormat="{}{0}, {1}{2}">
                                                         <Binding Path="DisplayTitle" />
                                                         <Binding Path="OutcomeLabel" />
-                                                        <Binding Path="Branch" />
+                                                        <Binding Path="BranchSuffix" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -2830,9 +2830,9 @@
                                             <Setter Property="Padding" Value="4,4" />
                                             <Setter Property="AutomationProperties.Name">
                                                 <Setter.Value>
-                                                    <MultiBinding StringFormat="{}{0} {1}">
+                                                    <MultiBinding StringFormat="{}{0}{1}">
                                                         <Binding Path="DisplayTitle" />
-                                                        <Binding Path="StateLabel" />
+                                                        <Binding Path="StateSuffix" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -3391,10 +3391,10 @@
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="AutomationProperties.Name">
                                                 <Setter.Value>
-                                                    <MultiBinding StringFormat="{}{0}, {1} {2}">
+                                                    <MultiBinding StringFormat="{}{0}{1}{2}">
                                                         <Binding Path="Path" />
-                                                        <Binding Path="BranchLabel" />
-                                                        <Binding Path="StateLabel" />
+                                                        <Binding Path="BranchSuffix" />
+                                                        <Binding Path="StateSuffix" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -3511,9 +3511,9 @@
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="AutomationProperties.Name">
                                                 <Setter.Value>
-                                                    <MultiBinding StringFormat="{}{0}, {1}">
+                                                    <MultiBinding StringFormat="{}{0}{1}">
                                                         <Binding Path="Path" />
-                                                        <Binding Path="Url" />
+                                                        <Binding Path="UrlSuffix" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>

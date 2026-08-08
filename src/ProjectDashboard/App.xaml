@@ -15,8 +15,8 @@
                 <ResourceDictionary Source="pack://application:,,,/ProjectDashboard;component/Views/Themes/StatusPalette.Dark.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Accessibility: a visible keyboard-focus ring (adorner, doesn't disturb the element's
-                 own border) + a style that makes a clickable Border keyboard-focusable. -->
+            <!-- A visible keyboard-focus ring, drawn as an adorner so it does not disturb the
+                 element's own border. -->
             <Style x:Key="FocusRing">
                 <Setter Property="Control.Template">
                     <Setter.Value>
@@ -27,10 +27,6 @@
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>
-            </Style>
-            <Style x:Key="FocusableChip" TargetType="Border">
-                <Setter Property="Focusable" Value="True" />
-                <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

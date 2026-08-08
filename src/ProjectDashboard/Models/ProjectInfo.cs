@@ -35,6 +35,19 @@ public partial class ProjectInfo : ObservableObject
     [ObservableProperty] private List<GitCommit> _recentCommits = [];
     [ObservableProperty] private List<GitHubIssue> _issues = [];
 
+    partial void OnGitStatusChanged(GitStatus value) => OnPropertyChanged(nameof(AccessibleName));
+
+    /// <summary>
+    /// What a reader is handed for the card. A repository with no local clone has no branch and
+    /// no working tree, and one whose status could not be read has neither measured — a name that
+    /// pastes those empty values into a fixed sentence reports a branch and a change count that
+    /// were never observed.
+    /// </summary>
+    public string AccessibleName =>
+        IsRemoteOnly ? $"{DisplayName}, not cloned"
+        : GitStatus.HasError ? $"{DisplayName}, status unavailable"
+        : $"{DisplayName}{GitStatus.BranchSuffix}, {GitStatus.TotalChanges} uncommitted{GitStatus.AheadBehindSuffix}";
+
     public int TaskCount => CountNotePrefix("TASK:");
     public int BugCount => CountNotePrefix("BUG:");
     public int WaitCount => CountNotePrefix("WAIT:");

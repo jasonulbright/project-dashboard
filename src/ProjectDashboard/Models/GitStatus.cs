@@ -33,6 +33,11 @@ public sealed class GitStatus
     /// supplies the separator itself trails one when the label has nothing to say.
     /// </summary>
     public string AheadBehindSuffix => AheadBehindLabel.Length == 0 ? "" : $" {AheadBehindLabel}";
+    /// <summary>
+    /// <see cref="Branch"/> carrying its own leading separator and label; empty when git named no
+    /// branch, which a composed name would otherwise render as a separator with nothing after it.
+    /// </summary>
+    public string BranchSuffix => Branch.Length == 0 ? "" : $", branch {Branch}";
     public string LatestTag { get; set; } = "";
     public DateTimeOffset? LastCommitDate { get; set; }
     public string LastCommitMessage { get; set; } = "";

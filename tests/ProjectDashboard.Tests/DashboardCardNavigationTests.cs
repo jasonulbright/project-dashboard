@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Xml;
+using ProjectDashboard.Helpers;
 
 namespace ProjectDashboard.Tests;
 
@@ -78,7 +79,7 @@ public class DashboardCardNavigationTests
         var markup = new XmlDocument();
         markup.LoadXml(RepoSource.Read(PageXaml));
         var gridElement = Element(markup, "//*[local-name()='ScrollViewer']/*[local-name()='ListBox']");
-        var cardElement = Element(markup, "//*[local-name()='DataTemplate']/*[local-name()='Border']");
+        var cardElement = Element(markup, "//*[local-name()='DataTemplate']/*[local-name()='FocusableCard']");
         var actionsElement = Element(markup,
             "//*[local-name()='StackPanel'][*[local-name()='Button'][@Content='Fetch']]");
 
@@ -101,7 +102,7 @@ public class DashboardCardNavigationTests
         var cards = new List<Border>();
         for (var i = 0; i < cardCount; i++)
         {
-            var card = new Border
+            var card = new FocusableCard
             {
                 Name = "c" + i,
                 Width = 320,

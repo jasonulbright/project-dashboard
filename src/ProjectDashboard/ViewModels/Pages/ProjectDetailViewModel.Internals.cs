@@ -29,6 +29,19 @@ public sealed record WorktreeRow(WorktreeEntry Entry, bool IsCurrent)
             return string.Join(" · ", parts);
         }
     }
+
+    /// <summary>
+    /// <see cref="BranchLabel"/> carrying its own leading separator; empty when git named neither
+    /// a branch nor a state that stands in for one.
+    /// </summary>
+    public string BranchSuffix => BranchLabel.Length == 0 ? "" : $", {BranchLabel}";
+
+    /// <summary>
+    /// <see cref="StateLabel"/> carrying its own leading separator. A composed name that supplies
+    /// the separator itself ends on one for every entry git flags nothing about, and runs the
+    /// branch into the state for every entry it does.
+    /// </summary>
+    public string StateSuffix => StateLabel.Length == 0 ? "" : $", {StateLabel}";
 }
 
 /// <summary>

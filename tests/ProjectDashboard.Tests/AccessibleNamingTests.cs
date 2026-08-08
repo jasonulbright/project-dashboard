@@ -1,5 +1,5 @@
-using System.Xml;
 using ProjectDashboard.Models;
+using ProjectDashboard.ViewModels.Pages;
 
 namespace ProjectDashboard.Tests;
 
@@ -128,9 +128,10 @@ public class AccessibleNamingTests
     }
 
     /// <summary>
-    /// The dashboard card's name is composed in markup out of four bound values, so what a reader
-    /// hears is the format string and the properties together. A repository level with its upstream
-    /// has nothing to add, and a name that pastes that emptiness in ends on its own separator.
+    /// The dashboard card's name is composed out of the project it is drawn for, so what a reader
+    /// hears is the binding the page declares and the property together. A repository level with
+    /// its upstream has nothing to add, and a name that pastes that emptiness in ends on its own
+    /// separator.
     /// </summary>
     [Theory]
     [InlineData(0, 0, "trackr, branch main, 3 uncommitted")]
@@ -152,46 +153,169 @@ public class AccessibleNamingTests
             }
         };
 
-        Assert.Equal(expected, CardNameFromMarkup(project));
+        Assert.Equal(expected, MarkupName.From(CardNameBinding(), project));
+    }
+
+    /// <summary>
+    /// A repository with no local clone has no branch and nothing uncommitted to count. Naming it
+    /// from a fixed sentence read out an empty branch and reported zero changes in a working tree
+    /// that does not exist.
+    /// </summary>
+    [Fact]
+    public void ACloudCard_SaysItIsNotClonedAndClaimsNoBranchOrChangeCount()
+    {
+        var project = new ProjectInfo
+        {
+            DirectoryName = "app-packager",
+            DisplayName = "app-packager",
+            IsRemoteOnly = true,
+            RemoteSlug = "owner/app-packager"
+        };
+
+        var name = MarkupName.From(CardNameBinding(), project);
+
+        Assert.Equal("app-packager, not cloned", name);
+        Assert.DoesNotContain("branch", name, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("uncommitted", name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A status git could not report is not a clean working tree. The count is measured, so a card
+    /// that never got one says so instead of claiming zero.
+    /// </summary>
+    [Fact]
+    public void ACardWhoseStatusFailed_ClaimsNoChangeCount()
+    {
+        var project = new ProjectInfo
+        {
+            DisplayName = "trackr",
+            GitStatus = new GitStatus { HasError = true }
+        };
+
+        Assert.Equal("trackr, status unavailable", MarkupName.From(CardNameBinding(), project));
+    }
+
+    /// <summary>
+    /// The generated container carries the name a reader enumerates the grid by; the Border inside
+    /// it is what the keyboard lands on. The two have to be the same name, or one of the two
+    /// surfaces announces something the other does not.
+    /// </summary>
+    [Fact]
+    public void TheFocusedCardElement_CarriesTheSameNameAsItsContainer()
+    {
+        var markup = MarkupName.Markup(DashboardXaml);
+        var card = MarkupName.Element(markup,
+            "//*[local-name()='DataTemplate']/*[local-name()='FocusableCard']", DashboardXaml);
+
+        Assert.Equal(CardNameBinding(), card.GetAttribute("AutomationProperties.Name"));
     }
 
     private const string DashboardXaml = "src/ProjectDashboard/Views/Pages/DashboardPage.xaml";
+    private const string DetailXaml = "src/ProjectDashboard/Views/Pages/ProjectDetailPage.xaml";
+    private const string FileHistoryXaml = "src/ProjectDashboard/Views/Pages/FileHistoryView.xaml";
 
-    /// <summary>
-    /// Composes the card name the way WPF does, out of the shipped markup: the format string and
-    /// the binding paths the page declares, resolved against a real project.
-    /// </summary>
-    private static string CardNameFromMarkup(ProjectInfo project)
+    private static string CardNameBinding()
     {
-        var markup = new XmlDocument();
-        markup.LoadXml(RepoSource.Read(DashboardXaml));
-        var binding = markup.SelectSingleNode(
+        var markup = MarkupName.Markup(DashboardXaml);
+        var setter = MarkupName.Element(markup,
             "//*[local-name()='ListBox.ItemContainerStyle']/*[local-name()='Style']" +
-            "/*[local-name()='Setter'][@Property='AutomationProperties.Name']" +
-            "/*[local-name()='Setter.Value']/*[local-name()='MultiBinding']") as XmlElement;
-        Assert.True(binding is not null, $"no card-name MultiBinding in {DashboardXaml}");
-
-        // "{}" opens a XAML string that would otherwise be read as a markup extension.
-        var format = binding!.GetAttribute("StringFormat");
-        if (format.StartsWith("{}", StringComparison.Ordinal)) format = format[2..];
-
-        var values = binding.ChildNodes.OfType<XmlElement>()
-            .Where(b => b.LocalName == "Binding")
-            .Select(b => Resolve(project, b.GetAttribute("Path")))
-            .ToArray();
-
-        return string.Format(System.Globalization.CultureInfo.InvariantCulture, format, values);
+            "/*[local-name()='Setter'][@Property='AutomationProperties.Name']", DashboardXaml);
+        return setter.GetAttribute("Value");
     }
 
-    private static object? Resolve(object? root, string path)
+    /// <summary>
+    /// A worktree row names a path, what is checked out there, and what git flags about it. Two of
+    /// the three are absent for ordinary entries: a linked worktree git flags nothing about ended
+    /// the name on a separator, and the main worktree ran its branch straight into its state.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, @"C:\projects\trackr\.wt\fix", "fix", @"C:\projects\trackr\.wt\fix, fix")]
+    [InlineData(true, false, @"C:\projects\trackr", "main", @"C:\projects\trackr, main, main worktree")]
+    [InlineData(true, true, @"C:\projects\trackr", "main",
+        @"C:\projects\trackr, main, main worktree · this checkout")]
+    public void AWorktreeRow_IsNamedWithoutADanglingSeparatorOrARunOnState(
+        bool isMain, bool isCurrent, string path, string branch, string expected)
     {
-        foreach (var step in path.Split('.'))
+        var row = new WorktreeRow(
+            new WorktreeEntry { Path = path, Branch = branch, IsMain = isMain }, isCurrent);
+
+        Assert.Equal(expected, RowName(DetailXaml, "Worktrees of this repository", row));
+    }
+
+    /// <summary>A bare checkout has a state word standing in for the branch it has none of.</summary>
+    [Fact]
+    public void ABareWorktreeRow_IsNamedByTheStateThatStandsInForItsBranch()
+    {
+        var row = new WorktreeRow(
+            new WorktreeEntry { Path = @"C:\projects\trackr.git", IsBare = true, IsMain = true }, IsCurrent: false);
+
+        Assert.Equal(@"C:\projects\trackr.git, bare, main worktree",
+            RowName(DetailXaml, "Worktrees of this repository", row));
+    }
+
+    /// <summary>A published release carries no state word, and the name used to end on its space.</summary>
+    [Theory]
+    [InlineData(false, false, "v2.0.0 — Rewrite engine")]
+    [InlineData(true, false, "v2.0.0 — Rewrite engine draft")]
+    [InlineData(false, true, "v2.0.0 — Rewrite engine prerelease")]
+    public void AReleaseRow_IsNamedWithoutADanglingSeparator(bool draft, bool prerelease, string expected)
+    {
+        var release = new Release
         {
-            if (root is null) return null;
-            var property = root.GetType().GetProperty(step);
-            Assert.True(property is not null, $"{root.GetType().Name} has no {step}; the card name binds to it");
-            root = property!.GetValue(root);
-        }
-        return root;
+            TagName = "v2.0.0", Name = "Rewrite engine", IsDraft = draft, IsPrerelease = prerelease
+        };
+
+        Assert.Equal(expected, RowName(DetailXaml, "Releases", release));
+    }
+
+    /// <summary>A run GitHub reports no head branch for is named by what it is, not by "on".</summary>
+    [Theory]
+    [InlineData("main", "Build, success, on main")]
+    [InlineData("", "Build, success")]
+    public void AWorkflowRunRow_IsNamedWithoutADanglingPreposition(string branch, string expected)
+    {
+        var run = new WorkflowRun
+        {
+            DisplayTitle = "Build", Status = "completed", Conclusion = "success", Branch = branch
+        };
+
+        Assert.Equal(expected, RowName(DetailXaml, "Workflow runs", run));
+    }
+
+    /// <summary>An index-only gitlink has no URL, and the name used to end on the comma before it.</summary>
+    [Theory]
+    [InlineData("https://github.com/owner/lib", "vendor/lib, https://github.com/owner/lib")]
+    [InlineData("", "vendor/lib")]
+    public void ASubmoduleRow_IsNamedWithoutADanglingSeparator(string url, string expected)
+    {
+        var submodule = new SubmoduleEntry { Name = "lib", Path = "vendor/lib", Url = url };
+
+        Assert.Equal(expected, RowName(DetailXaml, "Submodules of this repository", submodule));
+    }
+
+    /// <summary>A blank line in a blamed file has no text, and the name used to end on its colon.</summary>
+    [Theory]
+    [InlineData("var x = 1;", "Line 12, a1b2c3d4 by Ada: var x = 1;")]
+    [InlineData("", "Line 12, a1b2c3d4 by Ada")]
+    public void ABlameRow_IsNamedWithoutADanglingSeparator(string text, string expected)
+    {
+        var line = new BlameLine { LineNumber = 12, Sha = "a1b2c3d4e5", Author = "Ada", Text = text };
+
+        Assert.Equal(expected, RowName(FileHistoryXaml, "Blame lines", line));
+    }
+
+    /// <summary>
+    /// The name the list identified by <paramref name="listName"/> gives its rows, composed out of
+    /// that list's own item-container style in the shipped markup.
+    /// </summary>
+    private static string RowName(string viewXaml, string listName, object row)
+    {
+        var markup = MarkupName.Markup(viewXaml);
+        var binding = MarkupName.Element(markup,
+            $"//*[local-name()='ListBox'][@AutomationProperties.Name='{listName}']" +
+            "//*[local-name()='Setter'][@Property='AutomationProperties.Name']" +
+            "//*[local-name()='MultiBinding']", viewXaml);
+
+        return MarkupName.From(binding, row);
     }
 }

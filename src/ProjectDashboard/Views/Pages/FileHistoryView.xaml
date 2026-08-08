@@ -193,11 +193,11 @@
                                     <Setter Property="MinHeight" Value="18" />
                                     <Setter Property="AutomationProperties.Name">
                                         <Setter.Value>
-                                            <MultiBinding StringFormat="{}Line {0}, {1} by {2}: {3}">
+                                            <MultiBinding StringFormat="{}Line {0}, {1} by {2}{3}">
                                                 <Binding Path="LineNumber" />
                                                 <Binding Path="ShortSha" />
                                                 <Binding Path="Author" />
-                                                <Binding Path="Text" />
+                                                <Binding Path="TextSuffix" />
                                             </MultiBinding>
                                         </Setter.Value>
                                     </Setter>

@@ -13,6 +13,12 @@ public sealed class BlameLine
     /// <summary>1-based line number in the final file.</summary>
     public int LineNumber { get; init; }
     public string Text { get; init; } = "";
+
+    /// <summary>
+    /// <see cref="Text"/> carrying its own leading separator; empty for a blank line, which a
+    /// composed name would otherwise end a separator on.
+    /// </summary>
+    public string TextSuffix => Text.Length == 0 ? "" : $": {Text}";
     /// <summary>True when the attributing commit is a blame boundary (root or walk limit).</summary>
     public bool IsBoundary { get; init; }
 }

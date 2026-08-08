@@ -27,6 +27,12 @@ public sealed class SubmoduleEntry
     /// <summary>URL from .gitmodules; empty for an index-only gitlink.</summary>
     public string Url { get; init; } = "";
 
+    /// <summary>
+    /// <see cref="Url"/> carrying its own leading separator; empty for an index-only gitlink,
+    /// which a composed name would otherwise end a separator on.
+    /// </summary>
+    public string UrlSuffix => Url.Length == 0 ? "" : $", {Url}";
+
     /// <summary>submodule.&lt;name&gt;.branch — the branch the submodule tracks; null when unset.</summary>
     public string? TrackedBranch { get; init; }
 
