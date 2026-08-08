@@ -26,7 +26,11 @@ public sealed class RewriteCoordinator
     /// <summary>
     /// How long a scratch tree must have sat untouched before the sweep treats it as a leak.
     /// No rewrite state on the repository names its scratch tree, so the write time is the only
-    /// liveness signal: a tree another process is still rewriting into is younger than this.
+    /// liveness signal — and the root's write time stops advancing once work/ and target.git/
+    /// exist, so a live rewrite in a second process looks idle for as long as it runs. This
+    /// must therefore exceed <see cref="RewriteRequest.ExportTimeout"/> plus
+    /// <see cref="RewriteRequest.ImportTimeout"/>, the ceiling on how long any single run can
+    /// take; below that sum a sweep can delete the tree a running rewrite is writing into.
     /// </summary>
     private static readonly TimeSpan ScratchGrace = TimeSpan.FromDays(1);
 
