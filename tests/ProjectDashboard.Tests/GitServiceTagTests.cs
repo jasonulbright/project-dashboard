@@ -33,6 +33,29 @@ public class GitServiceTagTests
         Assert.NotNull(annot.TaggerDate);
     }
 
+    /// <summary>
+    /// `tag -a` cleans a message handed to it with strip, which deletes every line starting with
+    /// the comment character. A subject typed as an issue reference vanishes and the tag is
+    /// recorded with no message at all, while git exits 0 and the surface reports the tag created.
+    /// Nothing in a repository's config can make this safe, so the message cleanup pin carries
+    /// every annotated tag.
+    /// </summary>
+    [Fact]
+    public async Task CreateTag_Annotated_RecordsAHashLeadingMessageVerbatim()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tag-hash-message");
+
+        Assert.True((await _git.CreateTagAsync(repo.Path, "v1", "#42 ship it")).Success);
+        Assert.True((await _git.CreateTagAsync(repo.Path, "v2", "#42 ship it\n\n#43 and this line too\n")).Success);
+
+        var tag = (await _git.GetTagsAsync(repo.Path)).Tags.Single(t => t.Name == "v1");
+        Assert.True(tag.IsAnnotated);
+        Assert.Equal("#42 ship it", tag.Subject);
+
+        Assert.Equal("#42 ship it\n\n#43 and this line too",
+            (await repo.GitAsync("tag", "-l", "--format=%(contents)", "v2")).Replace("\r\n", "\n").TrimEnd('\n'));
+    }
+
     [Fact]
     public async Task CreateTag_AtExplicitCommit_TargetsThatCommit()
     {

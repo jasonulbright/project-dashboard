@@ -52,11 +52,14 @@ public class GitService
     internal static string LiteralPathspec(string path) => ":(literal)" + path;
 
     /// <summary>
-    /// git's own default for a message it is handed rather than opening an editor for, pinned so
-    /// a repository configured with commit.cleanup=strip cannot rewrite one. Under strip every
-    /// line of the message starting with the comment character is deleted, which silently drops
-    /// an issue reference like "#42 …" and — when that was the whole subject — aborts the commit
-    /// as empty. Every commit and amend this app runs carries the pin.
+    /// git's own default for a commit message it is handed rather than opening an editor for,
+    /// pinned so a repository configured with commit.cleanup=strip cannot rewrite one. `tag -a`
+    /// takes strip as its own default and honours no config, so the pin is the only thing
+    /// keeping an annotated tag message intact. Under strip every line of the message starting
+    /// with the comment character is deleted, which silently drops an issue reference like
+    /// "#42 …" and — when that was the whole subject — leaves a commit rejected as empty and a
+    /// tag recorded with no message at all. Every commit, amend and annotated tag this app runs
+    /// carries the pin.
     /// </summary>
     internal const string MessageCleanupPin = "--cleanup=whitespace";
 
@@ -659,7 +662,7 @@ public class GitService
         string? targetCommit = null, CancellationToken ct = default)
     {
         var args = new List<string> { "tag" };
-        if (message is not null) { args.Add("-a"); args.Add("-m"); args.Add(message); }
+        if (message is not null) { args.Add("-a"); args.Add(MessageCleanupPin); args.Add("-m"); args.Add(message); }
         args.Add(name);
         if (!string.IsNullOrEmpty(targetCommit)) args.Add(targetCommit);
         return RunAsync(repoPath, args, ct);
@@ -1486,8 +1489,8 @@ public class GitService
     /// Whether the index holds this exact path. `ls-files` exits 0 either way and prints every
     /// index entry the pathspec covers, which for a directory is the files UNDER it — so any
     /// output at all would report a directory containing tracked files as itself tracked. Only
-    /// an entry equal to the path answers the question that was asked. -z keeps a path holding a
-    /// quote, a backslash, or a non-ASCII byte byte-exact instead of returning it C-quoted.
+    /// an entry equal to the path answers the question that was asked. -z returns a path holding
+    /// a quote, a backslash, or a non-ASCII byte byte-exact instead of C-quoting it.
     /// </summary>
     public async Task<bool> IsTrackedAsync(string repoPath, string path, CancellationToken ct = default)
     {

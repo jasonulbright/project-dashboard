@@ -648,14 +648,13 @@ public class RebaseDriver
     /// --no-verify matches git's own replay: a rebase does not run commit hooks for the
     /// commits it picks, and a hook firing here would stop the rebase mid-run.
     ///
-    /// --cleanup=whitespace is git's own default for a message given as a file, pinned because
-    /// commit.cleanup can override it: under `strip` a `#`-prefixed subject is dropped as
-    /// commentary — storing a message that differs from the one the caller confirmed — and a
-    /// message whose every line starts with `#` empties, which fails the exec and surfaces as a
-    /// stopped rebase.
+    /// The message cleanup pin is the same one every other message-carrying git call in this app
+    /// uses: under `strip` a `#`-prefixed subject is dropped as commentary — storing a message
+    /// that differs from the one the caller confirmed — and a message whose every line starts
+    /// with `#` empties, which fails the exec and surfaces as a stopped rebase.
     /// </summary>
     private string AmendExec(string messageToken) =>
-        $"exec {ShellArg(_gitExe)} commit --amend --no-verify --cleanup=whitespace -F {messageToken}";
+        $"exec {ShellArg(_gitExe)} commit --amend --no-verify {GitService.MessageCleanupPin} -F {messageToken}";
 
     /// <summary>
     /// Writes each message to the scratch and substitutes its shell-quoted path for the
