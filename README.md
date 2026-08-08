@@ -53,6 +53,10 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 
 Download `ProjectDashboard-Setup-*.exe` from [Releases](https://github.com/jasonulbright/project-dashboard/releases) and run it. Per-user install (no admin, no signing). Requires the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) — the installer checks for it and links the download if missing.
 
+### Portable
+
+`ProjectDashboard-Portable-*.zip` needs no installation: extract it anywhere and run `ProjectDashboard.exe`. The `portable.marker` file in the extracted folder keeps all app state in a `data` folder beside the executable, so the whole thing moves with a USB stick and leaves nothing in your user profile. Delete the marker to use the standard per-user locations instead. The .NET 10 Desktop Runtime is still required.
+
 ## Build and Run
 
 ```bash
@@ -60,6 +64,12 @@ git clone https://github.com/jasonulbright/project-dashboard.git
 cd project-dashboard
 dotnet build
 dotnet run --project src/ProjectDashboard/ProjectDashboard.csproj
+```
+
+To build the portable archive (publishes into `installer\payload`, then zips it with the marker):
+
+```powershell
+pwsh -File installer\build-portable.ps1
 ```
 
 ## Configuration
@@ -79,7 +89,7 @@ All app state lives outside your repositories, so source trees stay source-only:
 | `%LOCALAPPDATA%\ProjectDashboard\log.txt` | Diagnostic log |
 | `%APPDATA%\ProjectDashboard\manifests.json` | Per-project metadata index (roams with the user profile) |
 
-Setting the `PD_DATA_DIR` environment variable relocates all of the above under one directory (portable mode).
+Two things relocate all of the above under a single directory. In the portable build, the `portable.marker` file beside the executable puts them in `data\` next to it. Setting the `PD_DATA_DIR` environment variable points them anywhere you like, and takes precedence over the marker.
 
 ### Project metadata
 
