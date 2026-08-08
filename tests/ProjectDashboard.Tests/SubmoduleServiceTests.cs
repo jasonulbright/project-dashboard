@@ -541,17 +541,26 @@ public class SubmoduleServiceTests
     [Fact]
     public void ParseGitmodulesConfig_NormalizesDeclaredPathsToTheFormTheIndexUses()
     {
-        foreach (var variant in new[] { "./lib", "lib/", @"lib\", "././lib/" })
+        foreach (var variant in new[] { "./lib", "lib/", @"lib\", "././lib/", ".//lib" })
         {
             var declared = Assert.Single(SubmoduleService.ParseGitmodulesConfig(
                 $"submodule.lib.path\n{variant}\0submodule.lib.url\nhttps://example.invalid/lib.git\0"));
             Assert.Equal("lib", declared.Path);
         }
 
+        // A "." component inside the path is as inert as a leading one.
+        var nested = Assert.Single(SubmoduleService.ParseGitmodulesConfig(
+            "submodule.nested.path\na/./b\0submodule.nested.url\nhttps://example.invalid/b.git\0"));
+        Assert.Equal("a/b", nested.Path);
+
         // Two sections whose paths differ only in those decorations claim one submodule.
         var single = Assert.Single(SubmoduleService.ParseGitmodulesConfig(
-            "submodule.first.path\n./lib\0submodule.second.path\nlib/\0"));
+            "submodule.first.path\n.//lib\0submodule.second.path\nlib/\0"));
         Assert.Equal("first", single.Name);
+
+        var nestedSingle = Assert.Single(SubmoduleService.ParseGitmodulesConfig(
+            "submodule.first.path\na/./b\0submodule.second.path\na/b\0"));
+        Assert.Equal("first", nestedSingle.Name);
     }
 
     [Fact]

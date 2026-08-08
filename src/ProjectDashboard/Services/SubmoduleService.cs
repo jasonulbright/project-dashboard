@@ -304,16 +304,16 @@ public sealed class SubmoduleService
     }
 
     /// <summary>
-    /// The form git records a gitlink under: forward slashes, no "./" prefix, no trailing
-    /// separator. .gitmodules is hand-writable, so "./lib", "lib/", and "lib\" all denote
-    /// the path the index calls "lib"; without a common form the declaration/index union
-    /// lists one submodule several times.
+    /// The form git records a gitlink under: forward slashes, no "." components, no empty
+    /// components. .gitmodules is hand-writable, so "./lib", "lib/", "lib\", ".//lib", and
+    /// "a/./b" must collapse onto the paths the index calls "lib" and "a/b"; without a
+    /// common form the declaration/index union lists one submodule several times or invents
+    /// an uninitialized row for a path the index already holds.
     /// </summary>
     internal static string NormalizeDeclaredPath(string path)
     {
-        var normalized = path.Replace('\\', '/');
-        while (normalized.StartsWith("./", StringComparison.Ordinal)) normalized = normalized[2..];
-        return normalized.TrimEnd('/');
+        var parts = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return string.Join('/', parts.Where(p => p != "."));
     }
 
     /// <summary>One gitlink as the superproject index holds it.</summary>
