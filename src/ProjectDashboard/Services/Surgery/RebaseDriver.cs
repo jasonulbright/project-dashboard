@@ -634,9 +634,15 @@ public class RebaseDriver
     /// An amend exec whose message-file path is filled in once the scratch dir exists.
     /// --no-verify matches git's own replay: a rebase does not run commit hooks for the
     /// commits it picks, and a hook firing here would stop the rebase mid-run.
+    ///
+    /// --cleanup=whitespace is git's own default for a message given as a file, pinned because
+    /// commit.cleanup can override it: under `strip` a `#`-prefixed subject is dropped as
+    /// commentary — storing a message that differs from the one the caller confirmed — and a
+    /// message whose every line starts with `#` empties, which fails the exec and surfaces as a
+    /// stopped rebase.
     /// </summary>
     private string AmendExec(string messageToken) =>
-        $"exec {ShellArg(_gitExe)} commit --amend --no-verify -F {messageToken}";
+        $"exec {ShellArg(_gitExe)} commit --amend --no-verify --cleanup=whitespace -F {messageToken}";
 
     /// <summary>
     /// Writes each message to the scratch and substitutes its shell-quoted path for the

@@ -314,6 +314,65 @@ public class RebaseDriverTests
     }
 
     [Fact]
+    public async Task RunPlan_InARepoWhoseCleanupStrips_StoresTheHashSubjectTheCallerAsked()
+    {
+        // commit.cleanup=strip treats a `#` line as commentary: unpinned, the amend that installs
+        // a reword silently stores the body line as the subject instead, on an operation whose
+        // whole promise is that the history matches the preview.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b");
+        await repo.GitAsync("config", "commit.cleanup", "strip");
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 2);
+        const string message = "#123 fix the thing\n\nthe body that must stay the body";
+
+        var plan = new RebaseTodo
+        {
+            Steps =
+            [
+                new RebaseStep(scope.Commits[0].Sha, RebaseStepAction.Pick, message),
+                new RebaseStep(scope.Commits[1].Sha, RebaseStepAction.Pick)
+            ]
+        };
+
+        var result = await driver.RunPlanAsync(scope, plan);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal("#123 fix the thing", (await repo.GitAsync("log", "-1", "--format=%s", "HEAD~1")).Trim());
+        Assert.Equal(message, await repo.MessageAsync("HEAD~1"));
+    }
+
+    [Fact]
+    public async Task Reword_InARepoWhoseCleanupStrips_StoresTheHashSubjectTheCallerAsked()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b");
+        await repo.GitAsync("config", "commit.cleanup", "strip");
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 2);
+
+        var result = await driver.RewordAsync(scope, scope.Commits[0].Sha, "#123 fix the thing");
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal("#123 fix the thing", (await repo.GitAsync("log", "-1", "--format=%s", "HEAD~1")).Trim());
+    }
+
+    [Fact]
+    public async Task Squash_InARepoWhoseCleanupStrips_StoresTheHashSubjectTheCallerAsked()
+    {
+        // An all-`#` message is emptied by strip, which fails the amend exec and surfaces as a
+        // rebase stop the caller would read as a conflict.
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b");
+        await repo.GitAsync("config", "commit.cleanup", "strip");
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 2);
+
+        var result = await driver.SquashAsync(
+            scope, [scope.Commits[0].Sha, scope.Commits[1].Sha], "#123 fix the thing");
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal("#123 fix the thing", (await repo.GitAsync("log", "-1", "--format=%s", "HEAD")).Trim());
+    }
+
+    [Fact]
     public async Task RunPlan_UnderRoot_ReplaysWithoutGraftingAParentOntoTheRoot()
     {
         using var repo = await SurgeryRepo.CreateAsync("root", "a", "b");
