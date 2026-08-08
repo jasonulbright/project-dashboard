@@ -239,13 +239,15 @@ public partial class ProjectDetailPage
     // row's existing left-click command (open on GitHub) without a mouse.
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // The rewrite wizard is modal over the whole page: Esc cancels it, and the tab
-        // hotkeys stay inert so a digit cannot move the surface behind an open wizard.
-        if (_viewModel.RewriteWizardVisible)
+        // Each safety pane is modal over the whole page: Esc closes it, and the tab hotkeys stay
+        // inert so a digit cannot move the surface behind one. Ordered topmost-first, matching the
+        // Grid: the push pane opens over the wizard's result screen, so an Esc there must close
+        // the pane and leave the wizard — and its Undo — standing.
+        if (TopmostOverlayClose() is { } close)
         {
             if (e.Key == Key.Escape)
             {
-                _viewModel.CloseRewriteWizardCommand.Execute(null);
+                close.Execute(null);
                 e.Handled = true;
             }
             else if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is >= Key.D0 and <= Key.D9)
@@ -278,6 +280,16 @@ public partial class ProjectDetailPage
             e.Handled = true;
         }
     }
+
+    /// <summary>
+    /// The close command of the pane currently drawn on top, or null when none is up. The Backups
+    /// browser is absent because nothing draws over it and its own key binding closes it.
+    /// </summary>
+    private System.Windows.Input.ICommand? TopmostOverlayClose() =>
+        _viewModel.ForcePushVisible ? _viewModel.CloseForcePushCommand
+        : _viewModel.ReflogVisible ? _viewModel.CloseReflogCommand
+        : _viewModel.RewriteWizardVisible ? _viewModel.CloseRewriteWizardCommand
+        : null;
 
     /// <summary>Lazy-loads tab data the first time a surface is opened for the current project.</summary>
     private void WorkTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)

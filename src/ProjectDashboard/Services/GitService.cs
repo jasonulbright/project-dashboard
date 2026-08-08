@@ -647,6 +647,141 @@ public class GitService
     public Task<ProcessResult> PruneRemoteAsync(string repoPath, string remote, CancellationToken ct = default)
         => RunAsync(repoPath, ["remote", "prune", remote], ct, NetworkTimeout);
 
+    // ── Reflog ──────────────────────────────────────────────────────────────────
+
+    /// <summary>Repacking a large repository outruns every other budget here, so maintenance gets its own.</summary>
+    private static readonly TimeSpan MaintenanceTimeout = TimeSpan.FromMinutes(30);
+
+    /// <summary>Field separator for the reflog format. A unit separator cannot occur in a ref name or a reflog subject.</summary>
+    private const string ReflogFieldSeparator = "\u001f";
+
+    /// <summary>
+    /// One ref's reflog, newest first. <paramref name="reference"/> is passed to git as written
+    /// ("HEAD", or a branch name), and each entry's index selector is derived from its position —
+    /// which is what git's own <c>@{n}</c> form means. <c>--date=iso-strict</c> makes the selector
+    /// atom carry the moment the entry was written; the index form is rebuilt here rather than
+    /// asked for, because git emits one or the other and the timestamp is the part it cannot
+    /// reconstruct. A ref with no reflog is an empty list, not a failure.
+    /// </summary>
+    public async Task<List<ReflogEntry>> GetReflogAsync(
+        string repoPath, string reference, int limit = 200, CancellationToken ct = default)
+    {
+        var format = string.Join(ReflogFieldSeparator, "%gD", "%gs", "%H", "%cI");
+        var result = await RunAsync(repoPath,
+            ["reflog", "show", "--date=iso-strict", "--format=" + format, "-n", limit.ToString(), reference], ct);
+        if (!result.Success)
+        {
+            // A ref that has never moved has no reflog, which git reports as a failure; so does a
+            // ref that does not exist. Neither is an error the reader can act on.
+            Log.Warn($"git reflog show {reference} failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+
+        var entries = new List<ReflogEntry>();
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = raw.TrimEnd('\r').Split(ReflogFieldSeparator);
+            if (parts.Length < 4) continue;
+            var (action, subject) = SplitReflogSubject(parts[1]);
+            entries.Add(new ReflogEntry(
+                $"{reference}@{{{entries.Count}}}",
+                action,
+                subject,
+                parts[2],
+                ParseReflogStamp(parts[0])));
+        }
+        return entries;
+    }
+
+    /// <summary>
+    /// The action and its subject. A reflog subject is "&lt;action&gt;: &lt;detail&gt;", except for the
+    /// entry a fresh clone or an older git writes with no action at all, which is named rather
+    /// than shown as a blank row.
+    /// </summary>
+    internal static (string Action, string Subject) SplitReflogSubject(string reflogSubject)
+    {
+        var text = reflogSubject.Trim();
+        if (text.Length == 0) return ("(no action recorded)", "");
+        var colon = text.IndexOf(": ", StringComparison.Ordinal);
+        return colon <= 0 ? (text, "") : (text[..colon], text[(colon + 2)..]);
+    }
+
+    /// <summary>
+    /// The moment inside a date-form selector — "main@{2026-08-07T22:37:30-04:00}". Null when the
+    /// selector is not in that form, so a row shows no date rather than a fabricated one.
+    /// </summary>
+    internal static DateTimeOffset? ParseReflogStamp(string dateSelector)
+    {
+        var open = dateSelector.IndexOf("@{", StringComparison.Ordinal);
+        if (open < 0 || !dateSelector.EndsWith('}')) return null;
+        var inner = dateSelector[(open + 2)..^1];
+        return DateTimeOffset.TryParse(inner, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var when) ? when : null;
+    }
+
+    /// <summary>
+    /// Creates a branch at an explicit start point and switches to it. --no-track: the start point
+    /// is a raw object id from a reflog row, so there is nothing for the new branch to follow.
+    /// </summary>
+    public Task<ProcessResult> CreateBranchAtAsync(
+        string repoPath, string name, string startPoint, CancellationToken ct = default)
+        => RunAsync(repoPath, ["switch", "-c", name, "--no-track", startPoint], ct);
+
+    /// <summary>
+    /// Whether git would accept <paramref name="name"/> as a branch name. A leading dash is
+    /// refused here rather than handed to git, which would read it as an option.
+    /// </summary>
+    public async Task<bool> IsValidBranchNameAsync(string repoPath, string name, CancellationToken ct = default)
+    {
+        if (name.Length == 0 || name.StartsWith('-')) return false;
+        return (await RunAsync(repoPath, ["check-ref-format", "--branch", name], ct)).Success;
+    }
+
+    // ── Object-store maintenance ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Expires every reflog entry immediately, on all refs. This is what makes a replaced history
+    /// unreachable: the swap's own ref moves leave the pre-rewrite tips in the reflogs, and while
+    /// they are there nothing prunes the objects behind them.
+    /// </summary>
+    public Task<ProcessResult> ExpireReflogsAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all"],
+            ct, MaintenanceTimeout);
+
+    /// <summary>
+    /// Repacks and prunes with no grace period. Without --prune=now the default two-week window
+    /// keeps every just-unreferenced object on disk, so the reclaim would not happen.
+    /// </summary>
+    public Task<ProcessResult> GarbageCollectAsync(string repoPath, CancellationToken ct = default)
+        => RunAsync(repoPath, ["gc", "--prune=now", "--quiet"], ct, MaintenanceTimeout);
+
+    /// <summary>
+    /// The object store's size as git measures it. Null when git could not read the repository,
+    /// so a caller reports "not measured" rather than a zero it never observed.
+    /// </summary>
+    public async Task<RepoObjectCounts?> CountObjectsAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["count-objects", "-v"], ct, TimeSpan.FromMinutes(2));
+        if (!result.Success) return null;
+
+        var fields = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.TrimEnd('\r');
+            var colon = line.IndexOf(':');
+            if (colon <= 0) continue;
+            if (long.TryParse(line[(colon + 1)..].Trim(), System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var value))
+                fields[line[..colon]] = value;
+        }
+
+        return new RepoObjectCounts(
+            (int)fields.GetValueOrDefault("count"),
+            fields.GetValueOrDefault("size"),
+            (int)fields.GetValueOrDefault("in-pack"),
+            fields.GetValueOrDefault("size-pack"));
+    }
+
     // ── File history & blame (L-04) ──────────────────────────────────────────────
 
     /// <summary>Commit history for one file, following it across renames.</summary>

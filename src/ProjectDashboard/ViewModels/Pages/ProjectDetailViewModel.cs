@@ -45,7 +45,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         Services.Safety.RepoBusyRegistry? busyRegistry = null,
         SettingsService? settingsService = null,
         Services.Safety.BackupService? backups = null,
-        Services.Safety.RewriteRecoveryService? recovery = null)
+        Services.Safety.RewriteRecoveryService? recovery = null,
+        Services.Rewrite.ForcePushService? forcePush = null,
+        Services.Safety.DeepCleanService? deepClean = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
@@ -57,6 +59,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         // pretending a repository has no backups.
         _backups = backups;
         _recovery = recovery;
+        _forcePush = forcePush;
+        _deepClean = deepClean;
         ConfirmPrompt = ConfirmAsync;
         ConfirmSurgeryAsync = c => ConfirmAsync(c.Title, c.Message, c.ConfirmLabel);
 
@@ -148,9 +152,11 @@ public partial class ProjectDetailViewModel : ObservableObject
             return;
         }
 
-        // Reads the OUTGOING repository's overlay too: a browser left open would keep listing
-        // the previous repository's backups behind the incoming project's page.
+        // Reads the OUTGOING repository's overlays too: one left open would keep describing the
+        // previous repository behind the incoming project's page.
         CloseBackupsOnProjectSwitch();
+        CloseForcePushOnProjectSwitch();
+        CloseReflogOnProjectSwitch();
 
         // Reads the OUTGOING repository, so it runs before the swap below.
         ParkRewriteSessionForThisRepo();

@@ -519,6 +519,21 @@
                                            Command="{Binding UndoRewriteCommand}"
                                            AutomationProperties.Name="Undo the rewrite and restore the pre-rewrite backup" />
                             </StackPanel>
+
+                            <!-- The rewrite left the remote holding the old history. Publishing it
+                                 is a separate decision with its own plan and its own typed
+                                 confirmation; the pane opens OVER this screen so the Undo above
+                                 stays available behind it. -->
+                            <StackPanel Margin="0,0,0,10"
+                                        Visibility="{Binding RewriteResultSucceeded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <ui:Button Content="Push rewritten history…" Appearance="Danger"
+                                           FontSize="13" Padding="14,6" HorizontalAlignment="Left"
+                                           Icon="{ui:SymbolIcon CloudArrowUp24}"
+                                           Command="{Binding OpenForcePushCommand}"
+                                           AutomationProperties.Name="Review what a force-push would replace on the remote" />
+                                <TextBlock Style="{StaticResource WizardHint}" Margin="0,6,0,0"
+                                           Text="Shows exactly which branches would be replaced on their remotes and what each push is leased against, then asks for this repository's name. Nothing is pushed until you do that." />
+                            </StackPanel>
                             <TextBlock Text="{Binding RewriteUndoText}" FontSize="13" TextWrapping="Wrap" Margin="0,0,0,8"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
                                 <TextBlock.Style>

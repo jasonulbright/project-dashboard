@@ -90,6 +90,16 @@ public partial class App : Application
                 services.AddSingleton<IRewriteSessionFactory>(sp =>
                     new CoordinatorRewriteSessionFactory(sp.GetRequiredService<Services.Rewrite.RewriteCoordinator>()));
 
+                // Publishing a rewrite and reclaiming what it replaced. Both contend for the same
+                // repository lease as the rewrite itself, so both take the container's registry.
+                services.AddSingleton(sp => new Services.Rewrite.ForcePushService(
+                    sp.GetRequiredService<GitService>(),
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>()));
+                services.AddSingleton(sp => new Services.Safety.DeepCleanService(
+                    sp.GetRequiredService<GitService>(),
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
+                    sp.GetRequiredService<Services.Safety.RewriteJournal>()));
+
                 // Commit surgery, over the rails registered above.
                 services.AddCommitSurgery();
 
@@ -112,7 +122,9 @@ public partial class App : Application
                     sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
                     sp.GetRequiredService<SettingsService>(),
                     sp.GetRequiredService<Services.Safety.BackupService>(),
-                    sp.GetRequiredService<Services.Safety.RewriteRecoveryService>())
+                    sp.GetRequiredService<Services.Safety.RewriteRecoveryService>(),
+                    sp.GetRequiredService<Services.Rewrite.ForcePushService>(),
+                    sp.GetRequiredService<Services.Safety.DeepCleanService>())
                 {
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });

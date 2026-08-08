@@ -1,0 +1,207 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.ForcePushView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:vm="clr-namespace:ProjectDashboard.ViewModels.Pages"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseForcePushCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <Style x:Key="ForcePushHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <!-- Every navigation mode cycles inside the pane, for the reason the rewrite wizard's
+             does: the scrim stops the mouse but no keystroke, and this pane can be opened from
+             the wizard's own result screen, whose Undo sits directly behind it. -->
+        <Border MaxWidth="980" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseForcePushCommand}"
+                               ToolTip="Close without pushing (Esc)"
+                               AutomationProperties.Name="Close the push pane" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="CloudArrowUp24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{StaticResource StatusBadFg}" />
+                            <TextBlock Text="Push rewritten history" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="Replace what the remote holds with the history in this repository" FontSize="12"
+                                   Margin="0,2,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ BODY ═══ -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource ForcePushHint}"
+                                   Text="Each branch is pushed under its own lease: the push is refused unless the remote branch is still exactly where this repository last recorded it. A refused lease is reported and left alone — this app never retries with a plain force, and it never pushes anything on its own." />
+
+                        <!-- The empty state states the limit of what it can claim: nothing to
+                             force-push is not the same as nothing to push. -->
+                        <Border CornerRadius="6" Padding="12,10" Margin="0,0,0,10"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                Visibility="{Binding ForcePushEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="No branch here needs a force-push."
+                                           FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource ForcePushHint}" Margin="0,6,0,0"
+                                           Text="Every branch with an upstream is either level with it or ahead of it, so an ordinary Push would land. Divergence is read from the refs on disk, so this describes the remote as of the last fetch — fetch first if you want a newer answer." />
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl x:Name="PlanRows" ItemsSource="{Binding ForcePushRows}"
+                                      Focusable="True"
+                                      AutomationProperties.Name="Branches that would be force-pushed">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:ForcePushRow}">
+                                    <Border CornerRadius="6" Padding="12,10" Margin="0,0,0,8"
+                                            Background="{StaticResource StatusBadBg}" BorderThickness="1"
+                                            BorderBrush="{StaticResource StatusBadFg}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Headline}" FontSize="13" FontWeight="SemiBold"
+                                                       FontFamily="Cascadia Code,Consolas"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                            <TextBlock Text="{Binding Change}" FontSize="12" TextWrapping="Wrap"
+                                                       Margin="0,5,0,0" FontFamily="Cascadia Code,Consolas"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                            <TextBlock Text="{Binding Impact}" FontSize="12" TextWrapping="Wrap"
+                                                       Margin="0,5,0,0"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{Binding Lease}" FontSize="12" TextWrapping="Wrap"
+                                                       Margin="0,5,0,0"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- What the plan leaves out, named rather than left to be inferred. -->
+                        <Border CornerRadius="6" Padding="12,8" Margin="0,2,0,0"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                AutomationProperties.AutomationId="ForcePushExclusions">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ForcePushExclusions}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="{Binding ForcePushExclusions}" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </Border>
+
+                        <!-- ── The gate ── -->
+                        <StackPanel Visibility="{Binding ForcePushHasRows, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                                    BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,14,0,0">
+                                <StackPanel>
+                                    <TextBlock FontSize="13" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                               Text="This replaces commits on a remote that other people pull from. Nothing in this app backs up a remote, and nothing here can put those commits back — anyone who already pulled them has to reconcile by hand." />
+                                    <TextBlock FontSize="13" TextWrapping="Wrap" Margin="0,10,0,0"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                               Text="Type this repository's name below to confirm." />
+                                </StackPanel>
+                            </Border>
+                            <ui:TextBox Margin="0,12,0,0" MaxWidth="420" HorizontalAlignment="Left"
+                                        Text="{Binding ForcePushConfirmInput, UpdateSourceTrigger=PropertyChanged}"
+                                        PlaceholderText="Type the repository name here"
+                                        FontFamily="Cascadia Code,Consolas"
+                                        AutomationProperties.Name="Type the repository name to confirm the force-push" />
+                        </StackPanel>
+
+                        <ItemsControl ItemsSource="{Binding ForcePushResults}" Margin="0,14,0,0"
+                                      AutomationProperties.Name="Push results">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,5"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- ═══ FOOTER ═══ -->
+                <StackPanel Grid.Row="2" Margin="0,12,0,0">
+                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ForcePushErrorText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding ForcePushErrorText}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="ForcePushErrorText" />
+                    </Border>
+
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <ui:Button Content="Re-read" FontSize="13" Padding="14,5" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon ArrowSync24}"
+                                       Command="{Binding LoadForcePushPlanCommand}"
+                                       ToolTip="Rebuild the plan from the refs as they stand now"
+                                       AutomationProperties.Name="Rebuild the push plan" />
+                            <ui:Button Content="Push rewritten history" Appearance="Danger" FontSize="13" Padding="16,5"
+                                       Icon="{ui:SymbolIcon Warning24}"
+                                       Command="{Binding PushRewrittenHistoryCommand}"
+                                       Visibility="{Binding ForcePushHasRows, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                       AutomationProperties.Name="Force-push the branches listed above" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <ui:ProgressRing IsIndeterminate="True" Width="16" Height="16" Margin="0,0,10,0"
+                                             Visibility="{Binding ForcePushBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBlock Text="{Binding ForcePushStatusText}" FontSize="12" TextWrapping="Wrap"
+                                       VerticalAlignment="Center" MaxWidth="520"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       AutomationProperties.AutomationId="ForcePushStatusText" />
+                        </StackPanel>
+                    </DockPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

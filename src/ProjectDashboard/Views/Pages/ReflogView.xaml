@@ -1,0 +1,189 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.ReflogView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseReflogCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <helpers:RelativeTimeConverter x:Key="ReflogRelativeTime" />
+        <Style x:Key="ReflogHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <!-- Every navigation mode cycles inside the pane, for the reason the rewrite wizard's
+             does: the scrim stops the mouse but no keystroke, and Fetch, Pull, and Push sit
+             directly behind it. -->
+        <Border MaxWidth="1040" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{StaticResource StatusInfoFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseReflogCommand}"
+                               ToolTip="Close the reflog viewer (Esc)"
+                               AutomationProperties.Name="Close the reflog viewer" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="ClockArrowDownload24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{StaticResource StatusInfoFg}" />
+                            <TextBlock Text="Reflog" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="Every position a ref has held, newest first" FontSize="12" Margin="0,2,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ BODY ═══ -->
+                <Grid Grid.Row="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Style="{StaticResource ReflogHint}"
+                               Text="This list is read-only apart from one action: creating a new branch at a recorded state. Nothing here moves an existing ref. A rewrite's replaced commits stay reachable through these entries until a deep clean expires them." />
+
+                    <DockPanel Grid.Row="1" Margin="0,0,0,10">
+                        <TextBlock DockPanel.Dock="Left" Text="Ref" FontSize="13" VerticalAlignment="Center"
+                                   Margin="0,0,10,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadReflogRefsCommand}"
+                                   AutomationProperties.Name="Reload the reflog" />
+                        <ComboBox ItemsSource="{Binding ReflogRefChoices}"
+                                  SelectedItem="{Binding SelectedReflogRef}"
+                                  MaxWidth="360" HorizontalAlignment="Left" FontFamily="Cascadia Code,Consolas"
+                                  AutomationProperties.Name="Which ref's reflog to show" />
+                    </DockPanel>
+
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Border CornerRadius="6" Padding="12,10"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                VerticalAlignment="Top"
+                                Visibility="{Binding ReflogEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="This ref has no reflog entries."
+                                           FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource ReflogHint}" Margin="0,6,0,0"
+                                           Text="A ref that has never moved has nothing recorded, and an expired reflog reads the same way — an empty list is not proof this ref never held another position." />
+                            </StackPanel>
+                        </Border>
+
+                        <ListBox x:Name="ReflogRows" Grid.Row="0" ItemsSource="{Binding ReflogEntries}"
+                                 SelectedItem="{Binding SelectedReflogEntry}"
+                                 Background="Transparent" HorizontalContentAlignment="Stretch"
+                                 AutomationProperties.Name="Reflog entries">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:ReflogEntry}">
+                                    <DockPanel Margin="0,3">
+                                        <TextBlock DockPanel.Dock="Left" Width="120" Text="{Binding Selector}"
+                                                   FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Selector}"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock DockPanel.Dock="Left" Width="76" Text="{Binding ShortSha}"
+                                                   FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                        <TextBlock DockPanel.Dock="Left" Width="110" Text="{Binding Action}"
+                                                   FontSize="12" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Action}"
+                                                   Foreground="{StaticResource StatusWarnFg}" />
+                                        <TextBlock DockPanel.Dock="Right" MinWidth="72"
+                                                   Text="{Binding When, Converter={StaticResource ReflogRelativeTime}}"
+                                                   FontSize="11" HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock Text="{Binding Subject}" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+                            <TextBlock Text="Check the selected state out as a new branch" FontSize="13"
+                                       FontWeight="SemiBold" Margin="0,0,0,4"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource ReflogHint}"
+                                       Text="The branch is created at the selected entry's commit. No existing branch moves, and the entry's commit is used rather than its @{n} position, which shifts as new entries are recorded." />
+                            <DockPanel>
+                                <ui:Button DockPanel.Dock="Right" Content="Create branch here" FontSize="12" Padding="12,4"
+                                           Margin="8,0,0,0" Appearance="Primary"
+                                           Command="{Binding CheckOutReflogEntryCommand}"
+                                           AutomationProperties.Name="Create a branch at the selected reflog entry" />
+                                <ui:TextBox Text="{Binding ReflogBranchName, UpdateSourceTrigger=PropertyChanged}"
+                                            PlaceholderText="new-branch-name"
+                                            FontSize="12" FontFamily="Cascadia Code,Consolas"
+                                            AutomationProperties.Name="Name for the new branch">
+                                    <ui:TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Command="{Binding CheckOutReflogEntryCommand}" />
+                                    </ui:TextBox.InputBindings>
+                                </ui:TextBox>
+                            </DockPanel>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- ═══ FOOTER ═══ -->
+                <StackPanel Grid.Row="2" Margin="0,12,0,0">
+                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ReflogErrorText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding ReflogErrorText}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="ReflogErrorText" />
+                    </Border>
+
+                    <TextBlock Text="{Binding ReflogStatusText}" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.AutomationId="ReflogStatusText" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

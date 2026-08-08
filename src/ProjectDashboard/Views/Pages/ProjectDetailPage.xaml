@@ -624,25 +624,57 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
-                        <ui:Button DockPanel.Dock="Right" Content="Rewrite history…" Appearance="Danger"
-                                   FontSize="12" Padding="12,4"
-                                   Icon="{ui:SymbolIcon History24}"
-                                   Command="{Binding OpenRewriteWizardCommand}"
-                                   ToolTip="Rewrite this repository's history — replace text, remove files, or fix authorship"
-                                   AutomationProperties.Name="Rewrite history" />
-                        <!-- The durable route to a backup: the wizard's Undo belongs to one live
-                             session, and closing it takes the only in-session restore with it. -->
-                        <ui:Button DockPanel.Dock="Right" Content="Backups…" FontSize="12" Padding="12,4"
-                                   Margin="0,0,8,0"
-                                   Icon="{ui:SymbolIcon ArrowUndo24}"
-                                   Command="{Binding OpenBackupsCommand}"
-                                   ToolTip="Browse the backups taken before this repository's history operations, and restore one"
-                                   AutomationProperties.Name="Browse backups" />
-                        <TextBlock FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                   Text="Rewriting replaces commits with new ones. A backup is taken first and nothing is pushed." />
-                    </DockPanel>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                        <DockPanel>
+                            <ui:Button DockPanel.Dock="Right" Content="Rewrite history…" Appearance="Danger"
+                                       FontSize="12" Padding="12,4"
+                                       Icon="{ui:SymbolIcon History24}"
+                                       Command="{Binding OpenRewriteWizardCommand}"
+                                       ToolTip="Rewrite this repository's history — replace text, remove files, or fix authorship"
+                                       AutomationProperties.Name="Rewrite history" />
+                            <!-- The durable route to a backup: the wizard's Undo belongs to one live
+                                 session, and closing it takes the only in-session restore with it. -->
+                            <ui:Button DockPanel.Dock="Right" Content="Backups…" FontSize="12" Padding="12,4"
+                                       Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon ArrowUndo24}"
+                                       Command="{Binding OpenBackupsCommand}"
+                                       ToolTip="Browse the backups taken before this repository's history operations, and restore one"
+                                       AutomationProperties.Name="Browse backups" />
+                            <!-- Where a replaced history is still reachable from, which is why it
+                                 sits beside the action that expires it. -->
+                            <ui:Button DockPanel.Dock="Right" Content="Reflog…" FontSize="12" Padding="12,4"
+                                       Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon ClockArrowDownload24}"
+                                       Command="{Binding OpenReflogCommand}"
+                                       ToolTip="Every position this repository's refs have held, and a way to check one out as a new branch"
+                                       AutomationProperties.Name="Open the reflog viewer" />
+                            <ui:Button DockPanel.Dock="Right" Content="Deep clean…" Appearance="Danger"
+                                       FontSize="12" Padding="12,4" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon Broom24}"
+                                       Command="{Binding DeepCleanCommand}"
+                                       Visibility="{Binding DangerZoneEnabled, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                       ToolTip="Expire every reflog and prune, so a completed rewrite's replaced commits stop being reachable here"
+                                       AutomationProperties.Name="Deep clean this repository" />
+                            <TextBlock FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       Text="Rewriting replaces commits with new ones. A backup is taken first and nothing is pushed." />
+                        </DockPanel>
+                        <TextBlock Text="{Binding DeepCleanStatusText}" FontSize="12" TextWrapping="Wrap"
+                                   Margin="0,8,0,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   AutomationProperties.AutomationId="DeepCleanStatusText">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DeepCleanStatusText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
 
                 <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions>
@@ -838,10 +870,30 @@
                 <Grid Margin="0,12,0,0" MaxWidth="860" HorizontalAlignment="Left">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <!-- A branch behind its upstream cannot be published by an ordinary push, which
+                         is what a rewrite leaves behind on every branch it touched. -->
+                    <Border Grid.Row="0" Background="{StaticResource StatusWarnBg}"
+                            BorderBrush="{StaticResource StatusWarnFg}" BorderThickness="1"
+                            CornerRadius="8" Padding="14,10" Margin="0,0,0,10"
+                            AutomationProperties.AutomationId="BranchesDivergedNotice"
+                            Visibility="{Binding BranchesDivergedFromRemote, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <DockPanel>
+                            <ui:Button DockPanel.Dock="Right" Content="Push rewritten history…" Appearance="Danger"
+                                       FontSize="12" Padding="12,4" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       Icon="{ui:SymbolIcon CloudArrowUp24}"
+                                       Command="{Binding OpenForcePushCommand}"
+                                       AutomationProperties.Name="Review and force-push the diverged branches" />
+                            <TextBlock TextWrapping="Wrap" FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                       Text="At least one branch here holds commits its remote does not, and the remote holds commits it does not — which is what a history rewrite leaves. Publishing those branches replaces what the remote has, so it happens only through the reviewed, typed-confirmation flow." />
+                        </DockPanel>
+                    </Border>
+
+                    <DockPanel Grid.Row="1" Margin="0,0,0,10">
                         <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="8,0,0,0"
                                    Icon="{ui:SymbolIcon ArrowSync24}"
                                    Command="{Binding LoadBranchesCommand}" />
@@ -857,7 +909,7 @@
                         </ui:TextBox>
                     </DockPanel>
 
-                    <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
                             CornerRadius="8" Padding="10,8">
                         <ListBox ItemsSource="{Binding Branches}"
                                  SelectedItem="{Binding SelectedBranch}"
@@ -2523,6 +2575,7 @@
              view-model state a headless test can drive. The negative margin cancels the page
              padding so the scrim covers the whole surface. -->
         <pages:RewriteWizardView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                                 IsEnabled="{Binding MaintenanceOverlayHidden}"
                                  Visibility="{Binding RewriteWizardVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                  AutomationProperties.Name="Rewrite history wizard" />
 
@@ -2530,7 +2583,22 @@
              A pane on the same terms as the wizard: the restore it offers replaces every ref in
              the repository, so the surfaces behind it are disabled rather than merely covered. -->
         <pages:BackupsView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                           IsEnabled="{Binding MaintenanceOverlayHidden}"
                            Visibility="{Binding BackupsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                            AutomationProperties.Name="Backups browser" />
+
+        <!-- ═══ REFLOG ═══
+             Last but one in the Grid so it draws over the panes above it. -->
+        <pages:ReflogView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                          Visibility="{Binding ReflogVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                          AutomationProperties.Name="Reflog viewer" />
+
+        <!-- ═══ PUSH REWRITTEN HISTORY ═══
+             Last in the Grid, so opening it from the wizard's result screen draws over the wizard
+             rather than replacing it — closing the wizard would take the only one-click undo for
+             the history just replaced. -->
+        <pages:ForcePushView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                             Visibility="{Binding ForcePushVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                             AutomationProperties.Name="Push rewritten history" />
     </Grid>
 </Page>

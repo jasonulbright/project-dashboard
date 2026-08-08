@@ -85,8 +85,17 @@ public partial class ProjectDetailViewModel
     /// <summary>The exact text the reader must type: the repository folder name, never a generic word.</summary>
     [ObservableProperty] private string _backupsConfirmPhrase = "";
 
-    /// <summary>True when neither full-page safety overlay is up. Bound to the IsEnabled of every page surface they cover.</summary>
-    public bool SafetyOverlayHidden => !RewriteWizardVisible && !BackupsVisible;
+    /// <summary>True when no full-page safety overlay is up. Bound to the IsEnabled of every page surface they cover.</summary>
+    public bool SafetyOverlayHidden =>
+        !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible;
+
+    /// <summary>
+    /// True when neither maintenance pane is up. The force-push pane opens from the rewrite
+    /// wizard's own result screen and draws over it, so the wizard keeps the session holding the
+    /// only one-click undo — and this disables the wizard's controls underneath, because a scrim
+    /// stops the mouse and no keystroke.
+    /// </summary>
+    public bool MaintenanceOverlayHidden => !ForcePushVisible && !ReflogVisible;
 
     [RelayCommand]
     private async Task OpenBackups()
