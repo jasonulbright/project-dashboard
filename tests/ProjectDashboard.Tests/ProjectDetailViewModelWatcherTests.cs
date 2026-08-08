@@ -199,6 +199,33 @@ public class ProjectDetailViewModelWatcherTests
         Assert.Empty(vm.UnstagedFiles);
     }
 
+    /// <summary>
+    /// Two triggers can land on an ungated refresh — a watcher signal and F5, or two signals
+    /// with a slow git status between them. Run side by side they both write the file lists,
+    /// and the one that started earlier can finish later: the pane is left describing a
+    /// working tree that has already moved on. Every caller joins the one read in flight and
+    /// leaves a pass owed behind it, so the last write is always the newest read.
+    /// </summary>
+    [Fact]
+    public async Task OverlappingRefreshes_JoinTheOneReadInFlightAndRunAPassAfterIt()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("refresh-single-flight");
+        var vm = NewVm(new RepoBusyRegistry());
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+
+        var first = vm.RefreshWorkingStateAsync();
+        // Written while the first read is in flight: only a pass that starts after it can
+        // see this, and that pass is what the second caller is owed.
+        repo.WriteFile("file.txt", "edited outside the app\n");
+        var second = vm.RefreshWorkingStateAsync();
+
+        Assert.Same(first, second);
+
+        await second;
+        Assert.Single(vm.UnstagedFiles);
+    }
+
     // ── Manual refresh ──────────────────────────────────────────────────────────
 
     [Fact]

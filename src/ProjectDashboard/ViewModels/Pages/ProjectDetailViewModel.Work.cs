@@ -92,8 +92,41 @@ public partial class ProjectDetailViewModel
     internal void BumpGeneration() => _generation++;
     private bool IsCurrent(int gen) => gen == _generation;
 
-    /// <summary>Reload the working state and dependent UI (branch bar, banner, lists).</summary>
-    public async Task RefreshWorkingStateAsync()
+    /// <summary>
+    /// Reload the working state and dependent UI (branch bar, banner, lists).
+    ///
+    /// Every caller joins the one read in flight and leaves a pass owed behind it. Two reads
+    /// running side by side both write the file lists, and the one that started earlier can
+    /// finish later — leaving the pane describing a working tree that has already moved on.
+    /// The gates the mutating operations hold do not cover this: a watcher signal and a
+    /// manual refresh are both ungated, and either can meet the read a project load starts.
+    /// </summary>
+    public Task RefreshWorkingStateAsync()
+    {
+        _workingStateReadOwed = true;
+        return _workingStateRead.IsCompleted
+            ? _workingStateRead = DrainWorkingStateReadsAsync()
+            : _workingStateRead;
+    }
+
+    private Task _workingStateRead = Task.CompletedTask;
+    private bool _workingStateReadOwed;
+
+    /// <summary>
+    /// Runs reads until none is owed. The flag is set before a caller joins, and it is only
+    /// ever read on the UI thread between awaits, so a request arriving while a read is in
+    /// flight is always answered by a pass that starts after it.
+    /// </summary>
+    private async Task DrainWorkingStateReadsAsync()
+    {
+        while (_workingStateReadOwed)
+        {
+            _workingStateReadOwed = false;
+            await ReadWorkingStateAsync();
+        }
+    }
+
+    private async Task ReadWorkingStateAsync()
     {
         var gen = _generation;
         var repo = RepoPath;
