@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify every step except publishing the release.
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -29,15 +35,23 @@ jobs:
           $projectFile = 'src/ProjectDashboard/ProjectDashboard.csproj'
           $nsiFile     = 'installer/project-dashboard.nsi'
 
-          $version = '${{ github.ref_name }}'.TrimStart('v')
-          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-            throw "Tag '${{ github.ref_name }}' is not a version tag."
-          }
-
           $projectVersion = ([xml](Get-Content -LiteralPath $projectFile -Raw)).
             SelectSingleNode('/Project/PropertyGroup/Version').InnerText.Trim()
-          if ($projectVersion -ne $version) {
-            throw "Tag says $version, $projectFile says $projectVersion."
+
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $version = '${{ github.ref_name }}'.TrimStart('v')
+            if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+              throw "Tag '${{ github.ref_name }}' is not a version tag."
+            }
+            if ($projectVersion -ne $version) {
+              throw "Tag says $version, $projectFile says $projectVersion."
+            }
+          }
+          else {
+            $version = $projectVersion
+            if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+              throw "$projectFile says '$projectVersion', which is not a version."
+            }
           }
 
           $nsiText = Get-Content -LiteralPath $nsiFile -Raw
@@ -119,6 +133,7 @@ jobs:
       # Assets are named explicitly: a wildcard would attach any stale artifact left in
       # the tree by an earlier step.
       - name: Publish release
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
