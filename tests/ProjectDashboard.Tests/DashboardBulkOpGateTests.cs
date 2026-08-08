@@ -75,6 +75,92 @@ public class DashboardBulkOpGateTests
         Assert.True(Directory.Exists(Path.Combine(root, "delta")));
     }
 
+    /// <summary>
+    /// The gate serializes work; a report on screen is not work. Held across the results dialog
+    /// it stalls every queued re-scan and every other bulk op for as long as the reader leaves
+    /// the box open — the exact thing the gate's own contract forbids of a modal.
+    /// </summary>
+    [Fact]
+    public async Task TheSyncAllReport_IsShownAfterTheGateIsReleased_SoAQueuedRescanDrainsBehindIt()
+    {
+        var first = TestEnv.NewDir("sync-report-first");
+        var second = TestEnv.NewDir("sync-report-second");
+        var settings = NewSettings(first);
+
+        // One clean repository with a remote that cannot be reached: the fetch fails fast with
+        // no network, which is what puts a line in the report the dialog exists to show.
+        using var repo = await TempRepo.CreateWithCommitAsync("sync-report-repo");
+        var moved = Path.Combine(first, "synced");
+        CopyTree(repo.Path, moved);
+        await Git.RunAsync(moved, "remote", "add", "origin", Path.Combine(first, "no-such-origin.git"));
+
+        using var watcher = new ProjectWatcherService();
+        var dashboard = new ReportingDashboard(settings, watcher, second);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+        Assert.Contains(dashboard.Projects, p => p.FullPath == moved);
+
+        await dashboard.SyncAllCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, dashboard.Reports);
+        // Drained while the report stood, not after it closed.
+        Assert.Equal("", dashboard.RescanStatusDuringReport);
+        Assert.Equal(second, dashboard.RootDuringReport);
+        Assert.NotEqual(DashboardRescan.QueuedStatus, dashboard.RescanStatusDuringReport);
+    }
+
+    /// <summary>Queues a re-scan from inside the results dialog and records what it did there.</summary>
+    private sealed class ReportingDashboard : DashboardViewModel
+    {
+        private readonly SettingsService _settings;
+        private readonly string _newRoot;
+
+        public ReportingDashboard(SettingsService settings, ProjectWatcherService watcher, string newRoot)
+            : base(new ProjectDiscoveryService(new GitService(), new GitHubService(settings), settings, new ManifestStore()),
+                navigationService: null!, settings, new GitHubService(settings), new GitService(), watcher,
+                new RepoBusyRegistry(), uiPost: callback => callback())
+        {
+            _settings = settings;
+            _newRoot = newRoot;
+        }
+
+        public int Reports { get; private set; }
+        public string RescanStatusDuringReport { get; private set; } = "never shown";
+        public string RootDuringReport { get; private set; } = "";
+
+        internal override async Task ShowSyncAllResultsAsync(string body)
+        {
+            Reports++;
+            var moved = _settings.Load();
+            moved.ProjectsRootPath = _newRoot;
+            _settings.Save(moved);
+            await PendingRescan;
+            RescanStatusDuringReport = RescanStatus;
+            RootDuringReport = ConfiguredRootPath;
+        }
+    }
+
+    private static void CopyTree(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var dir in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(dir.Replace(source, target));
+        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            File.Copy(file, file.Replace(source, target), overwrite: true);
+    }
+
+    private static SettingsService NewSettings(string root)
+    {
+        var settings = new SettingsService();
+        settings.Save(new AppSettings
+        {
+            ProjectsRootPath = root,
+            GhPath = Path.Combine(root, "no-such-gh.exe"),
+            EnableGitHubDiscovery = false,
+            RefreshIntervalSeconds = 7200,
+        });
+        return settings;
+    }
+
     private static GatedDiscovery NewSettingsAndDiscovery(string root, out SettingsService settings)
     {
         settings = new SettingsService();

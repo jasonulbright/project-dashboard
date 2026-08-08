@@ -1130,6 +1130,7 @@ public partial class DashboardViewModel : ObservableObject
         var outcomes = new System.Collections.Concurrent.ConcurrentBag<string>();
         var done = 0;
         var semaphore = new SemaphoreSlim(4);
+        List<string> changed;
 
         try
         {
@@ -1179,25 +1180,30 @@ public partial class DashboardViewModel : ObservableObject
             }
         }));
 
-        var changed = outcomes.OrderBy(s => s).ToList();
+        changed = outcomes.OrderBy(s => s).ToList();
         OpStatusText = changed.Count == 0
             ? $"Sync all: {candidates.Count} repos fetched, everything already in sync." + (skipped > 0 ? $" ({skipped} skipped)" : "")
             : $"Sync all: done. {changed.Count} repos changed" + (skipped > 0 ? $" ({skipped} skipped)." : ".");
 
-        if (changed.Count > 0)
-        {
-            await new Wpf.Ui.Controls.MessageBox
-            {
-                Title = "Sync all — results",
-                Content = string.Join("\n", changed),
-                CloseButtonText = "OK"
-            }.ShowDialogAsync();
-        }
-
         await ForceRefreshAsync();
         }
         finally { ReleaseBulkOp(claim); }
+
+        // Outside the gate: the sync is over, and a report left open overnight would hold every
+        // queued re-scan and every other bulk op for as long as the dialog stands.
+        if (changed.Count > 0)
+            await ShowSyncAllResultsAsync(string.Join("\n", changed));
     }
+
+    /// <summary>What Sync All reports once it has released the gate. Overridable so a test can
+    /// observe the dashboard's state while the report is on screen.</summary>
+    internal virtual Task ShowSyncAllResultsAsync(string body) =>
+        new Wpf.Ui.Controls.MessageBox
+        {
+            Title = "Sync all — results",
+            Content = body,
+            CloseButtonText = "OK"
+        }.ShowDialogAsync();
 
     [RelayCommand]
     private void OpenProject(ProjectInfo? project)
