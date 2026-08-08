@@ -40,6 +40,8 @@ public sealed class WorkingState
 {
     public string Branch { get; set; } = "";
     public bool Detached { get; set; }
+    /// <summary>HEAD sha; empty on a repo with no commits yet.</summary>
+    public string Oid { get; set; } = "";
     public bool NoCommitsYet { get; set; }
     public string Upstream { get; set; } = "";
     public bool HasUpstream => Upstream.Length > 0;
@@ -76,7 +78,9 @@ public sealed class WorkingState
             }
             if (line.StartsWith("# branch.oid ", StringComparison.Ordinal))
             {
-                state.NoCommitsYet = line["# branch.oid ".Length..] == "(initial)";
+                var oid = line["# branch.oid ".Length..];
+                state.NoCommitsYet = oid == "(initial)";
+                state.Oid = state.NoCommitsYet ? "" : oid;
                 continue;
             }
             if (line.StartsWith("# branch.upstream ", StringComparison.Ordinal))
