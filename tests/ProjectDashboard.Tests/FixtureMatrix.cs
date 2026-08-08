@@ -3,9 +3,9 @@ using System.Text;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The canonical repository shapes these tests run against, and where each one is built. Read
-/// this before adding a fixture: the shapes below already exist, and a second builder for one of
-/// them is a divergence waiting to happen — one lane fixes a fixture and the other keeps the bug.
+/// The canonical repository shapes these tests run against, and where each one is built. Each
+/// shape has exactly one builder: a second builder for a shape listed here diverges silently,
+/// since a fix applied to one leaves the other carrying the defect.
 ///
 /// BUILDERS
 ///

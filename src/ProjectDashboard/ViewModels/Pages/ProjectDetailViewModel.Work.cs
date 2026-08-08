@@ -668,13 +668,15 @@ public partial class ProjectDetailViewModel
     /// otherwise be dropped by every reload, including the one that follows a mutating operation.
     /// A commit the operation rewrote or removed has no sha in the new list and the selection
     /// clears, which is the honest outcome: it names history that is gone.
+    /// A selection made while the read was in flight wins over the one captured before it: the
+    /// later click is the user's current intent, and restoring the earlier sha would undo it.
     /// </summary>
     private async Task ReloadCommitsAsync()
     {
         var gen = _generation;
-        var selectedSha = SelectedCommit?.Ref;
         var commits = await _gitService.GetRecentCommitsAsync(RepoPath, 50);
         if (!IsCurrent(gen)) return;
+        var selectedSha = SelectedCommit?.Ref;
         Commits = new ObservableCollection<GitCommit>(commits);
         if (Project is not null) Project.RecentCommits = commits;
         SelectedCommit = selectedSha is null

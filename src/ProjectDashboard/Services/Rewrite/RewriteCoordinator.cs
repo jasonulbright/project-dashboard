@@ -16,13 +16,11 @@ namespace ProjectDashboard.Services.Rewrite;
 /// Cancellation is a safe-point contract: the whole pipeline is freely cancellable until the
 /// swap's point of no return, and refused after it, so a cancelled run has changed nothing.
 ///
-/// Sealed, and it stays sealed. Substitution happens at two seams instead, and every one of
-/// this type's behaviours is reachable through them: a view model fakes the whole session
-/// through <see cref="ViewModels.Pages.IRewriteSession"/>, and a service-level test overrides
-/// the virtual <see cref="SwapService.ApplySwapAsync"/> or <see cref="GitService.RunAsync"/>
-/// to fail or perturb one step while the real coordinator runs against a fixture repository.
-/// An interface over this class would add a second description of the pipeline that no caller
-/// needs and that nothing keeps honest.
+/// Sealed. Substitution happens at two seams, and every behaviour of this type is reachable
+/// through them: a view model fakes the whole session through
+/// <see cref="ViewModels.Pages.IRewriteSession"/>, and a service-level test overrides the
+/// virtual <see cref="SwapService.ApplySwapAsync"/> or <see cref="GitService.RunAsync"/> to
+/// fail or perturb one step while the real coordinator runs against a fixture repository.
 /// </summary>
 public sealed class RewriteCoordinator
 {

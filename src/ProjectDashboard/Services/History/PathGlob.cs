@@ -53,9 +53,10 @@ public sealed class PathGlob
     /// Two constructs need work. Brackets are literal here and a character class to wildmatch, and
     /// a backslash is not an escape in a pathspec (git's own tests rely on that), so `[` and `]`
     /// are written as the single-character classes `[[]` and `[]]`, which wildmatch reads as those
-    /// literal characters. And wildmatch rejects a `**` that is not bounded by slashes or by the
-    /// ends of the pattern — `a**b` is a parse error there and an any-run wildcard here — so a
-    /// pattern using one has no translation at all.
+    /// literal characters. And a `**` not bounded by slashes or by the ends of the pattern loses
+    /// its any-run meaning to wildmatch — `a**b` reads there as `a*b`, which stops at a '/' and so
+    /// searches fewer paths than the scope selected — so a pattern using one has no translation
+    /// at all.
     /// </summary>
     public static string? ToGitPathspec(string pattern)
     {

@@ -20,7 +20,7 @@ public class ProjectDetailViewModelSurgeryTests
     private static SurgeryCoordinator NewCoordinator()
     {
         var git = new GitService();
-        var driver = new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var driver = new RebaseDriver(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
         return new SurgeryCoordinator(
             new BackupService(git, new SettingsService()), new RepoBusyRegistry(), git, driver);
     }
@@ -813,7 +813,7 @@ public class ProjectDetailViewModelSurgeryTests
         var vm = await VmForAsync(repo);
         vm.Surgery = new SurgeryCoordinator(
             new BackupService(git, new SettingsService()), busy, git,
-            new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work")));
+            new RebaseDriver(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work")));
         CaptureConfirmations(vm, answer: true);
         vm.SelectedCommit = vm.Commits[1];
 
@@ -838,7 +838,7 @@ public class ProjectDetailViewModelSurgeryTests
     private sealed class ThrowingRebaseDriver : RebaseDriver
     {
         public ThrowingRebaseDriver(GitService git)
-            : base(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"))
+            : base(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work"))
         {
         }
 
@@ -881,13 +881,14 @@ public class ProjectDetailViewModelSurgeryTests
         private bool _fixupRecorded;
 
         public override async Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var argv = args.ToList();
             if (_fixupRecorded && argv is ["rev-parse", "--verify", "-q", "HEAD"])
                 return new ProcessResult(128, "", "fatal: could not read HEAD", TimedOut: false);
 
-            var result = await base.RunAsync(repoPath, argv, ct, timeout);
+            var result = await base.RunAsync(repoPath, argv, environment, ct, timeout);
             if (argv.Count > 0 && argv[0] == "commit" &&
                 argv.Any(a => a.StartsWith("--fixup=", StringComparison.Ordinal)))
                 _fixupRecorded = true;
@@ -903,7 +904,7 @@ public class ProjectDetailViewModelSurgeryTests
         var vm = await VmForAsync(repo);
         vm.Surgery = new SurgeryCoordinator(
             new BackupService(new GitService(), new SettingsService()), new RepoBusyRegistry(), git,
-            new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work")));
+            new RebaseDriver(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work")));
         CaptureConfirmations(vm, answer: true);
 
         repo.Write("alpha.txt", "alpha content\nthe fix\n");
@@ -1005,12 +1006,13 @@ public class ProjectDetailViewModelSurgeryTests
     private sealed class StashRefusingGitService : GitService
     {
         public override Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var argv = args.ToList();
             if (argv is ["stash", "push", ..])
                 return Task.FromResult(new ProcessResult(1, "", "fatal: unable to write stash", TimedOut: false));
-            return base.RunAsync(repoPath, argv, ct, timeout);
+            return base.RunAsync(repoPath, argv, environment, ct, timeout);
         }
     }
 

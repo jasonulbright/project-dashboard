@@ -20,7 +20,7 @@ public class RebaseDriverTests
     public RebaseDriverTests(ITestOutputHelper output) => _output = output;
 
     private static RebaseDriver NewDriver() =>
-        new(new GitService(), GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        new(new GitService(), Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
 
     /// <summary>seed, then two commits that rewrite the SAME line — replaying them out of order must conflict.</summary>
     private static async Task<SurgeryRepo> ConflictingRepoAsync()
@@ -540,7 +540,7 @@ public class RebaseDriverTests
 
         // A repository genuinely left mid-rebase: its scratch holds the message files the
         // stopped todo points at, so reclaiming it would break `git rebase --continue`.
-        var stoppedDriver = new RebaseDriver(new GitService(), GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var stoppedDriver = new RebaseDriver(new GitService(), Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
         var stoppedScope = await stoppedDriver.LoadScopeAsync(stopped.Path, 2);
         await stoppedDriver.ReorderAsync(
             stoppedScope, [stoppedScope.Commits[1].Sha, stoppedScope.Commits[0].Sha], RebaseConflictPolicy.LeaveStopped);
@@ -551,7 +551,7 @@ public class RebaseDriverTests
         var inUse = NewScratch(workRoot, "rebase-in-use", stopped.Path, DateTime.UtcNow.AddDays(-3));
         var recent = NewScratch(workRoot, "rebase-recent", repo.Path, DateTime.UtcNow);
 
-        var driver = new RebaseDriver(new GitService(), GitGuard.GitExe, workRoot);
+        var driver = new RebaseDriver(new GitService(), workRoot);
         var scope = await driver.LoadScopeAsync(repo.Path, 2);
         var result = await driver.ReorderAsync(scope, [scope.Commits[1].Sha, scope.Commits[0].Sha]);
 

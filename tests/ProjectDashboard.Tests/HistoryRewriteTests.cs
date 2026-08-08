@@ -218,11 +218,10 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     /// A rewrite run, verified the only way a rewrite can be: fsck, the content that came out,
     /// and the report's own scrub checks. The identity proofs in
     /// <see cref="HistoryTestSupport.RoundTripAsync"/> — the byte-identical re-emit and the
-    /// ref-for-ref object-id comparison — do not apply here and must not be folded in: a rewrite
-    /// changes payload bytes, so the emitted stream differs from the spool and every commit
-    /// downstream of a changed blob gets a new object id. Those proofs hold only for the no-op
-    /// round trip, and one test in this file (<c>NoOpTransformReproducesIdenticalRefs</c>) uses
-    /// them for exactly that.
+    /// ref-for-ref object-id comparison — do not hold here: a rewrite changes payload bytes, so
+    /// the emitted stream differs from the spool and every commit downstream of a changed blob
+    /// gets a new object id. Those proofs hold only for the no-op round trip, which
+    /// <c>NoOpTransformReproducesIdenticalRefs</c> uses them for.
     /// </summary>
     private static Task<RewriteReport> RewriteAsync(FixtureRepo f, RewriteOptions rewrite, string? reportPath = null) =>
         new HistoryRewriter(GitGuard.GitExe).RunAsync(new HistoryRewriteRequest
@@ -585,6 +584,45 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         var scrub = Assert.Single(report.ScrubChecks);
         Assert.True(scrub.Performed);
         Assert.False(scrub.Complete);
+    }
+
+    /// <summary>
+    /// The payload limit refuses the transform, not the scan: the untransformed bytes still reach
+    /// the import, so a literal needle inside them is a definite survivor and must be reported as
+    /// one rather than disappearing behind the skip.
+    /// </summary>
+    [Fact]
+    public async Task AnOverLimitBlobCarryingALiteralNeedle_IsReportedAsAByteSurvivor()
+    {
+        using var f = Fixture();
+        f.WriteBytes("big.txt", Encoding.ASCII.GetBytes(new string('a', 40) + Needle + "\n"));
+        f.CommitAll("over limit");
+
+        var report = await new HistoryRewriter(GitGuard.GitExe, regexPayloadLimit: 32).RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = new RewriteOptions
+            {
+                ContentOps =
+                [
+                    new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) },
+                    new RegexReplace { Pattern = "never-matches-anything", Replacement = "z" }
+                ]
+            },
+            GitExecutable = GitGuard.GitExe
+        });
+
+        Assert.Contains("regex transform limit", Assert.Single(report.BinarySkips).Reason);
+        Assert.Equal(0, report.BlobsChanged);
+
+        var literalCheck = report.ScrubChecks.Single(c => c.Kind == "literal");
+        Assert.Contains(literalCheck.Hits, h => h.Contains("carry the needle", StringComparison.Ordinal));
+        Assert.False(literalCheck.Complete);
+        output.WriteLine($"over-limit literal survivor reported: {string.Join(" | ", literalCheck.Hits)}");
     }
 
     [Fact]

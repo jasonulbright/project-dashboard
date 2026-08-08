@@ -188,6 +188,9 @@ public sealed class ScopedRewritePass
             {
                 outcome.Skips.Add((mark, slice.Length,
                     $"exceeds the {_contentTransformer.RegexPayloadLimit}-byte regex transform limit"));
+                // The transform is refused, not the scan: an unchanged in-scope payload still
+                // reaches the import, so its literal needles are reported as byte survivors.
+                ScanLiteralSurvivors(ReadSlice(spool, slice), mark, slice.Length, outcome);
                 continue;
             }
 
@@ -197,9 +200,7 @@ public sealed class ScopedRewritePass
             {
                 case TransformClass.BinarySkipped:
                     outcome.Skips.Add((mark, slice.Length, "not valid UTF-8"));
-                    foreach (var op in _contentLiteralOps)
-                        if (payload.AsSpan().IndexOf(op.Find) >= 0)
-                            outcome.ByteSurvivors.Add((op, mark, slice.Length));
+                    ScanLiteralSurvivors(payload, mark, slice.Length, outcome);
                     break;
 
                 case TransformClass.Changed:
@@ -249,9 +250,21 @@ public sealed class ScopedRewritePass
     }
 
     /// <summary>
+    /// Records a literal needle still present in a payload the transform declined to rewrite.
+    /// Every skip arm runs this, so no in-scope payload reaches the import unscanned.
+    /// </summary>
+    private void ScanLiteralSurvivors(byte[] payload, long mark, long length, ScopedRewriteOutcome outcome)
+    {
+        foreach (var op in _contentLiteralOps)
+            if (payload.AsSpan().IndexOf(op.Find) >= 0)
+                outcome.ByteSurvivors.Add((op, mark, length));
+    }
+
+    /// <summary>
     /// Records any needle still present in the bytes the import will receive, for the ops no git
-    /// grep argument can express. A skipped payload is not scanned here: its bytes never changed,
-    /// so the same finding is already recorded as a byte survivor.
+    /// grep argument can express. A skipped payload is scanned by
+    /// <see cref="ScanLiteralSurvivors"/> instead, which reports the same finding as a byte
+    /// survivor.
     /// </summary>
     private void ScanFinalBytes(byte[] finalBytes, long mark, ScopedRewriteOutcome outcome)
     {

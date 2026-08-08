@@ -512,12 +512,13 @@ public class BackupsSurfaceTests
         public Func<Task>? OnRestoreEntry { get; set; }
 
         public override async Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var list = args.ToList();
             if (list.Contains("verify") && Interlocked.Exchange(ref _fired, 1) == 0 && OnRestoreEntry is not null)
                 await OnRestoreEntry();
-            return await base.RunAsync(repoPath, list, ct, timeout);
+            return await base.RunAsync(repoPath, list, environment, ct, timeout);
         }
     }
 

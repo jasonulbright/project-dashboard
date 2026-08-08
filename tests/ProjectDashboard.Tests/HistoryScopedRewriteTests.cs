@@ -194,10 +194,10 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     /// <summary>
     /// A scoped rewrite run, verified by fsck, the content that came out, and the report's own
     /// scrub checks. The identity proofs in <see cref="HistoryTestSupport.RoundTripAsync"/> — the
-    /// byte-identical re-emit and the ref-for-ref object-id comparison — do not apply and must not
-    /// be folded in: a rewrite changes payload bytes, so the emitted stream differs from the spool
-    /// and every commit downstream of a changed blob gets a new object id. They are used here only
-    /// where a scoped run provably changed nothing.
+    /// byte-identical re-emit and the ref-for-ref object-id comparison — do not hold here: a
+    /// rewrite changes payload bytes, so the emitted stream differs from the spool and every
+    /// commit downstream of a changed blob gets a new object id. They hold only where a scoped
+    /// run provably changed nothing.
     /// </summary>
     private static Task<RewriteReport> RewriteAsync(FixtureRepo f, RewriteOptions rewrite, long ceiling = HistoryRewriter.DefaultChangedPayloadCeiling) =>
         new HistoryRewriter(GitGuard.GitExe, changedPayloadCeiling: ceiling).RunAsync(new HistoryRewriteRequest
@@ -275,6 +275,31 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         Assert.True(scrub.Performed, scrub.Note);
         Assert.True(scrub.Complete, scrub.Note);
         Assert.Empty(scrub.Hits);
+    }
+
+    [Fact]
+    public async Task AGlobNamingADirectoryWithoutASlashScopesNothingAndReportsNoSurvivors()
+    {
+        using var f = Fixture();
+        f.Write("docs/keys.md", $"doc {Needle}\n");
+        f.CommitAll("docs only");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+
+        // "docs" names the directory itself, which is not a path; the rewrite therefore scopes
+        // no file. git's pathspec prefix-matches the directory, so the scrub grep sees
+        // docs/keys.md — a path this run was never allowed to touch.
+        var report = await RewriteAsync(f, Literal(Needle, Redacted, files: new GlobScope { Patterns = ["docs"] }));
+        var newHead = report.CommitMap[head];
+
+        Assert.Equal(0, report.BlobsChanged);
+        Assert.Contains(Needle, Show(f, $"{newHead}:docs/keys.md"));
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed, scrub.Note);
+        Assert.Empty(scrub.Hits);
+        Assert.True(scrub.WithinScopeOnly);
+        Assert.Contains("within scope", scrub.Note);
+        output.WriteLine($"glob 'docs' scoped 0 blobs; scrub hits={scrub.Hits.Count} WithinScopeOnly={scrub.WithinScopeOnly}");
     }
 
     [Fact]
@@ -404,6 +429,45 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         Assert.False(line.ClaimsClean);
         output.WriteLine($"scoped run with a skipped payload: WithinScopeOnly={check.WithinScopeOnly}, " +
                          $"Complete={check.Complete}, verdict={line.Verdict}");
+    }
+
+    /// <summary>
+    /// The scoped pass gates the regex transform the same way, and owes the same scan: an
+    /// in-scope payload it declined to rewrite still reaches the import carrying its needle.
+    /// </summary>
+    [Fact]
+    public async Task AnOverLimitInScopeBlobCarryingALiteralNeedle_IsReportedAsAByteSurvivor()
+    {
+        using var f = Fixture();
+        f.WriteBytes("src/big.txt", Encoding.ASCII.GetBytes(new string('a', 40) + Needle + "\n"));
+        f.Write("docs/out.txt", $"out of scope {Needle}\n");
+        f.CommitAll("over limit in scope");
+
+        var report = await new HistoryRewriter(GitGuard.GitExe, regexPayloadLimit: 32).RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = new RewriteOptions
+            {
+                ContentOps =
+                [
+                    new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) },
+                    new RegexReplace { Pattern = "never-matches-anything", Replacement = "z" }
+                ],
+                FileScope = new GlobScope { Patterns = ["src/**"] }
+            },
+            GitExecutable = GitGuard.GitExe
+        });
+
+        Assert.Contains("regex transform limit", Assert.Single(report.BinarySkips).Reason);
+
+        var literalCheck = report.ScrubChecks.Single(c => c.Kind == "literal");
+        Assert.Contains(literalCheck.Hits, h => h.Contains("carry the needle", StringComparison.Ordinal));
+        Assert.False(literalCheck.Complete);
+        output.WriteLine($"scoped over-limit literal survivor reported: {string.Join(" | ", literalCheck.Hits)}");
     }
 
     [Fact]

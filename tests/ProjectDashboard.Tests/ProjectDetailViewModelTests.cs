@@ -108,6 +108,56 @@ public class ProjectDetailViewModelTests
         Assert.Null(vm.SelectedCommit);
     }
 
+    /// <summary>
+    /// A click that lands while the history read is in flight is the user's current intent, so
+    /// the sha captured before the read must not be restored over it.
+    /// </summary>
+    [Fact]
+    public async Task AClickDuringTheReload_SurvivesTheReSelection()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("sel-race");
+        repo.WriteFile("second.txt", "second\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("commit", "-q", "-m", "second");
+
+        var git = new SelectsDuringHistoryRead();
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(await ProjectWithHistoryAsync(repo));
+        var oldest = vm.Commits.Last();
+        var tip = vm.Commits.First();
+        vm.SelectedCommit = oldest;
+
+        // The click lands inside the reload's own `git log`, after the pre-await capture.
+        git.OnHistoryRead = () => vm.SelectedCommit = tip;
+
+        repo.WriteFile("third.txt", "third\n");
+        await vm.StageAllCommand.ExecuteAsync(null);
+        vm.CommitMessage = "third";
+        await vm.CommitCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.SelectedCommit);
+        Assert.Equal(tip.Ref, vm.SelectedCommit.Ref);
+        Assert.False(ReferenceEquals(tip, vm.SelectedCommit));
+    }
+
+    /// <summary>Fires once, during the `git log -n 50` the History reload issues and nothing else does.</summary>
+    private sealed class SelectsDuringHistoryRead : GitService
+    {
+        private int _fired;
+
+        public Action? OnHistoryRead { get; set; }
+
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            if (argv is ["log", ..] && argv.Contains("50") && Interlocked.Exchange(ref _fired, 1) == 0)
+                OnHistoryRead?.Invoke();
+            return base.RunAsync(repoPath, argv, environment, ct, timeout);
+        }
+    }
+
     [Fact]
     public async Task SwitchMidCommit_StaleFinallyDoesNotReleaseTheNewProjectsGate()
     {

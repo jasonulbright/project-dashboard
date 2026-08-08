@@ -13,14 +13,16 @@ public class GitServiceTests
     private readonly GitService _git = new();
 
     [Fact]
-    public void NonInteractiveEnvironment_IsTheOneSourceForBothVariables()
+    public void NonInteractiveEnvironment_IsTheOneSourceForEveryVariable()
     {
         Assert.Equal("0", GitService.NonInteractiveEnvironment["GIT_TERMINAL_PROMPT"]);
         Assert.Equal("0", GitService.NonInteractiveEnvironment["GIT_OPTIONAL_LOCKS"]);
+        Assert.Equal("C", GitService.NonInteractiveEnvironment["LC_ALL"]);
+        Assert.Equal("C", GitService.NonInteractiveEnvironment["LANGUAGE"]);
     }
 
     [Fact]
-    public async Task RunAsync_WithExtraEnvironment_PassesItThroughAndKeepsTheNonInteractivePair()
+    public async Task RunAsync_WithExtraEnvironment_PassesItThroughAndKeepsTheNonInteractiveSet()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("env-overload");
 
@@ -30,10 +32,38 @@ public class GitServiceTests
         Assert.True(editor.Success, editor.FirstError);
         Assert.Equal("pd-marker-editor", editor.StdOut.Trim());
 
-        // …and cannot replace the non-interactive pair, whatever it asks for.
+        // …and cannot replace the non-interactive set, whatever it asks for.
         var prompt = await _git.RunAsync(repo.Path, ["var", "GIT_EDITOR"],
             new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "1", ["GIT_EDITOR"] = "pd-marker-editor" });
         Assert.True(prompt.Success, prompt.FirstError);
+    }
+
+    [Fact]
+    public async Task TheEnvironmentOverload_IsTheSeamEveryRunPassesThrough()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("run-seam");
+        var git = new RecordingGitService();
+
+        await git.RunAsync(repo.Path, ["var", "GIT_EDITOR"]);
+        await git.RunAsync(repo.Path, ["var", "GIT_EDITOR"],
+            new Dictionary<string, string> { ["GIT_EDITOR"] = "pd-marker-editor" });
+
+        Assert.Equal(2, git.Calls.Count);
+        Assert.Null(git.Calls[0]);
+        Assert.Equal("pd-marker-editor", git.Calls[1]!["GIT_EDITOR"]);
+    }
+
+    private sealed class RecordingGitService : GitService
+    {
+        public List<IReadOnlyDictionary<string, string>?> Calls { get; } = [];
+
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            Calls.Add(environment);
+            return base.RunAsync(repoPath, args, environment, ct, timeout);
+        }
     }
 
     [Fact]

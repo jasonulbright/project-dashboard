@@ -1,6 +1,5 @@
 using System.IO;
 using System.Text;
-using ProjectDashboard.Services.History;
 
 namespace ProjectDashboard.Services.Surgery;
 
@@ -84,10 +83,12 @@ public class RebaseDriver
     private bool _swept;
     private string? _emptyMode;
 
-    public RebaseDriver(GitService git, string? gitExecutable = null, string? workRoot = null)
+    public RebaseDriver(GitService git, string? workRoot = null)
     {
         _git = git;
-        _gitExe = gitExecutable ?? HistoryPipeline.ResolveGitExecutable();
+        // The amend exec lines name git in a command line of their own; they must name the same
+        // binary GitService starts the rebase with, or one operation runs two git builds.
+        _gitExe = GitService.ResolveGitExe();
         _workRoot = workRoot ?? Path.Combine(AppPaths.LocalDir, "surgery-work");
     }
 

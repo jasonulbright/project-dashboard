@@ -316,11 +316,12 @@ public class RewriteCancellationTests
     private sealed class CancellingBackup(CancellationTokenSource source) : GitService
     {
         public override Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var list = args.ToList();
             if (list.Contains("bundle")) source.Cancel();
-            return base.RunAsync(repoPath, list, ct, timeout);
+            return base.RunAsync(repoPath, list, environment, ct, timeout);
         }
     }
 

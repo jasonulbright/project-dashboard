@@ -452,10 +452,11 @@ public class RewriteCoordinatorTests
     private sealed class DirtiesTreeAfterFetch(string repoPath) : GitService
     {
         public override async Task<ProcessResult> RunAsync(
-            string repo, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repo, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var argv = args.ToList();
-            var result = await base.RunAsync(repo, argv, ct, timeout);
+            var result = await base.RunAsync(repo, argv, environment, ct, timeout);
             if (argv.Contains("fetch"))
                 await File.WriteAllTextAsync(Path.Combine(repoPath, "a.txt"), "edited during the swap\n", ct);
             return result;

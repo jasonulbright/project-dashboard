@@ -323,14 +323,16 @@ public sealed class HistoryRewriter
                     if (slice.Length > int.MaxValue)
                         throw new NotSupportedException(
                             $"a {slice.Length}-byte blob cannot be materialized for transformation (2 GiB payload ceiling)");
-                    // Gate the regex payload limit against the slice length before reading
-                    // it, so an over-limit blob is a reported skip (feeding scrub
-                    // incompleteness) rather than a materialized allocation or a run-
-                    // aborting throw. The rest of the repository still rewrites.
+                    // Gate the regex payload limit against the slice length, so an over-limit
+                    // blob is a reported skip (feeding scrub incompleteness) rather than a
+                    // regex transform over a payload that size or a run-aborting throw. The
+                    // rest of the repository still rewrites. The literal scan still runs: the
+                    // untransformed bytes reach the import.
                     if (transformer.HasRegexOp && slice.Length > transformer.RegexPayloadLimit)
                     {
                         tally.Skips.Add((blob.Mark, slice.Length,
                             $"exceeds the {transformer.RegexPayloadLimit}-byte regex transform limit"));
+                        ScanLiteralSurvivors(ReadSlice(spool, slice), literalOps, blob.Mark, slice.Length, tally);
                         break;
                     }
                     var payload = ReadSlice(spool, slice);
@@ -339,11 +341,7 @@ public sealed class HistoryRewriter
                     {
                         case TransformClass.BinarySkipped:
                             tally.Skips.Add((blob.Mark, slice.Length, "not valid UTF-8"));
-                            // The transform left these bytes untouched, so any literal
-                            // needle present survives where git grep -I cannot see it.
-                            foreach (var op in literalOps)
-                                if (payload.AsSpan().IndexOf(op.Find) >= 0)
-                                    tally.ByteSurvivors.Add((op, blob.Mark, slice.Length));
+                            ScanLiteralSurvivors(payload, literalOps, blob.Mark, slice.Length, tally);
                             break;
                         case TransformClass.Changed:
                             blob.Data.InlineBytes = outcome.Bytes;
@@ -380,9 +378,22 @@ public sealed class HistoryRewriter
     }
 
     /// <summary>
+    /// Records a literal needle still present in a payload the transform declined to rewrite.
+    /// Every skip arm runs this, so no payload reaches the import unscanned.
+    /// </summary>
+    private static void ScanLiteralSurvivors(
+        byte[] payload, IReadOnlyList<LiteralReplace> literalOps, long? mark, long size, TransformTally tally)
+    {
+        foreach (var op in literalOps)
+            if (payload.AsSpan().IndexOf(op.Find) >= 0)
+                tally.ByteSurvivors.Add((op, mark, size));
+    }
+
+    /// <summary>
     /// Records any needle still present in the bytes the import will receive, for the ops no git
-    /// grep argument can express. A skipped payload is not scanned here: its bytes never changed,
-    /// so the same finding is already recorded as a byte survivor.
+    /// grep argument can express. A skipped payload is scanned by
+    /// <see cref="ScanLiteralSurvivors"/> instead, which reports the same finding as a byte
+    /// survivor.
     /// </summary>
     private static void ScanFinalBytes(
         byte[]? finalBytes, IReadOnlyList<LiteralReplace> byteScanOps, long? mark,
@@ -687,7 +698,7 @@ public sealed class HistoryRewriter
                             break;
                         }
                         checks.Add(Make("literal", needle,
-                            await GrepAsync(request, ["grep", "-I", "--fixed-strings", "-e", needle], commits, scope.PathSpecs, ct),
+                            await GrepAsync(request, ["grep", "-I", "--fixed-strings", "-e", needle], commits, scope, ct),
                             literalExtras));
                         break;
 
@@ -704,7 +715,7 @@ public sealed class HistoryRewriter
                             break;
                         }
                         List<string> grepArgs = ["grep", "-I", "-E", .. flags, "-e", regex.Pattern];
-                        checks.Add(Make("regex", regex.Pattern, await GrepAsync(request, grepArgs, commits, scope.PathSpecs, ct), regexExtras));
+                        checks.Add(Make("regex", regex.Pattern, await GrepAsync(request, grepArgs, commits, scope, ct), regexExtras));
                         break;
                 }
             }
@@ -1074,8 +1085,9 @@ public sealed class HistoryRewriter
 
     private async Task<GrepOutcome> GrepAsync(
         HistoryRewriteRequest request, IReadOnlyList<string> grepArgs,
-        IReadOnlyList<string> commits, IReadOnlyList<string> pathSpecs, CancellationToken ct)
+        IReadOnlyList<string> commits, ScrubScope scope, CancellationToken ct)
     {
+        var pathSpecs = scope.PathSpecs;
         var hits = new List<string>();
         var overflow = 0;
         foreach (var chunk in Chunk(commits))
@@ -1099,6 +1111,7 @@ public sealed class HistoryRewriter
             {
                 foreach (var line in SplitLines(result.StdOut))
                 {
+                    if (!HitPathCouldBeInScope(line, scope.PathInScope)) continue;
                     if (hits.Count < ScrubHitCap) hits.Add(line);
                     else overflow++;
                 }
@@ -1111,6 +1124,28 @@ public sealed class HistoryRewriter
         }
 
         return new GrepOutcome(true, hits, overflow > 0 ? $"{overflow} further hit(s) not listed" : null);
+    }
+
+    /// <summary>
+    /// Whether a `rev:path:line` grep hit can belong to a path the rewrite scoped. A git
+    /// pathspec matches a directory by prefix while a <see cref="PathGlob"/> naming that
+    /// directory without a trailing slash does not, so the grep can return paths the rewrite
+    /// never scoped; reporting those would show survivors for a run that touched nothing.
+    /// A path may itself contain ':', so every colon-delimited candidate is tested and the hit
+    /// is kept when any is in scope — the ambiguity is resolved toward reporting, never toward
+    /// a clean bill the grep did not earn.
+    /// </summary>
+    private static bool HitPathCouldBeInScope(string hitLine, Func<string, bool> pathInScope)
+    {
+        var revEnd = hitLine.IndexOf(':');
+        if (revEnd < 0) return true;
+
+        for (var i = revEnd + 1; i <= hitLine.Length; i++)
+        {
+            if (i < hitLine.Length && hitLine[i] != ':') continue;
+            if (pathInScope(hitLine[(revEnd + 1)..i])) return true;
+        }
+        return false;
     }
 
     private static bool TryDescribeNeedle(byte[] find, out string needle)

@@ -24,7 +24,7 @@ public class SurgeryCoordinatorTests
     private static SurgeryCoordinator NewCoordinator(RepoBusyRegistry? busy = null)
     {
         var git = new GitService();
-        var driver = new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var driver = new RebaseDriver(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
         return new SurgeryCoordinator(
             new BackupService(git, new SettingsService()),
             busy ?? new RepoBusyRegistry(),
@@ -166,7 +166,7 @@ public class SurgeryCoordinatorTests
         repo.Write("shared.txt", "a\nSHARED-TWO\n");
         await repo.CommitAllAsync("two");
 
-        var driver = new RebaseDriver(new GitService(), GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var driver = new RebaseDriver(new GitService(), Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
         var scope = await driver.LoadScopeAsync(repo.Path, 2);
         await driver.ReorderAsync(scope, [scope.Commits[1].Sha, scope.Commits[0].Sha], RebaseConflictPolicy.LeaveStopped);
         Assert.True(repo.RebaseInProgress);
@@ -662,7 +662,7 @@ public class SurgeryCoordinatorTests
         var before = await repo.FullStateAsync();
 
         var git = new GitService();
-        var driver = new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
+        var driver = new RebaseDriver(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
         var result = await new CommitSurgery(git, driver).InjectStagedIntoAsync(repo.Path, shas[0]);
 
         Assert.False(result.Success);

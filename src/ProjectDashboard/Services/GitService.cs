@@ -10,11 +10,13 @@ public class GitService
 
     /// <summary>
     /// Environment for every git call in this application: never prompt for credentials (a
-    /// windowless app would hang invisibly), never take optional index locks during reads,
-    /// and emit messages in one fixed language — several decisions are made by matching git's
-    /// own words (a rejected lease, a held index lock, a commit a rebase emptied), and git
-    /// translates those words. The single source: a caller that needs more variables merges
-    /// onto this rather than writing its own pair.
+    /// windowless app would hang invisibly), never take optional index locks during reads, and
+    /// emit messages in one fixed language. Several decisions are made by matching git's own
+    /// words — a rejected lease, a held index lock, a commit a rebase emptied — and git
+    /// translates those words, so the locale pin is load-bearing, not cosmetic.
+    /// The single source — a caller that needs more variables merges onto this rather than
+    /// writing its own set, or a git process started somewhere else can still block on a
+    /// prompt no window shows or answer in a language no sniff matches.
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> NonInteractiveEnvironment =
         new Dictionary<string, string>
@@ -193,17 +195,19 @@ public class GitService
         return null;
     }
 
-    /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure). Virtual so a test can fail one command.</summary>
-    public virtual Task<ProcessResult> RunAsync(string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null) =>
+    /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure).</summary>
+    public Task<ProcessResult> RunAsync(string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null) =>
         RunAsync(repoPath, args, null, ct, timeout);
 
     /// <summary>
     /// Structured run with extra environment variables layered over
     /// <see cref="NonInteractiveEnvironment"/>. For the callers that need a variable of their own
-    /// — a sequence editor, a signing override — without restating the non-interactive pair or
+    /// — a sequence editor, a signing override — without restating the non-interactive set or
     /// starting git through some other path.
+    /// This overload is the single virtual seam: every other run here funnels through it, so a
+    /// subclass that overrides it sees every git invocation including the env-carrying ones.
     /// </summary>
-    public async Task<ProcessResult> RunAsync(
+    public virtual async Task<ProcessResult> RunAsync(
         string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
         CancellationToken ct = default, TimeSpan? timeout = null)
     {
@@ -1322,8 +1326,12 @@ public class GitService
         Directory.Delete(dir, recursive: true);
     }
 
-    /// <summary>Resolve git: known install dirs first (survives a stale Start-Menu PATH), then PATH.</summary>
-    private static string ResolveGitExe()
+    /// <summary>
+    /// Resolve git: known install dirs first (survives a stale Start-Menu PATH), then PATH.
+    /// Internal so a caller that must name the same binary in a command line of its own — a
+    /// rebase todo's exec line — runs the executable this service starts, not a second one.
+    /// </summary>
+    internal static string ResolveGitExe()
     {
         string[] known =
         [
