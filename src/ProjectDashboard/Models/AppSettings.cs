@@ -12,16 +12,16 @@ public sealed class AppSettings
     /// <summary>Optional explicit path to gh.exe (file or its folder). Empty = resolve via PATH / known locations.</summary>
     public string GhPath { get; set; } = "";
 
-    /// <summary>Surface the user's GitHub repos that aren't cloned locally as "Cloud" cards (ROADMAP v1.1).</summary>
+    /// <summary>Surface the user's GitHub repos that aren't cloned locally as "Cloud" cards.</summary>
     public bool EnableGitHubDiscovery { get; set; } = true;
 
     /// <summary>Refresh a repo's card automatically when its working tree changes on disk.</summary>
     public bool EnableAutoRefresh { get; set; } = true;
 
-    /// <summary>Per-repo backups retained before a history rewrite prunes the oldest (R-01).</summary>
+    /// <summary>Per-repo backups retained before a history rewrite prunes the oldest.</summary>
     public int BackupRetentionCount { get; set; } = 10;
 
-    /// <summary>Gate for the destructive GitHub-admin surface; off until the user opts in (R-05).</summary>
+    /// <summary>Gate for the destructive GitHub-admin surface; off until the user opts in.</summary>
     public bool DangerZoneEnabled { get; set; }
 
     /// <summary>
@@ -33,7 +33,7 @@ public sealed class AppSettings
     /// <summary>Card density: "compact" tightens padding and minimum height; anything else is comfortable.</summary>
     public string CardDensity { get; set; } = "comfortable";
 
-    /// <summary>Render diffs in two columns rather than as one unified list (X-01).</summary>
+    /// <summary>Render diffs in two columns rather than as one unified list.</summary>
     public bool DiffSideBySide { get; set; }
 
     /// <summary>

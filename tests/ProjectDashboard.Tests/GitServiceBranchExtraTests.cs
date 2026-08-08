@@ -3,7 +3,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Branch rename, remote-tracking checkout, remote branch delete/prune (L-03) — file:// fixtures only.</summary>
+/// <summary>Branch rename, remote-tracking checkout, remote branch delete/prune — file:// fixtures only.</summary>
 public class GitServiceBranchExtraTests
 {
     private readonly GitService _git = new();

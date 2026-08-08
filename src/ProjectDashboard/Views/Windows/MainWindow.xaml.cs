@@ -877,8 +877,6 @@ public partial class MainWindow : INavigationWindow
         ScheduleRepoSearch();
     }
 
-    // ── Global file search behind the palette (X-12) ─────────────────────────
-
     private CancellationTokenSource? _repoSearchCts;
     private DispatcherTimer? _repoSearchDebounce;
     private List<Models.PaletteItem> _searchRows = [];
@@ -1022,8 +1020,6 @@ public partial class MainWindow : INavigationWindow
     private void PaletteItem_Invoke(object sender, System.Windows.Input.MouseButtonEventArgs e)
         => InvokeSelectedPaletteItem();
 
-    // ── Shortcut cheat sheet (X-13) ──────────────────────────────────────────
-
     private void ToggleShortcuts()
     {
         if (ShortcutOverlay.Visibility == Visibility.Visible) { CloseShortcuts(); return; }
@@ -1042,8 +1038,6 @@ public partial class MainWindow : INavigationWindow
     }
 
     private void ShortcutClose_Click(object sender, RoutedEventArgs e) => CloseShortcuts();
-
-    // ── Detail-tab deep links (X-11) ─────────────────────────────────────────
 
     /// <summary>
     /// The tab is handed to the page the navigation is about to build, alongside the

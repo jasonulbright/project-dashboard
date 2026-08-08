@@ -6,7 +6,7 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The per-file viewer as the detail page drives it (L-04): one path's history beside a blame of
+/// The per-file viewer as the detail page drives it: one path's history beside a blame of
 /// its current content, and the two jump-throughs that connect them to the page's History list.
 /// The service's own parsing is proven in <see cref="GitServiceFileHistoryTests"/>.
 /// </summary>

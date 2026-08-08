@@ -4,7 +4,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// The per-file viewer (L-04): one path's commit history, followed across renames, beside a
+/// The per-file viewer: one path's commit history, followed across renames, beside a
 /// blame of its current content. Read-only — nothing here changes a ref, an index, or a file.
 ///
 /// Blame is read on a worker thread. The porcelain output of a large file is megabytes and its

@@ -2,7 +2,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Tag listing/create/delete/push (L-01) against disposable local + file:// fixtures.</summary>
+/// <summary>Tag listing/create/delete/push against disposable local + file:// fixtures.</summary>
 public class GitServiceTagTests
 {
     private readonly GitService _git = new();

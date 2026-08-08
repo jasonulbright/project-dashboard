@@ -4,7 +4,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Topological paging, decorations, and lane assignment for the graph view (L-11).</summary>
+/// <summary>Topological paging, decorations, and lane assignment for the graph view.</summary>
 public class CommitGraphServiceTests
 {
     private readonly GitService _git = new();

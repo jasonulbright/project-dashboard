@@ -5,8 +5,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// Multi-select in the Changes tab (X-04), and the undo offers a completed operation leaves
-/// behind (X-07).
+/// Multi-select in the Changes tab, and the undo offers a completed operation leaves behind.
 ///
 /// A command reads the whole selection; the diff pane follows the focused file alone. Both are
 /// written together by the list that owns them, and both survive the refresh every mutating
@@ -144,8 +143,6 @@ public partial class ProjectDetailViewModel
 
         return text.Append("\n\nThis cannot be undone.").ToString();
     }
-
-    // ── Undo offers (X-07) ──────────────────────────────────────────────────
 
     /// <summary>
     /// An offer stands only where ONE git command puts the paths the operation named back the

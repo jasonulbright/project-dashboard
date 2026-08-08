@@ -6,7 +6,7 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The commit-graph pane (L-11): the row geometry a renderer draws from, the paging that keeps
+/// The commit-graph pane: the row geometry a renderer draws from, the paging that keeps
 /// lanes lined up across pages, and the selection it shares with the History list. The service's
 /// own lane assignment is proven in <see cref="CommitGraphServiceTests"/>.
 /// </summary>

@@ -4,7 +4,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Hunk-level stage/unstage/discard (L-06): the fiddly one. Every patch is sliced out of
+/// Hunk-level stage/unstage/discard: the fiddly one. Every patch is sliced out of
 /// the RAW `git diff` bytes by <see cref="GitService.ExtractHunkPatch"/> and applied by
 /// real `git apply`.
 ///

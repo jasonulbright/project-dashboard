@@ -2,7 +2,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Remote management (L-02) — add/rename/set-url/remove reflected back through GetRemotes.</summary>
+/// <summary>Remote management — add/rename/set-url/remove reflected back through GetRemotes.</summary>
 public class GitServiceRemotesTests
 {
     private readonly GitService _git = new();

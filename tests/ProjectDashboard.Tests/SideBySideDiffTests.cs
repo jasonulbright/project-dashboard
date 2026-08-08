@@ -3,7 +3,7 @@ using ProjectDashboard.Models;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The two-column rendering (X-01). It is built from the rows the unified pane already holds,
+/// The two-column rendering. It is built from the rows the unified pane already holds,
 /// so what has to hold is that nothing is invented and nothing is lost: every line lands on
 /// exactly one row, on the side the file it belongs to, under the hunk index the unified rows
 /// give it — the index every hunk action slices a patch at.

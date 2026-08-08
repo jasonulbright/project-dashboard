@@ -3,7 +3,7 @@ using ProjectDashboard.Models;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// The commit box's guidance (X-05): live subject and body counters, the one structural
+/// The commit box's guidance: live subject and body counters, the one structural
 /// warning worth naming, and the subjects already in this repository's history.
 ///
 /// Nothing here writes a message on the reader's behalf and nothing blocks a commit; the

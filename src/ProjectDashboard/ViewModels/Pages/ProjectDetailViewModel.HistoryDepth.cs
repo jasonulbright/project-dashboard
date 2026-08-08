@@ -4,7 +4,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// Paging the History list past its recent window (L-05).
+/// Paging the History list past its recent window.
 ///
 /// INVARIANT the surgery commands depend on: <c>Commits</c> is a contiguous walk of
 /// <c>git log HEAD</c> with index 0 at the tip and no filter applied. Depth is read

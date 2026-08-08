@@ -5,7 +5,7 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Paging the History list past its recent window (L-05), and the invariant the surgery commands
+/// Paging the History list past its recent window, and the invariant the surgery commands
 /// read it under: the list is a contiguous walk from HEAD, so a row's position IS the depth a
 /// rebase would be planned over. A page that does not continue the same walk must be refused,
 /// not appended — an appended gap would let a plan rewrite commits the reader never saw.

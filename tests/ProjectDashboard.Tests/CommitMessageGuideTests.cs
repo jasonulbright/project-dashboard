@@ -3,7 +3,7 @@ using ProjectDashboard.Models;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The commit box's guidance (X-05). Every rule here is advisory: git accepts all of these
+/// The commit box's guidance. Every rule here is advisory: git accepts all of these
 /// messages, so what has to hold is that the counters describe the message accurately and
 /// that the one warning fires on a real structural mistake, never on ordinary typing.
 /// </summary>

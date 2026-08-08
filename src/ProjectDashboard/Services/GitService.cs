@@ -769,8 +769,6 @@ public class GitService
         return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
     }
 
-    // ── Tags (L-01) ───────────────────────────────────────────────────────────
-
     public async Task<TagsResult> GetTagsAsync(string repoPath, CancellationToken ct = default)
     {
         // %(objecttype) is "tag" for an annotated tag, "commit" for a lightweight one, and the
@@ -834,8 +832,6 @@ public class GitService
     public Task<ProcessResult> PushAllTagsAsync(string repoPath, string remote, CancellationToken ct = default)
         => RunAsync(repoPath, ["push", remote, "--tags"], ct, NetworkTimeout);
 
-    // ── Remotes (L-02) ─────────────────────────────────────────────────────────
-
     public async Task<RemotesResult> GetRemotesAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["remote", "-v"], ct);
@@ -885,8 +881,6 @@ public class GitService
 
     public Task<ProcessResult> SetRemoteUrlAsync(string repoPath, string name, string url, CancellationToken ct = default)
         => RunAsync(repoPath, ["remote", "set-url", name, url], ct);
-
-    // ── Branch extras (L-03) ────────────────────────────────────────────────────
 
     public Task<ProcessResult> RenameBranchAsync(string repoPath, string oldName, string newName, CancellationToken ct = default)
         => RunAsync(repoPath, ["branch", "-m", oldName, newName], ct);
@@ -1121,8 +1115,6 @@ public class GitService
             fields.GetValueOrDefault("size-pack"));
     }
 
-    // ── File history & blame (L-04) ──────────────────────────────────────────────
-
     /// <summary>
     /// Budget for the two per-path reads. Both are proportional to the file rather than to the
     /// repository — `log --follow` re-runs rename detection at every commit it walks, and
@@ -1286,8 +1278,6 @@ public class GitService
         };
     }
 
-    // ── Paged history & search (L-05) ────────────────────────────────────────────
-
     /// <summary>
     /// One page of history from `--skip`/`-n`, optionally filtered by message, author,
     /// path, and date range (all combine). Reads count+1 commits so the extra row's
@@ -1326,8 +1316,6 @@ public class GitService
             HasMore = hasMore
         };
     }
-
-    // ── Hunk staging (L-06) ──────────────────────────────────────────────────────
 
     public Task<ProcessResult> StageHunkAsync(string repoPath, string patchText, CancellationToken ct = default)
         => ApplyPatchAsync(repoPath, patchText, ["apply", "--cached"], ct);
@@ -1487,8 +1475,6 @@ public class GitService
         return path;
     }
 
-    // ── Stash depth (L-07) ───────────────────────────────────────────────────────
-
     public Task<ProcessResult> StashPushAsync(string repoPath, string? message = null,
         bool includeUntracked = false, CancellationToken ct = default)
     {
@@ -1508,8 +1494,6 @@ public class GitService
         }
         return FileDiff.ParseUnified(result.StdOut);
     }
-
-    // ── Worktrees (L-08) ─────────────────────────────────────────────────────────
 
     public async Task<List<WorktreeEntry>> GetWorktreesAsync(string repoPath, CancellationToken ct = default)
     {
@@ -1601,8 +1585,6 @@ public class GitService
     /// </summary>
     public Task<ProcessResult> PruneWorktreesAsync(string repoPath, CancellationToken ct = default)
         => RunAsync(repoPath, ["worktree", "prune"], ct);
-
-    // ── .gitignore (L-10) ────────────────────────────────────────────────────────
 
     /// <summary>Root .gitignore contents, or null when absent.</summary>
     public async Task<string?> GetGitignoreAsync(string repoPath, CancellationToken ct = default)

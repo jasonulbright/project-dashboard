@@ -3,7 +3,7 @@ using ProjectDashboard.Models;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// The diff pane's layout (X-01). Side-by-side is a second rendering of the rows the unified
+/// The diff pane's layout. Side-by-side is a second rendering of the rows the unified
 /// pane already holds — no second git call and no second parser — so both modes name the same
 /// hunks, and every hunk action works unchanged in either.
 /// </summary>

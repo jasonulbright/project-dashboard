@@ -3204,7 +3204,6 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Notifications (G-12) -->
                             <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
                                     Padding="16,12" Margin="0,0,0,12">
                                 <StackPanel>
@@ -3301,7 +3300,6 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Danger zone (G-09) -->
                             <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                                     BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,16"
                                     Visibility="{Binding DangerZoneEnabled, Converter={StaticResource BooleanToVisibilityConverter}}"

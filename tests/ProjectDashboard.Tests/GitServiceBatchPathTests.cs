@@ -4,7 +4,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The multi-path working-tree operations behind the Changes tab's batch actions (X-04).
+/// The multi-path working-tree operations behind the Changes tab's batch actions.
 /// A selection reaches git as pathspecs, batched under a command-line budget: sent as one run,
 /// a few hundred paths overrun the Windows limit and nothing at all is staged.
 /// </summary>

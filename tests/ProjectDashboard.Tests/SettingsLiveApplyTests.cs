@@ -8,7 +8,7 @@ using Wpf.Ui.Appearance;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Live-apply settings (X-09). One notification path — <see cref="SettingsService.Changed"/>
+/// Live-apply settings. One notification path — <see cref="SettingsService.Changed"/>
 /// — carries every write to the running app, and <see cref="SettingsDelta"/> decides which
 /// consumers it wakes. A trigger that returns false where it should return true is the whole
 /// failure this covers: the page shows the new value while the app keeps running the old one
@@ -326,8 +326,8 @@ public class PublicationOrderTests
 }
 
 /// <summary>
-/// The gate on a settings-driven re-scan. R-08 keeps a repository under a rewrite or
-/// surgery off-limits to background readers; a settings change must queue behind that
+/// The gate on a settings-driven re-scan. A repository under a rewrite or
+/// surgery is off-limits to background readers; a settings change must queue behind that
 /// operation rather than interrupt it or be dropped.
 /// </summary>
 public class DashboardRescanTests

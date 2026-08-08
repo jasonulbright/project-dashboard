@@ -7,7 +7,7 @@ using ProjectDashboard.Helpers;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Focus restore across a full refresh (X-08), on a live focus scope. The replica carries the
+/// Focus restore across a full refresh, on a live focus scope. The replica carries the
 /// page's shape — a focusable root holding a list whose items are replaced wholesale — because
 /// the loss is a property of that arrangement, not of what the list contains.
 /// </summary>

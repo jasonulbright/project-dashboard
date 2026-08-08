@@ -3,7 +3,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>File history across renames, blame porcelain parse, and paged/filtered history (L-04, L-05).</summary>
+/// <summary>File history across renames, blame porcelain parse, and paged/filtered history.</summary>
 public class GitServiceFileHistoryTests
 {
     private readonly GitService _git = new();

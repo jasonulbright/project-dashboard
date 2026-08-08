@@ -5,7 +5,7 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Hunk staging as the Changes tab drives it (L-06): the diff pane's selected row names a hunk,
+/// Hunk staging as the Changes tab drives it: the diff pane's selected row names a hunk,
 /// and the operation slices that hunk out of a freshly read raw diff.
 ///
 /// The service's own round-trips are proven in <see cref="GitServiceHunkTests"/>; what is proven

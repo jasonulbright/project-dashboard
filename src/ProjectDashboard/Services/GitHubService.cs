@@ -547,8 +547,6 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
-    // ── Notifications (G-12) ────────────────────────────────────────────────────
-
     /// <summary>
     /// Notification threads for one repo, unread only unless <paramref name="includeRead"/>.
     /// Null = fetch failed, never an empty inbox.

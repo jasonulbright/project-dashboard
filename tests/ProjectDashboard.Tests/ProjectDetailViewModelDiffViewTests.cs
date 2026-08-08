@@ -5,7 +5,7 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The diff pane's two layouts as the Changes tab drives them (X-01). The rendering is the
+/// The diff pane's two layouts as the Changes tab drives them. The rendering is the
 /// only thing that changes: the same rows, the same hunk indexes, the same selection, and no
 /// second read of the repository.
 /// </summary>

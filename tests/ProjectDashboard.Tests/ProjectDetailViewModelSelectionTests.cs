@@ -5,8 +5,8 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Multi-select staging (X-04), the undo offers a reversible operation leaves (X-07), and the
-/// selection half of focus restore (X-08). Every case runs against a real repository: what a
+/// Multi-select staging, the undo offers a reversible operation leaves, and the
+/// selection half of focus restore. Every case runs against a real repository: what a
 /// batch command does to the index is the whole point of it.
 /// </summary>
 public class ProjectDetailViewModelSelectionTests
@@ -169,8 +169,6 @@ public class ProjectDetailViewModelSelectionTests
         Assert.Equal("Delete untracked file new.txt?\n\nThis cannot be undone.", message);
     }
 
-    // ── Focus / selection restore across a refresh (X-08) ───────────────────
-
     /// <summary>
     /// Every refresh builds new WorkingFile instances. A batch the reader assembled by hand
     /// must survive the refresh that the operation on it triggers, or the next action reads a
@@ -328,8 +326,6 @@ public class ProjectDetailViewModelSelectionTests
         Assert.Null(vm.SelectedRecentSubject);
     }
 
-    // ── Undo offers (X-07) ──────────────────────────────────────────────────
-
     [Fact]
     public async Task StagingEverything_OffersToUnstageItAgain()
     {
@@ -444,8 +440,6 @@ public class ProjectDetailViewModelSelectionTests
 
         Assert.False(vm.UndoOfferVisible);
     }
-
-    // ── Notice on suppress (X-06) ───────────────────────────────────────────
 
     [Theory]
     [InlineData("stage")]

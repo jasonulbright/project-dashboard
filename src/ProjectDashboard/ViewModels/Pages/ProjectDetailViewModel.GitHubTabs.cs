@@ -52,12 +52,10 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _repoWikiEnabled;
     [ObservableProperty] private bool _repoProjectsEnabled;
 
-    // ── Repo tab: notifications (G-12) ──────────────────────────────────────────
     [ObservableProperty] private ObservableCollection<GitHubNotification> _notifications = [];
     [ObservableProperty] private bool _notificationsLoading;
     [ObservableProperty] private string _notificationsError = "";
 
-    // ── Repo tab: danger zone (G-09) ────────────────────────────────────────────
     [ObservableProperty] private bool _dangerZoneEnabled;
     [ObservableProperty] private string _repoDeleteNotice = "";
     [ObservableProperty] private bool _deleteScopeHintVisible;
@@ -757,8 +755,6 @@ public partial class ProjectDetailViewModel
         typed is not null && slug.Length > 0 &&
         string.Equals(typed.Trim(), slug, StringComparison.OrdinalIgnoreCase);
 
-    // ── Notifications (G-12) ────────────────────────────────────────────────────
-
     [RelayCommand]
     private async Task LoadNotifications()
     {
@@ -845,8 +841,6 @@ public partial class ProjectDetailViewModel
         // opens the repository rather than a guessed URL.
         OpenExternal(notification.WebUrl.Length > 0 ? notification.WebUrl : $"https://github.com/{slug}");
     }
-
-    // ── Danger zone (G-09) ──────────────────────────────────────────────────────
 
     /// <summary>
     /// Deletes the repository on GitHub. Three independent gates: the danger-zone

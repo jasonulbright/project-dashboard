@@ -3,7 +3,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Submodule listing, divergence, and the guarded init/update/sync/deinit operations (L-09).</summary>
+/// <summary>Submodule listing, divergence, and the guarded init/update/sync/deinit operations.</summary>
 public class SubmoduleServiceTests
 {
     private readonly GitService _git = new();

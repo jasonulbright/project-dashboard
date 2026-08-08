@@ -2,7 +2,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Stash push with message/untracked and stash diff (L-07); base apply/pop/drop live in GitServiceTests.</summary>
+/// <summary>Stash push with message/untracked and stash diff; base apply/pop/drop live in GitServiceTests.</summary>
 public class GitServiceStashDepthTests
 {
     private readonly GitService _git = new();

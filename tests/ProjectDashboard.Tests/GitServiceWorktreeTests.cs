@@ -2,7 +2,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>Worktree list/add/remove and porcelain parsing (L-08).</summary>
+/// <summary>Worktree list/add/remove and porcelain parsing.</summary>
 public class GitServiceWorktreeTests
 {
     private readonly GitService _git = new();

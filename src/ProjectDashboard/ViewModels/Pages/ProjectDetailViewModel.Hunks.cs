@@ -5,7 +5,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// Hunk-level staging in the Changes tab (L-06).
+/// Hunk-level staging in the Changes tab.
 ///
 /// Every patch is sliced out of a freshly read RAW <c>git diff</c> by
 /// <see cref="GitService.ExtractHunkPatch"/> and applied with <c>git apply</c>. Nothing here

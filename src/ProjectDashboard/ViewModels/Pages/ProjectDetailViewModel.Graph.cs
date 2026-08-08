@@ -4,7 +4,7 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
-/// The commit graph pane (L-11): lane-assigned pages of the DAG over every local branch plus
+/// The commit graph pane: lane-assigned pages of the DAG over every local branch plus
 /// HEAD, drawn as columns.
 ///
 /// Lanes are stable across pages because the service re-walks from the ref tips for every page,

@@ -3,7 +3,7 @@ using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
 
-/// <summary>.gitignore read/save/append and check-ignore (L-10).</summary>
+/// <summary>.gitignore read/save/append and check-ignore.</summary>
 public class GitServiceGitignoreTests
 {
     private readonly GitService _git = new();

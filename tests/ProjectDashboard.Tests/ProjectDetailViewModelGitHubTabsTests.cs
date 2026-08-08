@@ -661,8 +661,6 @@ public class ProjectDetailViewModelGitHubTabsTests
     public void RepoNameConfirmation_AcceptsOnlyTheSlug(string? typed, bool expected)
         => Assert.Equal(expected, ProjectDetailViewModel.RepoNameConfirmed(typed, "o/r"));
 
-    // ── Notifications (G-12) ────────────────────────────────────────────────────
-
     [Fact]
     public async Task Notifications_LoadForTheCurrentRepo()
     {
@@ -745,8 +743,6 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Contains("clears threads beyond the 50 shown here", message);
         Assert.DoesNotContain("Mark all 50", message);
     }
-
-    // ── Danger zone (G-09) ──────────────────────────────────────────────────────
 
     [Fact]
     public async Task WithTheDangerZoneOff_ItIsHiddenAndDeleteRefusesBeforeAnyPrompt()

@@ -114,7 +114,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         {
             await ApplyRemoteDataAsync(results, ct);
 
-            // Phase C (ROADMAP v1.1): surface GitHub repos not cloned locally as Cloud cards.
+            // Phase C: surface GitHub repos not cloned locally as Cloud cards.
             if (settings.EnableGitHubDiscovery)
                 await AppendRemoteOnlyAsync(results, ct);
         }

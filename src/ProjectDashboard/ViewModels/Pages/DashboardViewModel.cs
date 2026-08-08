@@ -353,8 +353,6 @@ public partial class DashboardViewModel : ObservableObject
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnSelectedSortChanged(string value) => ApplyFilters();
 
-    // ── View preferences: pinned cards + density (X-10) ───────────────────────
-
     private readonly RepoSearchService _searchService;
     private HashSet<string> _pinnedKeys = new(StringComparer.OrdinalIgnoreCase);
 
@@ -434,8 +432,6 @@ public partial class DashboardViewModel : ObservableObject
         foreach (var project in _hiddenSnapshot) project.IsPinned = DashboardOrdering.IsPinned(project, _pinnedKeys);
     }
 
-    // ── Empty states (X-14) ───────────────────────────────────────────────────
-
     /// <summary>
     /// Probed once per load: two bindings read the root and every dashboard-search
     /// keystroke re-raises them, so reading settings per property would mean a
@@ -477,8 +473,6 @@ public partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowRefreshing));
         OnPropertyChanged(nameof(ConfiguredRootPath));
     }
-
-    // ── Card quick actions (X-11) ─────────────────────────────────────────────
 
     [RelayCommand] private Task FetchProject(ProjectInfo? project) => RunCardActionAsync(project, CardAction.Fetch);
     [RelayCommand] private Task PullProject(ProjectInfo? project) => RunCardActionAsync(project, CardAction.Pull);
@@ -577,8 +571,6 @@ public partial class DashboardViewModel : ObservableObject
         }
     }
 
-    // ── Deep links into the detail page's tabs (X-11) ─────────────────────────
-
     [RelayCommand] private void OpenChangesTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.Changes);
     [RelayCommand] private void OpenBranchesTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.Branches);
     [RelayCommand] private void OpenIssuesTab(ProjectInfo? project) => OpenAtTab(project, DetailTab.Issues);
@@ -611,8 +603,6 @@ public partial class DashboardViewModel : ObservableObject
             Log.Warn("clipboard copy failed", ex);
         }
     }
-
-    // ── Global search fan-out (X-12) ──────────────────────────────────────────
 
     /// <summary>
     /// Searches every discovered local repo. Remote-only cards carry no working tree,
@@ -911,8 +901,6 @@ public partial class DashboardViewModel : ObservableObject
             Log.Warn($"could not remove the incomplete scaffold at {projectPath}", ex);
         }
     }
-
-    // ── Portfolio export (P-08) ───────────────────────────────────────────────
 
     /// <summary>
     /// Exactly what an export file will hold, shown before the reader picks a destination.
@@ -1503,8 +1491,6 @@ public partial class DashboardViewModel : ObservableObject
         if (root.Length == 0) _watcher.Stop();
         else _watcher.Start(root);
     }
-
-    // ── Live-apply settings (X-09) ────────────────────────────────────────────
 
     /// <summary>What a queued or running settings-driven re-scan is doing; empty when idle.</summary>
     [ObservableProperty] private string _rescanStatus = "";
