@@ -48,6 +48,66 @@ public class ProjectDetailViewModelTests
         return repo;
     }
 
+    /// <summary>The page seeds its History list from the project's cached commits, so a selection test has to supply them.</summary>
+    private static async Task<ProjectInfo> ProjectWithHistoryAsync(TempRepo repo)
+    {
+        var project = ProjectFor(repo);
+        project.RecentCommits = await new GitService().GetRecentCommitsAsync(repo.Path, 50);
+        return project;
+    }
+
+    /// <summary>
+    /// Surgery runs FROM the History selection, and every reload replaces every GitCommit object,
+    /// so a selection kept by reference is lost by the reload that follows any mutating operation.
+    /// </summary>
+    [Fact]
+    public async Task ReloadAfterAMutatingOp_KeepsTheHistorySelectionBySha()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("sel-keep");
+        repo.WriteFile("second.txt", "second\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("commit", "-q", "-m", "second");
+
+        var vm = NewVm();
+        await vm.SetProjectAsync(await ProjectWithHistoryAsync(repo));
+        var older = vm.Commits.Last();
+        var olderSha = older.Ref;
+        vm.SelectedCommit = older;
+
+        repo.WriteFile("third.txt", "third\n");
+        await vm.StageAllCommand.ExecuteAsync(null);
+        vm.CommitMessage = "third";
+        await vm.CommitCommand.ExecuteAsync(null);
+
+        Assert.Equal(3, vm.Commits.Count);
+        Assert.NotNull(vm.SelectedCommit);
+        Assert.Equal(olderSha, vm.SelectedCommit.Ref);
+        // The reload really did rebuild the list, so this is a re-selection, not a survivor.
+        Assert.False(ReferenceEquals(older, vm.SelectedCommit));
+    }
+
+    [Fact]
+    public async Task ReloadDropsTheSelectionWhenTheSelectedCommitNoLongerExists()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("sel-drop");
+        repo.WriteFile("second.txt", "second\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("commit", "-q", "-m", "second");
+
+        var vm = NewVm();
+        await vm.SetProjectAsync(await ProjectWithHistoryAsync(repo));
+        vm.SelectedCommit = vm.Commits.First();
+
+        // Amending replaces the tip, so the selected sha is not in the reloaded history.
+        repo.WriteFile("second.txt", "second edited\n");
+        await repo.GitAsync("add", "-A");
+        vm.AmendMode = true;
+        vm.CommitMessage = "second amended";
+        await vm.CommitCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.SelectedCommit);
+    }
+
     [Fact]
     public async Task SwitchMidCommit_StaleFinallyDoesNotReleaseTheNewProjectsGate()
     {

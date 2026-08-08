@@ -662,13 +662,24 @@ public partial class ProjectDetailViewModel
         }, label, repo, gen);
     }
 
+    /// <summary>
+    /// Re-reads the History list and re-selects the same commit by sha. Every entry is a fresh
+    /// object, so the selection — which the surgery commands read to decide their range — would
+    /// otherwise be dropped by every reload, including the one that follows a mutating operation.
+    /// A commit the operation rewrote or removed has no sha in the new list and the selection
+    /// clears, which is the honest outcome: it names history that is gone.
+    /// </summary>
     private async Task ReloadCommitsAsync()
     {
         var gen = _generation;
+        var selectedSha = SelectedCommit?.Ref;
         var commits = await _gitService.GetRecentCommitsAsync(RepoPath, 50);
         if (!IsCurrent(gen)) return;
         Commits = new ObservableCollection<GitCommit>(commits);
         if (Project is not null) Project.RecentCommits = commits;
+        SelectedCommit = selectedSha is null
+            ? null
+            : commits.FirstOrDefault(c => string.Equals(c.Ref, selectedSha, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
