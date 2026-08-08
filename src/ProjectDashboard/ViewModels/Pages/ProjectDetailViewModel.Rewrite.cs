@@ -1533,6 +1533,11 @@ internal static class ByteSizeText
                 System.Globalization.CultureInfo.InvariantCulture, out var value) || value <= 0)
             return false;
 
+        // Scaling a value this large overflows decimal, and the multiply throws rather than
+        // returning a number the byte-count guard below could reject. The field binds on every
+        // keystroke, so the throw would repeat out of the setter and every command requery.
+        if (value > decimal.MaxValue / unit) return false;
+
         // Rounded up: a size that lands between bytes must not silently include a file smaller
         // than the one the reader named.
         var scaled = decimal.Ceiling(value * unit);

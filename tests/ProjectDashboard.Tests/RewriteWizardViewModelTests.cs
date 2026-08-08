@@ -1662,6 +1662,22 @@ public class RewriteWizardViewModelTests
         Assert.False(ByteSizeText.TryParse(typed, out _));
     }
 
+    /// <summary>
+    /// A size too large to scale into bytes is rejected, not thrown out of. The field binds on
+    /// every keystroke, so a throw here repeats out of the setter and every command requery and
+    /// the wizard cannot be dismissed.
+    /// </summary>
+    [Theory]
+    [InlineData("9999999999999999999999999999 KB")]
+    [InlineData("79228162514264337593543950335 gb")]
+    [InlineData("40000000000000000000000000 mib")]
+    public void ASizeTooLargeToScaleIntoBytes_IsRejectedRatherThanThrown(string typed)
+    {
+        Assert.False(ByteSizeText.TryParse(typed, out var bytes));
+        Assert.Equal(0L, bytes);
+        Assert.Contains("is not a size", ByteSizeText.ProblemWith(typed));
+    }
+
     /// <summary>A size landing between bytes rounds up, so the filter never catches a file smaller than the one named.</summary>
     [Fact]
     public void AFractionalByteCount_RoundsUpRatherThanDown()
