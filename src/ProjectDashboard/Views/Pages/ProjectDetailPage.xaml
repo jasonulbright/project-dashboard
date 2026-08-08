@@ -1581,6 +1581,859 @@
                     </Border>
                 </Grid>
             </TabItem>
+
+            <!-- ── ACTIONS ── -->
+            <TabItem Header="Actions" Tag="{x:Static models:DetailTab.Actions}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadWorkflowRunsCommand}"
+                                   AutomationProperties.Name="Refresh workflow runs" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding GitHubStatusText}" />
+                    </DockPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="420" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Run list -->
+                        <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                            <Grid>
+                                <TextBlock Text="{Binding WorkflowRunsError}" FontSize="12" TextWrapping="Wrap"
+                                           VerticalAlignment="Top"
+                                           Foreground="{StaticResource StatusBadFg}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WorkflowRunsError}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="No workflow runs." FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding WorkflowRuns.Count}" Value="0" />
+                                                        <Condition Binding="{Binding WorkflowRunsError}" Value="" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding WorkflowRuns}"
+                                         SelectedItem="{Binding SelectedWorkflowRun}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Workflow runs">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="4,4" />
+                                            <EventSetter Event="MouseDoubleClick" Handler="RunRow_Open" />
+                                            <EventSetter Event="KeyDown" Handler="RunRow_KeyDown" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:WorkflowRun}">
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <Border DockPanel.Dock="Left" CornerRadius="4" Padding="6,1" Margin="0,0,8,0"
+                                                            MinWidth="72" VerticalAlignment="Center">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding OutcomeLabel}" Value="success">
+                                                                        <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding OutcomeLabel}" Value="failure">
+                                                                        <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding OutcomeLabel}" Value="in progress">
+                                                                        <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding OutcomeLabel}" Value="queued">
+                                                                        <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding OutcomeLabel}" FontSize="10"
+                                                                   HorizontalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding OutcomeLabel}" Value="success">
+                                                                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding OutcomeLabel}" Value="failure">
+                                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding OutcomeLabel}" Value="in progress">
+                                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding OutcomeLabel}" Value="queued">
+                                                                            <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Border>
+                                                    <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               Text="{Binding ElapsedLabel}"
+                                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                    <TextBlock Text="{Binding Name}" FontSize="13"
+                                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayTitle}"
+                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                </DockPanel>
+                                                <TextBlock FontSize="11" Margin="80,1,0,0"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                                    <Run Text="{Binding Branch, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Event, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Border>
+
+                        <!-- Right pane: jobs and steps for the selected run -->
+                        <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="16,12">
+                            <Grid>
+                                <TextBlock Text="Select a run to see its jobs and steps."
+                                           FontSize="13" VerticalAlignment="Top" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedWorkflowRun}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <Grid>
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedWorkflowRun}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                                        <TextBlock FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                   Text="{Binding SelectedWorkflowRun.DisplayTitle}" />
+                                        <TextBlock FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <Run Text="{Binding SelectedWorkflowRun.Name, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SelectedWorkflowRun.Branch, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SelectedWorkflowRun.Event, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SelectedWorkflowRun.OutcomeLabel, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SelectedWorkflowRun.ElapsedLabel, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left"
+                                                         Margin="0,4,0,0"
+                                                         Visibility="{Binding WorkflowJobsLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBlock Text="{Binding WorkflowJobsError}" FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{StaticResource StatusBadFg}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding WorkflowJobsError}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                                  PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+                                        <Grid>
+                                            <TextBlock Text="This run reported no jobs." FontSize="12"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <MultiDataTrigger>
+                                                                <MultiDataTrigger.Conditions>
+                                                                    <Condition Binding="{Binding WorkflowJobs.Count}" Value="0" />
+                                                                    <Condition Binding="{Binding WorkflowJobsError}" Value="" />
+                                                                    <Condition Binding="{Binding WorkflowJobsLoading}" Value="False" />
+                                                                </MultiDataTrigger.Conditions>
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </MultiDataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <ItemsControl ItemsSource="{Binding WorkflowJobs}"
+                                                          AutomationProperties.Name="Jobs in this run">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type models:WorkflowJob}">
+                                                        <StackPanel Margin="0,0,0,10">
+                                                            <DockPanel>
+                                                                <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,0,0,0"
+                                                                           VerticalAlignment="Center"
+                                                                           Text="{Binding ElapsedLabel}"
+                                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                                <TextBlock FontSize="13" FontWeight="SemiBold"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                                                                    <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" — " /><Run Text="{Binding OutcomeLabel, Mode=OneWay}" />
+                                                                </TextBlock>
+                                                            </DockPanel>
+                                                            <ItemsControl ItemsSource="{Binding Steps}" Margin="12,2,0,0">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate DataType="{x:Type models:WorkflowStep}">
+                                                                        <DockPanel Margin="0,1">
+                                                                            <TextBlock DockPanel.Dock="Left" Width="28" FontSize="11"
+                                                                                       FontFamily="Cascadia Code,Consolas"
+                                                                                       Text="{Binding Number}"
+                                                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                                            <TextBlock DockPanel.Dock="Right" MinWidth="70" FontSize="11"
+                                                                                       Text="{Binding OutcomeLabel}">
+                                                                                <TextBlock.Style>
+                                                                                    <Style TargetType="TextBlock">
+                                                                                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding OutcomeLabel}" Value="success">
+                                                                                                <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                                            </DataTrigger>
+                                                                                            <DataTrigger Binding="{Binding OutcomeLabel}" Value="failure">
+                                                                                                <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </TextBlock.Style>
+                                                                            </TextBlock>
+                                                                            <TextBlock Text="{Binding Name}" FontSize="12"
+                                                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"
+                                                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                                        </DockPanel>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </Grid>
+                                    </ScrollViewer>
+
+                                    <WrapPanel Grid.Row="2" Margin="0,8,0,0">
+                                        <CheckBox Content="Failed jobs only" FontSize="12" VerticalAlignment="Center"
+                                                  Margin="0,0,10,6" IsChecked="{Binding RerunFailedJobsOnly}"
+                                                  AutomationProperties.Name="Re-run failed jobs only" />
+                                        <ui:Button Content="Re-run" Appearance="Primary" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                                   Command="{Binding RerunWorkflowRunCommand}"
+                                                   AutomationProperties.Name="Re-run this workflow run" />
+                                        <ui:Button Content="Cancel run" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                   Command="{Binding CancelWorkflowRunCommand}"
+                                                   AutomationProperties.Name="Cancel this workflow run" />
+                                        <ui:Button Content="Open on GitHub" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                   Icon="{ui:SymbolIcon Open24}"
+                                                   Command="{Binding OpenWorkflowRunCommand}"
+                                                   CommandParameter="{Binding SelectedWorkflowRun}"
+                                                   AutomationProperties.Name="Open this run on GitHub" />
+                                    </WrapPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ── RELEASES ── -->
+            <TabItem Header="Releases" Tag="{x:Static models:DetailTab.Releases}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadReleasesCommand}"
+                                   AutomationProperties.Name="Refresh releases" />
+                        <ui:Button DockPanel.Dock="Right" Content="New Release" FontSize="12" Padding="10,4"
+                                   Appearance="Primary" Icon="{ui:SymbolIcon Add24}"
+                                   Command="{Binding ShowNewReleaseCommand}"
+                                   AutomationProperties.Name="New release from an existing tag" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding GitHubStatusText}" />
+                    </DockPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="380" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Release list -->
+                        <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                            <Grid>
+                                <TextBlock Text="{Binding ReleasesError}" FontSize="12" TextWrapping="Wrap"
+                                           VerticalAlignment="Top" Foreground="{StaticResource StatusBadFg}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ReleasesError}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="No releases yet." FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding Releases.Count}" Value="0" />
+                                                        <Condition Binding="{Binding ReleasesError}" Value="" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding Releases}"
+                                         SelectedItem="{Binding SelectedRelease}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Releases">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="4,4" />
+                                            <EventSetter Event="MouseDoubleClick" Handler="ReleaseRow_Open" />
+                                            <EventSetter Event="KeyDown" Handler="ReleaseRow_KeyDown" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:Release}">
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+                                                            VerticalAlignment="Center">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding StateLabel}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding StateLabel}" Value="prerelease">
+                                                                        <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding StateLabel}" FontSize="10">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding StateLabel}" Value="prerelease">
+                                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Border>
+                                                    <TextBlock Text="{Binding DisplayTitle}" FontSize="13"
+                                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayTitle}"
+                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                </DockPanel>
+                                                <TextBlock FontSize="11" Margin="0,1,0,0"
+                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                                    <Run Text="{Binding PublishedAt, Mode=OneWay, Converter={StaticResource RelativeTimeConverter}}" />
+                                                    <Run Text=" · " /><Run Text="{Binding Assets.Count, Mode=OneWay}" /><Run Text=" asset(s)" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Border>
+
+                        <!-- Right pane: compose form OR release detail OR hint -->
+                        <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="16,12">
+                            <Grid>
+                                <TextBlock Text="Select a release to read its notes, or click New Release to cut one from an existing tag."
+                                           FontSize="13" VerticalAlignment="Top" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding SelectedRelease}" Value="{x:Null}" />
+                                                        <Condition Binding="{Binding ReleaseComposeVisible}" Value="False" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Compose new release -->
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                              Visibility="{Binding ReleaseComposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <TextBlock Text="New Release" FontWeight="SemiBold" FontSize="15" Margin="0,0,0,10"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <TextBlock Text="Tag (an existing tag in this repository)" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ComboBox ItemsSource="{Binding AvailableTagNames}"
+                                                  SelectedItem="{Binding NewReleaseTag}"
+                                                  Width="260" HorizontalAlignment="Left" FontSize="12" Margin="0,0,0,4"
+                                                  AutomationProperties.Name="Release tag" />
+                                        <TextBlock Text="This repository has no tags — create one on the Branches tab first."
+                                                   FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
+                                                   Foreground="{StaticResource StatusWarnFg}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding AvailableTagNames.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="Title" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewReleaseTitle, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="Release name" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="New release title" />
+                                        <TextBlock Text="Notes (Markdown)" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ui:TextBox Text="{Binding NewReleaseBody, UpdateSourceTrigger=PropertyChanged}"
+                                                    AcceptsReturn="True" MinHeight="140" MaxHeight="260"
+                                                    VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="New release notes" />
+                                        <CheckBox Content="Create as draft" FontSize="12" Margin="0,0,0,4"
+                                                  IsChecked="{Binding NewReleaseDraft}"
+                                                  AutomationProperties.Name="Create release as draft" />
+                                        <CheckBox Content="Mark as prerelease" FontSize="12" Margin="0,0,0,10"
+                                                  IsChecked="{Binding NewReleasePrerelease}"
+                                                  AutomationProperties.Name="Mark release as prerelease" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:Button Content="Create Release" Appearance="Primary" FontSize="12" Padding="14,4"
+                                                       Margin="0,0,8,0" Command="{Binding SubmitNewReleaseCommand}"
+                                                       AutomationProperties.Name="Create release" />
+                                            <ui:Button Content="Cancel" FontSize="12" Padding="14,4"
+                                                       Command="{Binding CancelNewReleaseCommand}"
+                                                       AutomationProperties.Name="Cancel new release" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+
+                                <!-- Release detail -->
+                                <Grid>
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedRelease}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ReleaseComposeVisible}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                                        <TextBlock FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                   Text="{Binding SelectedRelease.DisplayTitle}" />
+                                        <TextBlock FontSize="11" Margin="0,2,0,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <Run Text="{Binding SelectedRelease.TagName, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SelectedRelease.PublishedAt, Mode=OneWay, Converter={StaticResource RelativeTimeConverter}}" />
+                                            <Run Text=" · " /><Run Text="{Binding SelectedRelease.StateLabel, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                                  PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+                                        <RichTextBox x:Name="ReleaseNotesRich" IsReadOnly="True"
+                                                     IsDocumentEnabled="True"
+                                                     BorderThickness="0" Background="Transparent"
+                                                     FontFamily="Segoe UI" FontSize="13"
+                                                     AutomationProperties.Name="Release notes" />
+                                    </ScrollViewer>
+
+                                    <!-- Assets -->
+                                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                        <TextBlock Text="Assets" Style="{StaticResource PaneHeader}" />
+                                        <TextBlock Text="No assets attached to this release." FontSize="12"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedRelease.Assets.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <ItemsControl ItemsSource="{Binding SelectedRelease.Assets}" MaxHeight="140"
+                                                      AutomationProperties.Name="Release assets">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type models:ReleaseAsset}">
+                                                    <DockPanel Margin="0,2">
+                                                        <ui:Button DockPanel.Dock="Right" Content="Download" FontSize="11" Padding="8,2"
+                                                                   Icon="{ui:SymbolIcon ArrowDownload24}"
+                                                                   Command="{Binding DataContext.DownloadReleaseAssetCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                                   CommandParameter="{Binding}"
+                                                                   AutomationProperties.Name="Download this asset" />
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding SizeLabel}" FontSize="11"
+                                                                   MinWidth="70" Margin="8,0,8,0" VerticalAlignment="Center"
+                                                                   HorizontalAlignment="Right"
+                                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                        <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"
+                                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+
+                                    <WrapPanel Grid.Row="3" Margin="0,8,0,0">
+                                        <ui:Button Content="Open on GitHub" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                   Icon="{ui:SymbolIcon Open24}"
+                                                   Command="{Binding OpenReleaseCommand}"
+                                                   CommandParameter="{Binding SelectedRelease}"
+                                                   AutomationProperties.Name="Open this release on GitHub" />
+                                        <ui:Button Content="Delete release" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                   Command="{Binding DeleteReleaseCommand}"
+                                                   AutomationProperties.Name="Delete this release" />
+                                    </WrapPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ── REPO ── -->
+            <TabItem Header="Repo" Tag="{x:Static models:DetailTab.Repo}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadRepoTabCommand}"
+                                   AutomationProperties.Name="Refresh repository settings and notifications" />
+                        <ui:ProgressRing DockPanel.Dock="Right" IsIndeterminate="True" Width="16" Height="16"
+                                         Margin="0,0,10,0" VerticalAlignment="Center"
+                                         Visibility="{Binding RepoSettingsLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding GitHubStatusText}" />
+                    </DockPanel>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                  PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
+                        <StackPanel MaxWidth="860" HorizontalAlignment="Left">
+
+                            <TextBlock Text="{Binding RepoSettingsError}" FontSize="12" TextWrapping="Wrap"
+                                       Margin="0,0,0,8" Foreground="{StaticResource StatusBadFg}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding RepoSettingsError}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <!-- Details -->
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
+                                    Padding="16,12" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Repository details" Style="{StaticResource PaneHeader}" />
+                                    <TextBlock FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                        <Run Text="{Binding Project.GitHubSlug, Mode=OneWay}" />
+                                        <Run Text=" · default branch " /><Run Text="{Binding RepoSettings.DefaultBranch, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding RepoSettings.Visibility, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Text="Description" FontSize="12" Margin="0,0,0,2"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <ui:TextBox Text="{Binding RepoDescriptionDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                PlaceholderText="What this repository is" Margin="0,0,0,8"
+                                                AutomationProperties.Name="Repository description" />
+                                    <TextBlock Text="Homepage" FontSize="12" Margin="0,0,0,2"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <ui:TextBox Text="{Binding RepoHomepageDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                PlaceholderText="https://example.com" Margin="0,0,0,8"
+                                                AutomationProperties.Name="Repository homepage" />
+                                    <TextBlock Text="Topics (comma-separated)" FontSize="12" Margin="0,0,0,2"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <ui:TextBox Text="{Binding RepoTopicsDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                PlaceholderText="wpf, dotnet" Margin="0,0,0,10"
+                                                AutomationProperties.Name="Repository topics" />
+                                    <ui:Button Content="Save details" Appearance="Primary" FontSize="12" Padding="14,4"
+                                               HorizontalAlignment="Left"
+                                               Command="{Binding SaveRepoDetailsCommand}"
+                                               AutomationProperties.Name="Save repository description, homepage and topics" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Features -->
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
+                                    Padding="16,12" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Features" Style="{StaticResource PaneHeader}" />
+                                    <CheckBox Content="Issues" FontSize="12" Margin="0,0,0,4"
+                                              IsChecked="{Binding RepoIssuesEnabled}"
+                                              AutomationProperties.Name="Enable issues" />
+                                    <CheckBox Content="Wiki" FontSize="12" Margin="0,0,0,4"
+                                              IsChecked="{Binding RepoWikiEnabled}"
+                                              AutomationProperties.Name="Enable wiki" />
+                                    <CheckBox Content="Projects" FontSize="12" Margin="0,0,0,10"
+                                              IsChecked="{Binding RepoProjectsEnabled}"
+                                              AutomationProperties.Name="Enable projects" />
+                                    <ui:Button Content="Save features" FontSize="12" Padding="14,4"
+                                               HorizontalAlignment="Left"
+                                               Command="{Binding SaveRepoFeaturesCommand}"
+                                               AutomationProperties.Name="Save repository feature toggles" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Default branch + visibility -->
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
+                                    Padding="16,12" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Branch and visibility" Style="{StaticResource PaneHeader}" />
+                                    <TextBlock Text="Default branch (must already exist on the remote)" FontSize="12" Margin="0,0,0,2"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <WrapPanel Margin="0,0,0,10">
+                                        <ui:TextBox Text="{Binding RepoDefaultBranchDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                    Width="220" Margin="0,0,8,0"
+                                                    AutomationProperties.Name="Default branch" />
+                                        <ui:Button Content="Change default branch" FontSize="12" Padding="12,4"
+                                                   Command="{Binding ChangeDefaultBranchCommand}"
+                                                   AutomationProperties.Name="Change the default branch" />
+                                    </WrapPanel>
+                                    <TextBlock Text="Visibility — outward-facing; the change takes a typed repository name" FontSize="12"
+                                               Margin="0,0,0,2" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <WrapPanel>
+                                        <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.RepoVisibilities}"
+                                                  SelectedItem="{Binding SelectedRepoVisibility}"
+                                                  Width="140" FontSize="12" Margin="0,0,8,0"
+                                                  AutomationProperties.Name="Repository visibility" />
+                                        <ui:Button Content="Change visibility" FontSize="12" Padding="12,4"
+                                                   Command="{Binding ChangeRepoVisibilityCommand}"
+                                                   AutomationProperties.Name="Change repository visibility" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Notifications (G-12) -->
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
+                                    Padding="16,12" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <ui:Button DockPanel.Dock="Right" Content="Mark all read" FontSize="11" Padding="8,2"
+                                                   Command="{Binding MarkAllNotificationsReadCommand}"
+                                                   AutomationProperties.Name="Mark every notification on this repository read" />
+                                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                                   Command="{Binding LoadNotificationsCommand}"
+                                                   AutomationProperties.Name="Refresh notifications" />
+                                        <TextBlock Text="Unread notifications" Style="{StaticResource PaneHeader}"
+                                                   Margin="0" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding NotificationsError}" FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{StaticResource StatusBadFg}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding NotificationsError}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="Nothing unread on this repository." FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding Notifications.Count}" Value="0" />
+                                                            <Condition Binding="{Binding NotificationsError}" Value="" />
+                                                            <Condition Binding="{Binding NotificationsLoading}" Value="False" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <ListBox ItemsSource="{Binding Notifications}" MaxHeight="220"
+                                             Background="Transparent" BorderThickness="0"
+                                             AutomationProperties.Name="Unread notifications">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="Padding" Value="4,4" />
+                                                <EventSetter Event="MouseDoubleClick" Handler="NotificationRow_Open" />
+                                                <EventSetter Event="KeyDown" Handler="NotificationRow_KeyDown" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type models:GitHubNotification}">
+                                                <DockPanel>
+                                                    <Border DockPanel.Dock="Left" Background="{StaticResource StatusInfoBg}"
+                                                            CornerRadius="4" Padding="6,1" Margin="0,0,8,0" MinWidth="88"
+                                                            VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding ReasonLabel}" FontSize="10"
+                                                                   HorizontalAlignment="Center"
+                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                    </Border>
+                                                    <ui:Button DockPanel.Dock="Right" Content="Mark read" FontSize="11" Padding="8,2"
+                                                               Margin="8,0,0,0"
+                                                               Command="{Binding DataContext.MarkNotificationReadCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                               CommandParameter="{Binding}"
+                                                               AutomationProperties.Name="Mark this notification read" />
+                                                    <ui:Button DockPanel.Dock="Right" Content="Open" FontSize="11" Padding="8,2"
+                                                               Margin="8,0,0,0" Icon="{ui:SymbolIcon Open24}"
+                                                               Command="{Binding DataContext.OpenNotificationCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                               CommandParameter="{Binding}"
+                                                               AutomationProperties.Name="Open this notification on GitHub" />
+                                                    <TextBlock Text="{Binding Title}" FontSize="12" VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
+                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock Text="Opening a notification never marks it read — use Mark read."
+                                               FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Danger zone (G-09) -->
+                            <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                                    BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,16"
+                                    Visibility="{Binding DangerZoneEnabled, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                    AutomationProperties.Name="Danger zone">
+                                <StackPanel>
+                                    <TextBlock Text="Danger zone" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6"
+                                               Foreground="{StaticResource StatusBadFg}" />
+                                    <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                               Text="Deleting the repository removes its issues, pull requests, releases and Actions history on GitHub for good. The local files on this machine are not touched. You will be asked to type the full owner/name to confirm." />
+                                    <ui:Button Content="Delete repository on GitHub" Appearance="Danger" FontSize="12" Padding="14,4"
+                                               HorizontalAlignment="Left"
+                                               Command="{Binding DeleteRepoCommand}"
+                                               AutomationProperties.Name="Delete this repository on GitHub" />
+                                    <TextBlock Text="{Binding RepoDeleteNotice}" FontSize="12" TextWrapping="Wrap"
+                                               Margin="0,10,0,0"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding RepoDeleteNotice}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <ui:Button Content="Grant delete_repo scope" FontSize="12" Padding="14,4" Margin="0,8,0,0"
+                                               HorizontalAlignment="Left"
+                                               Visibility="{Binding DeleteScopeHintVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                               Command="{Binding GrantDeleteScopeCommand}"
+                                               AutomationProperties.Name="Grant the delete_repo scope to the GitHub CLI" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <!-- ═══ REWRITE WIZARD ═══

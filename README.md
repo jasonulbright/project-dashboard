@@ -29,13 +29,16 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Issues** — open issues as a full list (number, title, author, labels, updated); Enter or double-click opens on GitHub
 - **Pull Requests** — open PRs with draft state and an aggregated checks verdict (passing / failing / pending); opens on GitHub
 - **Stashes** — list, apply, pop, and drop (drop is confirmed)
+- **Actions** — workflow runs with status/conclusion, branch, event and elapsed time; per-run jobs and steps; re-run all or failed jobs, cancel a running run (both confirmed), and open on GitHub
+- **Releases** — releases with draft/prerelease state, date and asset count; release notes rendered natively; create a release from an existing tag (title, notes, draft/prerelease); delete a release (confirmed); download an asset to a location you choose
+- **Repo** — description, homepage and topics; feature toggles (issues, wiki, projects); default branch (confirmed) and visibility (confirmed by typing the full `owner/name`); this repository's unread notifications with explicit mark-read; and, only when switched on in Settings, a danger zone that can delete the repository on GitHub — typed `owner/name` confirmation, local files untouched
 - **Branch bar** — current branch, ahead/behind, Fetch / Pull (fast-forward only) / Push (auto-sets upstream)
 - **State banner** — surfaces merge / rebase / cherry-pick / revert / bisect / detached-HEAD / conflicts loudly, with an "Open in Terminal" escape hatch (the app does not build a merge tool)
 
 ### Platform
 - **GitHub integration** via the `gh` CLI — repo visibility and open issue/PR counts fetched in one batched GraphQL call per ~25 repos; clickable commit/issue/PR links; in-app bug/feature filing (pre-filled, labeled new-issue page). A dashboard banner offers in-app sign-in when gh is missing or signed out
 - **Remote discovery** (ROADMAP v1.1) — GitHub repos with no local clone appear as "Cloud" cards you can clone in one click (toggle in Settings)
-- **Keyboard accessible** — full no-mouse operation: `Ctrl+K` palette, arrow-key pane navigation, Tab/arrows/Enter through the card grid, `Ctrl+1..7` for detail tabs, Alt+Left / Backspace to go back, keyboard-activatable chips and rows, visible focus rings
+- **Keyboard accessible** — full no-mouse operation: `Ctrl+K` palette, arrow-key pane navigation, Tab/arrows/Enter through the card grid, `Ctrl+1..9` and `Ctrl+0` for detail tabs, Alt+Left / Backspace to go back, keyboard-activatable chips and rows, visible focus rings
 - **Window state** — size, position, and pane collapse state persisted across restarts
 - **Discovery cache** — instant relaunch from cached data; manual Refresh and Settings → Sync Now bypass the cache
 - **Error resilience** — global handlers show a dialog or banner instead of crashing; failures logged to `%LOCALAPPDATA%\ProjectDashboard\log.txt`

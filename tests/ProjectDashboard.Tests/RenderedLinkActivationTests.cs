@@ -20,7 +20,7 @@ public class RenderedLinkActivationTests
         var xaml = File.ReadAllText(DetailPageXaml());
         var declarations = Regex.Matches(xaml, @"<RichTextBox\b[^>]*>");
 
-        Assert.Equal(4, declarations.Count);
+        Assert.Equal(5, declarations.Count);
         foreach (var declaration in declarations.Select(d => d.Value))
         {
             Assert.Contains("IsDocumentEnabled=\"True\"", declaration);

@@ -41,6 +41,7 @@ public partial class ProjectDetailPage
         RenderDocuments();
         RenderIssueConversation();
         RenderPullRequestConversation();
+        RenderReleaseNotes();
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -53,6 +54,35 @@ public partial class ProjectDetailPage
             case nameof(ProjectDetailViewModel.PullRequestDetail):
                 RenderPullRequestConversation();
                 break;
+            case nameof(ProjectDetailViewModel.SelectedRelease):
+                RenderReleaseNotes();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Release notes render with images disabled, like issue and PR bodies: the notes of
+    /// a repository the reader only browses are third-party text, and a fetch would hand
+    /// their author the reader's IP and a read receipt.
+    /// </summary>
+    private void RenderReleaseNotes()
+    {
+        var release = _viewModel.SelectedRelease;
+        if (release is null)
+        {
+            ReleaseNotesRich.Document = new FlowDocument();
+            return;
+        }
+        try
+        {
+            var doc = NewFlowDocument();
+            AppendMarkdown(doc, string.IsNullOrWhiteSpace(release.Body) ? "(no release notes)" : release.Body,
+                "", allowImages: false);
+            ReleaseNotesRich.Document = doc;
+        }
+        catch
+        {
+            ReleaseNotesRich.Document = new FlowDocument(new Paragraph(new Run(release.Body) { FontSize = 12 }));
         }
     }
 
@@ -150,6 +180,7 @@ public partial class ProjectDetailPage
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         RenderIssueConversation();
         RenderPullRequestConversation();
+        RenderReleaseNotes();
 
         var project = DashboardViewModel.SelectedProject;
         if (project is null) return;
@@ -258,8 +289,13 @@ public partial class ProjectDetailPage
     private void LoadDataForActiveTab()
     {
         if (WorkTabs.SelectedItem is not TabItem { Tag: Models.DetailTab tab }) return;
-        var load = ProjectDetailTabs.LoadForTab(
-            tab, _viewModel.Branches.Count > 0, _viewModel.StashesLoaded, _viewModel.PullRequestsLoaded);
+        var load = ProjectDetailTabs.LoadForTab(tab, new DetailTabLoadState(
+            Branches: _viewModel.Branches.Count > 0,
+            Stashes: _viewModel.StashesLoaded,
+            PullRequests: _viewModel.PullRequestsLoaded,
+            WorkflowRuns: _viewModel.WorkflowRunsLoaded,
+            Releases: _viewModel.ReleasesLoaded,
+            RepoTab: _viewModel.RepoSettingsLoaded));
         switch (load)
         {
             case DetailTabLoad.Branches:
@@ -270,6 +306,15 @@ public partial class ProjectDetailPage
                 break;
             case DetailTabLoad.PullRequests:
                 _viewModel.LoadPullRequestsCommand.Execute(null);
+                break;
+            case DetailTabLoad.WorkflowRuns:
+                _viewModel.LoadWorkflowRunsCommand.Execute(null);
+                break;
+            case DetailTabLoad.Releases:
+                _viewModel.LoadReleasesCommand.Execute(null);
+                break;
+            case DetailTabLoad.RepoTab:
+                _viewModel.LoadRepoTabCommand.Execute(null);
                 break;
         }
     }
@@ -301,6 +346,53 @@ public partial class ProjectDetailPage
         if (e.Key is Key.Enter or Key.Space && sender is ListBoxItem { DataContext: Models.GitHubPullRequest pr })
         {
             _viewModel.OpenPullRequestCommand.Execute(pr);
+            e.Handled = true;
+        }
+    }
+
+    // Workflow run / release / notification rows: double-click or Enter opens the row
+    // on GitHub, matching the issue and PR lists.
+    private void RunRow_Open(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem { DataContext: Models.WorkflowRun run })
+            _viewModel.OpenWorkflowRunCommand.Execute(run);
+    }
+
+    private void RunRow_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is ListBoxItem { DataContext: Models.WorkflowRun run })
+        {
+            _viewModel.OpenWorkflowRunCommand.Execute(run);
+            e.Handled = true;
+        }
+    }
+
+    private void ReleaseRow_Open(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem { DataContext: Models.Release release })
+            _viewModel.OpenReleaseCommand.Execute(release);
+    }
+
+    private void ReleaseRow_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is ListBoxItem { DataContext: Models.Release release })
+        {
+            _viewModel.OpenReleaseCommand.Execute(release);
+            e.Handled = true;
+        }
+    }
+
+    private void NotificationRow_Open(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem { DataContext: Models.GitHubNotification notification })
+            _viewModel.OpenNotificationCommand.Execute(notification);
+    }
+
+    private void NotificationRow_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is ListBoxItem { DataContext: Models.GitHubNotification notification })
+        {
+            _viewModel.OpenNotificationCommand.Execute(notification);
             e.Handled = true;
         }
     }

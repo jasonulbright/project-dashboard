@@ -677,8 +677,17 @@ public partial class ProjectDetailViewModel
     /// ProcessResult (including GitHub's own-PR self-approve refusal), toasted here.
     /// </summary>
     private async Task<bool> RunGitHubOp(Func<Task<ProcessResult>> op, string label)
+        => await RunGitHubOpResult(op, label) is { Success: true };
+
+    /// <summary>
+    /// <see cref="RunGitHubOp"/> for callers that must read the failure itself — the
+    /// missing-scope refusal a repo delete has to tell apart from any other failure.
+    /// Null means no result belongs to this caller: the gate was already held, the op
+    /// threw, or the project changed while it ran.
+    /// </summary>
+    private async Task<ProcessResult?> RunGitHubOpResult(Func<Task<ProcessResult>> op, string label)
     {
-        if (IsBusy) return false;
+        if (IsBusy) return null;
         var gen = _generation;
         var holder = new object();
         IsBusy = true;
@@ -687,15 +696,15 @@ public partial class ProjectDetailViewModel
         try
         {
             var result = await op();
-            if (!IsCurrent(gen)) return false; // switched projects mid-op — drop the UI write
+            if (!IsCurrent(gen)) return null; // switched projects mid-op — drop the UI write
             GitHubStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
-            return result.Success;
+            return result;
         }
         catch (Exception ex)
         {
             Log.Warn($"{label} failed", ex);
             if (IsCurrent(gen)) GitHubStatusText = $"{label} failed: {ex.Message}";
-            return false;
+            return null;
         }
         finally
         {

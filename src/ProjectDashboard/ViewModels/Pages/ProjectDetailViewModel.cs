@@ -9,6 +9,8 @@ public partial class ProjectDetailViewModel : ObservableObject
     private readonly ProjectDiscoveryService _discoveryService;
     private readonly GitService _gitService;
     private readonly GitHubService _gitHubService;
+    /// <summary>Null outside the app host; the danger zone then reads as switched off.</summary>
+    private readonly SettingsService? _settingsService;
 
     [ObservableProperty] private ProjectInfo? _project;
     [ObservableProperty] private string _readmeText = "";
@@ -40,11 +42,13 @@ public partial class ProjectDetailViewModel : ObservableObject
         GitService gitService,
         GitHubService gitHubService,
         IRewriteSessionFactory? rewriteSessions = null,
-        Services.Safety.RepoBusyRegistry? busyRegistry = null)
+        Services.Safety.RepoBusyRegistry? busyRegistry = null,
+        SettingsService? settingsService = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
         _gitHubService = gitHubService;
+        _settingsService = settingsService;
         _rewriteSessions = rewriteSessions;
         _busyRegistry = busyRegistry ?? new Services.Safety.RepoBusyRegistry();
         ConfirmPrompt = ConfirmAsync;
@@ -132,6 +136,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         if (IsSameRepo(p))
         {
             Project = p;
+            // Edited on the Settings page, so a reload is the moment to re-read it.
+            RefreshDangerZoneGate();
             ApplyProjectContent(p);
             return;
         }
@@ -178,6 +184,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         StateBannerVisible = false;
         StateBannerText = "";
         ResetGitHubState();
+        ResetGitHubTabState();
         // A held dry run belongs to the repository it ran against; carrying it across a switch
         // would arm Execute on the new project with the previous one's report on screen. The
         // park above already took anything with an undo behind it, so this disposes only a
