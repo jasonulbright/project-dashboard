@@ -40,6 +40,17 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Branch bar** — current branch, ahead/behind, Fetch / Pull (fast-forward only) / Push (auto-sets upstream)
 - **State banner** — surfaces merge / rebase / cherry-pick / revert / bisect / detached-HEAD / conflicts loudly, with an "Open in Terminal" escape hatch (the app does not build a merge tool)
 
+![Changes tab with the native diff viewer](docs/screenshots/changes.png)
+
+### History editing
+- **Rewrite wizard** — replace text in file contents, remove a path from history, rewrite commit and tag messages, or rewrite an author/committer identity; scoped to all history, glob patterns, exact paths, specific commits, or a commit range. A dry run into a scratch copy reports what would change and verifies the result before anything is applied, and a verified backup is taken before the real run. Nothing is pushed.
+- **Plan a history edit** — reorder, drop, squash, and reword commits over a range as one replay, with a live preview of the resulting history and a refusal (with the reason) for any plan git cannot produce
+- **Backups, reflog, and force push** — browse and restore the backups taken before each history operation, inspect every position the refs have held, and push a rewritten branch only after reviewing exactly what diverged
+
+![Rewrite wizard dry run](docs/screenshots/history-rewrite.png)
+
+![Planning a reorder, drop, and squash](docs/screenshots/commit-surgery.png)
+
 ### Platform
 - **GitHub integration** via the `gh` CLI — repo visibility and open issue/PR counts fetched in one batched GraphQL call per ~25 repos; clickable commit/issue/PR links; in-app bug/feature filing (pre-filled, labeled new-issue page). A dashboard banner offers in-app sign-in when gh is missing or signed out
 - **Remote discovery** (ROADMAP v1.1) — GitHub repos with no local clone appear as "Cloud" cards you can clone in one click (toggle in Settings)
