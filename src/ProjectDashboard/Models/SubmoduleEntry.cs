@@ -36,6 +36,13 @@ public sealed class SubmoduleEntry
     /// <summary>Gitlink sha recorded in the superproject index; empty when only declared.</summary>
     public string RecordedSha { get; init; } = "";
 
+    /// <summary>
+    /// The superproject index holds unmerged stages for this gitlink. <see cref="RecordedSha"/>
+    /// is then the superproject's own side (stage 2), not the incoming one, so a checkout
+    /// left on our commit does not read as diverged.
+    /// </summary>
+    public bool IsConflicted { get; init; }
+
     /// <summary>The submodule's own HEAD sha; empty when uninitialized.</summary>
     public string CurrentSha { get; init; } = "";
 

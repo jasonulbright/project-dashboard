@@ -40,7 +40,7 @@ public sealed class SubmoduleService
         foreach (var path in order)
         {
             byPath.TryGetValue(path, out var decl);
-            recorded.TryGetValue(path, out var recordedSha);
+            recorded.TryGetValue(path, out var link);
 
             var full = ResolveInsideRepo(repoPath, path);
             var dotGit = full is null ? null : Path.Combine(full, ".git");
@@ -86,8 +86,9 @@ public sealed class SubmoduleService
                 Url = decl?.Url ?? "",
                 TrackedBranch = decl?.Branch,
                 DeclaredInGitmodules = decl is not null,
-                RecordedInIndex = recordedSha is not null,
-                RecordedSha = recordedSha ?? "",
+                RecordedInIndex = link is not null,
+                RecordedSha = link?.Sha ?? "",
+                IsConflicted = link?.Conflicted ?? false,
                 CurrentSha = currentSha,
                 CheckedOutBranch = branch,
                 IsDetached = detached,
@@ -215,12 +216,15 @@ public sealed class SubmoduleService
         if (relativePath.Length == 0) return null;
         try
         {
-            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
+            var root = Path.GetFullPath(repoPath);
+            // A drive root ("C:\") is its own terminator: appending a separator to it
+            // would build "C:\\" and no descendant would match the prefix.
+            var prefix = Path.EndsInDirectorySeparator(root)
+                ? root
+                : root + Path.DirectorySeparatorChar;
             var full = Path.TrimEndingDirectorySeparator(
                 Path.GetFullPath(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar))));
-            return full.Length > root.Length
-                   && full.StartsWith(root, StringComparison.OrdinalIgnoreCase)
-                   && full[root.Length] == Path.DirectorySeparatorChar
+            return full.Length > prefix.Length && full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
                 ? full
                 : null;
         }
@@ -289,6 +293,7 @@ public sealed class SubmoduleService
         foreach (var name in order)
         {
             var (path, url, branch) = byName[name];
+            path = NormalizeDeclaredPath(path);
             // A section with no path declares nothing checkoutable; two sections claiming
             // one path would collapse the listing, so the first declaration wins.
             if (path.Length == 0 || paths.Contains(path)) continue;
@@ -298,7 +303,25 @@ public sealed class SubmoduleService
         return declarations;
     }
 
-    private async Task<Dictionary<string, string>> ReadGitlinksAsync(string repoPath, CancellationToken ct)
+    /// <summary>
+    /// The form git records a gitlink under: forward slashes, no "./" prefix, no trailing
+    /// separator. .gitmodules is hand-writable, so "./lib", "lib/", and "lib\" all denote
+    /// the path the index calls "lib"; without a common form the declaration/index union
+    /// lists one submodule several times.
+    /// </summary>
+    internal static string NormalizeDeclaredPath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        while (normalized.StartsWith("./", StringComparison.Ordinal)) normalized = normalized[2..];
+        return normalized.TrimEnd('/');
+    }
+
+    /// <summary>One gitlink as the superproject index holds it.</summary>
+    /// <param name="Sha">Stage 0, or stage 2 while the gitlink is unmerged; empty when neither exists.</param>
+    /// <param name="Conflicted">The index holds unmerged stages for this path.</param>
+    internal sealed record Gitlink(string Sha, bool Conflicted);
+
+    private async Task<Dictionary<string, Gitlink>> ReadGitlinksAsync(string repoPath, CancellationToken ct)
     {
         var result = await _git.RunAsync(repoPath, ["ls-files", "-z", "--stage"], ct, ReadTimeout);
         if (!result.Success)
@@ -313,17 +336,33 @@ public sealed class SubmoduleService
     /// Picks the gitlinks out of `git ls-files -z --stage`: NUL-separated
     /// "&lt;mode&gt; &lt;sha&gt; &lt;stage&gt;\t&lt;path&gt;" records, gitlinks being mode 160000. NUL
     /// termination is what makes a path containing a space or a tab unambiguous.
+    /// <para>
+    /// A path is emitted once per index stage. A merged path has stage 0 alone; an
+    /// unmerged one has no stage 0 and instead stages 1 (base), 2 (ours), and 3 (theirs)
+    /// — so taking the last record would record THEIR commit as the superproject's, and
+    /// a checkout sitting on ours would read as diverged. Stage 0 wins, stage 2 is the
+    /// fallback, and any stage above 0 marks the path conflicted.
+    /// </para>
     /// </summary>
-    internal static Dictionary<string, string> ParseGitlinks(string lsFilesZ)
+    internal static Dictionary<string, Gitlink> ParseGitlinks(string lsFilesZ)
     {
-        var links = new Dictionary<string, string>();
+        var links = new Dictionary<string, Gitlink>();
         foreach (var record in lsFilesZ.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
             var tab = record.IndexOf('\t');
             if (tab < 0) continue;
             var meta = record[..tab].Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (meta.Length < 3 || meta[0] != "160000") continue;
-            links[record[(tab + 1)..]] = meta[1];
+
+            var path = record[(tab + 1)..];
+            links.TryGetValue(path, out var current);
+            var sha = meta[2] switch
+            {
+                "0" => meta[1],
+                "2" when current is null || current.Sha.Length == 0 => meta[1],
+                _ => current?.Sha ?? ""
+            };
+            links[path] = new Gitlink(sha, (current?.Conflicted ?? false) || meta[2] != "0");
         }
         return links;
     }

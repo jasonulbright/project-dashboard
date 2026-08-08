@@ -137,6 +137,59 @@ public class SubmoduleServiceTests
     }
 
     [Fact]
+    public async Task GetSubmodules_ConflictedGitlink_RecordsOurSideAndFlagsTheConflict()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("conflict-child");
+        using var super = await TempRepo.CreateWithCommitAsync("conflict-super");
+        await AddSubmoduleAsync(super, child, "lib");
+        var ours = await child.HeadShaAsync();
+        const string mergeBase = "1111111111111111111111111111111111111111";
+        const string theirs = "2222222222222222222222222222222222222222";
+
+        // The index a submodule merge conflict leaves: the stage-0 entry is gone and stages
+        // 1/2/3 hold base/ours/theirs. The leading mode-0 line drops stage 0 first, so the
+        // fixture is byte-identical to what `git merge` produces for a conflicted gitlink.
+        await Git.RunWithStdinAsync(super.Path,
+            $"0 0000000000000000000000000000000000000000\tlib\n" +
+            $"160000 {mergeBase} 1\tlib\n160000 {ours} 2\tlib\n160000 {theirs} 3\tlib\n",
+            "update-index", "--index-info");
+
+        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        Assert.True(entry.IsConflicted);
+        Assert.True(entry.RecordedInIndex);
+        Assert.Equal(ours, entry.RecordedSha);
+        Assert.NotEqual(theirs, entry.RecordedSha);
+        // The checkout still sits on OUR commit, which is not a divergence.
+        Assert.Equal(ours, entry.CurrentSha);
+        Assert.False(entry.CommitDiffersFromRecorded);
+    }
+
+    [Fact]
+    public async Task GetSubmodules_MergedGitlink_IsNotFlaggedConflicted()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("unconflicted-child");
+        using var super = await TempRepo.CreateWithCommitAsync("unconflicted-super");
+        await AddSubmoduleAsync(super, child, "lib");
+
+        Assert.False(Assert.Single(await _subs.GetSubmodulesAsync(super.Path)).IsConflicted);
+    }
+
+    [Fact]
+    public async Task GetSubmodules_DeclaredPathVariant_DoesNotDoubleListOneSubmodule()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("norm-child");
+        using var super = await TempRepo.CreateWithCommitAsync("norm-super");
+        await AddSubmoduleAsync(super, child, "lib");
+        await super.GitAsync("config", "-f", ".gitmodules", "submodule.lib.path", "./lib");
+
+        var entry = Assert.Single(await _subs.GetSubmodulesAsync(super.Path));
+        Assert.Equal("lib", entry.Path);
+        Assert.True(entry.DeclaredInGitmodules);
+        Assert.True(entry.RecordedInIndex);
+        Assert.True(entry.IsInitialized);
+    }
+
+    [Fact]
     public async Task GetSubmodules_UnicodeAndSpacedPaths_RoundTrip()
     {
         using var child = await TempRepo.CreateWithCommitAsync("uni-child");
@@ -467,6 +520,40 @@ public class SubmoduleServiceTests
         Assert.Null(SubmoduleService.ResolveInsideRepo(root, ""));
     }
 
+    /// <summary>
+    /// A repository checked out at a drive root: the root already ends in a separator, and
+    /// a containment check that appends one of its own rejects every submodule under it.
+    /// The check reads only the path strings, so no drive-root fixture is created.
+    /// </summary>
+    [Fact]
+    public void ResolveInsideRepo_AcceptsSubmodulesOfARepoAtADriveRoot()
+    {
+        Assert.Equal(@"C:\lib", SubmoduleService.ResolveInsideRepo(@"C:\", "lib"));
+        Assert.Equal(@"C:\vendor\lib", SubmoduleService.ResolveInsideRepo(@"C:\", "vendor/lib"));
+        Assert.Null(SubmoduleService.ResolveInsideRepo(@"C:\", "."));
+        Assert.Null(SubmoduleService.ResolveInsideRepo(@"C:\", @"D:\other"));
+
+        // A root handed in with a trailing separator resolves the same as one without.
+        Assert.Equal(@"C:\repo\lib", SubmoduleService.ResolveInsideRepo(@"C:\repo\", "lib"));
+        Assert.Equal(@"C:\repo\lib", SubmoduleService.ResolveInsideRepo(@"C:\repo", "lib"));
+    }
+
+    [Fact]
+    public void ParseGitmodulesConfig_NormalizesDeclaredPathsToTheFormTheIndexUses()
+    {
+        foreach (var variant in new[] { "./lib", "lib/", @"lib\", "././lib/" })
+        {
+            var declared = Assert.Single(SubmoduleService.ParseGitmodulesConfig(
+                $"submodule.lib.path\n{variant}\0submodule.lib.url\nhttps://example.invalid/lib.git\0"));
+            Assert.Equal("lib", declared.Path);
+        }
+
+        // Two sections whose paths differ only in those decorations claim one submodule.
+        var single = Assert.Single(SubmoduleService.ParseGitmodulesConfig(
+            "submodule.first.path\n./lib\0submodule.second.path\nlib/\0"));
+        Assert.Equal("first", single.Name);
+    }
+
     [Fact]
     public async Task GetSubmodules_DeclarationEscapingTheRepo_IsListedButNeverEntered()
     {
@@ -498,7 +585,28 @@ public class SubmoduleServiceTests
 
         var links = SubmoduleService.ParseGitlinks(lsFiles);
         Assert.Equal(2, links.Count);
-        Assert.Equal("70524b4ed1d8efcdb64249a843fd327e45c43259", links["vendor libs/sub-ünïcodé"]);
-        Assert.Equal("c440451ac29a1a3772d838cb3701632561a8a7cf", links["lib"]);
+        Assert.Equal("70524b4ed1d8efcdb64249a843fd327e45c43259", links["vendor libs/sub-ünïcodé"].Sha);
+        Assert.Equal("c440451ac29a1a3772d838cb3701632561a8a7cf", links["lib"].Sha);
+        Assert.All(links.Values, link => Assert.False(link.Conflicted));
+    }
+
+    [Fact]
+    public void ParseGitlinks_UnmergedStages_TakeOursAndNeverTheLastRecord()
+    {
+        const string mergeBase = "1111111111111111111111111111111111111111";
+        const string ours = "2222222222222222222222222222222222222222";
+        const string theirs = "3333333333333333333333333333333333333333";
+
+        var conflicted = SubmoduleService.ParseGitlinks(
+            $"160000 {mergeBase} 1\tlib\0160000 {ours} 2\tlib\0160000 {theirs} 3\tlib\0");
+        var link = Assert.Single(conflicted).Value;
+        Assert.True(link.Conflicted);
+        Assert.Equal(ours, link.Sha);
+
+        // Deleted on our side: stage 2 is absent, so no commit is claimed as recorded.
+        var deletedByUs = SubmoduleService.ParseGitlinks(
+            $"160000 {mergeBase} 1\tlib\0160000 {theirs} 3\tlib\0");
+        Assert.True(deletedByUs["lib"].Conflicted);
+        Assert.Equal("", deletedByUs["lib"].Sha);
     }
 }
