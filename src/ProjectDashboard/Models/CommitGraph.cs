@@ -71,6 +71,24 @@ public sealed class CommitGraphPage
 
     public int Skip { get; init; }
 
-    /// <summary>Columns in use across this page, counting lanes that only pass through.</summary>
+    /// <summary>
+    /// Columns already open immediately before the first row of this page — the lane state
+    /// the previous page left behind. Empty when <see cref="Skip"/> is 0. A renderer needs
+    /// it to draw the edges crossing the page's top edge, including a lane that closes at
+    /// the first row and so appears in no row of the page.
+    /// </summary>
+    public IReadOnlyList<int> IncomingLanes { get; init; } = [];
+
+    /// <summary>
+    /// Columns a renderer must reserve: the widest of <see cref="IncomingLanes"/>, each
+    /// row's own lane, and the lanes still open after each row.
+    /// </summary>
     public int LaneCount { get; init; }
+
+    /// <summary>
+    /// The walk failed (git missing, broken repo, timeout) and this page describes nothing.
+    /// A repository with no commits reachable from the requested refs is not an error and
+    /// leaves this false.
+    /// </summary>
+    public bool HasError { get; init; }
 }

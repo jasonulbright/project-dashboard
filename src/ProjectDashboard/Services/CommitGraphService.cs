@@ -38,9 +38,14 @@ public sealed class CommitGraphService
         {
             "log", "--topo-order", "--decorate=full", LogFormat, "-n", walk.ToString()
         };
-        if (!string.IsNullOrWhiteSpace(request.Branch)) args.Add(request.Branch);
-        else if (request.Refs is { Count: > 0 }) args.AddRange(request.Refs);
-        else { args.Add("--branches"); args.Add("HEAD"); }
+        // A ref may legally be named "--all", "-5", or "-g"; as bare argv git reads it as an
+        // option and silently widens, truncates, or repurposes the walk, so caller-supplied
+        // revisions follow --end-of-options. --ignore-missing applies only to the default
+        // set, where an unborn HEAD (empty repo, orphan checkout) is a state rather than a
+        // failure; a revision the caller named must still fail when it does not resolve.
+        if (!string.IsNullOrWhiteSpace(request.Branch)) { args.Add("--end-of-options"); args.Add(request.Branch); }
+        else if (request.Refs is { Count: > 0 }) { args.Add("--end-of-options"); args.AddRange(request.Refs); }
+        else { args.Add("--ignore-missing"); args.Add("--branches"); args.Add("HEAD"); }
         // Terminator: a ref name that also names a file is otherwise ambiguous to git.
         args.Add("--");
 
@@ -48,25 +53,48 @@ public sealed class CommitGraphService
         if (!result.Success)
         {
             Log.Warn($"git log --topo-order failed for {repoPath}: {result.FirstError}");
-            return new CommitGraphPage { Skip = skip };
+            return new CommitGraphPage { Skip = skip, HasError = true };
         }
 
         var ordered = ParseLog(result.StdOut);
         AssignLanes(ordered);
+        return BuildPage(ordered, skip, take);
+    }
 
+    /// <summary>
+    /// Slices a lane-assigned walk into one page: the rows, the lane state entering the
+    /// first of them, and the column count the two together demand.
+    /// <para>
+    /// OpenLanes is post-row state, so the lanes entering the page come from the row
+    /// BEFORE it. Counting only in-page rows hides every lane that closes at the first row
+    /// and every edge crossing the page's top, which no page after the first can draw.
+    /// </para>
+    /// </summary>
+    internal static CommitGraphPage BuildPage(IReadOnlyList<GraphCommit> ordered, int skip, int take)
+    {
         var hasMore = ordered.Count > (long)skip + take;
         var page = new List<GraphCommit>();
         for (var i = skip; i < ordered.Count && page.Count < take; i++)
             page.Add(ordered[i]);
 
+        IReadOnlyList<int> incoming = skip > 0 && skip <= ordered.Count ? ordered[skip - 1].OpenLanes : [];
+
         var laneCount = 0;
+        foreach (var lane in incoming) laneCount = Math.Max(laneCount, lane + 1);
         foreach (var commit in page)
         {
             laneCount = Math.Max(laneCount, commit.Lane + 1);
             foreach (var lane in commit.OpenLanes) laneCount = Math.Max(laneCount, lane + 1);
         }
 
-        return new CommitGraphPage { Commits = page, HasMore = hasMore, Skip = skip, LaneCount = laneCount };
+        return new CommitGraphPage
+        {
+            Commits = page,
+            HasMore = hasMore,
+            Skip = skip,
+            IncomingLanes = incoming,
+            LaneCount = laneCount
+        };
     }
 
     internal static List<GraphCommit> ParseLog(string log)

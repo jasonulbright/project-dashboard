@@ -244,6 +244,57 @@ public class CommitGraphServiceTests
         Assert.Empty(page.Commits);
         Assert.False(page.HasMore);
         Assert.Equal(0, page.LaneCount);
+        // An unborn HEAD is a state, not a failure.
+        Assert.False(page.HasError);
+    }
+
+    [Fact]
+    public async Task OrphanCheckout_KeepsTheOtherBranchesInTheDefaultRefSet()
+    {
+        using var repo = await NewRepoAsync("g-orphan-head");
+        await CommitAsync(repo, "A");
+        await repo.GitAsync("checkout", "--orphan", "fresh");
+
+        var page = await _graph.GetGraphAsync(repo.Path);
+        Assert.False(page.HasError);
+        Assert.Equal(["A"], page.Commits.Select(c => c.Subject));
+    }
+
+    [Fact]
+    public async Task GitFailure_IsFlaggedInsteadOfLookingLikeAnEmptyGraph()
+    {
+        using var repo = await NewRepoAsync("g-fail");
+        await CommitAsync(repo, "A");
+
+        var page = await _graph.GetGraphAsync(repo.Path, new CommitGraphRequest { Branch = "no-such-ref" });
+        Assert.True(page.HasError);
+        Assert.Empty(page.Commits);
+
+        // A broken checkout, not a missing ref: the default ref set must fail loudly too.
+        var broken = TestEnv.NewDir("g-broken");
+        File.WriteAllText(Path.Combine(broken, ".git"), "gitdir: ./nowhere\n");
+        Assert.True((await _graph.GetGraphAsync(broken)).HasError);
+    }
+
+    [Fact]
+    public async Task RefNamedLikeAnOption_IsWalkedAsARevision()
+    {
+        using var repo = await NewRepoAsync("g-hostile-ref");
+        await CommitAsync(repo, "A");
+        await CommitAsync(repo, "B");
+        await repo.GitAsync("switch", "-c", "side", "HEAD~1");
+        await CommitAsync(repo, "C");
+        var side = await repo.HeadShaAsync();
+        await repo.GitAsync("switch", "main");
+        // A ref name git accepts and a fetch can deliver; as bare argv "--all" would widen
+        // the walk to every ref instead of naming this one.
+        await repo.GitAsync("update-ref", "refs/heads/--all", side);
+
+        var branchMode = await _graph.GetGraphAsync(repo.Path, new CommitGraphRequest { Branch = "--all" });
+        Assert.Equal(["C", "A"], branchMode.Commits.Select(c => c.Subject));
+
+        var refSet = await _graph.GetGraphAsync(repo.Path, new CommitGraphRequest { Refs = ["--all"] });
+        Assert.Equal(["C", "A"], refSet.Commits.Select(c => c.Subject));
     }
 
     // ── Paging ───────────────────────────────────────────────────────────────
@@ -307,6 +358,10 @@ public class CommitGraphServiceTests
             var page = await _graph.GetGraphAsync(repo.Path, new CommitGraphRequest { Skip = skip, Take = 2 });
             foreach (var commit in page.Commits)
                 Assert.Equal(expected[commit.Sha], commit.Lane);
+
+            // The lanes entering a page are the ones the previous row left open.
+            IReadOnlyList<int> incoming = skip == 0 ? [] : whole.Commits[skip - 1].OpenLanes;
+            Assert.Equal(incoming, page.IncomingLanes);
         }
     }
 
@@ -421,5 +476,38 @@ public class CommitGraphServiceTests
         var prefix = Build().Take(3).ToList();
         CommitGraphService.AssignLanes(prefix);
         Assert.Equal(full.Take(3).Select(c => c.Lane), prefix.Select(c => c.Lane));
+    }
+
+    [Fact]
+    public void BuildPage_ReservesTheLanesEnteringThePageFromAbove()
+    {
+        // Diamond m→{b,c}→a, plus an unrelated root. Lane 1 carries the merge's second
+        // edge and closes AT "a", so it appears in no row of the page starting there.
+        List<GraphCommit> ordered =
+        [
+            new() { Sha = "m", Parents = ["b", "c"] },
+            new() { Sha = "c", Parents = ["a"] },
+            new() { Sha = "b", Parents = ["a"] },
+            new() { Sha = "a", Parents = [] },
+            new() { Sha = "z", Parents = [] }
+        ];
+        CommitGraphService.AssignLanes(ordered);
+
+        var tail = CommitGraphService.BuildPage(ordered, skip: 3, take: 2);
+        Assert.Equal(["a", "z"], tail.Commits.Select(c => c.Sha));
+        Assert.All(tail.Commits, c => Assert.Empty(c.OpenLanes));
+        Assert.Equal([0, 1], tail.IncomingLanes);
+        Assert.Equal(2, tail.LaneCount);
+
+        var first = CommitGraphService.BuildPage(ordered, skip: 0, take: 2);
+        Assert.Empty(first.IncomingLanes);
+        Assert.Equal(2, first.LaneCount);
+        Assert.True(first.HasMore);
+
+        var past = CommitGraphService.BuildPage(ordered, skip: 9, take: 2);
+        Assert.Empty(past.Commits);
+        Assert.Empty(past.IncomingLanes);
+        Assert.Equal(0, past.LaneCount);
+        Assert.False(past.HasMore);
     }
 }
