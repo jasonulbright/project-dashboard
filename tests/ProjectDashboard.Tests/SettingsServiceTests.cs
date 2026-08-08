@@ -69,6 +69,53 @@ public class SettingsServiceTests
     }
 
     [Fact]
+    public void Save_UnwritableTarget_IsLoggedInsteadOfThrown()
+    {
+        // The window's Closing handler saves; a throw there cancels the close.
+        var logOffset = File.Exists(AppPaths.LogFile) ? new FileInfo(AppPaths.LogFile).Length : 0;
+        Directory.CreateDirectory(SettingsPath);
+        try
+        {
+            new SettingsService().Save(new AppSettings { ProjectsRootPath = @"C:\root-one" });
+
+            Assert.Contains($"Failed to save settings to {SettingsPath}", ReadLogFrom(logOffset));
+        }
+        finally
+        {
+            Directory.Delete(SettingsPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Save_UnwritableTarget_LeavesTheServiceUsable()
+    {
+        Directory.CreateDirectory(SettingsPath);
+        try
+        {
+            new SettingsService().Save(new AppSettings { ProjectsRootPath = @"C:\root-one" });
+            Assert.Equal(new AppSettings().ProjectsRootPath, new SettingsService().Load().ProjectsRootPath);
+        }
+        finally
+        {
+            Directory.Delete(SettingsPath, recursive: true);
+        }
+
+        var service = new SettingsService();
+        service.Save(new AppSettings { ProjectsRootPath = @"C:\root-two" });
+        Assert.Equal(@"C:\root-two", service.Load().ProjectsRootPath);
+    }
+
+    private static string ReadLogFrom(long offset)
+    {
+        using var stream = new FileStream(
+            AppPaths.LogFile, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        stream.Seek(offset, SeekOrigin.Begin);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    [Fact]
     public void CorruptSettings_NoBackup_QuarantinesAndReturnsDefaults()
     {
         var service = new SettingsService();

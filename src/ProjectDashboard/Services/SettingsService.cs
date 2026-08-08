@@ -42,8 +42,17 @@ public class SettingsService
     {
         lock (FileLock)
         {
-            Directory.CreateDirectory(SettingsDir);
-            DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+            try
+            {
+                Directory.CreateDirectory(SettingsDir);
+                DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+            }
+            catch (Exception ex)
+            {
+                // A throw here reaches the window's Closing handler, where an unhandled
+                // exception cancels the close and leaves the app unclosable.
+                Log.Error($"Failed to save settings to {SettingsPath}", ex);
+            }
         }
     }
 }
