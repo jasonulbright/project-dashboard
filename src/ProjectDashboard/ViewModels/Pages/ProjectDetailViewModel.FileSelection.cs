@@ -1,0 +1,211 @@
+using System.Text;
+using ProjectDashboard.Models;
+using ProjectDashboard.Services;
+
+namespace ProjectDashboard.ViewModels.Pages;
+
+/// <summary>
+/// Multi-select in the Changes tab (X-04), and the undo offers a completed operation leaves
+/// behind (X-07).
+///
+/// A command reads the whole selection; the diff pane follows the focused file alone. Both are
+/// written together by the list that owns them, and both survive the refresh every mutating
+/// operation triggers — matched back by path, since each read of the working state builds new
+/// <see cref="WorkingFile"/> instances.
+/// </summary>
+public partial class ProjectDetailViewModel
+{
+    /// <summary>Every file selected on that side. The focused one is <see cref="SelectedUnstagedFile"/>.</summary>
+    [ObservableProperty] private IReadOnlyList<WorkingFile> _selectedUnstagedFiles = [];
+    [ObservableProperty] private IReadOnlyList<WorkingFile> _selectedStagedFiles = [];
+
+    /// <summary>
+    /// Applies a list's selection. The focused item is the one the reader just added, so the
+    /// diff pane follows the click rather than the first row of the selection.
+    /// </summary>
+    internal void SetUnstagedSelection(IReadOnlyList<WorkingFile> selection, WorkingFile? focused)
+    {
+        SelectedUnstagedFiles = selection;
+        SelectedUnstagedFile = FocusFor(selection, focused, SelectedUnstagedFile);
+    }
+
+    internal void SetStagedSelection(IReadOnlyList<WorkingFile> selection, WorkingFile? focused)
+    {
+        SelectedStagedFiles = selection;
+        SelectedStagedFile = FocusFor(selection, focused, SelectedStagedFile);
+    }
+
+    /// <summary>
+    /// Which file the diff pane follows: the one just added, else the one it already showed
+    /// while that stays selected, else the last of the selection.
+    /// </summary>
+    private static WorkingFile? FocusFor(IReadOnlyList<WorkingFile> selection, WorkingFile? focused,
+        WorkingFile? current)
+    {
+        if (selection.Count == 0) return null;
+        if (focused is not null) return focused;
+        return current is not null && selection.Contains(current) ? current : selection[^1];
+    }
+
+    internal IReadOnlyList<WorkingFile> UnstagedSelection() =>
+        Selection(SelectedUnstagedFiles, SelectedUnstagedFile);
+
+    internal IReadOnlyList<WorkingFile> StagedSelection() =>
+        Selection(SelectedStagedFiles, SelectedStagedFile);
+
+    private static IReadOnlyList<WorkingFile> Selection(IReadOnlyList<WorkingFile> selection,
+        WorkingFile? focused) =>
+        selection.Count > 0 ? selection : focused is null ? [] : [focused];
+
+    [RelayCommand]
+    private Task StageSelected() => StageFilesAsync(UnstagedSelection());
+
+    [RelayCommand]
+    private Task UnstageSelected() => UnstageFilesAsync(StagedSelection());
+
+    [RelayCommand]
+    private Task DiscardSelected() => DiscardFilesAsync(UnstagedSelection());
+
+    private async Task StageFilesAsync(IReadOnlyList<WorkingFile> files)
+    {
+        if (files.Count == 0) { SyncStatusText = "Select a file to stage first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Stage"); return; }
+
+        var paths = files.Select(f => f.Path).ToList();
+        var repo = RepoPath;
+        var gen = _generation;
+        if (await RunOp(r => _gitService.StageAsync(r, paths), "Stage", repo, gen) && IsCurrent(gen))
+            OfferUndo(UndoLabel("Unstage", paths.Count), "Unstage", repo,
+                r => _gitService.UnstageAsync(r, paths));
+    }
+
+    private async Task UnstageFilesAsync(IReadOnlyList<WorkingFile> files)
+    {
+        if (files.Count == 0) { SyncStatusText = "Select a file to unstage first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Unstage"); return; }
+
+        var paths = files.Select(f => f.Path).ToList();
+        var repo = RepoPath;
+        var gen = _generation;
+        if (await RunOp(r => _gitService.UnstageAsync(r, paths), "Unstage", repo, gen) && IsCurrent(gen))
+            OfferUndo(UndoLabel("Stage", paths.Count), "Stage", repo,
+                r => _gitService.StageAsync(r, paths));
+    }
+
+    private async Task DiscardFilesAsync(IReadOnlyList<WorkingFile> files)
+    {
+        if (files.Count == 0) { SyncStatusText = "Select a file to discard first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Discard"); return; }
+
+        // Read before the dialog: the confirmation names this repo and these files, and the
+        // discard is irreversible, so a switch landing while it is open must not redirect it
+        // onto the project that takes the screen.
+        var confirmedRepo = RepoPath;
+        var gen = _generation;
+
+        if (!await ConfirmAsync("Discard changes?", DiscardMessage(files), "Discard")) return;
+        if (!IsCurrent(gen))
+        {
+            SyncStatusText = ProjectSwitchedNotice("Discard");
+            return;
+        }
+
+        // No undo offer follows: what a discard removes was never committed and is in no
+        // index, so no git command puts it back. The confirmation above is the whole guard.
+        await RunOp(r => _gitService.DiscardAsync(r, files), "Discard", confirmedRepo, gen);
+    }
+
+    /// <summary>
+    /// What the confirmation says. It names the count and the files, because a selection made
+    /// with Shift can hold rows the reader never looked at, and caps the list so a hundred-file
+    /// selection still fits a dialog. Untracked files are called out: they are deleted, not
+    /// reverted.
+    /// </summary>
+    internal static string DiscardMessage(IReadOnlyList<WorkingFile> files, int cap = 8)
+    {
+        if (files.Count == 1)
+        {
+            var only = files[0];
+            var verb = only.IsUntracked ? "Delete untracked file" : "Discard changes to";
+            return $"{verb} {only.Path}?\n\nThis cannot be undone.";
+        }
+
+        var text = new StringBuilder($"Discard changes to {files.Count} files?\n\n");
+        foreach (var file in files.Take(cap)) text.Append($"    {file.Path}\n");
+        if (files.Count > cap) text.Append($"    +{files.Count - cap} more\n");
+
+        var untracked = files.Count(f => f.IsUntracked);
+        if (untracked == files.Count)
+            text.Append("\nAll of them are untracked and will be deleted.");
+        else if (untracked == 1)
+            text.Append("\nOne of them is untracked and will be deleted.");
+        else if (untracked > 1)
+            text.Append($"\n{untracked} of them are untracked and will be deleted.");
+
+        return text.Append("\n\nThis cannot be undone.").ToString();
+    }
+
+    // ── Undo offers (X-07) ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// An offer stands only where ONE git command puts the paths the operation named back the
+    /// way they were: stage and unstage, in either direction, whole-tree or by selection.
+    /// Nothing irreversible is offered one — a discard, a stash drop, a branch delete removes
+    /// content no command can reconstruct, and an "undo" beside them would promise a recovery
+    /// that does not exist. Their confirmation is what carries the weight instead.
+    /// </summary>
+    [ObservableProperty] private bool _undoOfferVisible;
+
+    /// <summary>The offer's button text, naming the action rather than calling it an undo.</summary>
+    [ObservableProperty] private string _undoOfferLabel = "";
+
+    private Func<string, Task<ProcessResult>>? _undoOfferOp;
+    private string _undoOfferRepo = "";
+    private string _undoOfferOpLabel = "";
+
+    private void OfferUndo(string buttonLabel, string opLabel, string repo,
+        Func<string, Task<ProcessResult>> op)
+    {
+        _undoOfferOp = op;
+        _undoOfferRepo = repo;
+        _undoOfferOpLabel = opLabel;
+        UndoOfferLabel = buttonLabel;
+        UndoOfferVisible = true;
+    }
+
+    internal void ClearUndoOffer()
+    {
+        _undoOfferOp = null;
+        _undoOfferRepo = "";
+        _undoOfferOpLabel = "";
+        UndoOfferLabel = "";
+        UndoOfferVisible = false;
+    }
+
+    private static string UndoLabel(string verb, int count) =>
+        count == 1 ? $"{verb} that file" : $"{verb} those {count} files";
+
+    /// <summary>
+    /// Runs the offered inverse. It is bound to the repository the operation ran in, never to
+    /// the live one: the offer is cleared on a project switch, and a click that beats the
+    /// switch is refused rather than replayed against whatever took the screen.
+    /// </summary>
+    [RelayCommand]
+    private async Task RunUndoOffer()
+    {
+        var op = _undoOfferOp;
+        var repo = _undoOfferRepo;
+        var label = _undoOfferOpLabel;
+        ClearUndoOffer();
+
+        if (op is null) return;
+        if (IsBusy) { SyncStatusText = BusyNotice(label); return; }
+        if (repo != RepoPath)
+        {
+            SyncStatusText = ProjectSwitchedNotice(label);
+            return;
+        }
+
+        await RunOp(op, label, repo, _generation);
+    }
+}

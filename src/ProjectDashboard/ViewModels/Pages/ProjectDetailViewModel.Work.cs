@@ -114,14 +114,21 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        // Preserve the selected file across the rebuild (new instances every parse), so a
-        // refresh triggered by an unrelated op doesn't blank the diff pane and selection.
+        // Preserve the selection across the rebuild (new instances every parse), so a refresh
+        // triggered by an unrelated op doesn't blank the diff pane and selection. Matched by
+        // path, and the whole multi-selection, not only the focused row: a batch the reader
+        // built by hand must survive the refresh that every operation on it triggers.
         var keepStaged = SelectedStagedFile?.Path;
         var keepUnstaged = SelectedUnstagedFile?.Path;
+        var keepStagedSet = SelectedStagedFiles.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
+        var keepUnstagedSet = SelectedUnstagedFiles.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
 
         StagedFiles = new ObservableCollection<WorkingFile>(state.Staged);
         UnstagedFiles = new ObservableCollection<WorkingFile>(state.Unstaged);
         ConflictedFiles = new ObservableCollection<WorkingFile>(state.Conflicted);
+
+        SelectedStagedFiles = StagedFiles.Where(f => keepStagedSet.Contains(f.Path)).ToList();
+        SelectedUnstagedFiles = UnstagedFiles.Where(f => keepUnstagedSet.Contains(f.Path)).ToList();
 
         if (keepStaged is not null)
             SelectedStagedFile = StagedFiles.FirstOrDefault(f => f.Path == keepStaged);
@@ -165,11 +172,16 @@ public partial class ProjectDetailViewModel
     // The hunk gates read the selected row, and the pane still holds the previous file's rows
     // until the read below returns; a row of those names a hunk of the file now selected.
     // The row is dropped as the selection moves, not once the replacement rows arrive.
+    // Focus moving to one side clears the other side's selection outright, not just its
+    // focused row: the actions on that side read its whole selection, and a selection left
+    // highlighted beside a diff of the other side arms a button the reader is not looking at.
     partial void OnSelectedUnstagedFileChanged(WorkingFile? value)
     {
         if (value is not null)
         {
             SelectedStagedFile = null;
+            SelectedStagedFiles = [];
+            if (!SelectedUnstagedFiles.Contains(value)) SelectedUnstagedFiles = [value];
             SelectedDiffLine = null;
             DiffRefresh = ShowDiffAsync(value, staged: false);
         }
@@ -184,6 +196,8 @@ public partial class ProjectDetailViewModel
         if (value is not null)
         {
             SelectedUnstagedFile = null;
+            SelectedUnstagedFiles = [];
+            if (!SelectedStagedFiles.Contains(value)) SelectedStagedFiles = [value];
             SelectedDiffLine = null;
             DiffRefresh = ShowDiffAsync(value, staged: true);
         }
@@ -228,60 +242,43 @@ public partial class ProjectDetailViewModel
     }
 
     [RelayCommand]
-    private async Task StageFile(WorkingFile? file)
-    {
-        if (file is null || IsBusy) return;
-        await RunOp(repo => _gitService.StageAsync(repo, file.Path), "Stage", RepoPath, _generation);
-    }
+    private Task StageFile(WorkingFile? file) =>
+        file is null ? NoFileSelected("stage") : StageFilesAsync([file]);
 
     [RelayCommand]
-    private async Task UnstageFile(WorkingFile? file)
-    {
-        if (file is null || IsBusy) return;
-        await RunOp(repo => _gitService.UnstageAsync(repo, file.Path), "Unstage", RepoPath, _generation);
-    }
+    private Task UnstageFile(WorkingFile? file) =>
+        file is null ? NoFileSelected("unstage") : UnstageFilesAsync([file]);
 
     [RelayCommand]
     private async Task StageAll()
     {
-        if (IsBusy) return;
-        await RunOp(repo => _gitService.StageAllAsync(repo), "Stage all", RepoPath, _generation);
+        if (IsBusy) { SyncStatusText = BusyNotice("Stage all"); return; }
+        var repo = RepoPath;
+        var gen = _generation;
+        if (await RunOp(r => _gitService.StageAllAsync(r), "Stage all", repo, gen) && IsCurrent(gen))
+            OfferUndo("Unstage all", "Unstage all", repo, r => _gitService.UnstageAllAsync(r));
     }
 
     [RelayCommand]
     private async Task UnstageAll()
     {
-        if (IsBusy) return;
-        await RunOp(repo => _gitService.UnstageAllAsync(repo), "Unstage all", RepoPath, _generation);
+        if (IsBusy) { SyncStatusText = BusyNotice("Unstage all"); return; }
+        var repo = RepoPath;
+        var gen = _generation;
+        // "Stage all again", not "undo": `git add -A` restages everything the worktree holds,
+        // which is the previous index only when the index matched the worktree to begin with.
+        if (await RunOp(r => _gitService.UnstageAllAsync(r), "Unstage all", repo, gen) && IsCurrent(gen))
+            OfferUndo("Stage all again", "Stage all", repo, r => _gitService.StageAllAsync(r));
     }
 
     [RelayCommand]
-    private async Task DiscardFile(WorkingFile? file)
-    {
-        if (file is null || IsBusy) return;
-        // Read before the dialog: the confirmation names this repo and this file, and
-        // `git checkout --` is irreversible, so a switch landing while it is open must
-        // not redirect the discard onto the project that takes the screen.
-        var confirmedRepo = RepoPath;
-        var gen = _generation;
-
-        var verb = file.IsUntracked ? "Delete untracked file" : "Discard changes to";
-        var confirmed = await ConfirmAsync("Discard changes?",
-            $"{verb} {file.Path}?\n\nThis cannot be undone.", "Discard");
-        if (!confirmed) return;
-        if (!IsCurrent(gen))
-        {
-            SyncStatusText = ProjectSwitchedNotice("Discard");
-            return;
-        }
-
-        await RunOp(repo => _gitService.DiscardAsync(repo, file), "Discard", confirmedRepo, gen);
-    }
+    private Task DiscardFile(WorkingFile? file) =>
+        file is null ? NoFileSelected("discard") : DiscardFilesAsync([file]);
 
     [RelayCommand]
     private async Task Commit()
     {
-        if (IsBusy) return;
+        if (IsBusy) { SyncStatusText = BusyNotice("Commit"); return; }
         if (string.IsNullOrWhiteSpace(CommitMessage))
         {
             SyncStatusText = "Enter a commit message first.";
@@ -325,30 +322,43 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task Fetch()
     {
-        if (IsBusy) return;
+        if (IsBusy) { SyncStatusText = BusyNotice("Fetch"); return; }
         await RunOp(repo => _gitService.FetchAsync(repo), "Fetch", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task Pull()
     {
-        if (IsBusy) return;
+        if (IsBusy) { SyncStatusText = BusyNotice("Pull"); return; }
         await RunOp(repo => _gitService.PullAsync(repo), "Pull", RepoPath, _generation);
     }
 
     [RelayCommand]
     private async Task Push()
     {
-        if (IsBusy) return;
+        if (IsBusy) { SyncStatusText = BusyNotice("Push"); return; }
         var ok = await RunOp(repo => _gitService.PushAsync(repo), "Push", RepoPath, _generation);
         if (ok) await ReloadCommitsAsync();
     }
 
+    /// <summary>
+    /// Opens the repository in Windows Terminal. The launch is the whole operation, so a
+    /// machine without wt.exe gets the failure in the status line — unhandled, the shell's
+    /// Win32Exception would reach the dispatcher and take the app down.
+    /// </summary>
     [RelayCommand]
     private void OpenRepoInTerminal()
     {
         if (RepoPath.Length == 0) return;
-        Process.Start(new ProcessStartInfo("wt.exe", $"-d \"{RepoPath}\"") { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo("wt.exe", $"-d \"{RepoPath}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"terminal launch failed for {RepoPath}", ex);
+            SyncStatusText = $"Could not open a terminal here: {ex.Message}";
+        }
     }
 
     // ── Branches ────────────────────────────────────────────────────────────
@@ -367,7 +377,8 @@ public partial class ProjectDetailViewModel
     private async Task CreateBranch()
     {
         var name = NewBranchName.Trim();
-        if (name.Length == 0 || IsBusy) return;
+        if (name.Length == 0) { SyncStatusText = "Enter a branch name first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Create branch"); return; }
         var gen = _generation;
         var ok = await RunOp(repo => _gitService.CreateBranchAsync(repo, name), "Create branch",
             RepoPath, gen);
@@ -382,7 +393,9 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task SwitchBranch(BranchInfo? branch)
     {
-        if (branch is null || branch.IsCurrent || IsBusy) return;
+        if (branch is null) { SyncStatusText = "Select a branch first."; return; }
+        if (branch.IsCurrent) { SyncStatusText = $"Already on {branch.Name}."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Switch branch"); return; }
         var ok = await RunOp(repo => _gitService.SwitchBranchAsync(repo, branch.Name), "Switch branch",
             RepoPath, _generation);
         if (ok)
@@ -395,7 +408,8 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task DeleteBranch(BranchInfo? branch)
     {
-        if (branch is null || IsBusy) return;
+        if (branch is null) { SyncStatusText = "Select a branch first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Delete branch"); return; }
         if (branch.IsCurrent)
         {
             SyncStatusText = "Can't delete the current branch — switch away first.";
@@ -441,25 +455,33 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task StashApply(StashEntry? stash)
     {
-        if (stash is null || IsBusy) return;
+        if (stash is null) { SyncStatusText = "Select a stash first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Apply stash"); return; }
         var ok = await RunOp(repo => _gitService.StashApplyAsync(repo, stash.Ref), "Apply stash",
             RepoPath, _generation);
         if (ok) await LoadStashes();
     }
 
+    /// <summary>
+    /// Pops a stash. A pop that fails — a conflict, most often — leaves the entry in place, and
+    /// saying so is the whole recovery: the work is not lost and the list below still holds it.
+    /// </summary>
     [RelayCommand]
     private async Task StashPop(StashEntry? stash)
     {
-        if (stash is null || IsBusy) return;
+        if (stash is null) { SyncStatusText = "Select a stash first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Pop stash"); return; }
         var ok = await RunOp(repo => _gitService.StashPopAsync(repo, stash.Ref), "Pop stash",
-            RepoPath, _generation);
+            RepoPath, _generation,
+            _ => $"{stash.Ref} was kept — resolve the working tree, then apply or drop it from this list.");
         if (ok) await LoadStashes();
     }
 
     [RelayCommand]
     private async Task StashDrop(StashEntry? stash)
     {
-        if (stash is null || IsBusy) return;
+        if (stash is null) { SyncStatusText = "Select a stash first."; return; }
+        if (IsBusy) { SyncStatusText = BusyNotice("Drop stash"); return; }
         // stash@{0} resolves in every repo that has a stash, so a rebind silently drops
         // a different repo's entry — unrecoverable once the reflog entry is gone.
         var confirmedRepo = RepoPath;
@@ -549,8 +571,7 @@ public partial class ProjectDetailViewModel
     private void OpenPullRequest(GitHubPullRequest? pr)
     {
         if (pr is null || Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
-        Process.Start(new ProcessStartInfo($"https://github.com/{Project.GitHubSlug}/pull/{pr.Number}")
-            { UseShellExecute = true });
+        OpenExternal($"https://github.com/{Project.GitHubSlug}/pull/{pr.Number}");
     }
 
     // ── Shared plumbing ─────────────────────────────────────────────────────
@@ -563,6 +584,19 @@ public partial class ProjectDetailViewModel
     /// </summary>
     internal static string ProjectSwitchedNotice(string op) =>
         $"{op} cancelled — the project changed while the dialog was open.";
+
+    /// <summary>
+    /// Says that a sanctioned op never started because the repository was already under one.
+    /// The gate is invisible, so a button that does nothing and says nothing reads as broken.
+    /// </summary>
+    internal static string BusyNotice(string op) =>
+        $"{op} not started — another operation is running on this repository.";
+
+    private Task NoFileSelected(string verb)
+    {
+        SyncStatusText = $"Select a file to {verb} first.";
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.
@@ -590,7 +624,13 @@ public partial class ProjectDetailViewModel
     /// op in both directions, so a rewrite started while an op runs is refused rather than
     /// interleaved.
     /// </summary>
-    private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label, string repo, int gen)
+    /// <param name="advice">
+    /// What the reader can still do about a failure, appended to the failure line. Consulted
+    /// only for an op that ran and failed — never for one refused or suppressed, which changed
+    /// nothing and has nothing to recover from.
+    /// </param>
+    private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label, string repo, int gen,
+        Func<ProcessResult, string?>? advice = null)
     {
         if (!IsCurrent(gen) || IsBusy) return false;
         if (repo.Length == 0) return false;
@@ -605,6 +645,9 @@ public partial class ProjectDetailViewModel
         SyncStatusText = $"{label}…";
         StaleLockRetryVisible = false;
         _staleLockRetryOp = null;
+        // The previous operation's inverse belongs beside the outcome it undid. A new
+        // operation replaces that outcome, so the offer goes with it.
+        ClearUndoOffer();
         try
         {
             var result = await op(repo);
@@ -622,6 +665,8 @@ public partial class ProjectDetailViewModel
                 return false;
             }
             SyncStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
+            if (!result.Success && advice?.Invoke(result) is { Length: > 0 } recovery)
+                SyncStatusText += $" {recovery}";
             if (GitService.IsIndexLockConflict(result))
             {
                 _staleLockRetryOp = op;

@@ -358,6 +358,82 @@ public class GitService
             ? RunAsync(repoPath, ["clean", "-f", "--", LiteralPathspec(file.Path)], ct)
             : RunAsync(repoPath, ["restore", "--", LiteralPathspec(file.Path)], ct);
 
+    public Task<ProcessResult> StageAsync(string repoPath, IReadOnlyList<string> paths, CancellationToken ct = default)
+        => RunPerBatchAsync(repoPath, ["add", "--"], paths, ct);
+
+    public Task<ProcessResult> UnstageAsync(string repoPath, IReadOnlyList<string> paths, CancellationToken ct = default)
+        => RunPerBatchAsync(repoPath, ["restore", "--staged", "--"], paths, ct);
+
+    /// <summary>
+    /// Discards several files at once. Tracked paths are restored before any untracked one is
+    /// deleted: a failed restore then stops the run with nothing removed from disk.
+    /// </summary>
+    public async Task<ProcessResult> DiscardAsync(string repoPath, IReadOnlyList<WorkingFile> files,
+        CancellationToken ct = default)
+    {
+        var tracked = files.Where(f => !f.IsUntracked).Select(f => f.Path).ToList();
+        var untracked = files.Where(f => f.IsUntracked).Select(f => f.Path).ToList();
+
+        var result = NothingToDo;
+        if (tracked.Count > 0)
+        {
+            result = await RunPerBatchAsync(repoPath, ["restore", "--"], tracked, ct);
+            if (!result.Success) return result;
+        }
+        if (untracked.Count > 0)
+            result = await RunPerBatchAsync(repoPath, ["clean", "-f", "--"], untracked, ct);
+        return result;
+    }
+
+    /// <summary>An operation asked to touch no paths at all: nothing ran and nothing failed.</summary>
+    private static readonly ProcessResult NothingToDo = new(0, "", "", TimedOut: false);
+
+    /// <summary>
+    /// Runs <paramref name="prefix"/> once per pathspec batch. Windows composes an argument
+    /// list into one command line with a hard length limit, so a selection of a few hundred
+    /// paths sent as one run fails outright with nothing staged. A batch that fails stops the
+    /// run: a later batch would pile a second change on top of an outcome nobody has seen yet.
+    /// </summary>
+    private async Task<ProcessResult> RunPerBatchAsync(string repoPath, IReadOnlyList<string> prefix,
+        IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        var result = NothingToDo;
+        foreach (var batch in PathspecBatches(paths))
+        {
+            result = await RunAsync(repoPath, [.. prefix, .. batch], ct);
+            if (!result.Success) return result;
+        }
+        return result;
+    }
+
+    /// <summary>Command-line budget for one run's pathspecs, well inside the Windows limit.</summary>
+    private const int PathspecBudget = 24000;
+
+    internal static List<List<string>> PathspecBatches(IEnumerable<string> paths, int budget = PathspecBudget)
+    {
+        var batches = new List<List<string>>();
+        var current = new List<string>();
+        var length = 0;
+
+        foreach (var path in paths)
+        {
+            var spec = LiteralPathspec(path);
+            // A single pathspec over the budget still gets its own run: git's own limit is
+            // what refuses it, rather than this silently dropping the path.
+            if (current.Count > 0 && length + spec.Length + 1 > budget)
+            {
+                batches.Add(current);
+                current = [];
+                length = 0;
+            }
+            current.Add(spec);
+            length += spec.Length + 1;
+        }
+
+        if (current.Count > 0) batches.Add(current);
+        return batches;
+    }
+
     public Task<ProcessResult> CommitAsync(string repoPath, string message, bool amend, CancellationToken ct = default)
     {
         var args = new List<string> { "commit", MessageCleanupPin, "-m", message };

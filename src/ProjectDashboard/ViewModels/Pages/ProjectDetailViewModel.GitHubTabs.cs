@@ -975,10 +975,19 @@ public partial class ProjectDetailViewModel
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
             ? uri.AbsoluteUri : null;
 
-    /// <summary>Overridable so the row commands are reachable without launching a browser.</summary>
+    /// <summary>
+    /// Overridable so the row commands are reachable without launching a browser. Both ways of
+    /// not opening a link report: a refused target and a shell that has no handler for one are
+    /// each invisible otherwise, and an uncaught Process.Start failure would reach the
+    /// dispatcher and take the app down.
+    /// </summary>
     internal virtual void OpenExternal(string url)
     {
-        if (NavigableUrl(url) is not { } target) return;
+        if (NavigableUrl(url) is not { } target)
+        {
+            SyncStatusText = "Not opened — that link is not an http or https address.";
+            return;
+        }
         try
         {
             Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
@@ -986,6 +995,7 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn("could not open an external link", ex);
+            SyncStatusText = $"Could not open {target}: {ex.Message}";
         }
     }
 }

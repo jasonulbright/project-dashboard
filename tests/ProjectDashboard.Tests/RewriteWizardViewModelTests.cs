@@ -1062,7 +1062,7 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.SafetyOverlayHidden);
         await vm.PullCommand.ExecuteAsync(null);
         Assert.Equal(0, await repo.CommitCountAsync() - await repo.CommitCountAsync()); // repo untouched
-        Assert.Equal("", vm.SyncStatusText);
+        Assert.Equal(ProjectDetailViewModel.BusyNotice("Pull"), vm.SyncStatusText);
 
         gate.SetResult();
         await running;
@@ -1104,7 +1104,7 @@ public class RewriteWizardViewModelTests
         Assert.True(vm.IsBusy);
         Assert.True(vm.RewriteRunning);
         await vm.PullCommand.ExecuteAsync(null);
-        Assert.Equal("", vm.SyncStatusText);
+        Assert.Equal(ProjectDetailViewModel.BusyNotice("Pull"), vm.SyncStatusText);
 
         gate.SetResult();
         await running;

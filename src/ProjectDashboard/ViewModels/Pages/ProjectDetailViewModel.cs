@@ -80,15 +80,13 @@ public partial class ProjectDetailViewModel : ObservableObject
     private void OpenCommit(GitCommit? commit)
     {
         if (commit is null || Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
-        var url = $"https://github.com/{Project.GitHubSlug}/commit/{commit.Ref}";
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        OpenExternal($"https://github.com/{Project.GitHubSlug}/commit/{commit.Ref}");
     }
 
     private void OpenIssue(GitHubIssue? issue)
     {
         if (issue is null || Project is null || string.IsNullOrEmpty(Project.GitHubSlug)) return;
-        var url = $"https://github.com/{Project.GitHubSlug}/issues/{issue.Number}";
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        OpenExternal($"https://github.com/{Project.GitHubSlug}/issues/{issue.Number}");
     }
 
     partial void OnNotesChanged(string value) => ParseNoteLines();
@@ -182,6 +180,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         ConflictedFiles = [];
         SelectedStagedFile = null;
         SelectedUnstagedFile = null;
+        SelectedStagedFiles = [];
+        SelectedUnstagedFiles = [];
         DiffLines = [];
         DiffTitle = "";
         DiffIsBinary = false;
@@ -196,6 +196,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         StaleLockRetryVisible = false;
         _staleLockRetryOp = null;
         _staleLockRetryRepo = "";
+        // The inverse belongs to the previous project's operation; left standing it would
+        // offer to unstage in a repository that never staged anything.
+        ClearUndoOffer();
         BranchLabel = "";
         AheadBehindLabel = "";
         Branches = [];
@@ -250,7 +253,14 @@ public partial class ProjectDetailViewModel : ObservableObject
         WorkingStateRefresh = SafeRefreshWorkingStateAsync();
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
+        // Every reload builds fresh commit objects, so a selection held by reference is lost.
+        // A reload of the SAME repository re-selects by sha; a commit the reload no longer
+        // lists has none to match, and the selection clearing is the honest outcome.
+        var selectedSha = SelectedCommit?.Ref;
         Commits = new ObservableCollection<GitCommit>(p.RecentCommits ?? []);
+        if (selectedSha is not null)
+            SelectedCommit = Commits.FirstOrDefault(
+                c => string.Equals(c.Ref, selectedSha, StringComparison.OrdinalIgnoreCase));
         // The seeded list is whatever the last scan cached, so its depth is unknown here.
         // The first page load reads the answer from git with one commit of overlap.
         HistoryHasMore = Commits.Count > 0;

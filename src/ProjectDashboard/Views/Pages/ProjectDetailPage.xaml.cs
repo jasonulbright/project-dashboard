@@ -58,6 +58,17 @@ public partial class ProjectDetailPage
             case nameof(ProjectDetailViewModel.SelectedRelease):
                 RenderReleaseNotes();
                 break;
+            case nameof(ProjectDetailViewModel.SelectedUnstagedFiles):
+                RestoreListSelection(UnstagedList, _viewModel.SelectedUnstagedFiles);
+                RestoreListFocus(UnstagedList);
+                break;
+            case nameof(ProjectDetailViewModel.SelectedStagedFiles):
+                RestoreListSelection(StagedList, _viewModel.SelectedStagedFiles);
+                RestoreListFocus(StagedList);
+                break;
+            case nameof(ProjectDetailViewModel.Commits):
+                RestoreListFocus(HistoryList);
+                break;
         }
     }
 
@@ -1327,7 +1338,88 @@ public partial class ProjectDetailPage
     private void OnListRightButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not ListBox list || e.OriginalSource is not DependencyObject source) return;
-        if (ItemsControl.ContainerFromElement(list, source) is ListBoxItem item) item.IsSelected = true;
+        if (ItemsControl.ContainerFromElement(list, source) is not ListBoxItem item) return;
+
+        // A multi-selection survives a right-click inside it and is replaced by one outside it,
+        // as everywhere else in Windows: the menu's commands act on the whole selection, so the
+        // rows highlighted when it opens have to be the rows it will touch.
+        if (!item.IsSelected && list.SelectionMode != SelectionMode.Single) list.SelectedItems.Clear();
+        item.IsSelected = true;
+    }
+
+    /// <summary>
+    /// The two directions of one selection. WPF owns the selection a reader makes with the
+    /// mouse and the keyboard; the view model owns the one it restores after a refresh, by
+    /// path. Each direction runs with the other suppressed, so restoring a selection cannot
+    /// re-enter as a fresh user selection and collapse it to a single row.
+    /// </summary>
+    private bool _syncingFileSelection;
+
+    private void OnUnstagedSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        PushSelection(sender, e, _viewModel.SetUnstagedSelection);
+
+    private void OnStagedSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        PushSelection(sender, e, _viewModel.SetStagedSelection);
+
+    private void PushSelection(object sender, SelectionChangedEventArgs e,
+        Action<IReadOnlyList<Models.WorkingFile>, Models.WorkingFile?> apply)
+    {
+        if (_syncingFileSelection || sender is not ListBox list) return;
+        _syncingFileSelection = true;
+        try
+        {
+            // The last row added is the one the reader just clicked or arrowed onto — which is
+            // not SelectedItem in an extended selection, where that stays the first row.
+            apply(list.SelectedItems.Cast<Models.WorkingFile>().ToList(),
+                e.AddedItems.OfType<Models.WorkingFile>().LastOrDefault());
+        }
+        finally { _syncingFileSelection = false; }
+    }
+
+    /// <summary>
+    /// Puts the view model's selection back onto a list whose items were just replaced. The
+    /// rebuild drops every container, so without this a refresh triggered by any operation
+    /// clears a selection the view model still holds — and the buttons then act on rows the
+    /// list no longer shows as selected.
+    /// </summary>
+    private void RestoreListSelection(ListBox list, IReadOnlyList<Models.WorkingFile> wanted)
+    {
+        if (_syncingFileSelection) return;
+        _syncingFileSelection = true;
+        try
+        {
+            list.SelectedItems.Clear();
+            foreach (var file in wanted) list.SelectedItems.Add(file);
+        }
+        finally { _syncingFileSelection = false; }
+    }
+
+    /// <summary>
+    /// The work list the reader was last inside. A full refresh replaces the list's items and
+    /// destroys the container focus was on, leaving focus on the list itself with no current
+    /// row — so the next arrow key starts from the top instead of from where the reader was.
+    /// </summary>
+    private ListBox? _lastFocusedWorkList;
+
+    private void OnWorkListGotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is ListBox list) _lastFocusedWorkList = list;
+    }
+
+    /// <summary>
+    /// Puts focus back on the re-selected row of the list the reader was in. The container for
+    /// that row exists only once the generator has run over the replaced items, which is after
+    /// this notification — hence the second pass, which re-tests everything the first did.
+    /// </summary>
+    private void RestoreListFocus(ListBox list)
+    {
+        if (!Helpers.ListFocusRestore.Wanted(list, _lastFocusedWorkList, Keyboard.FocusedElement, this)) return;
+
+        _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
+        {
+            if (Helpers.ListFocusRestore.Wanted(list, _lastFocusedWorkList, Keyboard.FocusedElement, this))
+                Helpers.ListFocusRestore.Apply(list);
+        });
     }
 
     /// <summary>

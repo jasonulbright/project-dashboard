@@ -384,6 +384,13 @@
                                VerticalAlignment="Center"
                                Visibility="{Binding StaleLockRetryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                Command="{Binding RemoveStaleLockAndRetryCommand}" />
+                    <!-- The inverse of what just finished, beside the line reporting it. Only
+                         reversible operations put one here. -->
+                    <ui:Button Content="{Binding UndoOfferLabel}" FontSize="12" Padding="10,4" Margin="10,0,0,0"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding UndoOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               Command="{Binding RunUndoOfferCommand}"
+                               AutomationProperties.Name="Reverse the operation that just finished" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                     <ui:Button Content="Fetch" FontSize="12" Padding="10,4" Margin="0,0,6,0"
@@ -664,8 +671,12 @@
                                                FontSize="11" Padding="8,2"
                                                Command="{Binding StageAllCommand}" />
                                 </DockPanel>
-                                <ListBox Grid.Row="1" ItemsSource="{Binding UnstagedFiles}"
-                                         SelectedItem="{Binding SelectedUnstagedFile}"
+                                <!-- Extended selection: the actions below read every selected
+                                     row, and the diff pane follows the one just clicked. -->
+                                <ListBox x:Name="UnstagedList" Grid.Row="1" ItemsSource="{Binding UnstagedFiles}"
+                                         SelectionMode="Extended"
+                                         SelectionChanged="OnUnstagedSelectionChanged"
+                                         GotKeyboardFocus="OnWorkListGotKeyboardFocus"
                                          ItemTemplate="{StaticResource WorkingFileTemplate}"
                                          Background="Transparent" BorderThickness="0"
                                          PreviewMouseRightButtonDown="OnListRightButtonDown"
@@ -673,6 +684,13 @@
                                     <ListBox.ContextMenu>
                                         <ContextMenu ToolTipService.ShowOnDisabled="True"
                                                      AutomationProperties.Name="Unstaged file actions">
+                                            <MenuItem Header="Stage selected"
+                                                      Command="{Binding StageSelectedCommand}"
+                                                      AutomationProperties.Name="Stage every selected file" />
+                                            <MenuItem Header="Discard selected…"
+                                                      Command="{Binding DiscardSelectedCommand}"
+                                                      AutomationProperties.Name="Discard every selected file" />
+                                            <Separator />
                                             <MenuItem Header="History and blame for this file…"
                                                       Command="{Binding OpenFileHistoryCommand}"
                                                       CommandParameter="{Binding SelectedUnstagedFile.Path}"
@@ -682,11 +700,11 @@
                                 </ListBox>
                                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                                     <ui:Button Content="Stage" FontSize="11" Padding="8,2" Margin="0,0,6,0"
-                                               Command="{Binding StageFileCommand}"
-                                               CommandParameter="{Binding SelectedUnstagedFile}" />
+                                               Command="{Binding StageSelectedCommand}"
+                                               AutomationProperties.Name="Stage every selected file" />
                                     <ui:Button Content="Discard" FontSize="11" Padding="8,2"
-                                               Command="{Binding DiscardFileCommand}"
-                                               CommandParameter="{Binding SelectedUnstagedFile}" />
+                                               Command="{Binding DiscardSelectedCommand}"
+                                               AutomationProperties.Name="Discard every selected file" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -708,8 +726,10 @@
                                                FontSize="11" Padding="8,2"
                                                Command="{Binding UnstageAllCommand}" />
                                 </DockPanel>
-                                <ListBox Grid.Row="1" ItemsSource="{Binding StagedFiles}"
-                                         SelectedItem="{Binding SelectedStagedFile}"
+                                <ListBox x:Name="StagedList" Grid.Row="1" ItemsSource="{Binding StagedFiles}"
+                                         SelectionMode="Extended"
+                                         SelectionChanged="OnStagedSelectionChanged"
+                                         GotKeyboardFocus="OnWorkListGotKeyboardFocus"
                                          ItemTemplate="{StaticResource StagedFileTemplate}"
                                          Background="Transparent" BorderThickness="0"
                                          PreviewMouseRightButtonDown="OnListRightButtonDown"
@@ -717,6 +737,10 @@
                                     <ListBox.ContextMenu>
                                         <ContextMenu ToolTipService.ShowOnDisabled="True"
                                                      AutomationProperties.Name="Staged file actions">
+                                            <MenuItem Header="Unstage selected"
+                                                      Command="{Binding UnstageSelectedCommand}"
+                                                      AutomationProperties.Name="Unstage every selected file" />
+                                            <Separator />
                                             <MenuItem Header="History and blame for this file…"
                                                       Command="{Binding OpenFileHistoryCommand}"
                                                       CommandParameter="{Binding SelectedStagedFile.Path}"
@@ -726,8 +750,8 @@
                                 </ListBox>
                                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                                     <ui:Button Content="Unstage" FontSize="11" Padding="8,2"
-                                               Command="{Binding UnstageFileCommand}"
-                                               CommandParameter="{Binding SelectedStagedFile}" />
+                                               Command="{Binding UnstageSelectedCommand}"
+                                               AutomationProperties.Name="Unstage every selected file" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -745,6 +769,58 @@
                                         <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding CommitCommand}" />
                                     </ui:TextBox.InputBindings>
                                 </ui:TextBox>
+                                <!-- Guidance, not enforcement: git accepts every message this
+                                     counts, so the numbers only report what the reader typed. -->
+                                <DockPanel Margin="0,6,0,0">
+                                    <ComboBox DockPanel.Dock="Right" Width="150" FontSize="11"
+                                              ItemsSource="{Binding RecentSubjects}"
+                                              SelectedItem="{Binding SelectedRecentSubject}"
+                                              ToolTip="Reuse a subject from this repository's loaded history"
+                                              AutomationProperties.Name="Recent commit subjects">
+                                        <ComboBox.Style>
+                                            <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding RecentSubjects.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ComboBox.Style>
+                                    </ComboBox>
+                                    <TextBlock Text="{Binding CommitGuide.CounterText}" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               AutomationProperties.Name="Commit message length">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground"
+                                                        Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding CommitGuide.SubjectOverLimit}" Value="True">
+                                                        <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding CommitGuide.BodyOverLimit}" Value="True">
+                                                        <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </DockPanel>
+
+                                <TextBlock Text="{Binding CommitGuide.Warning}" FontSize="11" Margin="0,4,0,0"
+                                           TextWrapping="Wrap" Foreground="{StaticResource StatusWarnFg}"
+                                           AutomationProperties.Name="Commit message warning">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CommitGuide.HasWarning}" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
                                 <DockPanel Margin="0,8,0,0">
                                     <CheckBox DockPanel.Dock="Left" Content="Amend last commit" FontSize="12"
                                               IsChecked="{Binding AmendMode}" />
@@ -955,9 +1031,10 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="Commits" Style="{StaticResource PaneHeader}" />
-                            <ListBox Grid.Row="1" ItemsSource="{Binding Commits}"
+                            <ListBox x:Name="HistoryList" Grid.Row="1" ItemsSource="{Binding Commits}"
                                      SelectedItem="{Binding SelectedCommit}"
                                      Background="Transparent" BorderThickness="0"
+                                     GotKeyboardFocus="OnWorkListGotKeyboardFocus"
                                      PreviewMouseRightButtonDown="OnListRightButtonDown"
                                      AutomationProperties.Name="Commit history">
                                 <ListBox.ContextMenu>

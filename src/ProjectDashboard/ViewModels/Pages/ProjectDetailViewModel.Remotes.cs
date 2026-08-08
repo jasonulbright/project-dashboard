@@ -150,7 +150,8 @@ public partial class ProjectDetailViewModel
         var url = NewRemoteUrl.Trim();
         var repo = RepoPath;
         var gen = _generation;
-        if (repo.Length == 0 || IsBusy) return;
+        if (repo.Length == 0) return;
+        if (IsBusy) { RemotesErrorText = BusyNotice("Add remote"); return; }
 
         if (!GitService.IsPlausibleRemoteUrl(url))
         {
@@ -430,7 +431,8 @@ public partial class ProjectDetailViewModel
         var name = BranchRenameTo.Trim();
         var repo = RepoPath;
         var gen = _generation;
-        if (branch is null || name.Length == 0 || repo.Length == 0 || IsBusy) return;
+        if (branch is null || name.Length == 0 || repo.Length == 0) return;
+        if (IsBusy) { BranchExtrasErrorText = BusyNotice("Branch rename"); return; }
         if (string.Equals(name, branch.Name, StringComparison.Ordinal)) return;
 
         if (!await _gitService.IsValidBranchNameAsync(repo, name))
@@ -466,7 +468,8 @@ public partial class ProjectDetailViewModel
         var upstream = SelectedUpstreamChoice;
         var repo = RepoPath;
         var gen = _generation;
-        if (branch is null || upstream is null || repo.Length == 0 || IsBusy) return;
+        if (branch is null || upstream is null || repo.Length == 0) return;
+        if (IsBusy) { BranchExtrasErrorText = BusyNotice("Upstream change"); return; }
 
         BranchExtrasErrorText = "";
         var ok = await RunOp(r => _gitService.SetUpstreamAsync(r, branch.Name, upstream),
@@ -489,7 +492,8 @@ public partial class ProjectDetailViewModel
         var branch = SelectedBranch;
         var repo = RepoPath;
         var gen = _generation;
-        if (branch is null || repo.Length == 0 || IsBusy) return;
+        if (branch is null || repo.Length == 0) return;
+        if (IsBusy) { BranchExtrasErrorText = BusyNotice("Upstream change"); return; }
         if (branch.Upstream.Length == 0)
         {
             BranchExtrasStatusText = $"{branch.Name} has no upstream to clear.";

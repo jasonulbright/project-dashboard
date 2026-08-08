@@ -156,7 +156,8 @@ public partial class ProjectDetailViewModel
         var branch = NewWorktreeBranch.Trim();
         var repo = RepoPath;
         var gen = _generation;
-        if (repo.Length == 0 || IsBusy) return;
+        if (repo.Length == 0) return;
+        if (IsBusy) { WorktreesErrorText = BusyNotice("Add worktree"); return; }
 
         if (path.Length == 0)
         {
@@ -285,7 +286,8 @@ public partial class ProjectDetailViewModel
     {
         var repo = RepoPath;
         var gen = _generation;
-        if (repo.Length == 0 || IsBusy) return;
+        if (repo.Length == 0) return;
+        if (IsBusy) { WorktreesErrorText = BusyNotice("Prune worktrees"); return; }
 
         var prunable = Worktrees.Count(w => w.Entry.IsPrunable);
         var confirmed = await ConfirmPrompt("Clear the stale worktree entries?",
