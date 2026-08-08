@@ -75,6 +75,133 @@
             </Setter>
         </Style>
 
+        <!-- Side-by-side row: old cell | new cell, or a header spanning both. Cell colour is
+             per side here rather than per row, because one row carries both sides. -->
+        <SolidColorBrush x:Key="DiffRemovedCellBg" Color="#1EE05252" />
+        <SolidColorBrush x:Key="DiffAddedCellBg" Color="#1E3FB950" />
+        <SolidColorBrush x:Key="DiffRemovedWordBg" Color="#4CE05252" />
+        <SolidColorBrush x:Key="DiffAddedWordBg" Color="#4C3FB950" />
+        <SolidColorBrush x:Key="DiffAbsentCellBg" Color="#0D808080" />
+
+        <!-- A header row spans both sides, so neither gutter names a line on it. -->
+        <Style x:Key="DiffGutterNumber" TargetType="TextBlock">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <DataTemplate x:Key="SideBySideRowTemplate" DataType="{x:Type models:SideBySideRow}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="42" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="DiffOldText" />
+                    <ColumnDefinition Width="42" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="DiffNewText" />
+                </Grid.ColumnDefinitions>
+
+                <!-- A hunk header, a mode line, or the untracked-preview note: one statement
+                     about the file, not a line of either side of it. -->
+                <TextBlock Grid.Column="0" Grid.ColumnSpan="4" Text="{Binding HeaderText}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
+                           Background="{StaticResource StatusInfoBg}"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Visibility="{Binding IsHeader, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                <TextBlock Grid.Column="0" Text="{Binding LeftNumber}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="11"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                           HorizontalAlignment="Right" Margin="0,0,8,0"
+                           Style="{StaticResource DiffGutterNumber}" />
+                <Border Grid.Column="1" MinWidth="120">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding LeftRemoved}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource DiffRemovedCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding LeftAbsent}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource DiffAbsentCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               helpers:InlineSegments.HighlightBrush="{StaticResource DiffRemovedWordBg}"
+                               helpers:InlineSegments.Segments="{Binding LeftSegments}" />
+                </Border>
+
+                <TextBlock Grid.Column="2" Text="{Binding RightNumber}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="11"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                           HorizontalAlignment="Right" Margin="10,0,8,0"
+                           Style="{StaticResource DiffGutterNumber}" />
+                <Border Grid.Column="3" MinWidth="120" BorderThickness="1,0,0,0"
+                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding RightAdded}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource DiffAddedCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding RightAbsent}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource DiffAbsentCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
+                               Margin="4,0,0,0"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               helpers:InlineSegments.HighlightBrush="{StaticResource DiffAddedWordBg}"
+                               helpers:InlineSegments.Segments="{Binding RightSegments}" />
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Long lines scroll rather than wrap, as in the unified pane: a wrapped cell would
+             put the two sides' line numbers out of step with each other. -->
+        <Style x:Key="SideBySideListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Grid.IsSharedSizeScope" Value="True" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <Setter Property="ItemTemplate" Value="{StaticResource SideBySideRowTemplate}" />
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="4,0" />
+                        <Setter Property="MinHeight" Value="18" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}"
+                                            BorderThickness="2,0,0,0" BorderBrush="Transparent">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource StatusInfoFg}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Working-file row -->
         <DataTemplate x:Key="WorkingFileTemplate" DataType="{x:Type models:WorkingFile}">
             <DockPanel>
@@ -660,6 +787,13 @@
                                            Command="{Binding DiscardHunkCommand}"
                                            ToolTip="{Binding DiscardHunkBlockedReason}"
                                            AutomationProperties.Name="Discard the selected hunk" />
+                                <!-- The layout is a rendering of the rows already loaded, so the
+                                     toggle costs no git call and keeps the selected hunk. -->
+                                <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                           Content="{Binding DiffLayoutLabel}" FontSize="11" Padding="8,2"
+                                           Command="{Binding ToggleDiffLayoutCommand}"
+                                           ToolTip="Switch between the unified and two-column renderings of this diff"
+                                           AutomationProperties.Name="Switch the diff layout" />
                                 <TextBlock Margin="12,0,0,0" FontSize="11" VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
@@ -674,10 +808,40 @@
                             <ListBox x:Name="WorkingDiffRows" Grid.Row="2" ItemsSource="{Binding DiffLines}"
                                      SelectedItem="{Binding SelectedDiffLine}"
                                      Style="{StaticResource DiffListStyle}"
+                                     Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}"
                                      SelectionChanged="OnWorkingDiffSelectionChanged"
                                      MouseDoubleClick="OnWorkingDiffDoubleClick"
                                      PreviewMouseRightButtonDown="OnListRightButtonDown"
                                      AutomationProperties.Name="File diff">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu ToolTipService.ShowOnDisabled="True"
+                                                 AutomationProperties.Name="Hunk actions">
+                                        <MenuItem Header="Stage this hunk"
+                                                  Command="{Binding StageHunkCommand}"
+                                                  ToolTip="{Binding StageHunkBlockedReason}"
+                                                  AutomationProperties.Name="Stage the selected hunk" />
+                                        <MenuItem Header="Unstage this hunk"
+                                                  Command="{Binding UnstageHunkCommand}"
+                                                  ToolTip="{Binding UnstageHunkBlockedReason}"
+                                                  AutomationProperties.Name="Unstage the selected hunk" />
+                                        <MenuItem Header="Discard this hunk…"
+                                                  Command="{Binding DiscardHunkCommand}"
+                                                  ToolTip="{Binding DiscardHunkBlockedReason}"
+                                                  AutomationProperties.Name="Discard the selected hunk" />
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                            </ListBox>
+
+                            <!-- Same rows, same hunk indexes, same selection: the two panes are
+                                 one diff rendered two ways, and only one of them is up. -->
+                            <ListBox x:Name="WorkingDiffColumns" Grid.Row="2" ItemsSource="{Binding DiffRows}"
+                                     SelectedItem="{Binding SelectedDiffRow}"
+                                     Style="{StaticResource SideBySideListStyle}"
+                                     Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                     SelectionChanged="OnWorkingDiffSelectionChanged"
+                                     MouseDoubleClick="OnWorkingDiffDoubleClick"
+                                     PreviewMouseRightButtonDown="OnListRightButtonDown"
+                                     AutomationProperties.Name="File diff, side by side">
                                 <ListBox.ContextMenu>
                                     <ContextMenu ToolTipService.ShowOnDisabled="True"
                                                  AutomationProperties.Name="Hunk actions">
@@ -999,7 +1163,12 @@
                                        Style="{StaticResource PaneHeader}" FontFamily="Cascadia Code,Consolas" />
                             <ListBox Grid.Row="1" ItemsSource="{Binding CommitDiffLines}"
                                      Style="{StaticResource DiffListStyle}"
+                                     Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}"
                                      AutomationProperties.Name="Commit diff" />
+                            <ListBox Grid.Row="1" ItemsSource="{Binding CommitDiffRows}"
+                                     Style="{StaticResource SideBySideListStyle}"
+                                     Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                     AutomationProperties.Name="Commit diff, side by side" />
                         </Grid>
                     </Border>
                 </Grid>

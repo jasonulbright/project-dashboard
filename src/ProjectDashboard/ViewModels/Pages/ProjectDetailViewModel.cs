@@ -66,6 +66,11 @@ public partial class ProjectDetailViewModel : ObservableObject
         ConfirmPrompt = ConfirmAsync;
         ConfirmSurgeryAsync = c => ConfirmAsync(c.Title, c.Message, c.ConfirmLabel);
 
+        // The page outlives every settings write, so the layout is re-derived from the one
+        // notification path rather than read once here and held until relaunch.
+        RefreshDiffLayout();
+        if (_settingsService is not null) _settingsService.Changed += OnSettingsChangedForDiffLayout;
+
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);
         OpenCommitCommand = new RelayCommand<GitCommit>(OpenCommit);

@@ -43,6 +43,13 @@ public static class SettingsDelta
         || change.Previous.EnableGitHubDiscovery != change.Current.EnableGitHubDiscovery
         || !PathsEqual(change.Previous.GhPath.Trim(), change.Current.GhPath.Trim());
 
+    /// <summary>
+    /// The diff pane's layout. The pane caches the rendering it is showing, so a write from
+    /// another surface has to reach it — nothing else re-reads the value.
+    /// </summary>
+    public static bool DiffLayoutChanged(SettingsChange change) =>
+        change.Previous.DiffSideBySide != change.Current.DiffSideBySide;
+
     /// <summary>Card ordering and density: a re-read of the grid's preferences, no re-scan.</summary>
     public static bool ViewPreferencesChanged(SettingsChange change) =>
         !string.Equals(change.Previous.CardDensity, change.Current.CardDensity, StringComparison.OrdinalIgnoreCase)

@@ -33,6 +33,9 @@ public sealed class AppSettings
     /// <summary>Card density: "compact" tightens padding and minimum height; anything else is comfortable.</summary>
     public string CardDensity { get; set; } = "comfortable";
 
+    /// <summary>Render diffs in two columns rather than as one unified list (X-01).</summary>
+    public bool DiffSideBySide { get; set; }
+
     /// <summary>
     /// Saved window rect in device pixels. Null in a settings file written before this
     /// field existed, where the per-monitor DIP fields below hold the rect instead.
