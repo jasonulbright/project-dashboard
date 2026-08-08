@@ -828,10 +828,11 @@ public partial class ProjectDetailViewModel
         Func<RebaseConflictPolicy, Task<SurgeryResult>> operate,
         bool retryable)
     {
-        // A backup is handed back for every gated call, refusals included. Restoring one ends in
-        // a hard reset, so offering it where nothing moved can only discard uncommitted work.
-        // The service's own claim is the discriminator: a failure it could not classify carries
-        // neither git-level result and is exactly the case the undo exists for.
+        // Every gate refusal returns before the backup step, so a refusal carries no undo at all.
+        // Where one is handed back, restoring it ends in a hard reset, so offering it for an
+        // outcome that proves nothing moved can only discard uncommitted work. The service's own
+        // claim is the discriminator: a failure it could not classify carries neither git-level
+        // result and is exactly the case the undo exists for.
         if (result.Undo is not null && !result.RepositoryUntouched)
         {
             _surgeryUndo = result.Undo;
