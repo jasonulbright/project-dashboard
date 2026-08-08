@@ -48,9 +48,14 @@ public class GitHubArgBuilderTests
         Assert.Equal(["pr", "merge", "1", "--repo", "o/r", flag], args);
     }
 
+    /// <summary>
+    /// An unmapped token builds nothing, and the mutation turns that into a failed result
+    /// rather than a throw: a mutation is the one place a throw escapes the callers'
+    /// result handling and unwinds the busy gate through an exception path.
+    /// </summary>
     [Fact]
-    public void Merge_UnknownStrategy_Throws()
-        => Assert.Throws<ArgumentException>(() => GitHubService.BuildMergeArgs("o/r", 1, "octopus", false));
+    public void Merge_UnknownStrategy_BuildsNothing()
+        => Assert.Null(GitHubService.BuildMergeArgs("o/r", 1, "octopus", false));
 
     [Theory]
     [InlineData("approve", "--approve")]
@@ -72,8 +77,8 @@ public class GitHubArgBuilderTests
     }
 
     [Fact]
-    public void Review_UnknownAction_Throws()
-        => Assert.Throws<ArgumentException>(() => GitHubService.BuildReviewArgs("o/r", 9, "dismiss", ""));
+    public void Review_UnknownAction_BuildsNothing()
+        => Assert.Null(GitHubService.BuildReviewArgs("o/r", 9, "dismiss", ""));
 
     [Fact]
     public void CreatePullRequest_BaseOmittedWhenNull()
@@ -161,8 +166,8 @@ public class GitHubArgBuilderTests
     [InlineData("Public")]
     [InlineData("secret")]
     [InlineData("")]
-    public void Visibility_UnknownValue_Throws(string visibility)
-        => Assert.Throws<ArgumentException>(() => GitHubService.BuildVisibilityArgs("o/r", visibility));
+    public void Visibility_UnknownValue_BuildsNothing(string visibility)
+        => Assert.Null(GitHubService.BuildVisibilityArgs("o/r", visibility));
 
     [Fact]
     public void RepoEdit_NullMeansOmit_EmptyMeansClear()
@@ -203,10 +208,10 @@ public class GitHubArgBuilderTests
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public void DefaultBranch_BlankValue_Throws(string branch)
+    public void DefaultBranch_BlankValue_BuildsNothing(string branch)
     {
         // A blank flag argument makes gh consume the next token instead of failing.
-        Assert.Throws<ArgumentException>(() => GitHubService.BuildDefaultBranchArgs("o/r", branch));
+        Assert.Null(GitHubService.BuildDefaultBranchArgs("o/r", branch));
     }
 
     [Fact]
@@ -259,10 +264,10 @@ public class GitHubArgBuilderTests
     [InlineData("../../repos/o/r")]
     [InlineData("123abc")]
     [InlineData(" 123")]
-    public void MarkNotificationRead_NonDigitThreadId_Throws(string threadId)
+    public void MarkNotificationRead_NonDigitThreadId_BuildsNothing(string threadId)
     {
         // The id lands inside a REST path; anything else could address another endpoint.
-        Assert.Throws<ArgumentException>(() => GitHubService.BuildMarkNotificationReadArgs(threadId));
+        Assert.Null(GitHubService.BuildMarkNotificationReadArgs(threadId));
     }
 
     [Fact]
@@ -362,6 +367,34 @@ public class GitHubArgBuilderTests
     [InlineData("gh auth refresh -h github.com -s DELETE_REPO")]
     public void DeleteFailure_NamingTheScope_IsAScopeProblem(string error)
         => Assert.True(GitHubService.NeedsDeleteRepoScope(error));
+
+    /// <summary>
+    /// Every mutation whose argument builder can refuse a token comes back as a failed
+    /// result naming the token, never as an exception. A throw here is the one failure a
+    /// caller's result handling does not cover, and nothing spawns: the refusal lands
+    /// before gh is resolved, so this runs with no GitHub CLI present.
+    /// </summary>
+    [Fact]
+    public async Task AnUnmappedToken_ComesBackAsAFailedResult_AndSpawnsNothing()
+    {
+        var gh = new GitHubService(new SettingsService());
+
+        foreach (var (mutation, expected) in new (Func<Task<ProcessResult>>, string)[]
+                 {
+                     (() => gh.MergePullRequestAsync("o/r", 1, "octopus"), "octopus"),
+                     (() => gh.ReviewPullRequestAsync("o/r", 1, "dismiss"), "dismiss"),
+                     (() => gh.SetRepoVisibilityAsync("o/r", "secret"), "secret"),
+                     (() => gh.SetDefaultBranchAsync("o/r", "   "), "blank"),
+                     (() => gh.MarkNotificationReadAsync("../../repos/o/r"), "notification id"),
+                 })
+        {
+            var result = await mutation();
+
+            Assert.False(result.Success);
+            Assert.False(result.TimedOut);
+            Assert.Contains(expected, result.FirstError);
+        }
+    }
 }
 
 /// <summary>

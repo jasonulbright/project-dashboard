@@ -636,17 +636,22 @@ public class GitHubService(SettingsService settingsService)
 
     /// <summary>Marks one thread read. Never automatic — the caller acts on an explicit request.</summary>
     public Task<ProcessResult> MarkNotificationReadAsync(string threadId, CancellationToken ct = default)
-        => RunMutationAsync($"gh api PATCH notifications/threads/{threadId}",
-            BuildMarkNotificationReadArgs(threadId), ct: ct);
-
-    internal static List<string> BuildMarkNotificationReadArgs(string threadId)
     {
-        // The id lands inside a REST path; anything but digits could address a
-        // different endpoint entirely.
-        if (threadId.Length == 0 || !threadId.All(char.IsAsciiDigit))
-            throw new ArgumentException($"thread id '{threadId}' is not a notification id", nameof(threadId));
-        return ["api", "--method", "PATCH", $"notifications/threads/{threadId}"];
+        var what = $"gh api PATCH notifications/threads/{threadId}";
+        return BuildMarkNotificationReadArgs(threadId) is { } args
+            ? RunMutationAsync(what, args, ct: ct)
+            : Task.FromResult(Refused(what, $"thread id '{threadId}' is not a notification id"));
     }
+
+    /// <summary>
+    /// Null for anything but digits: the id lands inside a REST path, where any other
+    /// character could address a different endpoint entirely. The id comes off a gh
+    /// payload, so this is a value the app can actually be handed.
+    /// </summary>
+    internal static List<string>? BuildMarkNotificationReadArgs(string threadId) =>
+        threadId.Length > 0 && threadId.All(char.IsAsciiDigit)
+            ? ["api", "--method", "PATCH", $"notifications/threads/{threadId}"]
+            : null;
 
     /// <summary>Marks every thread on one repo read.</summary>
     public Task<ProcessResult> MarkRepoNotificationsReadAsync(string repoSlug, CancellationToken ct = default)
@@ -959,18 +964,24 @@ public class GitHubService(SettingsService settingsService)
 
     public Task<ProcessResult> MergePullRequestAsync(string repoSlug, int number, string strategy,
         bool deleteBranch = false, CancellationToken ct = default)
-        => RunMutationAsync($"gh pr merge #{number} ({repoSlug})",
-            BuildMergeArgs(repoSlug, number, strategy, deleteBranch), ct: ct);
+    {
+        var what = $"gh pr merge #{number} ({repoSlug})";
+        return BuildMergeArgs(repoSlug, number, strategy, deleteBranch) is { } args
+            ? RunMutationAsync(what, args, ct: ct)
+            : Task.FromResult(Refused(what, $"unknown merge strategy '{strategy}'"));
+    }
 
-    internal static List<string> BuildMergeArgs(string repoSlug, int number, string strategy, bool deleteBranch)
+    /// <summary>Null when <paramref name="strategy"/> is not a gh merge token.</summary>
+    internal static List<string>? BuildMergeArgs(string repoSlug, int number, string strategy, bool deleteBranch)
     {
         var flag = strategy switch
         {
             "merge" => "--merge",
             "squash" => "--squash",
             "rebase" => "--rebase",
-            _ => throw new ArgumentException($"unknown merge strategy '{strategy}'", nameof(strategy))
+            _ => null
         };
+        if (flag is null) return null;
         var args = new List<string> { "pr", "merge", number.ToString(), "--repo", repoSlug, flag };
         if (deleteBranch) args.Add("--delete-branch");
         return args;
@@ -987,18 +998,24 @@ public class GitHubService(SettingsService settingsService)
     /// </summary>
     public Task<ProcessResult> ReviewPullRequestAsync(string repoSlug, int number, string action,
         string body = "", CancellationToken ct = default)
-        => RunMutationAsync($"gh pr review #{number} ({repoSlug})",
-            BuildReviewArgs(repoSlug, number, action, body), ct: ct);
+    {
+        var what = $"gh pr review #{number} ({repoSlug})";
+        return BuildReviewArgs(repoSlug, number, action, body) is { } args
+            ? RunMutationAsync(what, args, ct: ct)
+            : Task.FromResult(Refused(what, $"unknown review action '{action}'"));
+    }
 
-    internal static List<string> BuildReviewArgs(string repoSlug, int number, string action, string body)
+    /// <summary>Null when <paramref name="action"/> is not a gh review token.</summary>
+    internal static List<string>? BuildReviewArgs(string repoSlug, int number, string action, string body)
     {
         var flag = action switch
         {
             "approve" => "--approve",
             "requestChanges" or "request-changes" => "--request-changes",
             "comment" => "--comment",
-            _ => throw new ArgumentException($"unknown review action '{action}'", nameof(action))
+            _ => null
         };
+        if (flag is null) return null;
         var args = new List<string> { "pr", "review", number.ToString(), "--repo", repoSlug, flag };
         if (body.Length > 0)
         {
@@ -1294,32 +1311,37 @@ public class GitHubService(SettingsService settingsService)
     /// back as a failed result (unknown flag), never a crash.
     /// </summary>
     public Task<ProcessResult> SetRepoVisibilityAsync(string repoSlug, string visibility, CancellationToken ct = default)
-        => RunMutationAsync($"gh repo edit --visibility {visibility} ({repoSlug})",
-            BuildVisibilityArgs(repoSlug, visibility), ct: ct);
-
-    internal static List<string> BuildVisibilityArgs(string repoSlug, string visibility)
     {
-        if (visibility is not ("public" or "private" or "internal"))
-            throw new ArgumentException($"unknown visibility '{visibility}'", nameof(visibility));
-        return ["repo", "edit", repoSlug, "--visibility", visibility, "--accept-visibility-change-consequences"];
+        var what = $"gh repo edit --visibility {visibility} ({repoSlug})";
+        return BuildVisibilityArgs(repoSlug, visibility) is { } args
+            ? RunMutationAsync(what, args, ct: ct)
+            : Task.FromResult(Refused(what, $"unknown visibility '{visibility}'"));
     }
+
+    /// <summary>Null when <paramref name="visibility"/> is not a gh visibility token.</summary>
+    internal static List<string>? BuildVisibilityArgs(string repoSlug, string visibility) =>
+        visibility is "public" or "private" or "internal"
+            ? ["repo", "edit", repoSlug, "--visibility", visibility, "--accept-visibility-change-consequences"]
+            : null;
 
     /// <summary>
     /// Repoints HEAD on the remote. The branch must already exist there; gh reports an
     /// unknown branch as a failed result.
     /// </summary>
     public Task<ProcessResult> SetDefaultBranchAsync(string repoSlug, string branch, CancellationToken ct = default)
-        => RunMutationAsync($"gh repo edit --default-branch {branch} ({repoSlug})",
-            BuildDefaultBranchArgs(repoSlug, branch), ct: ct);
-
-    internal static List<string> BuildDefaultBranchArgs(string repoSlug, string branch)
     {
-        // A blank value reaches gh as a flag with a missing argument, which consumes the
-        // next token instead of failing.
-        if (branch.Trim().Length == 0)
-            throw new ArgumentException("default branch cannot be blank", nameof(branch));
-        return ["repo", "edit", repoSlug, "--default-branch", branch];
+        var what = $"gh repo edit --default-branch {branch} ({repoSlug})";
+        return BuildDefaultBranchArgs(repoSlug, branch) is { } args
+            ? RunMutationAsync(what, args, ct: ct)
+            : Task.FromResult(Refused(what, "default branch cannot be blank"));
     }
+
+    /// <summary>
+    /// Null for a blank branch: it reaches gh as a flag with a missing argument, which
+    /// consumes the next token instead of failing.
+    /// </summary>
+    internal static List<string>? BuildDefaultBranchArgs(string repoSlug, string branch) =>
+        branch.Trim().Length == 0 ? null : ["repo", "edit", repoSlug, "--default-branch", branch];
 
     /// <summary>Null for a feature means "leave unchanged".</summary>
     public Task<ProcessResult> SetRepoFeaturesAsync(string repoSlug, bool? issues = null, bool? wiki = null,
@@ -1409,6 +1431,19 @@ public class GitHubService(SettingsService settingsService)
     }
 
     private static ProcessResult NoOpSuccess() => new(0, "", "", TimedOut: false);
+
+    /// <summary>
+    /// A mutation refused before it spawned, in the same failed-result shape every other
+    /// refusal on this service uses. A token the argument builder cannot map is a caller
+    /// error the enum-bound UI cannot produce, but a throw from a mutation would be the
+    /// one failure the callers' result handling does not cover — it would leave the busy
+    /// gate's owner unwinding through an exception path instead of a toast.
+    /// </summary>
+    private static ProcessResult Refused(string what, string reason)
+    {
+        Log.Warn($"{what} refused: {reason}");
+        return new ProcessResult(1, "", reason, TimedOut: false);
+    }
 
     /// <summary>
     /// Environment for every gh call: no ANSI color in parsed output, no update banner

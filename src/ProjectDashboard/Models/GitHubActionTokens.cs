@@ -27,7 +27,7 @@ public enum RepoVisibility
 /// <summary>
 /// Enum → exact gh token. The UI binds enums, never free text, so the token that
 /// reaches GitHubService.BuildMergeArgs / BuildReviewArgs / BuildVisibilityArgs is
-/// always one those methods map — their unmapped-token throw is unreachable from the UI.
+/// always one those methods map, and their refusal path is never taken from the UI.
 /// </summary>
 public static class GitHubActionTokens
 {

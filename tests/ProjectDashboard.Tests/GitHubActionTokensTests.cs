@@ -5,9 +5,10 @@ namespace ProjectDashboard.Tests;
 
 /// <summary>
 /// The UI derives the gh token from an enum, never free text, so the token reaching
-/// GitHubService.BuildMergeArgs / BuildReviewArgs is always mapped —
-/// those methods' unmapped-token throw is unreachable from the UI. These assertions
-/// pin the exact strings the service's switch expects.
+/// GitHubService.BuildMergeArgs / BuildReviewArgs / BuildVisibilityArgs is always one
+/// those builders map. These assertions pin the exact strings the service's switch
+/// expects: an enum value the builder cannot map would refuse every use of that verdict,
+/// strategy, or visibility.
 /// </summary>
 public class GitHubActionTokensTests
 {
@@ -18,8 +19,8 @@ public class GitHubActionTokensTests
     public void MergeStrategy_MapsToServiceToken(MergeStrategy strategy, string token)
     {
         Assert.Equal(token, strategy.Token());
-        // The mapped token must round-trip through the service arg builder without throwing.
         var args = GitHubService.BuildMergeArgs("o/r", 1, strategy.Token(), deleteBranch: false);
+        Assert.NotNull(args);
         Assert.Contains($"--{token}", args);
     }
 
@@ -30,22 +31,21 @@ public class GitHubActionTokensTests
     public void ReviewAction_MapsToServiceToken(ReviewAction action, string token)
     {
         Assert.Equal(token, action.Token());
-        // No throw for any enum value the UI can produce.
-        _ = GitHubService.BuildReviewArgs("o/r", 1, action.Token(), "");
+        Assert.NotNull(GitHubService.BuildReviewArgs("o/r", 1, action.Token(), ""));
     }
 
     [Fact]
     public void EveryMergeStrategy_IsAccepted()
     {
         foreach (var s in Enum.GetValues<MergeStrategy>())
-            _ = GitHubService.BuildMergeArgs("o/r", 1, s.Token(), false);
+            Assert.NotNull(GitHubService.BuildMergeArgs("o/r", 1, s.Token(), false));
     }
 
     [Fact]
     public void EveryReviewAction_IsAccepted()
     {
         foreach (var a in Enum.GetValues<ReviewAction>())
-            _ = GitHubService.BuildReviewArgs("o/r", 1, a.Token(), "");
+            Assert.NotNull(GitHubService.BuildReviewArgs("o/r", 1, a.Token(), ""));
     }
 
     [Theory]
@@ -55,14 +55,16 @@ public class GitHubActionTokensTests
     public void RepoVisibility_MapsToServiceToken(RepoVisibility visibility, string token)
     {
         Assert.Equal(token, visibility.Token());
-        Assert.Contains(token, GitHubService.BuildVisibilityArgs("o/r", visibility.Token()));
+        var args = GitHubService.BuildVisibilityArgs("o/r", visibility.Token());
+        Assert.NotNull(args);
+        Assert.Contains(token, args);
     }
 
     [Fact]
     public void EveryRepoVisibility_IsAccepted()
     {
         foreach (var v in Enum.GetValues<RepoVisibility>())
-            _ = GitHubService.BuildVisibilityArgs("o/r", v.Token());
+            Assert.NotNull(GitHubService.BuildVisibilityArgs("o/r", v.Token()));
     }
 
     [Fact]
