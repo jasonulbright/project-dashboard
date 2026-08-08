@@ -127,6 +127,31 @@ public class HistorySurgeryPlanTests
     }
 
     [Fact]
+    public void AMarkHoldsARewordAside_AndLiftingItPutsTheMessageBack()
+    {
+        // A mark that discarded the message outright would lose typed text to a toggle, with the
+        // row reading "pick" as though nothing had ever been entered.
+        var commit = new PlannedCommit { Sha = Sha("a"), Subject = "a" };
+        commit.NewMessage = "a rewritten subject";
+
+        commit.Drop = true;
+        Assert.Null(commit.NewMessage);
+        Assert.True(commit.HasDisplacedMessage);
+        Assert.Equal("a", commit.EffectiveSubject);
+
+        commit.Drop = false;
+        Assert.Equal("a rewritten subject", commit.NewMessage);
+        Assert.False(commit.HasDisplacedMessage);
+        Assert.Equal("reword", commit.MarkLabel);
+
+        commit.ClearPlan();
+        Assert.Null(commit.NewMessage);
+        Assert.False(commit.HasDisplacedMessage);
+        Assert.Equal("pick", commit.MarkLabel);
+        Assert.Equal("a", commit.EffectiveSubject);
+    }
+
+    [Fact]
     public void ARewordsSubject_IsItsFirstLine()
     {
         var commit = new PlannedCommit { Sha = Sha("a"), Subject = "a" };

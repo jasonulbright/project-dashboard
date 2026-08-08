@@ -11,12 +11,22 @@ namespace ProjectDashboard.ViewModels.Pages;
 /// uses. The three marks are mutually exclusive: a dropped commit's message is never written,
 /// and a folded one's is discarded by the fold, so carrying a reword alongside either would
 /// describe a commit the replay does not produce.
+///
+/// A mark that displaces a typed message holds it aside and puts it back when the mark is
+/// lifted, so no toggle discards typed text without saying so. <see cref="ClearPlan"/> is the
+/// one way a message leaves the row for good.
 /// </summary>
 public sealed partial class PlannedCommit : ObservableObject
 {
     [ObservableProperty] private bool _drop;
     [ObservableProperty] private bool _squashIntoPrevious;
     [ObservableProperty] private string? _newMessage;
+
+    /// <summary>Non-null only while a drop or squash mark is holding a typed message aside.</summary>
+    private string? _displacedMessage;
+
+    /// <summary>Guards the mutual-exclusion writes, which are property sets that re-enter these handlers.</summary>
+    private bool _reconciling;
 
     public required string Sha { get; init; }
 
@@ -30,35 +40,80 @@ public sealed partial class PlannedCommit : ObservableObject
     public string MarkLabel =>
         Drop ? "drop" : SquashIntoPrevious ? "squash" : NewMessage is not null ? "reword" : "pick";
 
-    partial void OnDropChanged(bool value)
+    /// <summary>True while a mark is holding a typed message that lifting the mark would restore.</summary>
+    public bool HasDisplacedMessage => _displacedMessage is not null;
+
+    /// <summary>Returns the row to a plain pick, discarding the message and anything held aside.</summary>
+    public void ClearPlan()
     {
-        if (value)
+        Reconcile(() =>
         {
+            Drop = false;
             SquashIntoPrevious = false;
             NewMessage = null;
-        }
+            _displacedMessage = null;
+        });
+        OnPropertyChanged(nameof(MarkLabel));
+        OnPropertyChanged(nameof(EffectiveSubject));
+        OnPropertyChanged(nameof(HasDisplacedMessage));
+    }
+
+    partial void OnDropChanged(bool value)
+    {
+        ReconcileMark(value, () => SquashIntoPrevious = false, otherMark: SquashIntoPrevious);
         OnPropertyChanged(nameof(MarkLabel));
     }
 
     partial void OnSquashIntoPreviousChanged(bool value)
     {
-        if (value)
-        {
-            Drop = false;
-            NewMessage = null;
-        }
+        ReconcileMark(value, () => Drop = false, otherMark: Drop);
         OnPropertyChanged(nameof(MarkLabel));
     }
 
     partial void OnNewMessageChanged(string? value)
     {
-        if (value is not null)
-        {
-            Drop = false;
-            SquashIntoPrevious = false;
-        }
+        if (value is not null && !_reconciling)
+            Reconcile(() =>
+            {
+                Drop = false;
+                SquashIntoPrevious = false;
+                // Typed text supersedes whatever a mark was holding: restoring the older message
+                // later would replace the one on screen.
+                _displacedMessage = null;
+            });
         OnPropertyChanged(nameof(MarkLabel));
         OnPropertyChanged(nameof(EffectiveSubject));
+        OnPropertyChanged(nameof(HasDisplacedMessage));
+    }
+
+    private void ReconcileMark(bool marked, Action clearOtherMark, bool otherMark)
+    {
+        if (_reconciling) return;
+        Reconcile(() =>
+        {
+            if (marked)
+            {
+                clearOtherMark();
+                if (NewMessage is not null)
+                {
+                    _displacedMessage = NewMessage;
+                    NewMessage = null;
+                }
+            }
+            else if (!otherMark && _displacedMessage is not null)
+            {
+                NewMessage = _displacedMessage;
+                _displacedMessage = null;
+            }
+        });
+        OnPropertyChanged(nameof(HasDisplacedMessage));
+    }
+
+    private void Reconcile(Action write)
+    {
+        _reconciling = true;
+        try { write(); }
+        finally { _reconciling = false; }
     }
 }
 

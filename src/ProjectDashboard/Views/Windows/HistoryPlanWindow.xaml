@@ -19,6 +19,7 @@
         <KeyBinding Key="D" Modifiers="Ctrl" Command="{Binding ToggleDropCommand}" />
         <KeyBinding Key="S" Modifiers="Ctrl" Command="{Binding ToggleSquashCommand}" />
         <KeyBinding Key="R" Modifiers="Ctrl" Command="{Binding RewordCommand}" />
+        <KeyBinding Key="R" Modifiers="Ctrl+Shift" Command="{Binding ClearRowCommand}" />
     </ui:FluentWindow.InputBindings>
 
     <Grid>
@@ -35,11 +36,11 @@
 
         <TextBlock Grid.Row="1" Margin="16,8,16,0" FontSize="12" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Text="Oldest first — the order git replays them. Alt+Up and Alt+Down move the selected commit, Ctrl+D marks it dropped, Ctrl+S folds it into the commit above it, Ctrl+R replaces its message." />
+                   Text="Oldest first — the order git replays them. Alt+Up and Alt+Down move the selected commit, Ctrl+D marks it dropped, Ctrl+S folds it into the commit above it, Ctrl+R replaces its message, Ctrl+Shift+R returns it to a plain pick." />
 
         <TextBlock Grid.Row="2" Margin="16,6,16,8" FontSize="12" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                   Text="Moves, drops, squashes and rewords apply together as one replay. The preview is the history that replay produces; a plan it cannot produce is refused below instead." />
+                   Text="Moves, drops, squashes and rewords apply together as one replay. The preview is the history that replay produces; a plan it cannot produce is refused below instead. Dropping or squashing a reworded commit keeps its new message aside and restores it if the mark is lifted — Clear row is what discards it." />
 
         <Grid Grid.Row="3" Margin="16,0,16,0">
             <Grid.ColumnDefinitions>
@@ -120,9 +121,12 @@
             <ui:Button Content="Toggle _squash" Padding="12,5" Margin="0,0,8,0"
                        Command="{Binding ToggleSquashCommand}"
                        AutomationProperties.Name="Toggle folding the selected commit into the one above it" />
-            <ui:Button Content="Re_word…" Padding="12,5" Margin="0,0,20,0"
+            <ui:Button Content="Re_word…" Padding="12,5" Margin="0,0,8,0"
                        Command="{Binding RewordCommand}"
                        AutomationProperties.Name="Replace the selected commit's message" />
+            <ui:Button Content="C_lear row" Padding="12,5" Margin="0,0,20,0"
+                       Command="{Binding ClearRowCommand}"
+                       AutomationProperties.Name="Return the selected commit to a plain pick, discarding its new message" />
             <ui:Button Content="Reset _marks" Padding="12,5" Margin="0,0,8,0"
                        Command="{Binding ResetPlanCommand}"
                        AutomationProperties.Name="Discard every move and mark" />

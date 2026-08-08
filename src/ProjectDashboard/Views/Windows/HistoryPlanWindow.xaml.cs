@@ -10,7 +10,8 @@ namespace ProjectDashboard.Views.Windows;
 /// into the one combined todo that runs.
 ///
 /// Every action has both a button and a key binding, so the whole surface works without a
-/// mouse: Alt+Up/Alt+Down move, Ctrl+D drops, Ctrl+S squashes, Ctrl+R rewords.
+/// mouse: Alt+Up/Alt+Down move, Ctrl+D drops, Ctrl+S squashes, Ctrl+R rewords, Ctrl+Shift+R
+/// returns the selected row to a plain pick.
 /// </summary>
 public partial class HistoryPlanWindow
 {
@@ -128,16 +129,21 @@ public sealed partial class HistoryPlanViewModel : ObservableObject
         commit.NewMessage = message;
     }
 
+    /// <summary>
+    /// Returns the selected commit to a plain pick. Marks hold a typed message aside rather than
+    /// discarding it, so this is the one action that drops a reword from the plan.
+    /// </summary>
+    [RelayCommand]
+    private void ClearRow()
+    {
+        Selected?.ClearPlan();
+    }
+
     [RelayCommand]
     private void ResetPlan()
     {
         var byId = Commits.ToDictionary(c => c.Sha, StringComparer.OrdinalIgnoreCase);
-        foreach (var commit in Commits)
-        {
-            commit.Drop = false;
-            commit.SquashIntoPrevious = false;
-            commit.NewMessage = null;
-        }
+        foreach (var commit in Commits) commit.ClearPlan();
         Commits.Clear();
         foreach (var sha in _originalOrder) Commits.Add(byId[sha]);
         SelectedIndex = Commits.Count - 1;
