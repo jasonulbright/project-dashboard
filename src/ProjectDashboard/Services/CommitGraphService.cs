@@ -40,12 +40,13 @@ public sealed class CommitGraphService
         };
         // A ref may legally be named "--all", "-5", or "-g"; as bare argv git reads it as an
         // option and silently widens, truncates, or repurposes the walk, so caller-supplied
-        // revisions follow --end-of-options. --ignore-missing applies only to the default
-        // set, where an unborn HEAD (empty repo, orphan checkout) is a state rather than a
-        // failure; a revision the caller named must still fail when it does not resolve.
+        // revisions follow --end-of-options. --ignore-missing binds only to the arguments
+        // that follow it, so between --branches and HEAD it excuses an unborn HEAD (empty
+        // repo, orphan checkout) and nothing else: a dangling branch ref still fails the
+        // walk instead of yielding a graph silently missing that branch.
         if (!string.IsNullOrWhiteSpace(request.Branch)) { args.Add("--end-of-options"); args.Add(request.Branch); }
         else if (request.Refs is { Count: > 0 }) { args.Add("--end-of-options"); args.AddRange(request.Refs); }
-        else { args.Add("--ignore-missing"); args.Add("--branches"); args.Add("HEAD"); }
+        else { args.Add("--branches"); args.Add("--ignore-missing"); args.Add("HEAD"); }
         // Terminator: a ref name that also names a file is otherwise ambiguous to git.
         args.Add("--");
 

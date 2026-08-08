@@ -277,6 +277,20 @@ public class CommitGraphServiceTests
     }
 
     [Fact]
+    public async Task DanglingBranchRef_IsFlaggedInsteadOfDroppingThatBranch()
+    {
+        using var repo = await NewRepoAsync("g-dangling");
+        await CommitAsync(repo, "A");
+        // update-ref refuses an absent object, so the damaged ref file is written directly —
+        // the state an interrupted fetch or a gc-pruned object leaves behind.
+        repo.WriteFile(".git/refs/heads/broken", new string('0', 39) + "1\n");
+
+        var page = await _graph.GetGraphAsync(repo.Path);
+        Assert.True(page.HasError);
+        Assert.Empty(page.Commits);
+    }
+
+    [Fact]
     public async Task RefNamedLikeAnOption_IsWalkedAsARevision()
     {
         using var repo = await NewRepoAsync("g-hostile-ref");
