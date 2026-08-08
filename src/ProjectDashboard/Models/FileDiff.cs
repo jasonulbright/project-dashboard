@@ -11,6 +11,17 @@ public sealed class DiffLine
     public string OldNumber { get; init; } = "";
     /// <summary>Line number in the new file ("" for removed/hunk rows).</summary>
     public string NewNumber { get; init; } = "";
+
+    /// <summary>
+    /// Zero-based position of the hunk this row belongs to WITHIN ITS FILE, counted over the
+    /// same column-0 "@@" headers <see cref="Services.GitService.ExtractHunkPatch"/> counts, so
+    /// the two agree on which hunk an index names. Negative for a row that precedes the file's
+    /// first hunk and for a synthesized diff, which has no hunk a patch could be sliced at.
+    /// </summary>
+    public int HunkIndex { get; init; } = -1;
+
+    /// <summary>True for the header row of a hunk that can be sliced out of the raw diff.</summary>
+    public bool IsHunkStart => Kind == DiffLineKind.HunkHeader && HunkIndex >= 0;
 }
 
 /// <summary>Parsed diff for one file (hunk headers flattened in as rows).</summary>
@@ -38,6 +49,9 @@ public sealed class FileDiff
         // clobbers OldPath/Path. A Lines.Count gate cannot stand in for this
         // flag: mode-change diffs add old/new mode rows before ---/+++.
         var seenHunk = false;
+        // Per FILE, not per diff text: a patch is sliced out of one file's raw diff, so an
+        // index counted across files would name a hunk of the wrong file.
+        var hunkIndex = -1;
 
         foreach (var raw in diffText.Split('\n'))
         {
@@ -51,6 +65,7 @@ public sealed class FileDiff
                 current.Path = PathFromDiffGit(line);
                 oldNo = newNo = 0;
                 seenHunk = false;
+                hunkIndex = -1;
                 continue;
             }
             if (line.StartsWith("diff --cc ", StringComparison.Ordinal) ||
@@ -63,18 +78,19 @@ public sealed class FileDiff
                 current.Path = sp > 0 ? line[(sp + 1)..].Trim() : line["diff --cc ".Length..].Trim();
                 oldNo = newNo = 0;
                 seenHunk = false;
+                hunkIndex = -1;
                 continue;
             }
             if (current is null) continue;
 
             if (line.StartsWith("old mode ", StringComparison.Ordinal))
             {
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line, HunkIndex = hunkIndex });
                 continue;
             }
             if (line.StartsWith("new mode ", StringComparison.Ordinal))
             {
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line, HunkIndex = hunkIndex });
                 continue;
             }
 
@@ -91,17 +107,17 @@ public sealed class FileDiff
                 // past it, a body line can itself begin with "---"/"+++" (two status
                 // columns plus content), so headers are skipped by position, not prefix.
                 if (line.StartsWith("@@@", StringComparison.Ordinal))
-                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line, HunkIndex = ++hunkIndex });
                 else if (current.Lines.Count == 0 || line.Length == 0)
                 {
                     // Pre-hunk metadata, or the blank artifact of a trailing newline.
                 }
                 else if (line.StartsWith('+'))
-                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line });
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line, HunkIndex = hunkIndex });
                 else if (line.StartsWith('-'))
-                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = line });
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = line, HunkIndex = hunkIndex });
                 else
-                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line });
+                    current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line, HunkIndex = hunkIndex });
                 continue;
             }
 
@@ -130,7 +146,7 @@ public sealed class FileDiff
                 var at = ParseHunkHeader(line);
                 oldNo = at.oldStart;
                 newNo = at.newStart;
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = line, HunkIndex = ++hunkIndex });
                 seenHunk = true;
                 continue;
             }
@@ -150,20 +166,20 @@ public sealed class FileDiff
 
             if (line.StartsWith('+'))
             {
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line[1..], NewNumber = (newNo++).ToString() });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = line[1..], NewNumber = (newNo++).ToString(), HunkIndex = hunkIndex });
             }
             else if (line.StartsWith('-'))
             {
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = line[1..], OldNumber = (oldNo++).ToString() });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = line[1..], OldNumber = (oldNo++).ToString(), HunkIndex = hunkIndex });
             }
             else if (line.StartsWith(' '))
             {
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line[1..], OldNumber = (oldNo++).ToString(), NewNumber = (newNo++).ToString() });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line[1..], OldNumber = (oldNo++).ToString(), NewNumber = (newNo++).ToString(), HunkIndex = hunkIndex });
             }
             else if (line.StartsWith('\\'))
             {
                 // "\ No newline at end of file"
-                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line });
+                current.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = line, HunkIndex = hunkIndex });
             }
         }
 

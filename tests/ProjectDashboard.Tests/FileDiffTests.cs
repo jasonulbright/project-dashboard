@@ -379,4 +379,72 @@ public class FileDiffTests
         Assert.Equal("two.txt", diffs[1].OldPath);
         Assert.Equal(3, diffs[1].Lines.Count);
     }
+
+    // ── Hunk index (the handle the staging UI passes to ExtractHunkPatch) ────────
+
+    /// <summary>
+    /// The index counts hunks WITHIN a file. Counted across the whole diff text it would name a
+    /// hunk of the wrong file, and the patch sliced at it would stage somebody else's change.
+    /// </summary>
+    [Fact]
+    public void HunkIndex_RestartsAtEachFile()
+    {
+        var diffs = FileDiff.ParseUnified(
+            "diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n" +
+            "@@ -1,2 +1,2 @@\n-a\n+A\n b\n" +
+            "@@ -20,2 +20,2 @@\n y\n-z\n+Z\n" +
+            "diff --git a/two.txt b/two.txt\n--- a/two.txt\n+++ b/two.txt\n" +
+            "@@ -1,1 +1,1 @@\n-p\n+P\n");
+
+        Assert.Equal([0, 0, 0, 0, 1, 1, 1, 1], diffs[0].Lines.Select(l => l.HunkIndex));
+        Assert.Equal([0, 0, 0], diffs[1].Lines.Select(l => l.HunkIndex));
+        Assert.Equal([0, 1], diffs[0].Lines.Where(l => l.IsHunkStart).Select(l => l.HunkIndex));
+        Assert.Single(diffs[1].Lines, l => l.IsHunkStart);
+    }
+
+    /// <summary>
+    /// A mode-change row is rendered as a header but is not a hunk: no patch can be sliced at it,
+    /// so it must not offer the staging actions a real hunk header does.
+    /// </summary>
+    [Fact]
+    public void HunkIndex_IsNegativeForRowsBeforeTheFirstHunk()
+    {
+        var diffs = FileDiff.ParseUnified(
+            "diff --git a/exec.sh b/exec.sh\n" +
+            "old mode 100644\n" +
+            "new mode 100755\n" +
+            "--- a/exec.sh\n+++ b/exec.sh\n" +
+            "@@ -1 +1 @@\n-a\n+A\n");
+
+        var file = Assert.Single(diffs);
+        Assert.Equal(-1, file.Lines[0].HunkIndex);
+        Assert.Equal(-1, file.Lines[1].HunkIndex);
+        Assert.False(file.Lines[0].IsHunkStart);
+        Assert.Equal(0, file.Lines[2].HunkIndex);
+        Assert.True(file.Lines[2].IsHunkStart);
+    }
+
+    /// <summary>
+    /// The rendered row and the patch builder must agree on what index N names, or the reader
+    /// stages a hunk other than the one selected. Both count column-0 "@@" headers in order.
+    /// </summary>
+    [Fact]
+    public void HunkIndex_NamesTheSameHunkExtractHunkPatchSlices()
+    {
+        const string raw =
+            "diff --git a/f.txt b/f.txt\n" +
+            "index 111..222 100644\n" +
+            "--- a/f.txt\n" +
+            "+++ b/f.txt\n" +
+            "@@ -1,2 +1,2 @@\n-a\n+A\n b\n" +
+            "@@ -10,2 +10,2 @@ tail section\n y\n-z\n+Z\n";
+
+        var file = Assert.Single(FileDiff.ParseUnified(raw));
+        foreach (var header in file.Lines.Where(l => l.IsHunkStart))
+        {
+            var patch = Services.GitService.ExtractHunkPatch(raw, header.HunkIndex);
+            Assert.NotNull(patch);
+            Assert.Contains(header.Text + "\n", patch);
+        }
+    }
 }
