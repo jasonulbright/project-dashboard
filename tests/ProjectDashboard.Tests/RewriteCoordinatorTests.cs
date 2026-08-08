@@ -34,12 +34,12 @@ public class RewriteCoordinatorTests
         ContentOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(find), Replace = Encoding.UTF8.GetBytes(replace) }]
     };
 
-    private static RewriteCoordinator NewCoordinator(SwapService? swap = null)
+    private static RewriteCoordinator NewCoordinator(SwapService? swap = null, RepoBusyRegistry? busy = null)
     {
         var git = new GitService();
         return new RewriteCoordinator(
             new BackupService(git, new SettingsService()),
-            new RepoBusyRegistry(),
+            busy ?? new RepoBusyRegistry(),
             git,
             swap ?? new SwapService(git, GitGuard.GitExe),
             gitExecutable: GitGuard.GitExe);
@@ -154,6 +154,87 @@ public class RewriteCoordinatorTests
         // And the needle is back — the restore reinstated the original objects.
         Assert.True(GrepHits(f.SourcePath, AllCommits(f.SourcePath), Needle) >= 5);
         _output.WriteLine("undo round-trip: source refs byte-identical to the pre-rewrite snapshot");
+    }
+
+    /// <summary>
+    /// The restore verifies a bundle, unbundles it, reconciles every ref, repositions HEAD and
+    /// resets the working tree — a long sequence of writes. Unleased, Sync All and the watcher
+    /// refresh read the repository as idle and a pull can land in the middle of it.
+    /// </summary>
+    [Fact]
+    public async Task Undo_HoldsTheRepositoryLeaseForTheWholeRestore()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var busy = new RepoBusyRegistry();
+        var result = await NewCoordinator(busy: busy).ExecuteAsync(Request(f));
+        Assert.True(result.Success, result.FailureReason);
+
+        // The execute's own lease is gone before the caller can reach the undo, so the undo's
+        // acquire is not contending with it.
+        Assert.False(busy.IsBusy(f.SourcePath));
+
+        var transitions = new List<bool>();
+        var refusedDuringRestore = false;
+        busy.Changed += repo =>
+        {
+            var isBusy = busy.IsBusy(repo);
+            transitions.Add(isBusy);
+            // Exactly the gate a mutating git op consults before it runs.
+            if (isBusy) refusedDuringRestore = !busy.TryAcquire(repo, out _);
+        };
+
+        var restore = await result.Undo!.RestoreAsync();
+
+        Assert.True(restore.Success, restore.Message);
+        Assert.Equal([true, false], transitions);
+        Assert.True(refusedDuringRestore);
+        Assert.False(busy.IsBusy(f.SourcePath));
+    }
+
+    /// <summary>The restore is refused rather than interleaved when something else already holds the repository.</summary>
+    [Fact]
+    public async Task Undo_WhileTheRepositoryIsBusy_RefusesWithoutRestoring()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var busy = new RepoBusyRegistry();
+        var result = await NewCoordinator(busy: busy).ExecuteAsync(Request(f));
+        Assert.True(result.Success, result.FailureReason);
+        var rewritten = RefState(f.SourcePath);
+
+        using (busy.Acquire(f.SourcePath))
+        {
+            var restore = await result.Undo!.RestoreAsync();
+            Assert.False(restore.Success);
+            Assert.False(restore.RefsRestored);
+            Assert.Contains("busy", restore.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Equal(rewritten, RefState(f.SourcePath));
+
+        // Released, the same handle restores.
+        Assert.True((await result.Undo!.RestoreAsync()).Success);
+    }
+
+    /// <summary>The dry run only reads the source, so it must not gate the repository against the reader's other work.</summary>
+    [Fact]
+    public async Task PreviewAsync_TakesNoRepositoryLease()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var busy = new RepoBusyRegistry();
+        var transitions = new List<bool>();
+        busy.Changed += repo => transitions.Add(busy.IsBusy(repo));
+
+        using var preview = await NewCoordinator(busy: busy).PreviewAsync(Request(f));
+
+        Assert.NotNull(preview.Report);
+        Assert.Empty(transitions);
+        Assert.False(busy.IsBusy(f.SourcePath));
     }
 
     [Fact]

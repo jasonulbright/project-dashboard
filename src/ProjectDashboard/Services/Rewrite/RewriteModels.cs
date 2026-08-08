@@ -68,20 +68,37 @@ public sealed class PreviewHandle : IDisposable
 /// before the rewrite, returning refs (and the working tree) to their exact pre-rewrite
 /// state. The <see cref="RestoreResult.WorktreeWasDirty"/> flag it surfaces reports whether
 /// the restore's reset discarded uncommitted work.
+///
+/// The restore runs under the repository lease, so it is the gate every entry point inherits
+/// by holding a handle. The operation that created the handle releases its own lease before
+/// the handle reaches a caller, so the acquire here never contends with it.
 /// </summary>
 public sealed class UndoHandle
 {
     private readonly BackupService _backup;
+    private readonly RepoBusyRegistry _busy;
 
-    internal UndoHandle(BackupService backup, BackupHandle handle)
+    internal UndoHandle(BackupService backup, RepoBusyRegistry busy, BackupHandle handle)
     {
         _backup = backup;
+        _busy = busy;
         Backup = handle;
     }
 
     public BackupHandle Backup { get; }
 
-    public Task<RestoreResult> RestoreAsync(CancellationToken ct = default) => _backup.RestoreAsync(Backup, ct);
+    /// <summary>
+    /// Restores under the repository lease. The restore unbundles, reconciles every ref,
+    /// repositions HEAD and resets the working tree; unleased, a background sync reads the
+    /// repository as idle and its fetch or pull lands part-way through that sequence.
+    /// </summary>
+    public async Task<RestoreResult> RestoreAsync(CancellationToken ct = default)
+    {
+        if (!_busy.TryAcquire(Backup.RepoPath, out var lease))
+            return new RestoreResult(false, $"Repository is busy with another operation: {Backup.RepoPath}");
+        using (lease)
+            return await _backup.RestoreAsync(Backup, ct);
+    }
 }
 
 /// <summary>

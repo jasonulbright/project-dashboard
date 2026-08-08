@@ -155,7 +155,7 @@ public sealed class RewriteCoordinator
             {
                 return RewriteExecutionResult.Failed($"backup failed — no rewrite attempted: {ex.Message}");
             }
-            undo = new UndoHandle(_backup, backup);
+            undo = new UndoHandle(_backup, _busy, backup);
 
             // 4. Journal: the in-flight op is on disk before the swap, so a crash between
             // here and completion is detectable at the next launch.

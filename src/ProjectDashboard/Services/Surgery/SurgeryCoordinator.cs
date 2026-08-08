@@ -179,7 +179,7 @@ public sealed class SurgeryCoordinator
                 {
                     return SurgeryResult.Failed($"backup failed — no history was touched: {ex.Message}");
                 }
-                undo = new UndoHandle(_backup, handle);
+                undo = new UndoHandle(_backup, _busy, handle);
 
                 // 4. Journal: the in-flight operation is on disk before anything moves, so a
                 // crash part-way through is detectable at the next launch.
