@@ -745,6 +745,64 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.False(vm.SurgeryStashOfferVisible);
     }
 
+    /// <summary>
+    /// A git whose HEAD read fails once `commit --fixup` has run. The commit landed, so the
+    /// staged fix is a commit on the tip and the repository has moved.
+    /// </summary>
+    private sealed class HeadUnreadableAfterFixup : GitService
+    {
+        private bool _fixupRecorded;
+
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            if (_fixupRecorded && argv is ["rev-parse", "--verify", "-q", "HEAD"])
+                return new ProcessResult(128, "", "fatal: could not read HEAD", TimedOut: false);
+
+            var result = await base.RunAsync(repoPath, argv, ct, timeout);
+            if (argv.Count > 0 && argv[0] == "commit" &&
+                argv.Any(a => a.StartsWith("--fixup=", StringComparison.Ordinal)))
+                _fixupRecorded = true;
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task AFixupWhoseHeadReadFails_KeepsTheUndoOfferAndTheRecoveryMarker()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var git = new HeadUnreadableAfterFixup();
+        var vm = await VmForAsync(repo);
+        vm.Surgery = new SurgeryCoordinator(
+            new BackupService(new GitService(), new SettingsService()), new RepoBusyRegistry(), git,
+            new RebaseDriver(git, GitGuard.GitExe, Path.Combine(TestEnv.NewDir("surgery-work"), "work")));
+        CaptureConfirmations(vm, answer: true);
+
+        repo.Write("alpha.txt", "alpha content\nthe fix\n");
+        await repo.GitAsync("add", "-A");
+        await vm.RefreshWorkingStateAsync();
+        vm.SelectedCommit = vm.Commits[1];
+
+        await vm.AmendStagedIntoSelectedCommitCommand.ExecuteAsync(null);
+
+        // The fixup commit is on the tip and the fix is no longer staged: the repository moved,
+        // whatever the HEAD read could not say.
+        Assert.Equal(4, (await repo.ShasAsync()).Count);
+        Assert.StartsWith("fixup!", (await repo.SubjectsAsync())[0]);
+        Assert.Empty(await repo.StatusAsync());
+
+        Assert.Contains("HEAD could not be read", vm.SurgeryFailureText);
+        Assert.True(vm.SurgeryUndoVisible);
+        Assert.True(vm.UndoLastSurgeryCommand.CanExecute(null));
+
+        var pending = await new RewriteJournal().ReadPendingAsync(repo.Path);
+        Assert.NotNull(pending);
+        Assert.Equal("inject", pending!.Phase);
+
+        await new RewriteJournal().ClearAllAsync();
+    }
+
     [Fact]
     public async Task OpeningThePlanDialog_ClearsTheFailureTextAndTheOffersItExplained()
     {

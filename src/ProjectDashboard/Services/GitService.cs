@@ -179,8 +179,8 @@ public class GitService
         return null;
     }
 
-    /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure).</summary>
-    public async Task<ProcessResult> RunAsync(string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+    /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure). Virtual so a test can fail one command.</summary>
+    public virtual async Task<ProcessResult> RunAsync(string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
     {
         // core.quotepath=false: unicode paths arrive as UTF-8, not octal escapes.
         var full = new List<string> { "-c", "core.quotepath=false" };

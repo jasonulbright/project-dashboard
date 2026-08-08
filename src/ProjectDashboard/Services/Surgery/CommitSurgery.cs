@@ -84,7 +84,15 @@ public sealed class CommitSurgery
 
         var fixupSha = await HeadShaAsync(repoPath, ct);
         if (fixupSha.Length == 0)
-            return RebaseRunResult.Failed("the fixup commit was recorded but HEAD could not be read");
+            // The commit landed, so the staged fix is now a commit on the tip and the sha needed to
+            // unwind it is unreadable. RepositoryUntouched stays false: the backup is the way back.
+            return new RebaseRunResult
+            {
+                Success = false,
+                FailureReason =
+                    "the fixup commit was recorded but HEAD could not be read — the staged fix is now a " +
+                    "commit on the tip; restore from the backup"
+            };
 
         // The scope is the target, everything already replaying after it, and the fixup itself:
         // the same span the fold rewrites. A root target yields a null base and a `--root` replay.
