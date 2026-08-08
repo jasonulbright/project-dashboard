@@ -217,18 +217,25 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.False(vm.IsBusy);
     }
 
+    /// <summary>
+    /// Nothing selected: no gh spawn, no busy gate, no launch — and the two mutating
+    /// commands name the row to pick rather than returning with no trace at all.
+    /// </summary>
     [Fact]
-    public async Task ActionCommands_WithoutARunSelected_AreInert()
+    public async Task ActionCommands_WithoutARunSelected_SpawnNothingAndSayWhatToSelect()
     {
         var vm = new StubTabsViewModel();
         await vm.SetProjectAsync(RemoteProject());
 
         await vm.RerunWorkflowRunCommand.ExecuteAsync(null);
+        Assert.Equal("Select a workflow run first.", vm.GitHubStatusText);
+
         await vm.CancelWorkflowRunCommand.ExecuteAsync(null);
+        Assert.Equal("Select a workflow run first.", vm.GitHubStatusText);
+
         vm.OpenWorkflowRunCommand.Execute(null);
 
         Assert.False(vm.IsBusy);
-        Assert.Equal("", vm.GitHubStatusText);
         Assert.Empty(vm.Opened);
     }
 

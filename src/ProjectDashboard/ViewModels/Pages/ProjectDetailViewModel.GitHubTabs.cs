@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
@@ -67,6 +68,19 @@ public partial class ProjectDetailViewModel
     /// <summary>Shown instead of a silent return when the danger zone is switched off.</summary>
     internal const string DangerZoneOffNotice =
         "Repository delete is off. Turn on the danger zone in Settings first.";
+
+    /// <summary>
+    /// Whether the repository settings a save compares against are on hand. Every save
+    /// sends only what differs from them, so without them there is nothing to send —
+    /// a state the reader reaches by triggering a save before the tab has finished
+    /// loading, and one that must say so rather than do nothing.
+    /// </summary>
+    private bool HasRepoSettings([NotNullWhen(true)] RepoSettings? loaded)
+    {
+        if (loaded is not null) return true;
+        GitHubStatusText = "Repository settings haven't loaded yet.";
+        return false;
+    }
 
     /// <summary>Resets every Actions/Releases/Repo field so nothing leaks across a project switch.</summary>
     private void ResetGitHubTabState()
@@ -248,7 +262,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var run = SelectedWorkflowRun;
-        if (slug.Length == 0 || run is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, run, "a workflow run") || IsBusy) return;
         var failedOnly = RerunFailedJobsOnly;
         var gen = _generation;
         var scope = failedOnly ? "the failed jobs of" : "every job in";
@@ -271,7 +285,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var run = SelectedWorkflowRun;
-        if (slug.Length == 0 || run is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, run, "a workflow run") || IsBusy) return;
         if (run.IsCompleted)
         {
             GitHubStatusText = "That run has already finished — there is nothing to cancel.";
@@ -325,11 +339,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task ShowNewRelease()
     {
-        if (Slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
+        if (!HasGitHubRemote(Slug)) return;
         NewReleaseTag = null;
         NewReleaseTitle = "";
         NewReleaseBody = "";
@@ -373,11 +383,7 @@ public partial class ProjectDetailViewModel
         var repo = RepoPath;
         var tag = NewReleaseTag?.Trim() ?? "";
         var title = NewReleaseTitle.Trim();
-        if (Slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
+        if (!HasGitHubRemote(Slug)) return;
         if (tag.Length == 0)
         {
             GitHubStatusText = "Pick an existing tag to release from.";
@@ -420,7 +426,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var release = SelectedRelease;
-        if (slug.Length == 0 || release is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, release, "a release") || IsBusy) return;
         // Read before the dialog: the confirmation names this release's published state,
         // and the command below decides on the same reading.
         var tag = release.TagName;
@@ -460,7 +466,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var release = SelectedRelease;
-        if (slug.Length == 0 || release is null || asset is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, release, "a release") || asset is null || IsBusy) return;
 
         var tag = release.TagName;
         var gen = _generation;
@@ -542,12 +548,8 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var loaded = RepoSettings;
-        if (slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
-        if (loaded is null || IsBusy) return;
+        if (!HasGitHubRemote(slug)) return;
+        if (!HasRepoSettings(loaded) || IsBusy) return;
 
         var description = RepoDescriptionDraft.Trim();
         var homepage = RepoHomepageDraft.Trim();
@@ -595,12 +597,8 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var loaded = RepoSettings;
-        if (slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
-        if (loaded is null || IsBusy) return;
+        if (!HasGitHubRemote(slug)) return;
+        if (!HasRepoSettings(loaded) || IsBusy) return;
 
         var issues = FeatureChange(loaded.HasIssues, RepoIssuesEnabled);
         var wiki = FeatureChange(loaded.HasWiki, RepoWikiEnabled);
@@ -631,12 +629,8 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var loaded = RepoSettings;
         var branch = RepoDefaultBranchDraft.Trim();
-        if (slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
-        if (loaded is null || IsBusy) return;
+        if (!HasGitHubRemote(slug)) return;
+        if (!HasRepoSettings(loaded) || IsBusy) return;
         if (branch.Length == 0)
         {
             GitHubStatusText = "Enter the branch to make default.";
@@ -668,12 +662,8 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var loaded = RepoSettings;
-        if (slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
-        if (loaded is null || IsBusy) return;
+        if (!HasGitHubRemote(slug)) return;
+        if (!HasRepoSettings(loaded) || IsBusy) return;
 
         var visibility = SelectedRepoVisibility;
         var token = visibility.Token(); // enum → exact gh token; BuildVisibilityArgs can't see a bad value
@@ -786,7 +776,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task MarkNotificationRead(GitHubNotification? notification)
     {
-        if (notification is null || Slug.Length == 0 || IsBusy) return;
+        if (notification is null || !HasGitHubRemote(Slug) || IsBusy) return;
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.MarkNotificationReadAsync(notification.ThreadId),
             "Mark notification read");
@@ -797,7 +787,7 @@ public partial class ProjectDetailViewModel
     private async Task MarkAllNotificationsRead()
     {
         var slug = Slug;
-        if (slug.Length == 0 || IsBusy) return;
+        if (!HasGitHubRemote(slug) || IsBusy) return;
         var count = Notifications.Count;
         if (count == 0)
         {
@@ -846,11 +836,7 @@ public partial class ProjectDetailViewModel
     private async Task DeleteRepo()
     {
         var slug = Slug;
-        if (slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
+        if (!HasGitHubRemote(slug)) return;
         // Re-read, not the bound property: the panel's visibility is a rendering
         // decision, and a command reachable from the keyboard must enforce the gate
         // itself.

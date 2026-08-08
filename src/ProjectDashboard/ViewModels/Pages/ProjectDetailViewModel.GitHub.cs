@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
@@ -62,6 +63,34 @@ public partial class ProjectDetailViewModel
 
     /// <summary>Shown instead of a silent return when a command needs a slug and there is none.</summary>
     private const string NoRemoteStatus = "This project has no GitHub remote.";
+
+    /// <summary>
+    /// Whether a command that needs a repository can proceed, writing why it cannot when
+    /// it cannot. An absent remote is a state the reader can see and act on, so it is
+    /// never a silent return. The busy gate is deliberately not folded in: the operation
+    /// holding it already names itself on this same status line, and overwriting that
+    /// with a refusal would hide the operation actually running.
+    /// </summary>
+    private bool HasGitHubRemote(string slug)
+    {
+        if (slug.Length > 0) return true;
+        GitHubStatusText = NoRemoteStatus;
+        return false;
+    }
+
+    /// <summary>
+    /// <see cref="HasGitHubRemote"/> plus the row the command acts on.
+    /// <paramref name="selectionNoun"/> completes "Select … first." and names the surface
+    /// the reader has to pick from, since one status line serves every GitHub command.
+    /// </summary>
+    private bool HasGitHubTarget<T>(string slug, [NotNullWhen(true)] T? selection, string selectionNoun)
+        where T : class
+    {
+        if (!HasGitHubRemote(slug)) return false;
+        if (selection is not null) return true;
+        GitHubStatusText = $"Select {selectionNoun} first.";
+        return false;
+    }
 
     /// <summary>Resets every interactive Issues/PR field so nothing leaks across a project switch.</summary>
     private void ResetGitHubState()
@@ -224,11 +253,7 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = "Enter an issue title first.";
             return;
         }
-        if (slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
+        if (!HasGitHubRemote(slug)) return;
         if (IsBusy) return;
         var body = NewIssueBody;
         var labels = SplitLabels(NewIssueLabels);
@@ -250,7 +275,13 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var issue = SelectedIssue;
         var body = IssueCommentDraft.Trim();
-        if (slug.Length == 0 || issue is null || body.Length == 0 || IsBusy) return;
+        if (!HasGitHubTarget(slug, issue, "an issue")) return;
+        if (body.Length == 0)
+        {
+            GitHubStatusText = "Enter a comment first.";
+            return;
+        }
+        if (IsBusy) return;
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.CommentIssueAsync(slug, issue.Number, body),
             $"Comment on #{issue.Number}");
@@ -266,7 +297,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var issue = SelectedIssue;
-        if (slug.Length == 0 || issue is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, issue, "an issue") || IsBusy) return;
         // Held across the dialog: the captured slug keeps the write on the right repo,
         // but a project switched to while the dialog is open must not inherit this
         // command's busy gate or its status line.
@@ -290,7 +321,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var issue = SelectedIssue;
-        if (slug.Length == 0 || issue is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, issue, "an issue") || IsBusy) return;
         var ok = await RunGitHubOp(() => _gitHubService.ReopenIssueAsync(slug, issue.Number), $"Reopen #{issue.Number}");
         if (ok)
         {
@@ -305,7 +336,7 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var issue = SelectedIssue;
         var label = SelectedLabelToAdd;
-        if (slug.Length == 0 || issue is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, issue, "an issue") || IsBusy) return;
         if (string.IsNullOrWhiteSpace(label))
         {
             GitHubStatusText = "Pick a label to add first.";
@@ -327,7 +358,12 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var issue = SelectedIssue;
         var label = SelectedLabelToRemove;
-        if (slug.Length == 0 || issue is null || string.IsNullOrWhiteSpace(label) || IsBusy) return;
+        if (!HasGitHubTarget(slug, issue, "an issue") || IsBusy) return;
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            GitHubStatusText = "Pick a label to remove first.";
+            return;
+        }
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.EditIssueLabelsAsync(slug, issue.Number, [], [label]),
             $"Remove label from #{issue.Number}");
@@ -344,7 +380,12 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var issue = SelectedIssue;
         var assignee = IssueAssignee.Trim();
-        if (slug.Length == 0 || issue is null || assignee.Length == 0 || IsBusy) return;
+        if (!HasGitHubTarget(slug, issue, "an issue") || IsBusy) return;
+        if (assignee.Length == 0)
+        {
+            GitHubStatusText = "Enter a username to assign first.";
+            return;
+        }
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.AssignIssueAsync(slug, issue.Number, assignee),
             $"Assign #{issue.Number}");
@@ -398,11 +439,7 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task ShowNewPr()
     {
-        if (Slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
+        if (!HasGitHubRemote(Slug)) return;
         NewPrTitle = "";
         NewPrBody = "";
         NewPrBase = "";
@@ -432,11 +469,7 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = "Enter a pull request title first.";
             return;
         }
-        if (Slug.Length == 0)
-        {
-            GitHubStatusText = NoRemoteStatus;
-            return;
-        }
+        if (!HasGitHubRemote(Slug)) return;
         if (repo.Length == 0 || IsBusy) return;
         // Without an explicit head, gh reads the checkout at spawn time — which the
         // app's own Open in Terminal makes easy to change while the form is open.
@@ -470,7 +503,13 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var pr = SelectedPullRequest;
         var body = PrCommentDraft.Trim();
-        if (slug.Length == 0 || pr is null || body.Length == 0 || IsBusy) return;
+        if (!HasGitHubTarget(slug, pr, "a pull request")) return;
+        if (body.Length == 0)
+        {
+            GitHubStatusText = "Enter a comment first.";
+            return;
+        }
+        if (IsBusy) return;
         var gen = _generation;
         var ok = await RunGitHubOp(() => _gitHubService.CommentPullRequestAsync(slug, pr.Number, body),
             $"Comment on #{pr.Number}");
@@ -486,7 +525,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var pr = SelectedPullRequest;
-        if (slug.Length == 0 || pr is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, pr, "a pull request") || IsBusy) return;
         var gen = _generation;
         if (!await ConfirmAsync("Close pull request?", $"Close pull request #{pr.Number} — {pr.Title}?", "Close")) return;
         if (!IsCurrent(gen))
@@ -508,7 +547,7 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         var pr = SelectedPullRequest;
         var detail = PullRequestDetail;
-        if (slug.Length == 0 || pr is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, pr, "a pull request") || IsBusy) return;
 
         var strategy = SelectedMergeStrategy;
         var token = strategy.Token(); // enum → exact gh token; BuildMergeArgs can't see a bad value
@@ -543,7 +582,9 @@ public partial class ProjectDetailViewModel
     {
         var repo = RepoPath;
         var pr = SelectedPullRequest;
-        if (repo.Length == 0 || pr is null || IsBusy) return;
+        // Checkout runs in the clone, so the repository path is what it needs; the slug
+        // still gates it, because a clone with no GitHub remote has no pull request.
+        if (!HasGitHubTarget(Slug, pr, "a pull request") || repo.Length == 0 || IsBusy) return;
 
         var head = PullRequestDetail?.HeadRef ?? "";
         var target = head.Length > 0 ? head : "the pull request's head branch";
@@ -568,7 +609,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var pr = SelectedPullRequest;
-        if (slug.Length == 0 || pr is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, pr, "a pull request") || IsBusy) return;
         var gen = _generation;
         if (!await ConfirmAsync("Mark ready for review?",
                 $"Mark pull request #{pr.Number} — {pr.Title} — ready for review?\n\n" +
@@ -593,7 +634,7 @@ public partial class ProjectDetailViewModel
     {
         var slug = Slug;
         var pr = SelectedPullRequest;
-        if (slug.Length == 0 || pr is null || IsBusy) return;
+        if (!HasGitHubTarget(slug, pr, "a pull request") || IsBusy) return;
 
         var token = action.Token(); // enum → exact gh token; BuildReviewArgs can't see a bad value
         var body = ReviewBody.Trim();
