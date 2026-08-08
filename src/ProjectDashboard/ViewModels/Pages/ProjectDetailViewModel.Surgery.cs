@@ -224,8 +224,7 @@ public partial class ProjectDetailViewModel
     private string _surgeryRetryRepo = "";
 
     /// <summary>Confirm seam: replaced where no window can be shown.</summary>
-    internal Func<SurgeryConfirmation, Task<bool>> ConfirmSurgeryAsync { get; set; } =
-        confirmation => ConfirmAsync(confirmation.Title, confirmation.Message, confirmation.ConfirmLabel);
+    internal Func<SurgeryConfirmation, Task<bool>> ConfirmSurgeryAsync { get; set; }
 
     /// <summary>Message-entry seam: title, prompt, initial text → the text, or null when cancelled.</summary>
     internal Func<string, string, string, Task<string?>> PromptForCommitMessageAsync { get; set; } =
@@ -324,11 +323,11 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// Command availability and the disabled-state reasons depend on state owned by the other
-    /// partials, which cannot carry this partial's notification attributes.
+    /// partials, which cannot carry this partial's notification attributes. Dispatched from the
+    /// class's single OnPropertyChanged override.
     /// </summary>
-    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    private void HandleSurgeryPropertyChanged(PropertyChangedEventArgs e)
     {
-        base.OnPropertyChanged(e);
         switch (e.PropertyName)
         {
             case nameof(Project):
@@ -700,8 +699,21 @@ public partial class ProjectDetailViewModel
             if (result.Success)
             {
                 // The restore undid the operation the recovery marker describes, so the marker goes
-                // with it: left behind it reports an interrupted rewrite at the next launch.
-                if (Surgery is not null) await Surgery.ConcludeUndoAsync(repo);
+                // with it: left behind it reports an interrupted rewrite at the next launch. The
+                // marker write is not part of the restore's outcome — a throw here costs one stale
+                // recovery prompt, while reporting it as a failed restore would deny a repository
+                // that is already back at its backup and leave its spent undo offer standing.
+                if (Surgery is not null)
+                {
+                    try
+                    {
+                        await Surgery.ConcludeUndoAsync(repo);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn($"undo of '{operation}' restored {repo} but could not clear the recovery marker", ex);
+                    }
+                }
                 SurgeryStatusText = result.WorktreeWasDirty
                     ? $"Restored — {result.DiscardedChangeCount} uncommitted change(s) were discarded."
                     : "Restored.";
@@ -749,9 +761,10 @@ public partial class ProjectDetailViewModel
     {
         if (IsBusy || RepoPath.Length == 0) return;
         var gen = _generation;
+        var repo = RepoPath;
         var ok = await RunOp(
-            repo => _gitService.StashPushAsync(repo, "before history edit", includeUntracked: true),
-            "Stash changes");
+            r => _gitService.StashPushAsync(r, "before history edit", includeUntracked: true),
+            "Stash changes", repo, gen);
         if (!IsCurrent(gen)) return;
         if (!ok)
         {

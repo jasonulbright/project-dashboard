@@ -373,6 +373,7 @@ public partial class ProjectDetailViewModel
         base.OnPropertyChanged(e);
         if (e.PropertyName is { } name && RewriteInputProperties.Contains(name))
             InvalidateRewritePreview();
+        HandleSurgeryPropertyChanged(e);
     }
 
     // ── Derived selections ──────────────────────────────────────────────────────

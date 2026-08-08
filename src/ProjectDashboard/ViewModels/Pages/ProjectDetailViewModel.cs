@@ -48,6 +48,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         _rewriteSessions = rewriteSessions;
         _busyRegistry = busyRegistry ?? new Services.Safety.RepoBusyRegistry();
         ConfirmPrompt = ConfirmAsync;
+        ConfirmSurgeryAsync = c => ConfirmAsync(c.Title, c.Message, c.ConfirmLabel);
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);

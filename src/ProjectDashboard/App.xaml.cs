@@ -91,10 +91,15 @@ public partial class App : Application
                 services.AddSingleton<DashboardPage>();
                 services.AddSingleton<DashboardViewModel>();
                 services.AddTransient<ProjectDetailPage>();
+                // The registry and session factory must be the container's own instances:
+                // the constructor's null-fallbacks would give the page a private registry
+                // that shares no state with the coordinators' leases.
                 services.AddSingleton<ProjectDetailViewModel>(sp => new ProjectDetailViewModel(
                     sp.GetRequiredService<ProjectDiscoveryService>(),
                     sp.GetRequiredService<GitService>(),
-                    sp.GetRequiredService<GitHubService>())
+                    sp.GetRequiredService<GitHubService>(),
+                    sp.GetRequiredService<IRewriteSessionFactory>(),
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>())
                 {
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });

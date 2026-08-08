@@ -828,6 +828,54 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Null(await new RewriteJournal().ReadPendingAsync(repo.Path));
     }
 
+    [Fact]
+    public async Task AnUndoWhoseRecoveryMarkerCannotBeCleared_StillReportsTheRestoreThatSucceeded()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        var git = new GitService();
+        var vm = await VmForAsync(repo);
+        vm.Surgery = new SurgeryCoordinator(
+            new BackupService(git, new SettingsService()), new RepoBusyRegistry(), git,
+            new ThrowingRebaseDriver(git));
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        Assert.NotNull(await new RewriteJournal().ReadPendingAsync(repo.Path));
+        Assert.True(vm.SurgeryUndoVisible);
+
+        // A second repository's pending entry makes clearing this one a rewrite of the journal
+        // rather than a delete, and the durable write cannot create its .tmp over a directory.
+        var journal = new RewriteJournal();
+        await journal.BeginAsync(new RewriteJournalEntry
+        {
+            RepoPath = TestEnv.NewDir("other-pending"),
+            Phase = "rebase",
+            UtcStamp = "20260101-000000000"
+        });
+        var blocked = journal.Path + ".tmp";
+        Directory.CreateDirectory(blocked);
+        try
+        {
+            await vm.UndoLastSurgeryCommand.ExecuteAsync(null);
+        }
+        finally
+        {
+            Directory.Delete(blocked, recursive: true);
+        }
+
+        // The restore landed; only the marker it tried to clear survived. Reporting a failure
+        // here would tell the reader the repository was never put back, and leave standing an
+        // undo offer whose backup has already been applied.
+        Assert.StartsWith("Restored", vm.SurgeryStatusText);
+        Assert.Equal("", vm.SurgeryFailureText);
+        Assert.False(vm.SurgeryUndoVisible);
+        Assert.False(vm.UndoLastSurgeryCommand.CanExecute(null));
+        Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
+
+        await journal.ClearAllAsync();
+    }
+
     /// <summary>A git that refuses every stash push, leaving the tree the surgery gate refused.</summary>
     private sealed class StashRefusingGitService : GitService
     {
