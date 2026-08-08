@@ -4,9 +4,15 @@ using ProjectDashboard.Services;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Hunk-level stage/unstage/discard (L-06): the fiddly one. Exercises the model-based
-/// <see cref="GitService.BuildHunkPatch"/> and the byte-faithful raw
-/// <see cref="GitService.ExtractHunkPatch"/> against real `git apply`.
+/// Hunk-level stage/unstage/discard (L-06): the fiddly one. Every patch is sliced out of
+/// the RAW `git diff` bytes by <see cref="GitService.ExtractHunkPatch"/> and applied by
+/// real `git apply`.
+///
+/// There is deliberately no second, model-based builder. A patch rebuilt from a parsed
+/// <see cref="FileDiff"/> is lossy in two ways that `git apply` either rejects or, worse,
+/// accepts with the wrong bytes: the parser strips the CR of every CRLF line, and it
+/// cannot tell the "\ No newline at end of file" marker from a context line whose own
+/// content starts with a backslash. Both are exercised below through the raw path.
 /// </summary>
 public class GitServiceHunkTests
 {
@@ -25,6 +31,16 @@ public class GitServiceHunkTests
         return (await _git.GetFileDiffAsync(repo.Path, file, staged))!;
     }
 
+    /// <summary>The patch the staging UI sends: raw diff bytes, sliced at one hunk.</summary>
+    private async Task<string> HunkPatchAsync(TempRepo repo, int hunkIndex, bool staged = false)
+    {
+        var raw = await _git.GetFileDiffRawAsync(repo.Path, "file.txt", staged);
+        Assert.NotNull(raw);
+        var patch = GitService.ExtractHunkPatch(raw, hunkIndex);
+        Assert.NotNull(patch);
+        return patch;
+    }
+
     private static int HunkCount(FileDiff diff) =>
         diff.Lines.Count(l => l.Kind == DiffLineKind.HunkHeader && l.Text.StartsWith("@@"));
 
@@ -39,10 +55,9 @@ public class GitServiceHunkTests
         await repo.CommitAllAsync("fifteen lines");
         repo.WriteFile("file.txt", FifteenEdited);
 
-        var diff = await FileDiffAsync(repo, staged: false);
-        Assert.Equal(2, HunkCount(diff));
+        Assert.Equal(2, HunkCount(await FileDiffAsync(repo, staged: false)));
 
-        var patch = GitService.BuildHunkPatch(diff, 0);
+        var patch = await HunkPatchAsync(repo, 0);
         Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
 
         // Staged side carries ONLY the first hunk (L1); the second (L15) stays unstaged.
@@ -64,7 +79,7 @@ public class GitServiceHunkTests
         await repo.CommitAllAsync("fifteen lines");
         repo.WriteFile("file.txt", FifteenEdited);
 
-        var patch = GitService.BuildHunkPatch(await FileDiffAsync(repo, staged: false), 0);
+        var patch = await HunkPatchAsync(repo, 0);
         Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
         Assert.Equal(1, HunkCount(await FileDiffAsync(repo, staged: true)));
 
@@ -83,7 +98,7 @@ public class GitServiceHunkTests
         await repo.CommitAllAsync("fifteen lines");
         repo.WriteFile("file.txt", FifteenEdited);
 
-        var patch = GitService.BuildHunkPatch(await FileDiffAsync(repo, staged: false), 0);
+        var patch = await HunkPatchAsync(repo, 0);
         Assert.True((await _git.DiscardHunkAsync(repo.Path, patch)).Success);
 
         // First hunk reverted on disk (line 1 back to l1), second edit (L15) kept.
@@ -100,9 +115,8 @@ public class GitServiceHunkTests
         await repo.CommitAllAsync("no trailing newline");
         repo.WriteFile("file.txt", "x1\nx2\nX3");   // still none
 
-        var diff = await FileDiffAsync(repo, staged: false);
-        var patch = GitService.BuildHunkPatch(diff, 0);
-        // The builder must carry the "\ No newline at end of file" markers verbatim.
+        var patch = await HunkPatchAsync(repo, 0);
+        // The marker travels verbatim; a patch without it appends a newline nobody asked for.
         Assert.Contains("\\ No newline at end of file", patch);
 
         Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
@@ -111,56 +125,50 @@ public class GitServiceHunkTests
     }
 
     [Fact]
-    public async Task StageHunk_CrlfFile_StagesBytesFaithfullyViaRawExtract()
+    public async Task StageHunk_CrlfFile_StagesBytesFaithfully()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("hunk-crlf");
         repo.WriteFile("file.txt", "c1\r\nc2\r\nc3\r\n");
         await repo.CommitAllAsync("crlf file");
         repo.WriteFile("file.txt", "C1\r\nc2\r\nc3\r\n");
 
-        // FileDiff.ParseUnified strips the CR, so a model-built patch would fail plain
-        // `git apply`; the raw extractor preserves the CR bytes.
         var raw = await _git.GetFileDiffRawAsync(repo.Path, "file.txt", staged: false);
         Assert.NotNull(raw);
         Assert.Contains("\r", raw);
-        var patch = GitService.ExtractHunkPatch(raw!, 0);
-        Assert.NotNull(patch);
+        // FileDiff.ParseUnified drops these CRs, which is why it is not the staging path.
+        Assert.DoesNotContain("\r", string.Concat((await FileDiffAsync(repo, false)).Lines.Select(l => l.Text)));
 
-        Assert.True((await _git.StageHunkAsync(repo.Path, patch!)).Success);
+        var patch = GitService.ExtractHunkPatch(raw, 0);
+        Assert.NotNull(patch);
+        Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
 
         // Staged blob keeps CRLF on every line — no LF corruption of the edited line.
         var stagedBlob = await Git.RunAsync(repo.Path, "cat-file", "-p", ":file.txt");
         Assert.Equal("C1\r\nc2\r\nc3\r\n", stagedBlob);
     }
 
+    /// <summary>
+    /// A context line whose own content begins with "\ " is indistinguishable from the
+    /// no-newline marker once the parser has stripped the diff's leading space, so a
+    /// model-built patch emits it with no prefix and `git apply` reads it as a marker.
+    /// Sliced from the raw bytes the distinction never has to be made.
+    /// </summary>
     [Fact]
-    public void BuildHunkPatch_ProducesGitApplyableHeadersAndBody()
+    public async Task StageHunk_ContextLineStartingWithABackslash_IsNotReadAsANoNewlineMarker()
     {
-        var diff = new FileDiff { Path = "file.txt", OldPath = "file.txt" };
-        diff.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = "@@ -1,3 +1,3 @@" });
-        diff.Lines.Add(new DiffLine { Kind = DiffLineKind.Removed, Text = "old" });
-        diff.Lines.Add(new DiffLine { Kind = DiffLineKind.Added, Text = "new" });
-        diff.Lines.Add(new DiffLine { Kind = DiffLineKind.Context, Text = "keep" });
+        using var repo = await TempRepo.CreateWithCommitAsync("hunk-backslash");
+        repo.WriteFile("file.txt", "a1\n\\ No newline at end of file\na3\n");
+        await repo.CommitAllAsync("backslash content line");
+        repo.WriteFile("file.txt", "A1\n\\ No newline at end of file\na3\n");
 
-        var patch = GitService.BuildHunkPatch(diff, 0);
+        var patch = await HunkPatchAsync(repo, 0);
+        // The content line keeps the unified diff's context space; only a real marker
+        // sits at column 0.
+        Assert.Contains(" \\ No newline at end of file", patch);
 
-        Assert.Equal(
-            "diff --git a/file.txt b/file.txt\n" +
-            "--- a/file.txt\n" +
-            "+++ b/file.txt\n" +
-            "@@ -1,3 +1,3 @@\n" +
-            "-old\n" +
-            "+new\n" +
-            " keep\n",
-            patch);
-    }
-
-    [Fact]
-    public void BuildHunkPatch_OutOfRangeIndex_Throws()
-    {
-        var diff = new FileDiff { Path = "f" };
-        diff.Lines.Add(new DiffLine { Kind = DiffLineKind.HunkHeader, Text = "@@ -1 +1 @@" });
-        Assert.Throws<ArgumentOutOfRangeException>(() => GitService.BuildHunkPatch(diff, 1));
+        Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
+        var stagedBlob = await Git.RunAsync(repo.Path, "cat-file", "-p", ":file.txt");
+        Assert.Equal("A1\n\\ No newline at end of file\na3\n", stagedBlob);
     }
 
     [Fact]
@@ -185,7 +193,29 @@ public class GitServiceHunkTests
             "@@ -10,2 +10,2 @@\n" +
             " y\n-z\n+Z\n",
             second);
-
-        Assert.Null(GitService.ExtractHunkPatch(raw, 2));
     }
+
+    /// <summary>
+    /// An index past the last hunk yields nothing rather than the last hunk: a caller
+    /// asking for a hunk that is not there must not stage a different one.
+    /// </summary>
+    [Theory]
+    [InlineData(2)]
+    [InlineData(-1)]
+    [InlineData(99)]
+    public void ExtractHunkPatch_IndexOutsideTheDiff_YieldsNothing(int hunkIndex)
+    {
+        const string raw =
+            "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n" +
+            "@@ -1,2 +1,2 @@\n-a\n+A\n b\n" +
+            "@@ -10,2 +10,2 @@\n y\n-z\n+Z\n";
+
+        Assert.Null(GitService.ExtractHunkPatch(raw, hunkIndex));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("diff --git a/f.txt b/f.txt\nindex 111..222 100644\n")]
+    public void ExtractHunkPatch_DiffWithNoHunk_YieldsNothing(string raw)
+        => Assert.Null(GitService.ExtractHunkPatch(raw, 0));
 }

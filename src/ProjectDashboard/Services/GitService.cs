@@ -1040,14 +1040,18 @@ public class GitService
     }
 
     /// <summary>
-    /// Slices a single-hunk patch out of one file's RAW `git diff` output, byte-for-byte
-    /// (CR bytes and the "\ No newline at end of file" markers survive intact, which the
-    /// FileDiff model discards). This is the byte-faithful path for staging real hunks;
-    /// <see cref="BuildHunkPatch"/> is the model-based counterpart. Null when the diff has
-    /// no hunk at <paramref name="hunkIndex"/>. Body lines never start with "@@" (they
-    /// carry a +/-/space prefix), so a column-0 "@@" unambiguously marks a hunk header.
+    /// Slices a single-hunk patch out of one file's RAW `git diff` output, byte-for-byte.
+    /// The only patch builder: a patch reconstructed from a parsed
+    /// <see cref="FileDiff"/> cannot be byte-faithful, because the model discards the CR
+    /// of a CRLF line and cannot tell the "\ No newline at end of file" marker from a
+    /// context line whose own content begins with a backslash — either one produces a
+    /// patch `git apply` rejects or, worse, applies with the wrong bytes.
+    ///
+    /// Null when the diff has no hunk at <paramref name="hunkIndex"/>. Body lines never
+    /// start with "@@" (they carry a +/-/space prefix), so a column-0 "@@" unambiguously
+    /// marks a hunk header.
     /// </summary>
-    internal static string? ExtractHunkPatch(string rawFileDiff, int hunkIndex)
+    public static string? ExtractHunkPatch(string rawFileDiff, int hunkIndex)
     {
         if (string.IsNullOrEmpty(rawFileDiff)) return null;
         // Split on '\n' only: each element keeps its trailing '\r' for a CRLF diff.
@@ -1075,63 +1079,6 @@ public class GitService
             // as a spurious blank line.
             if (i == lines.Length - 1 && lines[i].Length == 0) break;
             sb.Append(lines[i]).Append('\n');
-        }
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Builds a valid single-hunk patch from a parsed <see cref="FileDiff"/> and a hunk
-    /// index, reconstructing the "diff --git"/"---"/"+++" headers git apply needs and the
-    /// hunk body. Faithful to the DiffLine text it is given, including a trailing CR when
-    /// present and the "\ No newline at end of file" marker. Because FileDiff.ParseUnified
-    /// strips the CR from CRLF content, feed <see cref="ExtractHunkPatch"/> from
-    /// <see cref="GetFileDiffRawAsync"/> when byte-exact CRLF staging is required.
-    /// </summary>
-    public static string BuildHunkPatch(FileDiff diff, int hunkIndex)
-    {
-        var headers = new List<int>();
-        for (var i = 0; i < diff.Lines.Count; i++)
-            if (diff.Lines[i].Kind == DiffLineKind.HunkHeader &&
-                diff.Lines[i].Text.StartsWith("@@", StringComparison.Ordinal))
-                headers.Add(i);
-
-        if (hunkIndex < 0 || hunkIndex >= headers.Count)
-            throw new ArgumentOutOfRangeException(nameof(hunkIndex),
-                $"hunk {hunkIndex} requested; the diff has {headers.Count}");
-
-        var start = headers[hunkIndex];
-        var end = hunkIndex + 1 < headers.Count ? headers[hunkIndex + 1] : diff.Lines.Count;
-
-        var oldPath = diff.OldPath ?? diff.Path;
-        var newPath = diff.Path;
-
-        var sb = new StringBuilder();
-        sb.Append("diff --git a/").Append(oldPath).Append(" b/").Append(newPath).Append('\n');
-        sb.Append("--- a/").Append(oldPath).Append('\n');
-        sb.Append("+++ b/").Append(newPath).Append('\n');
-        for (var i = start; i < end; i++)
-        {
-            var dl = diff.Lines[i];
-            switch (dl.Kind)
-            {
-                case DiffLineKind.HunkHeader:
-                    sb.Append(dl.Text).Append('\n');
-                    break;
-                case DiffLineKind.Added:
-                    sb.Append('+').Append(dl.Text).Append('\n');
-                    break;
-                case DiffLineKind.Removed:
-                    sb.Append('-').Append(dl.Text).Append('\n');
-                    break;
-                case DiffLineKind.Context:
-                    // The "\ No newline at end of file" marker is emitted verbatim; every
-                    // other context line takes the leading space a unified diff requires.
-                    if (dl.Text.StartsWith("\\ ", StringComparison.Ordinal))
-                        sb.Append(dl.Text).Append('\n');
-                    else
-                        sb.Append(' ').Append(dl.Text).Append('\n');
-                    break;
-            }
         }
         return sb.ToString();
     }
