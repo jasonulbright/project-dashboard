@@ -1119,11 +1119,26 @@ public partial class ProjectDetailPage
     /// The authority a label claims, which is not the whole label: the resolved host is
     /// the text after the last "@" and before the first ":" or "/", and punctuation
     /// wrapping or trailing it is decoration rather than part of the name.
+    ///
+    /// A trailing "@" resolves nothing, and neither does a second one: "github.com@" and
+    /// "a@github.com@b" both leave a token no host shape can match, which would classify
+    /// the label as prose and open its target with nothing disclosed. Each "@"-separated
+    /// candidate is read from the last back to the first, and the first dotted one is the
+    /// name the label puts in front of the reader.
     /// </summary>
     private static string HostToken(string label)
     {
-        var authority = label.Split('/', 2)[0];
-        var host = authority[(authority.LastIndexOf('@') + 1)..].Split(':', 2)[0];
+        var candidates = label.Split('/', 2)[0].Split('@');
+        for (var i = candidates.Length - 1; i >= 0; i--)
+        {
+            var candidate = TrimToNameCharacters(candidates[i].Split(':', 2)[0]);
+            if (candidate.Contains('.')) return candidate;
+        }
+        return TrimToNameCharacters(candidates[^1].Split(':', 2)[0]);
+    }
+
+    private static string TrimToNameCharacters(string host)
+    {
         var start = 0;
         var end = host.Length;
         while (start < end && !char.IsLetterOrDigit(host[start])) start++;

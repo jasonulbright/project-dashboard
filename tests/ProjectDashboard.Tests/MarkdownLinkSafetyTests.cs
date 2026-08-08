@@ -178,6 +178,22 @@ public class MarkdownLinkSafetyTests
         Assert.Equal("https://evil.example/x", ProjectDetailPage.KeyboardDisclosure(label, target));
     }
 
+    /// <summary>
+    /// An "@" the label ends with, or a second one after the host, resolves to a token no
+    /// host shape can match. The reader still sees github.com, so the label still claims a
+    /// destination and still owes the disclosure.
+    /// </summary>
+    [Theory]
+    [InlineData("github.com@")]
+    [InlineData("a@github.com@b")]
+    [InlineData("github.com@x")]
+    [InlineData("github.com:443@")]
+    public void ALabelWithATrailingOrSecondAtSign_IsStillDisclosed(string label)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri("https://evil.example/x", out var target));
+        Assert.Equal("https://evil.example/x", ProjectDetailPage.KeyboardDisclosure(label, target));
+    }
+
     [Theory]
     // The label names one host and the link carries another.
     [InlineData("https://github.com/o/r/pull/12", "http://\u0430pple.com/login", "http://xn--pple-43d.com/login")]
