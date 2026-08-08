@@ -619,15 +619,20 @@ public partial class ProjectDetailViewModel
             PullRequestsError = NoRemoteStatus;
             return;
         }
-        var pullRequests = await _gitHubService.GetPullRequestsAsync(slug);
+        var pullRequests = await FetchPullRequestsAsync(slug);
         // A stale write would also set PullRequestsLoaded, making the new project's
         // tab skip its own load and open the previous project's PR numbers.
-        if (IsCurrent(gen))
+        if (!IsCurrent(gen)) return;
+        if (pullRequests is null)
         {
-            PullRequestsError = "";
-            PullRequests = new ObservableCollection<GitHubPullRequest>(pullRequests);
-            PullRequestsLoaded = true;
+            // Marked loaded, the next visit would skip its own read and show an empty list
+            // as though the repository had no open pull requests.
+            PullRequestsError = PullRequestsFetchFailed;
+            return;
         }
+        PullRequestsError = "";
+        PullRequests = new ObservableCollection<GitHubPullRequest>(pullRequests);
+        PullRequestsLoaded = true;
     }
 
     [RelayCommand]

@@ -145,17 +145,21 @@ public partial class ProjectDetailViewModel : ObservableObject
         }
         try
         {
-            var issues = await _gitHubService.GetIssuesAsync(project.GitHubSlug, "open");
-            project.Issues = issues; // cache on the model for the next visit
-            if (ReferenceEquals(Project, project)) // user may have moved on mid-fetch
+            var issues = await FetchIssuesAsync(project.GitHubSlug);
+            if (!ReferenceEquals(Project, project)) return; // user may have moved on mid-fetch
+            if (issues is null)
             {
-                IssuesError = "";
-                Issues = new ObservableCollection<GitHubIssue>(issues);
+                IssuesError = IssuesFetchFailed;
+                return;
             }
+            project.Issues = issues; // cache on the model for the next visit
+            IssuesError = "";
+            Issues = new ObservableCollection<GitHubIssue>(issues);
         }
         catch (Exception ex)
         {
             Log.Warn($"Issue list load failed for {project.GitHubSlug}", ex);
+            if (ReferenceEquals(Project, project)) IssuesError = IssuesFetchFailed;
         }
     }
 

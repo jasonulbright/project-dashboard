@@ -202,8 +202,15 @@ public partial class ProjectDetailViewModel
             return;
         }
         var gen = _generation;
-        var issues = await _gitHubService.GetIssuesAsync(slug, "open");
+        var issues = await FetchIssuesAsync(slug);
         if (!IsCurrent(gen)) return;
+        if (issues is null)
+        {
+            // The list already on screen is left standing: replacing it with nothing would
+            // report a repository emptied, which a read that never completed cannot say.
+            IssuesError = IssuesFetchFailed;
+            return;
+        }
         IssuesError = "";
         Issues = new ObservableCollection<GitHubIssue>(issues);
         if (Project is not null) Project.Issues = issues;
@@ -245,6 +252,24 @@ public partial class ProjectDetailViewModel
 
     internal virtual Task<List<Label>?> FetchLabelsAsync(string slug)
         => _gitHubService.GetLabelsAsync(slug);
+
+    /// <summary>
+    /// The two list reads the Issues and Pull Requests tabs stand on. Null is a failed read,
+    /// never rendered as an empty repository. Overridable on the same terms as the other
+    /// remote reads, so both outcomes are reachable without gh.
+    /// </summary>
+    internal virtual Task<List<GitHubIssue>?> FetchIssuesAsync(string slug)
+        => _gitHubService.GetIssuesAsync(slug, "open");
+
+    internal virtual Task<List<GitHubPullRequest>?> FetchPullRequestsAsync(string slug)
+        => _gitHubService.GetPullRequestsAsync(slug);
+
+    /// <summary>Shown wherever a list read failed, so a failure never reads as an empty repository.</summary>
+    private const string IssuesFetchFailed =
+        "Couldn't load issues. Check that the GitHub CLI is installed and signed in.";
+
+    private const string PullRequestsFetchFailed =
+        "Couldn't load pull requests. Check that the GitHub CLI is installed and signed in.";
 
     // ── Issue actions ───────────────────────────────────────────────────────────
 

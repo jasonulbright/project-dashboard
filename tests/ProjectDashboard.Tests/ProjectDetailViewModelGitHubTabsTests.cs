@@ -1051,6 +1051,72 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Equal("", vm.PullRequestsError);
     }
 
+    /// <summary>
+    /// A failed list read is not an empty repository. Both surfaces gate their empty state on
+    /// the same error line, so a failure that left it blank would render as the one claim the
+    /// read cannot support.
+    /// </summary>
+    [Fact]
+    public async Task AFailedIssueFetch_SaysSoRatherThanShowingAnEmptyList()
+    {
+        var vm = new StubTabsViewModel { SeedIssues = null };
+
+        await vm.SetProjectAsync(RemoteProject());
+
+        Assert.Contains("Couldn't load issues", vm.IssuesError);
+        Assert.Empty(vm.Issues);
+    }
+
+    [Fact]
+    public async Task AFailedIssueRefresh_LeavesTheListItAlreadyHadStanding()
+    {
+        var vm = new FailingSecondIssueFetch();
+        await vm.SetProjectAsync(RemoteProject());
+        Assert.Single(vm.Issues);
+
+        await vm.RefreshIssuesCommand.ExecuteAsync(null);
+
+        Assert.Contains("Couldn't load issues", vm.IssuesError);
+        // Emptying the list would report a repository whose issues were all closed.
+        Assert.Single(vm.Issues);
+    }
+
+    [Fact]
+    public async Task AFailedPullRequestFetch_SaysSoAndLeavesTheTabUnloaded()
+    {
+        var vm = new StubTabsViewModel { SeedPullRequests = null };
+        await vm.SetProjectAsync(RemoteProject());
+
+        await vm.LoadPullRequestsCommand.ExecuteAsync(null);
+
+        Assert.Contains("Couldn't load pull requests", vm.PullRequestsError);
+        Assert.Empty(vm.PullRequests);
+        Assert.False(vm.PullRequestsLoaded);
+    }
+
+    [Fact]
+    public async Task ASuccessfulFetchOfAnEmptyRepository_LeavesNoErrorLine()
+    {
+        var vm = new StubTabsViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+
+        await vm.LoadPullRequestsCommand.ExecuteAsync(null);
+
+        Assert.Equal("", vm.IssuesError);
+        Assert.Equal("", vm.PullRequestsError);
+        Assert.True(vm.PullRequestsLoaded);
+    }
+
+    /// <summary>Answers the first read and fails every one after it, as a signed-out gh does.</summary>
+    private sealed class FailingSecondIssueFetch() : StubTabsViewModel
+    {
+        private int _fetches;
+
+        internal override Task<List<GitHubIssue>?> FetchIssuesAsync(string slug) =>
+            Task.FromResult<List<GitHubIssue>?>(
+                _fetches++ == 0 ? [new GitHubIssue { Number = 1, Title = "still open" }] : null);
+    }
+
     [Theory]
     [InlineData("https://github.com/o/r", "https://github.com/o/r")]
     [InlineData("  https://github.com/o/r  ", "https://github.com/o/r")]
@@ -1073,10 +1139,18 @@ public class ProjectDetailViewModelGitHubTabsTests
     /// synchronously, so a fire-and-forget load has finished by the time the setter that
     /// started it returns.
     /// </summary>
-    private sealed class StubTabsViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    private class StubTabsViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
     {
         public List<WorkflowRun>? Runs { get; init; }
         public List<WorkflowJob>? Jobs { get; init; }
+
+        /// <summary>
+        /// The two list reads, defaulting to a successful read of an empty repository. Null
+        /// is the failed read, which no surface may render as an empty list.
+        /// </summary>
+        public List<GitHubIssue>? SeedIssues { get; init; } = [];
+        public List<GitHubPullRequest>? SeedPullRequests { get; init; } = [];
+
         public List<Release>? SeedReleases { get; init; }
         public RepoSettings? Settings { get; init; }
         public List<GitHubNotification>? SeedNotifications { get; init; }
@@ -1115,6 +1189,11 @@ public class ProjectDetailViewModelGitHubTabsTests
             => JobGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Jobs);
 
         internal override Task<List<Release>?> FetchReleasesAsync(string slug) => Task.FromResult(SeedReleases);
+
+        internal override Task<List<GitHubIssue>?> FetchIssuesAsync(string slug) => Task.FromResult(SeedIssues);
+
+        internal override Task<List<GitHubPullRequest>?> FetchPullRequestsAsync(string slug)
+            => Task.FromResult(SeedPullRequests);
 
         internal override Task<RepoSettings?> FetchRepoSettingsAsync(string slug)
             => SettingsGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Settings);

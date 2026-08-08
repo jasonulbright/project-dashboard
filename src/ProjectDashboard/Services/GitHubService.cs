@@ -148,7 +148,13 @@ public class GitHubService(SettingsService settingsService)
         return results;
     }
 
-    public async Task<List<GitHubIssue>> GetIssuesAsync(string repoSlug, string state = "open", CancellationToken ct = default)
+    /// <summary>
+    /// The repository's issues, or null when the read failed. An empty list is an answer —
+    /// this repository has no open issues — and a failed gh call establishes no such thing,
+    /// so the two are never the same value. gh prints a JSON array whenever it succeeds, so
+    /// blank output is a failure too.
+    /// </summary>
+    public async Task<List<GitHubIssue>?> GetIssuesAsync(string repoSlug, string state = "open", CancellationToken ct = default)
     {
         try
         {
@@ -157,7 +163,10 @@ public class GitHubService(SettingsService settingsService)
                  "--json", "number,title,state,createdAt,updatedAt,author,labels", "--limit", "100"], ct);
 
             if (string.IsNullOrWhiteSpace(output))
-                return [];
+            {
+                Log.Warn($"gh issue list returned nothing for {repoSlug}");
+                return null;
+            }
 
             var issues = new List<GitHubIssue>();
             using var doc = JsonDocument.Parse(output);
@@ -182,12 +191,16 @@ public class GitHubService(SettingsService settingsService)
         }
         catch (Exception ex)
         {
-            Log.Warn($"gh issue list failed for {repoSlug} (showing 0 issues)", ex);
-            return [];
+            Log.Warn($"gh issue list failed for {repoSlug}", ex);
+            return null;
         }
     }
 
-    public async Task<List<GitHubPullRequest>> GetPullRequestsAsync(string repoSlug, CancellationToken ct = default)
+    /// <summary>
+    /// The repository's open pull requests, or null when the read failed. Same terms as
+    /// <see cref="GetIssuesAsync"/>: an empty list is an answer and a failure is not one.
+    /// </summary>
+    public async Task<List<GitHubPullRequest>?> GetPullRequestsAsync(string repoSlug, CancellationToken ct = default)
     {
         try
         {
@@ -196,7 +209,10 @@ public class GitHubService(SettingsService settingsService)
                  "--json", "number,title,author,isDraft,updatedAt,statusCheckRollup", "--limit", "100"], ct);
 
             if (string.IsNullOrWhiteSpace(output))
-                return [];
+            {
+                Log.Warn($"gh pr list returned nothing for {repoSlug}");
+                return null;
+            }
 
             var prs = new List<GitHubPullRequest>();
             using var doc = JsonDocument.Parse(output);
@@ -218,8 +234,8 @@ public class GitHubService(SettingsService settingsService)
         }
         catch (Exception ex)
         {
-            Log.Warn($"gh pr list failed for {repoSlug} (showing 0 PRs)", ex);
-            return [];
+            Log.Warn($"gh pr list failed for {repoSlug}", ex);
+            return null;
         }
     }
 
