@@ -1315,11 +1315,17 @@ public partial class DashboardViewModel : ObservableObject
     {
         if (pending.Count == 0) return null;
 
-        var names = pending
+        var named = pending
             .Select(e => System.IO.Path.GetFileName(e.RepoPath.TrimEnd('\\', '/')))
             .Where(n => n.Length > 0)
             .ToList();
-        var listed = names.Count > 0 ? string.Join(", ", names) : "an unnamed repository";
+
+        // An entry whose path yields no name is still one of the count, so it is listed as a
+        // remainder — otherwise the count claims more repositories than the text names.
+        var unnamed = pending.Count - named.Count;
+        if (unnamed > 0)
+            named.Add(unnamed == 1 ? "an unnamed repository" : $"{unnamed} unnamed repositories");
+        var listed = string.Join(", ", named);
         return pending.Count == 1
             ? $"A history operation on {listed} was interrupted. Open that project to restore its backup or dismiss the record — nothing has been restored."
             : $"History operations on {pending.Count} repositories were interrupted ({listed}). Open each project to restore its backup or dismiss the record — nothing has been restored.";

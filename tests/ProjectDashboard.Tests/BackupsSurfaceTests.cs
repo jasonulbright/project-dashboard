@@ -563,6 +563,35 @@ public class BackupsSurfaceTests
         Assert.Contains("beta", text);
     }
 
+    /// <summary>
+    /// A legacy entry can record no path at all. It is still one of the repositories the count
+    /// claims, so it is listed as an unnamed remainder rather than dropped — a count larger than
+    /// the names beside it reads as a missing name for a repository that was never pending.
+    /// </summary>
+    [Fact]
+    public void TheDashboardBanner_AccountsForEveryPendingEntryItCounts()
+    {
+        var text = DashboardViewModel.DescribeInterrupted(
+        [
+            new RewriteJournalEntry { RepoPath = @"C:\repos\alpha", Phase = "swap" },
+            new RewriteJournalEntry { RepoPath = "", Phase = "swap" },
+        ]);
+
+        Assert.NotNull(text);
+        Assert.Contains("2 repositories", text);
+        Assert.Contains("alpha, an unnamed repository", text);
+
+        var allUnnamed = DashboardViewModel.DescribeInterrupted(
+        [
+            new RewriteJournalEntry { RepoPath = "", Phase = "swap" },
+            new RewriteJournalEntry { RepoPath = "", Phase = "rebase" },
+        ]);
+
+        Assert.NotNull(allUnnamed);
+        Assert.Contains("2 repositories", allUnnamed);
+        Assert.Contains("2 unnamed repositories", allUnnamed);
+    }
+
     private static string ViewSource(string name, [System.Runtime.CompilerServices.CallerFilePath] string testFile = "")
     {
         var path = Path.GetFullPath(Path.Combine(
