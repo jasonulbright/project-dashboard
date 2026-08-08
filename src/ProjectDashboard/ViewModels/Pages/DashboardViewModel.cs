@@ -241,6 +241,7 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private string _opStatusText = "";
 
     private bool _bulkOpActive;
+    private object? _bulkOpHolder;
 
     /// <summary>
     /// Serializes the dashboard-level bulk ops (clone, sync all) so their refreshes can't
@@ -254,6 +255,38 @@ public partial class DashboardViewModel : ObservableObject
             _bulkOpActive = value;
             if (!value) _ = DrainRescanAsync();
         }
+    }
+
+    /// <summary>Shown when a bulk op cannot start because another one holds the gate.</summary>
+    private const string BulkOpBusyNotice = "Another operation is in progress — try again in a moment.";
+
+    /// <summary>
+    /// Claims the bulk-op gate, or null when another operation already holds it. The test
+    /// and the claim are one statement with no await between them, which is what makes
+    /// the gate a gate: a clone that read it free, then spent a repository fetch and a
+    /// modal dialog getting its target, would otherwise start alongside a Sync All that
+    /// began in that window. Callers therefore claim immediately before the work, never
+    /// before the dialog — holding the gate across a modal stalls every queued re-scan
+    /// for as long as the dialog is open.
+    ///
+    /// The returned token is what releases it. Without one, the first of two overlapping
+    /// operations to finish would clear the gate the other is still relying on.
+    /// </summary>
+    private object? TryClaimBulkOp()
+    {
+        if (_bulkOpActive) return null;
+        var holder = new object();
+        _bulkOpHolder = holder;
+        _bulkOpRunning = true;
+        return holder;
+    }
+
+    /// <summary>Releases the gate only for the claim that took it.</summary>
+    private void ReleaseBulkOp(object holder)
+    {
+        if (!ReferenceEquals(_bulkOpHolder, holder)) return;
+        _bulkOpHolder = null;
+        _bulkOpRunning = false;
     }
 
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
@@ -546,7 +579,8 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task NewProject()
     {
-        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
+        // Read, not claimed: the gate is claimed by the scaffold below, after the dialog.
+        if (_bulkOpRunning) { OpStatusText = BulkOpBusyNotice; return; }
         var dialog = new Wpf.Ui.Controls.MessageBox
         {
             Title = "New Project",
@@ -612,14 +646,20 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Seeds the new project's folder and brings it onto the grid, holding the bulk-op flag
+    /// Seeds the new project's folder and brings it onto the grid, holding the bulk-op gate
     /// across both. Returns git's error text when the repository was left without its first
-    /// commit, so the report reaches the user outside the flag rather than stalling every
-    /// queued re-scan behind a modal.
+    /// commit, so the report reaches the user outside the gate rather than stalling every
+    /// queued re-scan behind a modal. Nothing is created at all when another bulk op
+    /// claimed the gate while the name dialog was open: that refusal is a status line, not
+    /// a git error, because there is no half-made project to report on.
     /// </summary>
     internal async Task<string?> ScaffoldProjectAsync(string projectPath, string projectName)
     {
-        _bulkOpRunning = true;
+        if (TryClaimBulkOp() is not { } claim)
+        {
+            OpStatusText = BulkOpBusyNotice;
+            return null;
+        }
         try
         {
             Directory.CreateDirectory(projectPath);
@@ -645,7 +685,7 @@ public partial class DashboardViewModel : ObservableObject
             await ForceRefreshAsync();
             return gitError;
         }
-        finally { _bulkOpRunning = false; }
+        finally { ReleaseBulkOp(claim); }
     }
 
     /// <summary>
@@ -655,7 +695,10 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task CloneRepo()
     {
-        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
+        // Read, not claimed: the repository list and the picker below are both slow, and
+        // the gate is claimed once the target is known. The early read only spares the
+        // reader a dialog that would be refused.
+        if (_bulkOpRunning) { OpStatusText = BulkOpBusyNotice; return; }
         List<RemoteRepo> repos = [];
         try { repos = await _gitHubService.GetUserReposAsync(); }
         catch (Exception ex) { Log.Warn("repo list for clone unavailable", ex); }
@@ -730,7 +773,7 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        _bulkOpRunning = true;
+        if (TryClaimBulkOp() is not { } claim) { OpStatusText = BulkOpBusyNotice; return; }
         try
         {
             OpStatusText = $"Cloning {repoName}…";
@@ -739,7 +782,7 @@ public partial class DashboardViewModel : ObservableObject
             if (error is null)
                 await ForceRefreshAsync();
         }
-        finally { _bulkOpRunning = false; }
+        finally { ReleaseBulkOp(claim); }
     }
 
     /// <summary>
@@ -750,7 +793,7 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private async Task SyncAll()
     {
-        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
+        if (_bulkOpRunning) { OpStatusText = BulkOpBusyNotice; return; }
         var candidates = Projects.Where(p =>
                 !p.GitStatus.HasError &&
                 !p.GitStatus.IsDirty &&
@@ -771,7 +814,7 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        _bulkOpRunning = true;
+        if (TryClaimBulkOp() is not { } claim) { OpStatusText = BulkOpBusyNotice; return; }
         var outcomes = new System.Collections.Concurrent.ConcurrentBag<string>();
         var done = 0;
         var semaphore = new SemaphoreSlim(4);
@@ -841,7 +884,7 @@ public partial class DashboardViewModel : ObservableObject
 
         await ForceRefreshAsync();
         }
-        finally { _bulkOpRunning = false; }
+        finally { ReleaseBulkOp(claim); }
     }
 
     [RelayCommand]
@@ -866,9 +909,6 @@ public partial class DashboardViewModel : ObservableObject
     private async Task CloneRemoteOnly(ProjectInfo? project)
     {
         if (project is null || !project.IsRemoteOnly || project.RemoteSlug.Length == 0) return;
-        // A card LeftClick calls this raw method (not the AsyncRelayCommand), so it bypasses
-        // the command's IsRunning gate — a fast second click would clone twice into one path.
-        if (_bulkOpRunning) { OpStatusText = "Another operation is in progress — try again in a moment."; return; }
 
         var settings = _settingsService.Load();
         var target = Path.Combine(settings.ProjectsRootPath, project.DirectoryName);
@@ -878,7 +918,9 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        _bulkOpRunning = true;
+        // A card LeftClick calls this raw method (not the AsyncRelayCommand), so it bypasses
+        // the command's IsRunning gate — a fast second click would clone twice into one path.
+        if (TryClaimBulkOp() is not { } claim) { OpStatusText = BulkOpBusyNotice; return; }
         try
         {
             OpStatusText = $"Cloning {project.DirectoryName}…";
@@ -888,7 +930,7 @@ public partial class DashboardViewModel : ObservableObject
             if (error is null)
                 await ForceRefreshAsync();
         }
-        finally { _bulkOpRunning = false; }
+        finally { ReleaseBulkOp(claim); }
     }
 
     [RelayCommand]
