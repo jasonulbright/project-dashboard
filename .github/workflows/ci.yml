@@ -16,6 +16,8 @@ defaults:
 
 jobs:
   build-and-test:
+    # A pull request from a branch of this repository is already covered by its push run.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
