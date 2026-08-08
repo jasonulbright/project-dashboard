@@ -54,6 +54,8 @@ public partial class ProjectDetailViewModel
     /// <inheritdoc cref="RemotesEmpty"/>
     [ObservableProperty] private bool _remoteBranchesEmpty;
 
+    private const string RemoteBranchesUnreadablePrefix = "Could not read this repository's remote branches: ";
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DeleteRemoteBranchCommand))]
     private string? _selectedRemoteBranch;
@@ -114,10 +116,9 @@ public partial class ProjectDetailViewModel
 
         // A read that failed and a repository with nothing configured produce the same empty
         // list; showing the empty state for the first states a fact the read never established.
-        if (remotes.HasError || remoteBranches.HasError)
+        if (remotes.HasError)
         {
-            RemotesErrorText = "Could not read this repository's remotes: " +
-                (remotes.HasError ? remotes.ErrorText : remoteBranches.ErrorText);
+            RemotesErrorText = $"Could not read this repository's remotes: {remotes.ErrorText}";
             RemotesEmpty = false;
             RemoteBranchesEmpty = false;
             return;
@@ -127,10 +128,19 @@ public partial class ProjectDetailViewModel
         Remotes = new ObservableCollection<RemoteEntry>(remotes.Remotes);
         RemotesEmpty = Remotes.Count == 0;
         RemoteBranches = new ObservableCollection<string>(remoteBranches.Branches);
-        RemoteBranchesEmpty = RemoteBranches.Count == 0;
+        RemoteBranchesEmpty = !remoteBranches.HasError && RemoteBranches.Count == 0;
         SelectedRemote = Remotes.FirstOrDefault(r => r.Name == keepRemote) ?? Remotes.FirstOrDefault();
         SelectedRemoteBranch = keepBranch is not null && RemoteBranches.Contains(keepBranch) ? keepBranch : null;
         RefreshBranchExtraChoices();
+
+        // The two reads answer different questions: a refused remote-branch read establishes
+        // nothing about the configured remotes, so it is reported beside that list rather than in
+        // place of it — and it belongs on the panel whose upstream and delete-on-remote pickers
+        // are the lists it feeds. A read that answered clears this notice only.
+        if (remoteBranches.HasError)
+            BranchExtrasErrorText = RemoteBranchesUnreadablePrefix + remoteBranches.ErrorText;
+        else if (BranchExtrasErrorText.StartsWith(RemoteBranchesUnreadablePrefix, StringComparison.Ordinal))
+            BranchExtrasErrorText = "";
     }
 
     [RelayCommand]

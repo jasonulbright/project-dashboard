@@ -136,15 +136,13 @@ public class RemotesSurfaceTests
     /// refused listing reached the pane as a plain empty list and the tab claimed the repository
     /// has no remotes configured.
     /// </summary>
-    [Theory]
-    [InlineData("remote")]
-    [InlineData("remote-branches")]
-    public async Task ARemoteReadThatExitsNonZero_ReportsTheFailureInsteadOfClaimingNoneAreConfigured(string failing)
+    [Fact]
+    public async Task ARemoteReadThatExitsNonZero_ReportsTheFailureInsteadOfClaimingNoneAreConfigured()
     {
-        using var repo = await TempRepo.CreateWithCommitAsync($"remotes-exit-{failing}");
+        using var repo = await TempRepo.CreateWithCommitAsync("remotes-exit-remote");
         await repo.GitAsync("remote", "add", "origin", "https://example.test/a.git");
 
-        var vm = new RemotesViewModel(git: new RemoteReadRefusingGit(failing));
+        var vm = new RemotesViewModel(git: new RemoteReadRefusingGit("remote"));
         vm.ConfirmPrompt = vm.ConfirmAsync;
         await vm.SetProjectAsync(ProjectFor(repo));
         await vm.LoadBranchesTabCommand.ExecuteAsync(null);
@@ -154,6 +152,34 @@ public class RemotesSurfaceTests
         Assert.False(vm.RemoteBranchesEmpty);
         Assert.Contains("Could not read this repository's remotes", vm.RemotesErrorText);
         Assert.Contains("refused by the fixture", vm.RemotesErrorText);
+    }
+
+    /// <summary>
+    /// The remote-tracking read is the other half, and its failure says nothing about which
+    /// remotes are configured: the remotes render, and the failure is reported on the panel whose
+    /// upstream and delete-on-remote pickers it feeds — which is what explains their being empty.
+    /// Neither list may claim "none configured" off a read that never answered.
+    /// </summary>
+    [Fact]
+    public async Task ARemoteBranchReadThatExitsNonZero_LeavesTheRemotesListedAndReportsItsOwnFailure()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("remotes-exit-remote-branches");
+        await repo.GitAsync("remote", "add", "origin", "https://example.test/a.git");
+
+        var vm = new RemotesViewModel(git: new RemoteReadRefusingGit("remote-branches"));
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.LoadBranchesTabCommand.ExecuteAsync(null);
+
+        Assert.Equal("origin", Assert.Single(vm.Remotes).Name);
+        Assert.False(vm.RemotesEmpty);
+        Assert.Equal("", vm.RemotesErrorText);
+
+        Assert.Empty(vm.RemoteBranches);
+        Assert.False(vm.RemoteBranchesEmpty);
+        Assert.Empty(vm.UpstreamChoices);
+        Assert.Contains("Could not read this repository's remote branches", vm.BranchExtrasErrorText);
+        Assert.Contains("refused by the fixture", vm.BranchExtrasErrorText);
     }
 
     /// <summary>Exits one listing non-zero the way git does, leaving every other read real.</summary>
