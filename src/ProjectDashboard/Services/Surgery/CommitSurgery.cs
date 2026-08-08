@@ -112,7 +112,7 @@ public sealed class CommitSurgery
         // A soft reset off it puts the same changes back in the index, so a refused injection
         // leaves refs, index, and tracked content exactly as the caller had them.
         var unwound = false;
-        var note = " — the fixup commit is still on the tip, unfolded";
+        var note = " — the fixup commit was recorded and is not unwound";
         if (result.Aborted)
             (unwound, note) = await TryUnwindFixupAsync(repoPath, fixupSha, ct);
 
@@ -142,7 +142,7 @@ public sealed class CommitSurgery
         string repoPath, string fixupSha, CancellationToken ct)
     {
         if (await HeadShaAsync(repoPath, ct) != fixupSha)
-            return (false, " — the fixup commit is still on the tip, unfolded");
+            return (false, " — HEAD is no longer the fixup commit, so it was not unwound; restore from the backup");
 
         var unwind = await _git.RunAsync(repoPath, ["reset", "--soft", fixupSha + "^"], ct, CommitTimeout);
         return unwind.Success
