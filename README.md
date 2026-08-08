@@ -1,6 +1,11 @@
 # Project Dashboard
 
-A Fluent 2 WPF desktop application for managing local git repositories — a GitHub Desktop-style client for your whole projects folder. Scans a configurable root directory, reads git status, changelogs, readmes, and GitHub issues/PRs, and gives you staging, commits, branches, history, stashes, and one-click clone across every repo in one window.
+[![CI](https://github.com/jasonulbright/project-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/jasonulbright/project-dashboard/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/jasonulbright/project-dashboard?label=release)](https://github.com/jasonulbright/project-dashboard/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/jasonulbright/project-dashboard/total?label=downloads)](https://github.com/jasonulbright/project-dashboard/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4)](#requirements)
+
+A Fluent 2 WPF desktop application for managing local git repositories — a full desktop git client for your whole projects folder. Scans a configurable root directory, reads git status, changelogs, readmes, and GitHub issues/PRs, and gives you staging, commits, branches, history, stashes, and one-click clone across every repo in one window.
 
 Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dependencies, no telemetry. Git and GitHub access are delegated to `git.exe` and the `gh` CLI as subprocesses — the app never reads, stores, or transmits tokens. Works fully offline with graceful GitHub degradation.
 
