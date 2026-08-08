@@ -74,6 +74,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }
 
+# The installer packs payload\*.* wholesale and the portable archive is a copy of the
+# payload, so a license file placed here travels with both release assets. The MIT terms
+# on this app and on every redistributed binary require that.
+foreach ($noticeName in @('LICENSE', 'THIRD-PARTY-NOTICES.md')) {
+    $notice = Join-Path $repoRoot $noticeName
+    if (-not (Test-Path -LiteralPath $notice)) {
+        throw "Missing $noticeName at $repoRoot; the release assets must ship it."
+    }
+    Copy-Item -LiteralPath $notice -Destination (Join-Path $payloadDir $noticeName) -Force
+}
+
 $archiveName = "ProjectDashboard-Portable-$version"
 $stageDir    = Join-Path $installerDir $archiveName
 $zipPath     = Join-Path $OutputDirectory "$archiveName.zip"
