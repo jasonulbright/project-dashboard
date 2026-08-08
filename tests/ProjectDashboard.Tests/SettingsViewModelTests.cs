@@ -88,6 +88,49 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void SaveSettings_UnwritableTarget_SurfacesTheFailureOnThePage()
+    {
+        var service = new SettingsService();
+        var vm = NewVm(service);
+
+        Directory.CreateDirectory(AppPaths.SettingsFile);
+        try
+        {
+            vm.SaveSettingsCommand.Execute(null);
+        }
+        finally
+        {
+            Directory.Delete(AppPaths.SettingsFile, recursive: true);
+        }
+
+        Assert.Contains("Save failed", vm.SaveStatus);
+        Assert.Contains(AppPaths.SettingsFile, vm.SaveStatus);
+    }
+
+    [Fact]
+    public void SaveSettings_Success_ReplacesAStaleFailureNotice()
+    {
+        var service = new SettingsService();
+        var vm = NewVm(service);
+
+        Directory.CreateDirectory(AppPaths.SettingsFile);
+        try
+        {
+            vm.SaveSettingsCommand.Execute(null);
+        }
+        finally
+        {
+            Directory.Delete(AppPaths.SettingsFile, recursive: true);
+        }
+        Assert.Contains("Save failed", vm.SaveStatus);
+
+        vm.SaveSettingsCommand.Execute(null);
+
+        Assert.DoesNotContain("Save failed", vm.SaveStatus);
+        Assert.Contains("Saved at", vm.SaveStatus);
+    }
+
+    [Fact]
     public void Save_PreservesFieldsTheSettingsPageDoesNotEdit()
     {
         var service = new SettingsService();

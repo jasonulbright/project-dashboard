@@ -22,6 +22,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _enableGitHubDiscovery = true;
     [ObservableProperty] private bool _enableAutoRefresh = true;
     [ObservableProperty] private string _syncStatus = "";
+    [ObservableProperty] private string _saveStatus = "";
 
     public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel)
     {
@@ -100,7 +101,12 @@ public partial class SettingsViewModel : ObservableObject
         settings.EnableGitHubDiscovery = EnableGitHubDiscovery;
         settings.EnableAutoRefresh = EnableAutoRefresh;
 
-        _settingsService.Save(settings);
+        // The startup probe covers only a location unwritable at launch. A volume that
+        // turns read-only mid-session fails here, and an unreported failure loses the
+        // edit at the next Load with the page still showing it as applied.
+        SaveStatus = _settingsService.Save(settings)
+            ? $"Saved at {DateTime.Now:HH:mm:ss}"
+            : $"Save failed — could not write {AppPaths.SettingsFile}. See the log for details.";
     }
 
     [RelayCommand]

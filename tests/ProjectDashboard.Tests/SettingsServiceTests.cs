@@ -87,6 +87,46 @@ public class SettingsServiceTests
     }
 
     [Fact]
+    public void Save_UnwritableTarget_ReturnsFalseWithoutThrowing()
+    {
+        Directory.CreateDirectory(SettingsPath);
+        try
+        {
+            Assert.False(new SettingsService().Save(new AppSettings { ProjectsRootPath = @"C:\root-one" }));
+        }
+        finally
+        {
+            Directory.Delete(SettingsPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Save_WritableTarget_ReturnsTrue()
+    {
+        Assert.True(new SettingsService().Save(new AppSettings { ProjectsRootPath = @"C:\root-one" }));
+    }
+
+    [Fact]
+    public void ClosePathSave_Failure_IsIgnorable_SoTheCloseIsNeverCancelled()
+    {
+        // Mirrors the window's Closing handler: load, mutate placement, save, discard
+        // the result. A throw there cancels the close and leaves the app unclosable.
+        var service = new SettingsService();
+        Directory.CreateDirectory(SettingsPath);
+        try
+        {
+            var s = service.Load();
+            s.PaneOpen = false;
+            s.WindowMaximized = true;
+            service.Save(s);
+        }
+        finally
+        {
+            Directory.Delete(SettingsPath, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Save_UnwritableTarget_LeavesTheServiceUsable()
     {
         Directory.CreateDirectory(SettingsPath);

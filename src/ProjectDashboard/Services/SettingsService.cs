@@ -38,7 +38,13 @@ public class SettingsService
         }
     }
 
-    public void Save(AppSettings settings)
+    /// <summary>
+    /// Persists <paramref name="settings"/>, returning false when the write failed and
+    /// the file on disk is unchanged. Failure is never thrown: a throw would reach the
+    /// window's Closing handler, where an unhandled exception cancels the close and
+    /// leaves the app unclosable.
+    /// </summary>
+    public bool Save(AppSettings settings)
     {
         lock (FileLock)
         {
@@ -46,12 +52,12 @@ public class SettingsService
             {
                 Directory.CreateDirectory(SettingsDir);
                 DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+                return true;
             }
             catch (Exception ex)
             {
-                // A throw here reaches the window's Closing handler, where an unhandled
-                // exception cancels the close and leaves the app unclosable.
                 Log.Error($"Failed to save settings to {SettingsPath}", ex);
+                return false;
             }
         }
     }
