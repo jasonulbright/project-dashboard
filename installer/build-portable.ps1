@@ -75,14 +75,28 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # The installer packs payload\*.* wholesale and the portable archive is a copy of the
-# payload, so a license file placed here travels with both release assets. The MIT terms
-# on this app and on every redistributed binary require that.
+# payload, so a license file placed here travels with both release assets.
 foreach ($noticeName in @('LICENSE', 'THIRD-PARTY-NOTICES.md')) {
     $notice = Join-Path $repoRoot $noticeName
     if (-not (Test-Path -LiteralPath $notice)) {
         throw "Missing $noticeName at $repoRoot; the release assets must ship it."
     }
     Copy-Item -LiteralPath $notice -Destination (Join-Path $payloadDir $noticeName) -Force
+}
+
+# A payload assembly the notices never name ships without its license text. The notices
+# file cites every redistributed assembly by file name in backticks; the app's own
+# assembly is first-party and covered by LICENSE.
+$noticeText = Get-Content -LiteralPath (Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md') -Raw
+$unlisted = @(
+    Get-ChildItem -LiteralPath $payloadDir -Filter '*.dll' -File -Recurse |
+        Where-Object { $_.Name -ne 'ProjectDashboard.dll' } |
+        Where-Object { -not $noticeText.Contains('`' + $_.Name + '`') } |
+        ForEach-Object { $_.Name } |
+        Sort-Object -Unique
+)
+if ($unlisted.Count -gt 0) {
+    throw "Payload assemblies missing from THIRD-PARTY-NOTICES.md: $($unlisted -join ', ')."
 }
 
 $archiveName = "ProjectDashboard-Portable-$version"
