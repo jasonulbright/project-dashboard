@@ -9,18 +9,21 @@ public class GitService
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// Environment for every git call: never prompt for credentials (a windowless app
-    /// would hang invisibly), never take optional index locks during reads, and emit messages in
-    /// one fixed language. Several decisions are made by matching git's own words — a rejected
-    /// lease, a held index lock, a commit a rebase emptied — and git translates those words.
+    /// Environment for every git call in this application: never prompt for credentials (a
+    /// windowless app would hang invisibly), never take optional index locks during reads,
+    /// and emit messages in one fixed language — several decisions are made by matching git's
+    /// own words (a rejected lease, a held index lock, a commit a rebase emptied), and git
+    /// translates those words. The single source: a caller that needs more variables merges
+    /// onto this rather than writing its own pair.
     /// </summary>
-    internal static readonly Dictionary<string, string> GitEnvironment = new()
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0",
-        ["LC_ALL"] = "C",
-        ["LANGUAGE"] = "C"
-    };
+    internal static readonly IReadOnlyDictionary<string, string> NonInteractiveEnvironment =
+        new Dictionary<string, string>
+        {
+            ["GIT_TERMINAL_PROMPT"] = "0",
+            ["GIT_OPTIONAL_LOCKS"] = "0",
+            ["LC_ALL"] = "C",
+            ["LANGUAGE"] = "C"
+        };
 
     /// <summary>
     /// Field separator for every --format this app parses. A unit separator cannot occur in a ref
@@ -148,12 +151,13 @@ public class GitService
     }
 
     /// <summary>Real git dir for a checkout — a linked worktree's .git is a file pointing elsewhere. Null when git can't read the repo.</summary>
-    private async Task<string?> ResolveGitDirAsync(string repoPath, CancellationToken ct)
+    public async Task<string?> ResolveGitDirAsync(string repoPath, CancellationToken ct = default, TimeSpan? timeout = null)
     {
-        var result = await RunAsync(repoPath, ["rev-parse", "--git-dir"], ct);
+        var result = await RunAsync(repoPath, ["rev-parse", "--git-dir"], ct, timeout);
         if (!result.Success) return null;
 
         var gitDir = result.StdOut.Trim();
+        if (gitDir.Length == 0) return null;
         return Path.IsPathRooted(gitDir) ? gitDir : Path.Combine(repoPath, gitDir);
     }
 
@@ -190,12 +194,47 @@ public class GitService
     }
 
     /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure). Virtual so a test can fail one command.</summary>
-    public virtual async Task<ProcessResult> RunAsync(string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+    public virtual Task<ProcessResult> RunAsync(string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null) =>
+        RunAsync(repoPath, args, null, ct, timeout);
+
+    /// <summary>
+    /// Structured run with extra environment variables layered over
+    /// <see cref="NonInteractiveEnvironment"/>. For the callers that need a variable of their own
+    /// — a sequence editor, a signing override — without restating the non-interactive pair or
+    /// starting git through some other path.
+    /// </summary>
+    public async Task<ProcessResult> RunAsync(
+        string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+        CancellationToken ct = default, TimeSpan? timeout = null)
     {
         // core.quotepath=false: unicode paths arrive as UTF-8, not octal escapes.
         var full = new List<string> { "-c", "core.quotepath=false" };
         full.AddRange(args);
-        return await ProcessRunner.RunAsync(ResolveGitExe(), full, repoPath, timeout ?? Timeout, GitEnvironment, ct);
+        return await ProcessRunner.RunAsync(ResolveGitExe(), full, repoPath, timeout ?? Timeout, MergedEnvironment(environment), ct);
+    }
+
+    /// <summary>
+    /// Structured run whose payload is stdin rather than arguments — `update-ref --stdin` and its
+    /// kind. Same executable resolution and same environment as every other call here.
+    /// </summary>
+    public Task<ProcessResult> RunWithInputAsync(
+        string repoPath, IEnumerable<string> args, string standardInput,
+        CancellationToken ct = default, TimeSpan? timeout = null)
+    {
+        var full = new List<string> { "-c", "core.quotepath=false" };
+        full.AddRange(args);
+        return ProcessRunner.RunWithInputAsync(
+            ResolveGitExe(), full, standardInput, repoPath, timeout ?? Timeout, NonInteractiveEnvironment, ct);
+    }
+
+    /// <summary>The non-interactive environment with <paramref name="extra"/> layered on top; the base pair itself is never overridden away.</summary>
+    private static IReadOnlyDictionary<string, string> MergedEnvironment(IReadOnlyDictionary<string, string>? extra)
+    {
+        if (extra is null || extra.Count == 0) return NonInteractiveEnvironment;
+        var merged = new Dictionary<string, string>(extra, StringComparer.Ordinal);
+        foreach (var (key, value) in NonInteractiveEnvironment)
+            merged[key] = value;
+        return merged;
     }
 
     /// <summary>String-result run that throws on non-zero exit (legacy shape for simple reads).</summary>
@@ -1225,7 +1264,7 @@ public class GitService
         var existedBefore = target is not null && Directory.Exists(target);
 
         var result = await ProcessRunner.RunAsync(ResolveGitExe(),
-            ["clone", "--", url], targetParentDir, timeout ?? TimeSpan.FromMinutes(15), GitEnvironment, ct);
+            ["clone", "--", url], targetParentDir, timeout ?? TimeSpan.FromMinutes(15), NonInteractiveEnvironment, ct);
         if (result.Success) return null;
 
         // A failed or timeout-killed clone can leave a partial target directory:

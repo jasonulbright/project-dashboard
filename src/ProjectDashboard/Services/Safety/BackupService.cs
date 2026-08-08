@@ -322,40 +322,12 @@ public sealed class BackupService
         return result.Success && result.StdOut.Trim() == "true";
     }
 
-    // Non-interactive git environment for the one call that bypasses GitService (its stdin
-    // path): never block a windowless app on a credential prompt, never take optional index
-    // locks mid-reconciliation.
-    private static readonly IReadOnlyDictionary<string, string> GitEnvironment = new Dictionary<string, string>
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0"
-    };
-
     /// <summary>
     /// Feeds a reconciliation script to `git update-ref --stdin`, which applies every delete
-    /// and update as one atomic transaction. Goes straight to ProcessRunner because the payload
-    /// is stdin, not arguments.
+    /// and update as one atomic transaction.
     /// </summary>
-    private static Task<ProcessResult> RunUpdateRefStdinAsync(string repoPath, string script, CancellationToken ct)
-        => ProcessRunner.RunWithInputAsync(
-            ResolveGitExe(),
-            ["-c", "core.quotepath=false", "update-ref", "--stdin"],
-            script, repoPath, RefTimeout, GitEnvironment, ct);
-
-    /// <summary>Resolve git: known install dirs first (survives a stale PATH), then PATH.</summary>
-    private static string ResolveGitExe()
-    {
-        string[] known =
-        [
-            Path.Combine(Environment.GetEnvironmentVariable("ProgramW6432") ?? @"C:\Program Files", "Git", "cmd", "git.exe"),
-            Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles") ?? @"C:\Program Files", "Git", "cmd", "git.exe"),
-            Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)") ?? @"C:\Program Files (x86)", "Git", "cmd", "git.exe"),
-            Path.Combine(Environment.GetEnvironmentVariable("LocalAppData") ?? "", "Programs", "Git", "cmd", "git.exe"),
-        ];
-        foreach (var p in known)
-            if (p.Length > 0 && File.Exists(p)) return p;
-        return "git";
-    }
+    private Task<ProcessResult> RunUpdateRefStdinAsync(string repoPath, string script, CancellationToken ct)
+        => _git.RunWithInputAsync(repoPath, ["update-ref", "--stdin"], script, ct, RefTimeout);
 
     private static RefsSnapshot? ReadSnapshot(string path)
     {

@@ -751,8 +751,8 @@ public class ForcePushTests
     [Fact]
     public void TheGitEnvironment_PinsTheMessageLocaleTheOutputSniffsDependOn()
     {
-        Assert.Equal("C", GitService.GitEnvironment["LC_ALL"]);
-        Assert.Equal("C", GitService.GitEnvironment["LANGUAGE"]);
+        Assert.Equal("C", GitService.NonInteractiveEnvironment["LC_ALL"]);
+        Assert.Equal("C", GitService.NonInteractiveEnvironment["LANGUAGE"]);
         Assert.True(ForcePushService.IsLeaseRejection(
             new ProcessResult(1, "", "! [rejected] main -> main (stale info)", false)));
         Assert.False(ForcePushService.IsLeaseRejection(

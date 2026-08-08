@@ -384,17 +384,17 @@ public class RebaseDriver
             // before the exec lines that reference them are written.
             var resolvedTodo = MaterializeMessageFiles(todoLines, messageFiles, scratch);
 
+            // Only the two variables this driver adds; the non-interactive pair comes from
+            // GitService, which is also what starts the process.
             var env = new Dictionary<string, string>
             {
-                ["GIT_TERMINAL_PROMPT"] = "0",
-                ["GIT_OPTIONAL_LOCKS"] = "0",
                 ["GIT_SEQUENCE_EDITOR"] = SequenceEditorFor(WriteTodo(resolvedTodo, scratch)),
                 ["GIT_EDITOR"] = "true"
             };
 
             var untrackedBefore = await UntrackedAsync(repoPath, ct);
             var args = BuildRebaseArgs(baseSha, await EmptyModeAsync(repoPath, ct));
-            var run = await ProcessRunner.RunAsync(_gitExe, args, repoPath, DefaultTimeout, env, ct);
+            var run = await _git.RunAsync(repoPath, args, env, ct, DefaultTimeout);
 
             if (run.Success && !await IsRebaseInProgressAsync(repoPath, ct))
                 return new RebaseRunResult
@@ -605,13 +605,8 @@ public class RebaseDriver
                 Directory.Exists(Path.Combine(gitDir, "rebase-apply")));
     }
 
-    private async Task<string?> ResolveGitDirAsync(string repoPath, CancellationToken ct)
-    {
-        var result = await _git.RunAsync(repoPath, ["rev-parse", "--git-dir"], ct, ShortTimeout);
-        if (!result.Success) return null;
-        var gitDir = result.StdOut.Trim();
-        return gitDir.Length == 0 ? null : Path.IsPathRooted(gitDir) ? gitDir : Path.Combine(repoPath, gitDir);
-    }
+    private Task<string?> ResolveGitDirAsync(string repoPath, CancellationToken ct) =>
+        _git.ResolveGitDirAsync(repoPath, ct, ShortTimeout);
 
     private async Task<string> HeadShaAsync(string repoPath, CancellationToken ct)
     {

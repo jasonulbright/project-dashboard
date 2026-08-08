@@ -51,12 +51,6 @@ public class SwapService
     private static readonly TimeSpan RefTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ResetTimeout = TimeSpan.FromMinutes(5);
 
-    private static readonly IReadOnlyDictionary<string, string> GitEnvironment = new Dictionary<string, string>
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0"
-    };
-
     private readonly GitService _git;
     private readonly string _gitExe;
 
@@ -182,7 +176,7 @@ public class SwapService
             {
                 var reconcile = await ProcessRunner.RunWithInputAsync(
                     _gitExe, ["-c", "core.quotepath=false", "update-ref", "--stdin"],
-                    script.ToString(), sourceRepo, RefTimeout, GitEnvironment, applying);
+                    script.ToString(), sourceRepo, RefTimeout, GitService.NonInteractiveEnvironment, applying);
                 if (!reconcile.Success)
                     return SwapResult.Refused($"ref reconciliation transaction failed — nothing changed: {reconcile.FirstError}");
             }
@@ -319,7 +313,7 @@ public class SwapService
                 script.Append("delete ").Append(raw.TrimEnd('\r')).Append('\n');
             if (script.Length > 0)
                 await ProcessRunner.RunWithInputAsync(
-                    _gitExe, ["update-ref", "--stdin"], script.ToString(), sourceRepo, RefTimeout, GitEnvironment, CancellationToken.None);
+                    _gitExe, ["update-ref", "--stdin"], script.ToString(), sourceRepo, RefTimeout, GitService.NonInteractiveEnvironment, CancellationToken.None);
         }
         catch (Exception ex)
         {

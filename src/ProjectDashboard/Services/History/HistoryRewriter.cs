@@ -53,11 +53,8 @@ public sealed class HistoryRewriter
 
     private const int ScrubHitCap = 200;
 
-    private static readonly Dictionary<string, string> GitEnvironment = new()
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0"
-    };
+    /// <summary>The application-wide non-interactive git environment; see <see cref="GitService.NonInteractiveEnvironment"/>.</summary>
+    private static readonly IReadOnlyDictionary<string, string> GitEnvironment = GitService.NonInteractiveEnvironment;
 
     private readonly string _gitExe;
     private readonly long _regexPayloadLimit;

@@ -85,12 +85,8 @@ public sealed class HistoryPipeline
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    /// <summary>Never prompt for credentials: a windowless app would hang invisibly.</summary>
-    private static readonly Dictionary<string, string> GitEnvironment = new()
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0"
-    };
+    /// <summary>The application-wide non-interactive git environment; see <see cref="GitService.NonInteractiveEnvironment"/>.</summary>
+    private static readonly IReadOnlyDictionary<string, string> GitEnvironment = GitService.NonInteractiveEnvironment;
 
     private static readonly string[] FastExportArgs =
     [

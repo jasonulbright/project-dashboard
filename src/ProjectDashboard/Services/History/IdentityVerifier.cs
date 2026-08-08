@@ -40,11 +40,8 @@ public sealed class IdentityVerificationResult
 /// </summary>
 public static class IdentityVerifier
 {
-    private static readonly Dictionary<string, string> GitEnvironment = new()
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0"
-    };
+    /// <summary>The application-wide non-interactive git environment; see <see cref="GitService.NonInteractiveEnvironment"/>.</summary>
+    private static readonly IReadOnlyDictionary<string, string> GitEnvironment = GitService.NonInteractiveEnvironment;
 
     public static async Task<IdentityVerificationResult> VerifyAsync(
         string gitExecutable, string sourceRepository, string targetRepository,

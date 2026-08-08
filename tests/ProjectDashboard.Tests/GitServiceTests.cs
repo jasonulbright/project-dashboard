@@ -13,6 +13,42 @@ public class GitServiceTests
     private readonly GitService _git = new();
 
     [Fact]
+    public void NonInteractiveEnvironment_IsTheOneSourceForBothVariables()
+    {
+        Assert.Equal("0", GitService.NonInteractiveEnvironment["GIT_TERMINAL_PROMPT"]);
+        Assert.Equal("0", GitService.NonInteractiveEnvironment["GIT_OPTIONAL_LOCKS"]);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithExtraEnvironment_PassesItThroughAndKeepsTheNonInteractivePair()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("env-overload");
+
+        // A caller's own variable reaches git…
+        var editor = await _git.RunAsync(repo.Path, ["var", "GIT_EDITOR"],
+            new Dictionary<string, string> { ["GIT_EDITOR"] = "pd-marker-editor" });
+        Assert.True(editor.Success, editor.FirstError);
+        Assert.Equal("pd-marker-editor", editor.StdOut.Trim());
+
+        // …and cannot replace the non-interactive pair, whatever it asks for.
+        var prompt = await _git.RunAsync(repo.Path, ["var", "GIT_EDITOR"],
+            new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "1", ["GIT_EDITOR"] = "pd-marker-editor" });
+        Assert.True(prompt.Success, prompt.FirstError);
+    }
+
+    [Fact]
+    public async Task ResolveGitDirAsync_ReturnsTheRealGitDirForACheckout()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("gitdir");
+
+        var gitDir = await _git.ResolveGitDirAsync(repo.Path);
+
+        Assert.NotNull(gitDir);
+        Assert.True(System.IO.Directory.Exists(gitDir));
+        Assert.EndsWith(".git", gitDir.TrimEnd('\\', '/'));
+    }
+
+    [Fact]
     public async Task InitWithFirstCommit_CreatesSingleCleanCommit()
     {
         using var repo = TempRepo.CreateEmptyDir("init");
