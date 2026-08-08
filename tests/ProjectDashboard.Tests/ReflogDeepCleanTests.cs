@@ -433,12 +433,13 @@ public class ReflogDeepCleanTests
     private sealed class StashReadFailingGit : GitService
     {
         public override Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var list = args.ToList();
             if (list.Any(a => a.Contains("stash", StringComparison.Ordinal)))
                 return Task.FromResult(new ProcessResult(128, "", "fatal: unable to read the object store", false));
-            return base.RunAsync(repoPath, list, ct, timeout);
+            return base.RunAsync(repoPath, list, environment, ct, timeout);
         }
     }
 
@@ -448,12 +449,13 @@ public class ReflogDeepCleanTests
         public List<(string Call, bool Held)> Gates { get; } = [];
 
         public override Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var list = args.ToList();
             if (list.Contains("status") || list.Any(a => a.Contains("stash", StringComparison.Ordinal)))
                 Gates.Add((string.Join(' ', list.Take(2)), busy.IsBusy(repoPath)));
-            return base.RunAsync(repoPath, list, ct, timeout);
+            return base.RunAsync(repoPath, list, environment, ct, timeout);
         }
     }
 
@@ -611,11 +613,12 @@ public class ReflogDeepCleanTests
         public List<List<string>> Calls { get; } = [];
 
         public override Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var list = args.ToList();
             Calls.Add(list);
-            return base.RunAsync(repoPath, list, ct, timeout);
+            return base.RunAsync(repoPath, list, environment, ct, timeout);
         }
     }
 

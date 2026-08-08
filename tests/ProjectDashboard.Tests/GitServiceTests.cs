@@ -39,7 +39,7 @@ public class GitServiceTests
     }
 
     [Fact]
-    public async Task TheEnvironmentOverload_IsTheSeamEveryRunPassesThrough()
+    public async Task TheEnvironmentOverload_IsTheSeamEveryArgumentRunPassesThrough()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("run-seam");
         var git = new RecordingGitService();
@@ -53,16 +53,65 @@ public class GitServiceTests
         Assert.Equal("pd-marker-editor", git.Calls[1]!["GIT_EDITOR"]);
     }
 
+    /// <summary>
+    /// The clone is the one argument-carrying run that started git for itself; a subclass that
+    /// overrides the seam and never sees it is watching an incomplete picture.
+    /// </summary>
+    [Fact]
+    public async Task TheCloneRunsThroughTheEnvironmentSeamLikeEveryOtherArgumentRun()
+    {
+        using var origin = await TempRepo.CreateWithCommitAsync("clone-seam-origin");
+        var parent = TestEnv.NewDir("clone-seam-target");
+        var git = new RecordingGitService();
+
+        var error = await git.CloneAsync(origin.Path, parent);
+
+        Assert.Null(error);
+        Assert.Contains(git.ArgumentRuns, run => run.Contains("clone"));
+    }
+
+    /// <summary>
+    /// A stdin-carrying run moves refs in one transaction, so it is its own virtual seam
+    /// rather than an unobservable path around the argument one.
+    /// </summary>
+    [Fact]
+    public async Task TheStdinRunIsItsOwnInterceptableSeam()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("stdin-seam");
+        var git = new RecordingGitService();
+        var head = (await git.RunAsync(repo.Path, ["rev-parse", "HEAD"])).StdOut.Trim();
+
+        var result = await git.RunWithInputAsync(
+            repo.Path, ["update-ref", "--stdin"], $"create refs/heads/seam {head}\n");
+
+        Assert.True(result.Success, result.FirstError);
+        Assert.Single(git.StdinRuns);
+        Assert.Contains("update-ref", git.StdinRuns[0]);
+    }
+
     private sealed class RecordingGitService : GitService
     {
         public List<IReadOnlyDictionary<string, string>?> Calls { get; } = [];
+        public List<List<string>> ArgumentRuns { get; } = [];
+        public List<List<string>> StdinRuns { get; } = [];
 
         public override Task<ProcessResult> RunAsync(
             string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
             CancellationToken ct = default, TimeSpan? timeout = null)
         {
+            var recorded = args.ToList();
             Calls.Add(environment);
-            return base.RunAsync(repoPath, args, environment, ct, timeout);
+            ArgumentRuns.Add(recorded);
+            return base.RunAsync(repoPath, recorded, environment, ct, timeout);
+        }
+
+        public override Task<ProcessResult> RunWithInputAsync(
+            string repoPath, IEnumerable<string> args, string standardInput,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var recorded = args.ToList();
+            StdinRuns.Add(recorded);
+            return base.RunWithInputAsync(repoPath, recorded, standardInput, ct, timeout);
         }
     }
 

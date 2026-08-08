@@ -52,7 +52,7 @@ public class RewriteCancellationTests
             new BackupService(git, new SettingsService()),
             busy ?? new RepoBusyRegistry(),
             git,
-            swap ?? new SwapService(git, GitGuard.GitExe),
+            swap ?? new SwapService(git),
             gitExecutable: GitGuard.GitExe);
     }
 
@@ -142,7 +142,7 @@ public class RewriteCancellationTests
 
         using var cts = new CancellationTokenSource();
         var phase = new CancelOnPhase(cts, RewritePhase.Applying);
-        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var swap = new SwapService(new GitService());
 
         var result = await swap.ApplySwapAsync(f.SourcePath, f.TargetPath, phase, cts.Token);
 
@@ -177,7 +177,7 @@ public class RewriteCancellationTests
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
         var phase = new CancelOnPhase(cts, RewritePhase.Applying);
-        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var swap = new SwapService(new GitService());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => swap.ApplySwapAsync(f.SourcePath, f.TargetPath, phase, cts.Token));
@@ -296,7 +296,7 @@ public class RewriteCancellationTests
             new BackupService(git, new SettingsService()),
             new RepoBusyRegistry(),
             git,
-            new SwapService(git, GitGuard.GitExe),
+            new SwapService(git),
             gitExecutable: GitGuard.GitExe);
 
         var result = await coordinator.ExecuteAsync(Request(f), cts.Token);
@@ -331,7 +331,7 @@ public class RewriteCancellationTests
     /// cancelled outcome exists for.
     /// </summary>
     private sealed class CancellingSwap(CancellationTokenSource source)
-        : SwapService(new GitService(), GitGuard.GitExe)
+        : SwapService(new GitService())
     {
         public override Task<SwapResult> ApplySwapAsync(
             string sourceRepo, string tempBareRepo, IProgress<RewritePhase>? phase = null, CancellationToken ct = default)

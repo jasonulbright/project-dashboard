@@ -160,11 +160,12 @@ public class ForcePushTests
         public List<List<string>> Calls { get; } = [];
 
         public override Task<ProcessResult> RunAsync(
-            string repoPath, IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
         {
             var list = args.ToList();
             Calls.Add(list);
-            return base.RunAsync(repoPath, list, ct, timeout);
+            return base.RunAsync(repoPath, list, environment, ct, timeout);
         }
     }
 

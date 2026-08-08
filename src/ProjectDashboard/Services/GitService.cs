@@ -204,8 +204,10 @@ public class GitService
     /// <see cref="NonInteractiveEnvironment"/>. For the callers that need a variable of their own
     /// — a sequence editor, a signing override — without restating the non-interactive set or
     /// starting git through some other path.
-    /// This overload is the single virtual seam: every other run here funnels through it, so a
-    /// subclass that overrides it sees every git invocation including the env-carrying ones.
+    /// This overload is the virtual seam for every run whose payload is arguments: all of them
+    /// funnel through it, the clone included, so a subclass that overrides it sees each one.
+    /// A run whose payload is stdin cannot take this shape and has its own seam,
+    /// <see cref="RunWithInputAsync"/>; between them the two cover every git invocation here.
     /// </summary>
     public virtual async Task<ProcessResult> RunAsync(
         string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
@@ -220,8 +222,11 @@ public class GitService
     /// <summary>
     /// Structured run whose payload is stdin rather than arguments — `update-ref --stdin` and its
     /// kind. Same executable resolution and same environment as every other call here.
+    /// Virtual for the same reason the argument overload is: a stdin-carrying run moves refs in
+    /// one transaction, and a subclass that cannot observe or refuse it sees an incomplete
+    /// picture of what this service did to a repository.
     /// </summary>
-    public Task<ProcessResult> RunWithInputAsync(
+    public virtual Task<ProcessResult> RunWithInputAsync(
         string repoPath, IEnumerable<string> args, string standardInput,
         CancellationToken ct = default, TimeSpan? timeout = null)
     {
@@ -1267,8 +1272,8 @@ public class GitService
         var target = repoName.Length > 0 ? Path.Combine(targetParentDir, repoName) : null;
         var existedBefore = target is not null && Directory.Exists(target);
 
-        var result = await ProcessRunner.RunAsync(ResolveGitExe(),
-            ["clone", "--", url], targetParentDir, timeout ?? TimeSpan.FromMinutes(15), NonInteractiveEnvironment, ct);
+        var result = await RunAsync(
+            targetParentDir, ["clone", "--", url], null, ct, timeout ?? TimeSpan.FromMinutes(15));
         if (result.Success) return null;
 
         // A failed or timeout-killed clone can leave a partial target directory:

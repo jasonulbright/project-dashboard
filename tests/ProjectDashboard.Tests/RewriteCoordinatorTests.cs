@@ -41,7 +41,7 @@ public class RewriteCoordinatorTests
             new BackupService(git, new SettingsService()),
             busy ?? new RepoBusyRegistry(),
             git,
-            swap ?? new SwapService(git, GitGuard.GitExe),
+            swap ?? new SwapService(git),
             gitExecutable: GitGuard.GitExe);
     }
 
@@ -271,7 +271,7 @@ public class RewriteCoordinatorTests
         var git = new GitService();
         var coordinator = new RewriteCoordinator(
             new BackupService(git, new SettingsService()), busy, git,
-            new SwapService(git, GitGuard.GitExe), gitExecutable: GitGuard.GitExe);
+            new SwapService(git), gitExecutable: GitGuard.GitExe);
 
         using (busy.Acquire(f.SourcePath))
         {
@@ -337,7 +337,7 @@ public class RewriteCoordinatorTests
 
     private sealed class ThrowingSwap : SwapService
     {
-        public ThrowingSwap() : base(new GitService(), GitGuard.GitExe) { }
+        public ThrowingSwap() : base(new GitService()) { }
 
         public override Task<SwapResult> ApplySwapAsync(
             string sourceRepo, string tempBareRepo, IProgress<RewritePhase>? phase = null, CancellationToken ct = default) =>
@@ -377,7 +377,7 @@ public class RewriteCoordinatorTests
             "M 100644 :1 config/aux\n\n";
         var bare = CraftBare(stream);
 
-        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var swap = new SwapService(new GitService());
         var result = await swap.ApplySwapAsync(f.SourcePath, bare);
 
         Assert.False(result.Success);
@@ -411,7 +411,7 @@ public class RewriteCoordinatorTests
             $"M 100644 :1 {deep}\n\n";
         var bare = CraftBare(stream);
 
-        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var swap = new SwapService(new GitService());
         var result = await swap.ApplySwapAsync(f.SourcePath, bare);
 
         Assert.False(result.Success);
@@ -440,7 +440,7 @@ public class RewriteCoordinatorTests
             $"M 100644 :1 {deep}\n\n";
         var bare = CraftBare(stream);
 
-        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var swap = new SwapService(new GitService());
         var result = await swap.ApplySwapAsync(f.SourcePath, bare);
 
         // The guard must not refuse what git can actually write; the swap goes through.
@@ -483,7 +483,7 @@ public class RewriteCoordinatorTests
         });
 
         var before = RefState(f.SourcePath);
-        var swap = new SwapService(new DirtiesTreeAfterFetch(f.SourcePath), GitGuard.GitExe);
+        var swap = new SwapService(new DirtiesTreeAfterFetch(f.SourcePath));
         var result = await swap.ApplySwapAsync(f.SourcePath, f.TargetPath);
 
         Assert.False(result.Success);
@@ -524,7 +524,7 @@ public class RewriteCoordinatorTests
         await File.WriteAllTextAsync(lockPath, "");
         try
         {
-            var swap = new SwapService(new GitService(), GitGuard.GitExe);
+            var swap = new SwapService(new GitService());
             var result = await swap.ApplySwapAsync(f.SourcePath, f.TargetPath);
 
             Assert.False(result.Success);
@@ -674,7 +674,7 @@ public class RewriteCoordinatorTests
             new BackupService(git, new SettingsService()),
             new RepoBusyRegistry(),
             git,
-            new SwapService(git, GitGuard.GitExe),
+            new SwapService(git),
             gitExecutable: GitGuard.GitExe,
             workRoot: workRoot);
         var session = new CoordinatorRewriteSession(coordinator);
@@ -741,7 +741,7 @@ public class RewriteCoordinatorTests
                 new BackupService(git, new SettingsService()),
                 new RepoBusyRegistry(),
                 git,
-                new SwapService(git, GitGuard.GitExe),
+                new SwapService(git),
                 gitExecutable: GitGuard.GitExe,
                 workRoot: workRoot);
 
