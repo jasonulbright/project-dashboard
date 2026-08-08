@@ -1243,23 +1243,7 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     public async Task ThousandCommitScopedRewriteCompletesQuickly()
     {
         using var f = Fixture(bareSource: true);
-        var stream = new StringBuilder();
-        for (var i = 1; i <= 1000; i++)
-        {
-            var blobMark = i * 2 - 1;
-            var commitMark = i * 2;
-            var content = i % 3 == 0 ? $"revision {i} holds {Needle}\n" : $"revision {i} is clean\n";
-            stream.Append($"blob\nmark :{blobMark}\ndata {Encoding.UTF8.GetByteCount(content)}\n{content}");
-            var message = $"commit {i}\n";
-            stream.Append($"commit refs/heads/main\nmark :{commitMark}\n");
-            stream.Append($"author Fixture <fixture@example.com> {1700000000 + i} +0000\n");
-            stream.Append($"committer Fixture <fixture@example.com> {1700000000 + i} +0000\n");
-            stream.Append($"data {message.Length}\n{message}");
-            if (i > 1) stream.Append($"from :{(i - 1) * 2}\n");
-            stream.Append($"M 100644 :{blobMark} dir{i % 4}/file{i % 20}.txt\n");
-            stream.Append('\n');
-        }
-        f.GitWithStdin(Encoding.UTF8.GetBytes(stream.ToString()), "fast-import", "--quiet");
+        SyntheticHistory.Import(f, SyntheticHistory.BuildStream(1000, Needle, directoryCount: 4));
 
         var stopwatch = Stopwatch.StartNew();
         var report = await RewriteAsync(f, Literal(Needle, Redacted, files: new GlobScope { Patterns = ["dir0/**"] }));

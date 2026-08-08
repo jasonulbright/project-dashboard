@@ -783,30 +783,14 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     public async Task ThousandCommitRewriteCompletesQuickly()
     {
         using var f = Fixture(bareSource: true);
-        var stream = new StringBuilder();
-        for (var i = 1; i <= 1000; i++)
-        {
-            var blobMark = i * 2 - 1;
-            var commitMark = i * 2;
-            var content = i % 3 == 0 ? $"revision {i} holds {Needle}\n" : $"revision {i} is clean\n";
-            stream.Append($"blob\nmark :{blobMark}\ndata {Encoding.UTF8.GetByteCount(content)}\n{content}");
-            var message = $"commit {i}\n";
-            stream.Append($"commit refs/heads/main\nmark :{commitMark}\n");
-            stream.Append($"author Fixture <fixture@example.com> {1700000000 + i} +0000\n");
-            stream.Append($"committer Fixture <fixture@example.com> {1700000000 + i} +0000\n");
-            stream.Append($"data {message.Length}\n{message}");
-            if (i > 1) stream.Append($"from :{(i - 1) * 2}\n");
-            stream.Append($"M 100644 :{blobMark} file{i % 20}.txt\n");
-            stream.Append('\n');
-        }
-        f.GitWithStdin(Encoding.UTF8.GetBytes(stream.ToString()), "fast-import", "--quiet");
+        SyntheticHistory.Import(f, SyntheticHistory.BuildStream(1000, Needle));
 
         var stopwatch = Stopwatch.StartNew();
         var report = await RewriteAsync(f, LiteralScrub());
         stopwatch.Stop();
 
         Assert.Equal(1000, report.CommitMap.Count);
-        Assert.Equal(333, report.BlobsChanged);
+        Assert.Equal(SyntheticHistory.NeedleCommits(1000), report.BlobsChanged);
         Assert.NotEmpty(report.CommitsWithChangedTrees);
         var scrub = Assert.Single(report.ScrubChecks);
         Assert.True(scrub.Performed);
@@ -816,5 +800,44 @@ public class HistoryRewriterTests(ITestOutputHelper output)
         output.WriteLine($"1000-commit rewrite: {stopwatch.Elapsed.TotalSeconds:F2}s wall, " +
                          $"{report.BlobsChanged} blobs changed, {report.CommitsWithChangedTrees.Count} trees changed, " +
                          $"scrub over {scrub.CommitsChecked} commits clean");
+    }
+
+    /// <summary>
+    /// The scale fixture: ten thousand commits through export, transform, import, fsck and scrub.
+    /// Past 2,048 in-scope commits the scrub grep samples rather than checking all of them, so
+    /// this is also the only run where the sampled path is exercised end to end — the check must
+    /// come back performed but NOT complete, with its own note saying so.
+    /// </summary>
+    [Fact]
+    public async Task TenThousandCommitRewriteRoundTripsWithinItsBudget()
+    {
+        using var f = Fixture(bareSource: true);
+        SyntheticHistory.Import(f, SyntheticHistory.BuildStream(10_000, Needle));
+
+        var stopwatch = Stopwatch.StartNew();
+        var report = await RewriteAsync(f, LiteralScrub());
+        stopwatch.Stop();
+
+        Assert.Equal(10_000, report.CommitMap.Count);
+        Assert.Equal(SyntheticHistory.NeedleCommits(10_000), report.BlobsChanged);
+        Assert.Equal("", report.FsckOutput);
+
+        // Every rewritten commit really is scrubbed, sampling notwithstanding: this greps all of
+        // them directly rather than trusting the report's sampled check.
+        Assert.Equal(0, CountGrepHits(f.TargetPath, AllCommits(f.TargetPath), Needle, "target"));
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed);
+        Assert.False(scrub.Complete);
+        Assert.Contains("sampled", scrub.Note);
+        Assert.Empty(scrub.Hits);
+
+        // The rewrite itself runs in roughly 12 seconds on a developer machine (the whole test is
+        // about 21, the rest being the direct grep above); the ceiling leaves room for a loaded
+        // or slower machine while still failing on an order-of-magnitude regression.
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMinutes(5),
+            $"10,000-commit rewrite took {stopwatch.Elapsed} — past the 5-minute ceiling this fixture is bounded by");
+        output.WriteLine($"10,000-commit rewrite: {stopwatch.Elapsed.TotalSeconds:F1}s wall, " +
+                         $"{report.BlobsChanged} blobs changed, scrub sampled {scrub.CommitsChecked} commit(s)");
     }
 }
