@@ -36,6 +36,22 @@ public partial class ProjectDetailViewModel
     /// </summary>
     private (string Path, bool Staged, int Hunk)? _diffFocus;
 
+    /// <summary>
+    /// Everything a hunk operation acts on, read at the moment the reader chose it. An
+    /// operation that re-read the live selection would act on whatever the pane holds when its
+    /// dialog closes, which a background refresh or a click on another file can have moved —
+    /// and finding nothing there, would return silently after a confirmation was given. The
+    /// header travels with the index because the index alone survives an edit that renumbers
+    /// every hunk in the file.
+    /// </summary>
+    private readonly record struct HunkTarget(WorkingFile File, bool Staged, int Hunk, string Header);
+
+    /// <summary>The hunk the pane is on right now, or null when it is on none.</summary>
+    private HunkTarget? CurrentHunk =>
+        DiffTarget is { } target && SelectedDiffLine is { HunkIndex: >= 0 } row
+            ? new HunkTarget(target.File, target.Staged, row.HunkIndex, HeaderTextFor(row.HunkIndex))
+            : null;
+
     /// <summary>The file the diff pane is showing and which side of it, or null when it shows none.</summary>
     private (WorkingFile File, bool Staged)? DiffTarget =>
         SelectedStagedFile is { } staged ? (staged, true)
@@ -100,11 +116,13 @@ public partial class ProjectDetailViewModel
 
     [RelayCommand(CanExecute = nameof(CanStageHunk))]
     private Task StageHunk() =>
-        ApplyHunkAsync("Stage hunk", (repo, patch) => _gitService.StageHunkAsync(repo, patch));
+        ApplyHunkAsync("Stage hunk", (repo, patch) => _gitService.StageHunkAsync(repo, patch),
+            CurrentHunk, RepoPath, _generation);
 
     [RelayCommand(CanExecute = nameof(CanUnstageHunk))]
     private Task UnstageHunk() =>
-        ApplyHunkAsync("Unstage hunk", (repo, patch) => _gitService.UnstageHunkAsync(repo, patch));
+        ApplyHunkAsync("Unstage hunk", (repo, patch) => _gitService.UnstageHunkAsync(repo, patch),
+            CurrentHunk, RepoPath, _generation);
 
     /// <summary>
     /// Moves the selected hunk across the index in whichever direction the pane it is shown in
@@ -126,14 +144,15 @@ public partial class ProjectDetailViewModel
     [RelayCommand(CanExecute = nameof(CanDiscardHunk))]
     private async Task DiscardHunk()
     {
-        if (DiffTarget is not { } target || SelectedDiffLine is not { HunkIndex: >= 0 } row) return;
-        // Read before the dialog: `git apply --reverse` cannot be undone, so a project switch
-        // landing while it is open must not redirect the discard onto another repository.
+        // Read before the dialog, and acted on afterwards: `git apply --reverse` cannot be
+        // undone, so neither a project switch nor a refresh landing while it is open may
+        // redirect the discard onto another repository or another hunk.
+        if (CurrentHunk is not { } hunk) return;
         var repo = RepoPath;
         var gen = _generation;
 
         var confirmed = await ConfirmAsync("Discard this hunk?",
-            $"Revert one hunk of {target.File.Path} in the working tree?\n\n{HeaderTextFor(row.HunkIndex)}\n\n" +
+            $"Revert one hunk of {hunk.File.Path} in the working tree?\n\n{hunk.Header}\n\n" +
             "The rest of the file keeps its changes. This cannot be undone.", "Discard hunk");
         if (!confirmed) return;
         if (!IsCurrent(gen))
@@ -142,7 +161,8 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        await ApplyHunkAsync("Discard hunk", (r, patch) => _gitService.DiscardHunkAsync(r, patch), repo, gen);
+        await ApplyHunkAsync("Discard hunk", (r, patch) => _gitService.DiscardHunkAsync(r, patch),
+            hunk, repo, gen);
     }
 
     /// <summary>The header line of the hunk at <paramref name="hunkIndex"/> in the rendered diff, or "" when it has none.</summary>
@@ -155,33 +175,29 @@ public partial class ProjectDetailViewModel
     /// caller captured, never the live ones.
     /// </summary>
     private async Task ApplyHunkAsync(string label, Func<string, string, Task<ProcessResult>> operate,
-        string? boundRepo = null, int? boundGeneration = null)
+        HunkTarget? bound, string repo, int gen)
     {
-        if (DiffTarget is not { } target || SelectedDiffLine is not { HunkIndex: >= 0 } row) return;
-        var repo = boundRepo ?? RepoPath;
-        var gen = boundGeneration ?? _generation;
+        if (bound is not { } hunk) return;
         if (repo.Length == 0 || IsBusy) return;
 
-        var hunk = row.HunkIndex;
-        var shownHeader = HeaderTextFor(hunk);
-        var raw = await _gitService.GetFileDiffRawAsync(repo, target.File.Path, target.Staged);
+        var raw = await _gitService.GetFileDiffRawAsync(repo, hunk.File.Path, hunk.Staged);
         if (!IsCurrent(gen)) return;
         if (raw is null)
         {
-            SyncStatusText = $"{label} failed: the diff for {target.File.Path} could not be read.";
+            SyncStatusText = $"{label} failed: the diff for {hunk.File.Path} could not be read.";
             return;
         }
 
-        var patch = GitService.ExtractHunkPatch(raw, target.File.Path, hunk);
-        if (patch is null || !HeaderMatches(patch, shownHeader))
+        var patch = GitService.ExtractHunkPatch(raw, hunk.File.Path, hunk.Hunk);
+        if (patch is null || !HeaderMatches(patch, hunk.Header))
         {
-            SyncStatusText = $"{label} refused: {target.File.Path} changed since this diff was shown. " +
+            SyncStatusText = $"{label} refused: {hunk.File.Path} changed since this diff was shown. " +
                              "It has been reloaded — pick the hunk again.";
             await ReloadDiffForCurrentSelectionAsync();
             return;
         }
 
-        _diffFocus = (target.File.Path, target.Staged, hunk);
+        _diffFocus = (hunk.File.Path, hunk.Staged, hunk.Hunk);
         var ok = await RunOp(r => operate(r, patch), label, repo, gen);
         if (!ok) _diffFocus = null;
     }

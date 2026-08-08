@@ -24,6 +24,19 @@ public sealed class WorkingFile
     public bool IsUntracked { get; init; }
     public bool IsConflicted { get; init; }
 
+    /// <summary>
+    /// Whether two reads describe the same path in the same state. Instances are immutable
+    /// and every selection is held by reference, so this is what tells a re-read that moved
+    /// nothing from one that moved a file between columns.
+    /// </summary>
+    public bool SameAs(WorkingFile other) =>
+        string.Equals(Path, other.Path, StringComparison.Ordinal) &&
+        string.Equals(OrigPath, other.OrigPath, StringComparison.Ordinal) &&
+        IndexStatus == other.IndexStatus &&
+        WorktreeStatus == other.WorktreeStatus &&
+        IsUntracked == other.IsUntracked &&
+        IsConflicted == other.IsConflicted;
+
     public bool HasStagedChange => !IsUntracked && !IsConflicted && IndexStatus != '.';
     public bool HasUnstagedChange => IsUntracked || (!IsConflicted && WorktreeStatus != '.');
 

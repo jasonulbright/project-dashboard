@@ -123,9 +123,9 @@ public partial class ProjectDetailViewModel
         var keepStagedSet = SelectedStagedFiles.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
         var keepUnstagedSet = SelectedUnstagedFiles.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
 
-        StagedFiles = new ObservableCollection<WorkingFile>(state.Staged);
-        UnstagedFiles = new ObservableCollection<WorkingFile>(state.Unstaged);
-        ConflictedFiles = new ObservableCollection<WorkingFile>(state.Conflicted);
+        StagedFiles = Rebuild(state.Staged, StagedFiles);
+        UnstagedFiles = Rebuild(state.Unstaged, UnstagedFiles);
+        ConflictedFiles = Rebuild(state.Conflicted, ConflictedFiles);
 
         SelectedStagedFiles = StagedFiles.Where(f => keepStagedSet.Contains(f.Path)).ToList();
         SelectedUnstagedFiles = UnstagedFiles.Where(f => keepUnstagedSet.Contains(f.Path)).ToList();
@@ -158,6 +158,25 @@ public partial class ProjectDetailViewModel
             _ when state.HasConflicts => (true, "Unresolved conflicts — fix them in a terminal, then stage and commit."),
             _ => (false, "")
         };
+    }
+
+    /// <summary>
+    /// The rebuilt rows for one side, carrying forward the instance already on screen wherever
+    /// the read describes the same file in the same state. A selection is held by reference, so
+    /// a fresh instance for a file nothing moved re-fires the selection handlers — which drop
+    /// the diff rows and the hunk row the reader is on. That row is what a confirmed hunk
+    /// operation names, and a refresh nobody asked for must not take it away. A file that did
+    /// move gets its new instance, and the reload that follows from it is the correct one.
+    /// </summary>
+    private static ObservableCollection<WorkingFile> Rebuild(
+        IEnumerable<WorkingFile> read, IEnumerable<WorkingFile> shown)
+    {
+        var byPath = new Dictionary<string, WorkingFile>(StringComparer.Ordinal);
+        foreach (var file in shown) byPath.TryAdd(file.Path, file);
+        return new ObservableCollection<WorkingFile>(
+            read.Select(file => byPath.TryGetValue(file.Path, out var existing) && existing.SameAs(file)
+                ? existing
+                : file));
     }
 
     // ── Stage / unstage / discard / diff ────────────────────────────────────

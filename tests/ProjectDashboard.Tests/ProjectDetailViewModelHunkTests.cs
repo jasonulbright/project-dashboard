@@ -35,6 +35,23 @@ public class ProjectDetailViewModelHunkTests
         }
     }
 
+    /// <summary>
+    /// Answers the confirmation only once an edit elsewhere in the repository has been
+    /// signalled and the refresh it triggers has finished — the interleave a dialog that
+    /// holds no busy gate is open for.
+    /// </summary>
+    private sealed class RefreshingConfirmViewModel(GitService git, TempRepo repo, string repoDir)
+        : ProjectDetailViewModel(null!, git, null!, uiPost: callback => callback())
+    {
+        internal override async Task<bool> ConfirmAsync(string title, string message, string confirmText)
+        {
+            repo.WriteFile("elsewhere.txt", "touched outside the app\n");
+            OnWatchedReposChanged([repoDir]);
+            await WatcherRefresh;
+            return true;
+        }
+    }
+
     private static ProjectInfo ProjectFor(TempRepo repo)
     {
         var name = Path.GetFileName(repo.Path);
@@ -436,6 +453,82 @@ public class ProjectDetailViewModelHunkTests
         Assert.Equal("Select a line inside a hunk first.", vm.StageHunkBlockedReason);
 
         await vm.DiffRefresh;
+    }
+
+    // ── A refresh landing while a hunk dialog is open ────────────────────────────
+
+    /// <summary>
+    /// The confirmation names one hunk of one file, and OK has to run that hunk. The dialog
+    /// holds no busy gate, so a refresh — an external edit anywhere else in the repository —
+    /// lands while it is open and rebuilds the rows the pane is holding. An operation that
+    /// re-reads the live selection after the dialog finds none and returns silently: a
+    /// confirmed, irreversible action that reports neither success nor refusal.
+    /// </summary>
+    [Fact]
+    public async Task AConfirmedHunkDiscard_RunsTheHunkTheDialogNamedThroughARefreshThatLandsWhileItIsOpen()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-discard-refresh");
+        var vm = new RefreshingConfirmViewModel(new GitService(), repo, Path.GetFileName(repo.Path));
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 0);
+
+        await vm.DiscardHunkCommand.ExecuteAsync(null);
+
+        // The first hunk is reverted and the second is left exactly as it was.
+        var text = repo.ReadFile("file.txt");
+        Assert.StartsWith("l1\n", text);
+        Assert.EndsWith("L15\n", text);
+    }
+
+    /// <summary>
+    /// A refresh caused by an edit to another file moves nothing about the file the pane is
+    /// showing, so it keeps its rows and the hunk the reader is on. Rebuilding them throws
+    /// the reader back to the top of the diff on every unrelated save in the repository.
+    /// </summary>
+    [Fact]
+    public async Task ARefreshForAnEditElsewhere_KeepsTheRowsAndTheHunkThePaneIsShowing()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-unrelated-refresh");
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!, uiPost: callback => callback());
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 1);
+
+        var row = vm.SelectedDiffLine;
+        var rows = vm.DiffLines;
+        repo.WriteFile("elsewhere.txt", "touched outside the app\n");
+        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        await vm.WatcherRefresh;
+
+        Assert.Equal(2, vm.UnstagedFiles.Count);
+        Assert.Same(row, vm.SelectedDiffLine);
+        Assert.Same(rows, vm.DiffLines);
+        Assert.Null(vm.StageHunkBlockedReason);
+    }
+
+    /// <summary>
+    /// The other direction: the file the pane is showing really did move — staged from a
+    /// terminal, it is no longer on the unstaged side — and the selection and the diff of it
+    /// go with it rather than describing a row that is gone.
+    /// </summary>
+    [Fact]
+    public async Task ARefreshAfterTheShownFileMoves_DropsTheSelectionAndItsDiff()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-moved-refresh");
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!, uiPost: callback => callback());
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 1);
+
+        await repo.GitAsync("add", "file.txt");
+        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        await vm.WatcherRefresh;
+
+        Assert.Empty(vm.UnstagedFiles);
+        Assert.Null(vm.SelectedUnstagedFile);
+        Assert.Null(vm.SelectedDiffLine);
+        Assert.Empty(vm.DiffLines);
     }
 
     [Theory]
