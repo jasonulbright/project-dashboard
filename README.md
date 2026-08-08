@@ -4,6 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/jasonulbright/project-dashboard?label=release)](https://github.com/jasonulbright/project-dashboard/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/jasonulbright/project-dashboard/total?label=downloads)](https://github.com/jasonulbright/project-dashboard/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4)](#requirements)
+[![License](https://img.shields.io/github/license/jasonulbright/project-dashboard)](LICENSE)
 
 A Fluent 2 WPF desktop application for managing local git repositories — a full desktop git client for your whole projects folder. Scans a configurable root directory, reads git status, changelogs, readmes, and GitHub issues/PRs, and gives you staging, commits, branches, history, stashes, and one-click clone across every repo in one window.
 
@@ -163,4 +164,7 @@ Every subprocess goes through one `ProcessRunner`: both pipes drained concurrent
 
 ## License
 
-This project is provided as-is for personal and educational use.
+MIT — see [LICENSE](LICENSE).
+
+The binaries redistributed in the installer and portable archive are listed with their
+licenses in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
