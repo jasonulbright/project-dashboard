@@ -75,6 +75,22 @@ public class RewriteWizardFocusContainmentTests
     }
 
     /// <summary>
+    /// The detail page is transient and its view model is shared, so a navigation away and back
+    /// leaves an unrooted pane bound to the same properties as the visible one. A GroupName joins
+    /// an application-wide table matched by visual root, which every unrooted pane shares, so the
+    /// choices must not carry one.
+    /// </summary>
+    [Fact]
+    public void TheWizardChoices_JoinNoApplicationWideRadioGroup()
+    {
+        var choices = Regex.Matches(File.ReadAllText(SourceFile("RewriteWizardView.xaml")),
+            @"<RadioButton\b[^>]*>", RegexOptions.Singleline);
+
+        Assert.NotEmpty(choices);
+        Assert.DoesNotContain(choices, choice => choice.Value.Contains("GroupName"));
+    }
+
+    /// <summary>
     /// The containment itself, on a live focus scope. The replica carries the page's structure —
     /// an enabled-or-not header row beside a pane that cycles its navigation modes — because the
     /// escape is a property of that arrangement, not of the wizard's contents.

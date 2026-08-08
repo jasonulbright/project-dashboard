@@ -203,7 +203,13 @@
                             <TextBlock Style="{StaticResource WizardHint}"
                                        Text="Rewriting history replaces every affected commit with a new one. A verified backup is taken before anything is applied, and this app never pushes the result." />
 
-                            <RadioButton x:Name="FirstOperationChoice" GroupName="RewriteOperation" Style="{StaticResource WizardChoice}"
+                            <!-- These choices, and the scope choices below, take their exclusivity
+                                 from the panel they sit in and carry no GroupName. A named group is
+                                 an application-wide one keyed by visual root, so it also matches the
+                                 buttons of any other pane bound to the same view model — and the
+                                 button it unchecks writes false back through its two-way binding,
+                                 clearing the choice and the input panel that choice renders. -->
+                            <RadioButton x:Name="FirstOperationChoice" Style="{StaticResource WizardChoice}"
                                          Content="Replace text in file contents"
                                          IsChecked="{Binding RewriteOperationIsReplaceText, Mode=TwoWay}"
                                          AutomationProperties.Name="Operation: replace text in file contents" />
@@ -224,7 +230,7 @@
                                            Text="A regular expression only runs over files that decode as UTF-8; anything else is skipped and reported." />
                             </StackPanel>
 
-                            <RadioButton GroupName="RewriteOperation" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Remove a file or path from history"
                                          IsChecked="{Binding RewriteOperationIsPurgePath, Mode=TwoWay}"
                                          AutomationProperties.Name="Operation: remove a file or path from history" />
@@ -260,7 +266,7 @@
                                            Text="Sizes are binary: 1 KB is 1024 bytes. An entry containing * or ? is read as a glob; otherwise it is a path and everything under it. Commits left with no files are pruned." />
                             </StackPanel>
 
-                            <RadioButton GroupName="RewriteOperation" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Rewrite commit and tag messages"
                                          IsChecked="{Binding RewriteOperationIsMessages, Mode=TwoWay}"
                                          AutomationProperties.Name="Operation: rewrite commit and tag messages" />
@@ -279,7 +285,7 @@
                                           AutomationProperties.Name="Use a regular expression for messages" />
                             </StackPanel>
 
-                            <RadioButton GroupName="RewriteOperation" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Rewrite an author or committer identity"
                                          IsChecked="{Binding RewriteOperationIsIdentity, Mode=TwoWay}"
                                          AutomationProperties.Name="Operation: rewrite an author or committer identity" />
@@ -309,12 +315,12 @@
                             <TextBlock Style="{StaticResource WizardHint}"
                                        Text="Message and identity rewrites follow the commit choices only — a file pattern does not narrow them. Narrowing to some commits still changes their descendants, because a later commit that never re-touches a file inherits the rewritten one." />
 
-                            <RadioButton x:Name="FirstScopeChoice" GroupName="RewriteScope" Style="{StaticResource WizardChoice}"
+                            <RadioButton x:Name="FirstScopeChoice" Style="{StaticResource WizardChoice}"
                                          Content="All history, every file"
                                          IsChecked="{Binding RewriteScopeIsAllHistory, Mode=TwoWay}"
                                          AutomationProperties.Name="Scope: all history and every file" />
 
-                            <RadioButton GroupName="RewriteScope" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Only files matching these patterns"
                                          IsChecked="{Binding RewriteScopeIsGlobs, Mode=TwoWay}"
                                          AutomationProperties.Name="Scope: only files matching patterns" />
@@ -328,7 +334,7 @@
                                             AutomationProperties.Name="File globs in scope" />
                             </StackPanel>
 
-                            <RadioButton GroupName="RewriteScope" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Only these exact paths"
                                          IsChecked="{Binding RewriteScopeIsExplicitPaths, Mode=TwoWay}"
                                          AutomationProperties.Name="Scope: only these exact paths" />
@@ -342,7 +348,7 @@
                                             AutomationProperties.Name="Exact paths in scope" />
                             </StackPanel>
 
-                            <RadioButton GroupName="RewriteScope" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Only these commits"
                                          IsChecked="{Binding RewriteScopeIsExplicitCommits, Mode=TwoWay}"
                                          AutomationProperties.Name="Scope: only these commits" />
@@ -437,7 +443,7 @@
                                 </StackPanel>
                             </Grid>
 
-                            <RadioButton GroupName="RewriteScope" Style="{StaticResource WizardChoice}"
+                            <RadioButton Style="{StaticResource WizardChoice}"
                                          Content="Only a commit range"
                                          IsChecked="{Binding RewriteScopeIsCommitRange, Mode=TwoWay}"
                                          AutomationProperties.Name="Scope: only a commit range" />

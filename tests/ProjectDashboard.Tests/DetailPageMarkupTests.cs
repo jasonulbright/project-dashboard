@@ -38,6 +38,7 @@ public class DetailPageMarkupTests
             SideBySidePane_SplitsEvenlyAndScrollsToTheEndOfALongLine(page);
             ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(page);
             StatusLines_CarryTheirValueAndAreAnnouncedAsTheyChange(page);
+            WizardChoices_SurviveASecondPageBoundToTheSameViewModel();
             // Last: it applies a theme, and the assertions above read the brushes in force.
             TheStatusPalette_OutranksTheThemeDictionary();
         });
@@ -214,6 +215,61 @@ public class DetailPageMarkupTests
                     Cell(panel, DiffRowCell.NewText).ActualWidth, 3);
         }
         finally { window.Close(); }
+    }
+
+    /// <summary>
+    /// The page is transient and the view model it binds is shared, so navigating to a project
+    /// twice leaves two pages bound to one view model. A radio group that is keyed by name is
+    /// application-wide and matches those pages to each other, and the losing button pushes
+    /// false back through its two-way binding — leaving every choice cleared and the panel the
+    /// same property drives unrendered. Exclusivity has to come from the panel each group sits
+    /// in, which no second page shares.
+    /// </summary>
+    private static void WizardChoices_SurviveASecondPageBoundToTheSameViewModel()
+    {
+        var viewModel = NewViewModel();
+        var first = new ProjectDetailPage(viewModel);
+        var second = new ProjectDetailPage(viewModel);
+        var window = new Window { Content = first, Width = 1200, Height = 900, ShowActivated = false };
+        try
+        {
+            window.Show();
+            first.UpdateLayout();
+            Assert.True(Choice(first, "Operation: replace text in file contents").IsChecked,
+                "the page renders no operation choice");
+            Assert.True(Choice(first, "Scope: all history and every file").IsChecked,
+                "the page renders no scope choice");
+
+            window.Content = second;
+            second.UpdateLayout();
+
+            Assert.True(viewModel.RewriteOperationIsReplaceText);
+            Assert.True(viewModel.RewriteScopeIsAllHistory);
+            Assert.True(Choice(second, "Operation: replace text in file contents").IsChecked,
+                "the second page renders no operation choice");
+            Assert.True(Choice(second, "Scope: all history and every file").IsChecked,
+                "the second page renders no scope choice");
+
+            Choice(second, "Operation: remove a file or path from history").IsChecked = true;
+
+            Assert.True(viewModel.RewriteOperationIsPurgePath);
+            Assert.False(viewModel.RewriteOperationIsReplaceText);
+            Assert.False(Choice(second, "Operation: replace text in file contents").IsChecked);
+        }
+        finally { window.Close(); }
+    }
+
+    private static RadioButton Choice(DependencyObject page, string name) =>
+        Assert.Single(LogicalDescendants<RadioButton>(page),
+            button => AutomationProperties.GetName(button) == name);
+
+    private static IEnumerable<T> LogicalDescendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (child is T match) yield return match;
+            foreach (var nested in LogicalDescendants<T>(child)) yield return nested;
+        }
     }
 
     private static FrameworkElement Cell(DiffRowPanel panel, DiffRowCell cell) =>
