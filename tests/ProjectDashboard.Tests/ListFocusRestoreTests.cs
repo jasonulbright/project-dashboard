@@ -62,11 +62,35 @@ public class ListFocusRestoreTests
             Rebuild(list);
 
             Assert.True(ListFocusRestore.Wanted(list, list, Keyboard.FocusedElement, root));
-            Assert.True(ListFocusRestore.Apply(list));
+            Assert.True(ListFocusRestore.Apply(list, list.SelectedItem));
 
             Assert.True(list.IsKeyboardFocusWithin);
             Assert.Same(list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem),
                 Keyboard.FocusedElement);
+        });
+    }
+
+    /// <summary>
+    /// In an extended selection the reader's row is the one they last arrowed onto, and
+    /// SelectedItem is the first row of the selection — so focus taken back to SelectedItem
+    /// lands somewhere the reader never was, and the next arrow key walks from there.
+    /// </summary>
+    [Fact]
+    public void TheRestore_PrefersTheFocusedRowOverTheFirstOfASelection()
+    {
+        RunSta(() =>
+        {
+            var (_, list) = ShowReplica();
+            list.SelectionMode = SelectionMode.Extended;
+            list.SelectedItems.Add(list.Items[0]);
+            list.SelectedItems.Add(list.Items[2]);
+            list.UpdateLayout();
+            var focused = list.Items[2];
+
+            Assert.NotSame(focused, list.SelectedItem);
+            Assert.True(ListFocusRestore.Apply(list, focused));
+
+            Assert.Same(list.ItemContainerGenerator.ContainerFromItem(focused), Keyboard.FocusedElement);
         });
     }
 
@@ -113,12 +137,17 @@ public class ListFocusRestoreTests
             list.ItemsSource = new List<Row>();
             list.UpdateLayout();
 
-            Assert.True(ListFocusRestore.Apply(list));
+            Assert.True(ListFocusRestore.Apply(list, null));
             Assert.True(list.IsKeyboardFocused);
         });
     }
 
-    /// <summary>Root shaped like the page: focusable itself, with a list and one other control.</summary>
+    /// <summary>
+    /// Root shaped like the page: focusable itself, with a list and one other control. The window
+    /// is shown unactivated and closed with the body: keyboard focus is a desktop-wide resource,
+    /// and a window that takes activation pulls it out of whatever another test class is holding
+    /// on its own thread.
+    /// </summary>
     private static (FrameworkElement Root, ListBox List) ShowReplica()
     {
         var list = new ListBox
@@ -130,10 +159,15 @@ public class ListFocusRestoreTests
         root.Children.Add(list);
         root.Children.Add(new TextBox { Width = 200, Height = 24 });
 
-        new Window { Content = root, Width = 400, Height = 400 }.Show();
+        var window = new Window { Content = root, Width = 400, Height = 400, ShowActivated = false };
+        _windows.Value!.Add(window);
+        window.Show();
         root.UpdateLayout();
         return (root, list);
     }
+
+    /// <summary>Windows the running body opened, closed when it ends however it ends.</summary>
+    private static readonly ThreadLocal<List<Window>> _windows = new(() => []);
 
     private static void FocusRow(ListBox list, int index)
     {
@@ -161,6 +195,11 @@ public class ListFocusRestoreTests
         {
             try { action(); }
             catch (Exception ex) { error = ex; }
+            finally
+            {
+                foreach (var window in _windows.Value!) window.Close();
+                _windows.Value!.Clear();
+            }
         });
         thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);

@@ -38,9 +38,13 @@ internal static class ListFocusRestore
         return true;
     }
 
-    /// <summary>Puts focus on the list's selected row, or on the list when it has none.</summary>
-    internal static bool Apply(ListBox list) =>
-        list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem) is ListBoxItem row
+    /// <summary>
+    /// Puts focus on <paramref name="focused"/>'s row, or on the list when that row has no
+    /// container. The focused row is not SelectedItem in an extended selection, where that stays
+    /// the first row of the selection rather than the row the reader was on.
+    /// </summary>
+    internal static bool Apply(ListBox list, object? focused) =>
+        list.ItemContainerGenerator.ContainerFromItem(focused ?? list.SelectedItem) is ListBoxItem row
             ? row.Focus()
             : list.Focus();
 

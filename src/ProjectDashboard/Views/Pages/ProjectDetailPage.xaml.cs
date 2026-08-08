@@ -60,14 +60,14 @@ public partial class ProjectDetailPage
                 break;
             case nameof(ProjectDetailViewModel.SelectedUnstagedFiles):
                 RestoreListSelection(UnstagedList, _viewModel.SelectedUnstagedFiles);
-                RestoreListFocus(UnstagedList);
+                RestoreListFocus(UnstagedList, () => _viewModel.SelectedUnstagedFile);
                 break;
             case nameof(ProjectDetailViewModel.SelectedStagedFiles):
                 RestoreListSelection(StagedList, _viewModel.SelectedStagedFiles);
-                RestoreListFocus(StagedList);
+                RestoreListFocus(StagedList, () => _viewModel.SelectedStagedFile);
                 break;
             case nameof(ProjectDetailViewModel.Commits):
-                RestoreListFocus(HistoryList);
+                RestoreListFocus(HistoryList, () => _viewModel.SelectedCommit);
                 break;
         }
     }
@@ -1347,13 +1347,7 @@ public partial class ProjectDetailPage
         item.IsSelected = true;
     }
 
-    /// <summary>
-    /// The two directions of one selection. WPF owns the selection a reader makes with the
-    /// mouse and the keyboard; the view model owns the one it restores after a refresh, by
-    /// path. Each direction runs with the other suppressed, so restoring a selection cannot
-    /// re-enter as a fresh user selection and collapse it to a single row.
-    /// </summary>
-    private bool _syncingFileSelection;
+    private readonly Helpers.ListSelectionSync _fileSelection = new();
 
     private void OnUnstagedSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         PushSelection(sender, e, _viewModel.SetUnstagedSelection);
@@ -1364,16 +1358,13 @@ public partial class ProjectDetailPage
     private void PushSelection(object sender, SelectionChangedEventArgs e,
         Action<IReadOnlyList<Models.WorkingFile>, Models.WorkingFile?> apply)
     {
-        if (_syncingFileSelection || sender is not ListBox list) return;
-        _syncingFileSelection = true;
-        try
-        {
-            // The last row added is the one the reader just clicked or arrowed onto — which is
-            // not SelectedItem in an extended selection, where that stays the first row.
+        if (sender is not ListBox list) return;
+
+        // The last row added is the one the reader just clicked or arrowed onto — which is
+        // not SelectedItem in an extended selection, where that stays the first row.
+        _fileSelection.Push(list, () =>
             apply(list.SelectedItems.Cast<Models.WorkingFile>().ToList(),
-                e.AddedItems.OfType<Models.WorkingFile>().LastOrDefault());
-        }
-        finally { _syncingFileSelection = false; }
+                e.AddedItems.OfType<Models.WorkingFile>().LastOrDefault()));
     }
 
     /// <summary>
@@ -1382,17 +1373,8 @@ public partial class ProjectDetailPage
     /// clears a selection the view model still holds — and the buttons then act on rows the
     /// list no longer shows as selected.
     /// </summary>
-    private void RestoreListSelection(ListBox list, IReadOnlyList<Models.WorkingFile> wanted)
-    {
-        if (_syncingFileSelection) return;
-        _syncingFileSelection = true;
-        try
-        {
-            list.SelectedItems.Clear();
-            foreach (var file in wanted) list.SelectedItems.Add(file);
-        }
-        finally { _syncingFileSelection = false; }
-    }
+    private void RestoreListSelection(ListBox list, IReadOnlyList<Models.WorkingFile> wanted) =>
+        _fileSelection.Restore(list, wanted);
 
     /// <summary>
     /// The work list the reader was last inside. A full refresh replaces the list's items and
@@ -1410,15 +1392,17 @@ public partial class ProjectDetailPage
     /// Puts focus back on the re-selected row of the list the reader was in. The container for
     /// that row exists only once the generator has run over the replaced items, which is after
     /// this notification — hence the second pass, which re-tests everything the first did.
+    /// <paramref name="focused"/> is read on that second pass, so a selection that moved again
+    /// meanwhile does not leave focus on a row the view model no longer follows.
     /// </summary>
-    private void RestoreListFocus(ListBox list)
+    private void RestoreListFocus(ListBox list, Func<object?> focused)
     {
         if (!Helpers.ListFocusRestore.Wanted(list, _lastFocusedWorkList, Keyboard.FocusedElement, this)) return;
 
         _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
         {
             if (Helpers.ListFocusRestore.Wanted(list, _lastFocusedWorkList, Keyboard.FocusedElement, this))
-                Helpers.ListFocusRestore.Apply(list);
+                Helpers.ListFocusRestore.Apply(list, focused());
         });
     }
 
