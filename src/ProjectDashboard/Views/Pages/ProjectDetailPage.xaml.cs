@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Text.RegularExpressions;
@@ -1074,13 +1075,41 @@ public partial class ProjectDetailPage
     /// Whether a link label reads as a destination rather than as prose. A run of
     /// host-shaped text with no whitespace, with or without a scheme, is a claim about
     /// where the link goes; a version or a file name is not, and neither is a sentence.
+    /// The shape test runs on the normalized host token rather than the raw label: one
+    /// adjacent character otherwise reclassifies a host claim as prose and opens an
+    /// arbitrary target with nothing disclosed.
     /// </summary>
     private static bool NamesADestination(string label)
     {
-        if (label.Length == 0 || label.Any(char.IsWhiteSpace)) return false;
-        if (label.Contains("://", StringComparison.Ordinal)) return true;
-        var host = label.Split('/', 2)[0];
+        var visible = VisibleText(label);
+        if (visible.Length == 0 || visible.Any(char.IsWhiteSpace)) return false;
+        if (visible.Contains("://", StringComparison.Ordinal)) return true;
+        var host = HostToken(visible);
         return HostShapedLabel.IsMatch(host) || Uri.CheckHostName(host) == UriHostNameType.IPv4;
+    }
+
+    /// <summary>
+    /// The label with its invisible characters removed. A Format-category character
+    /// renders as nothing, so a zero-width space inside an otherwise host-shaped label
+    /// leaves the reader seeing the host unchanged while the raw text no longer matches.
+    /// </summary>
+    private static string VisibleText(string label) =>
+        string.Concat(label.Where(c => char.GetUnicodeCategory(c) != UnicodeCategory.Format)).Trim();
+
+    /// <summary>
+    /// The authority a label claims, which is not the whole label: the resolved host is
+    /// the text after the last "@" and before the first ":" or "/", and punctuation
+    /// wrapping or trailing it is decoration rather than part of the name.
+    /// </summary>
+    private static string HostToken(string label)
+    {
+        var authority = label.Split('/', 2)[0];
+        var host = authority[(authority.LastIndexOf('@') + 1)..].Split(':', 2)[0];
+        var start = 0;
+        var end = host.Length;
+        while (start < end && !char.IsLetterOrDigit(host[start])) start++;
+        while (end > start && !char.IsLetterOrDigit(host[end - 1])) end--;
+        return host[start..end];
     }
 
     /// <summary>

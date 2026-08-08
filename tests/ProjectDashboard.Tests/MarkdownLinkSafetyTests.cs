@@ -109,10 +109,31 @@ public class MarkdownLinkSafetyTests
     [InlineData("github.com/o/r/pull/12", "https://github.com/o/r/pull/12")]
     [InlineData("example.com", "https://example.com")]
     [InlineData("https://example.com", "https://example.com")]
+    [InlineData("github.com", "https://github.com")]
     public void ALabelClaimingNoOtherDestination_ActivatesWithoutADisclosure(string label, string url)
     {
         Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var target));
         Assert.Null(ProjectDetailPage.KeyboardDisclosure(label, target));
+    }
+
+    /// <summary>
+    /// The label is attacker-chosen, so the shape test runs on a normalized form. Each of
+    /// these reads as github.com and defeats a shape test applied to the raw label: an
+    /// invisible Format character, edge punctuation, an explicit port, a userinfo prefix.
+    /// One such character must not reclassify a host claim as prose and open an arbitrary
+    /// target with nothing disclosed.
+    /// </summary>
+    [Theory]
+    [InlineData("github.com\u200b")]
+    [InlineData("github.com.")]
+    [InlineData("github.com,")]
+    [InlineData("(github.com)")]
+    [InlineData("github.com:443")]
+    [InlineData("user@github.com")]
+    public void ALabelDecoratedAroundAHost_IsStillDisclosed(string label)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri("https://evil.example/x", out var target));
+        Assert.Equal("https://evil.example/x", ProjectDetailPage.KeyboardDisclosure(label, target));
     }
 
     [Theory]
