@@ -713,14 +713,15 @@ public partial class ProjectDetailViewModel
     /// </summary>
     internal virtual async Task<bool> ConfirmAsync(string title, string message, string confirmText)
     {
-        var result = await new Wpf.Ui.Controls.MessageBox
+        var dialog = new Wpf.Ui.Controls.MessageBox
         {
             Title = title,
             Content = message,
             PrimaryButtonText = confirmText,
             PrimaryButtonAppearance = Wpf.Ui.Controls.ControlAppearance.Danger,
             CloseButtonText = "Cancel"
-        }.ShowDialogAsync();
-        return result == Wpf.Ui.Controls.MessageBoxResult.Primary;
+        };
+        Helpers.DialogKeyGuard.Install(dialog);
+        return await dialog.ShowDialogAsync() == Wpf.Ui.Controls.MessageBoxResult.Primary;
     }
 }

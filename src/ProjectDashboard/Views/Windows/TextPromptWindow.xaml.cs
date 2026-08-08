@@ -17,6 +17,7 @@ public partial class TextPromptWindow
     public TextPromptWindow()
     {
         InitializeComponent();
+        Helpers.DialogKeyGuard.Install(this);
         Loaded += (_, _) => ValueInput.Focus();
     }
 
