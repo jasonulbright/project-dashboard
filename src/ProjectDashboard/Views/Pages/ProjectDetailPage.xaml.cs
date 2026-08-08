@@ -1053,7 +1053,8 @@ public partial class ProjectDetailPage
     /// caret has no hover, so the label is what a keyboard reader has: a label that names
     /// a destination the launch does not keep must reach them first, and a label that
     /// names no destination has nothing to contradict. Comparison is against the punycode
-    /// disclosure, so a label spelled in lookalike characters is never its own match.
+    /// disclosure, so a label spelled in lookalike characters is never its own match, and
+    /// is case-insensitive, so a host spelled in another case is not a mismatch.
     /// </summary>
     internal static string? KeyboardDisclosure(string linkText, Uri target)
     {
@@ -1066,26 +1067,35 @@ public partial class ProjectDetailPage
             : disclosure;
         // A bare host is disclosed with the "/" that spells its empty path; a label
         // naming that host is the same destination without it.
-        if (label == disclosure || label == bare || $"{label}/" == disclosure || $"{label}/" == bare)
+        if (Same(label, disclosure) || Same(label, bare) || Same($"{label}/", disclosure) || Same($"{label}/", bare))
             return null;
         return disclosure;
+
+        static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
     /// Whether a link label reads as a destination rather than as prose. A run of
     /// host-shaped text with no whitespace, with or without a scheme, is a claim about
-    /// where the link goes; a version or a file name is not, and neither is a sentence.
-    /// The shape test runs on the normalized host token rather than the raw label: one
-    /// adjacent character otherwise reclassifies a host claim as prose and opens an
-    /// arbitrary target with nothing disclosed.
+    /// where the link goes; a sentence, a file name, and a dotted version number are not.
+    /// A label that names a file names no destination, so it opens the way prose does —
+    /// only a host-shaped label owes a disclosure. The shape test runs on the normalized
+    /// host token rather than the raw label: one adjacent character otherwise reclassifies
+    /// a host claim as prose and opens an arbitrary target with nothing disclosed.
     /// </summary>
     private static bool NamesADestination(string label)
     {
         var visible = VisibleText(label);
         if (visible.Length == 0 || visible.Any(char.IsWhiteSpace)) return false;
         if (visible.Contains("://", StringComparison.Ordinal)) return true;
+
         var host = HostToken(visible);
-        return HostShapedLabel.IsMatch(host) || Uri.CheckHostName(host) == UriHostNameType.IPv4;
+        var segments = host.Split('.');
+        // A dotted run of digits is a version unless it is a full dotted quad: the
+        // framework reads three-segment shorthand such as 1.2.10 as an address too.
+        if (segments.All(s => s.Length > 0 && s.All(char.IsAsciiDigit)))
+            return segments.Length == 4 && Uri.CheckHostName(host) == UriHostNameType.IPv4;
+        return HostShapedLabel.IsMatch(host) && !FileNameSuffixes.Contains(segments[^1]);
     }
 
     /// <summary>
@@ -1117,6 +1127,23 @@ public partial class ProjectDetailPage
     /// not a host claim. Matches non-ASCII letters, which is where the lookalikes live.
     /// </summary>
     private static readonly Regex HostShapedLabel = new(@"^(?:[\w-]+\.)+\w{2,}$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Final segments that make a dotted label a file name rather than a host. Some are
+    /// also delegated top-level domains; in a rendered issue body the file reading is the
+    /// one a reader takes, and a label naming a file claims no destination at all.
+    /// </summary>
+    private static readonly HashSet<string> FileNameSuffixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "md", "markdown", "txt", "rst", "log", "csv", "tsv",
+        "json", "xml", "yml", "yaml", "toml", "ini", "cfg", "conf", "config", "lock",
+        "html", "htm", "css", "scss", "js", "jsx", "mjs", "cjs", "ts", "tsx",
+        "cs", "csproj", "sln", "slnx", "vb", "fs", "py", "rb", "go", "rs", "java", "kt",
+        "swift", "php", "pl", "lua", "sql", "cpp", "hpp",
+        "sh", "bash", "zsh", "ps1", "psm1", "bat", "cmd",
+        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "pdf",
+        "zip", "tar", "gz", "bz2", "7z", "rar", "exe", "msi", "dll", "dylib",
+    };
 
     /// <summary>
     /// The exact string handed to ShellExecute for a navigable link. The raw capture is
@@ -1258,12 +1285,14 @@ public partial class ProjectDetailPage
     /// <summary>
     /// Names the destination a link's own text does not. The label is attacker-chosen in a
     /// rendered issue body, so the disclosure is the punycode form and the reader answers
-    /// before anything is launched.
+    /// before anything is launched. The wording states the destination without asserting a
+    /// mismatch: a label reaches this dialog on shape alone, so a decorated spelling of an
+    /// honest host arrives here too and a mismatch claim would be false.
     /// </summary>
     private Task<bool> ConfirmLinkAsync(string disclosure) =>
         _viewModel.ConfirmAsync(
             "Open this link?",
-            $"The link text does not match where this link goes. It opens:\n\n{disclosure}",
+            $"This link opens:\n\n{disclosure}",
             "Open link");
 
     /// <summary>

@@ -117,6 +117,48 @@ public class MarkdownLinkSafetyTests
     }
 
     /// <summary>
+    /// A label naming a file or a version number claims nothing about a destination, so it
+    /// opens the way prose does. Only a host-shaped label owes a confirmation.
+    /// </summary>
+    [Theory]
+    [InlineData("README.md", "https://evil.example/x")]
+    [InlineData("CHANGELOG.md", "https://github.com/o/r/blob/main/CHANGELOG.md")]
+    [InlineData("appsettings.json", "https://evil.example/x")]
+    [InlineData("1.2.10", "https://evil.example/x")]
+    [InlineData("2026.08.07", "https://evil.example/x")]
+    public void ALabelNamingAFileOrAVersion_ActivatesWithoutADisclosure(string label, string url)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var target));
+        Assert.Null(ProjectDetailPage.KeyboardDisclosure(label, target));
+    }
+
+    /// <summary>
+    /// A host the label spells in another case is the same destination, so it costs no
+    /// second keystroke and no dialog naming a mismatch that is not there.
+    /// </summary>
+    [Theory]
+    [InlineData("GitHub.com", "https://github.com")]
+    [InlineData("GitHub.COM/o/r", "https://github.com/o/r")]
+    [InlineData("HTTPS://GitHub.com/o/r", "https://github.com/o/r")]
+    public void ARecasedHonestHost_ActivatesWithoutADisclosure(string label, string url)
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri(url, out var target));
+        Assert.Null(ProjectDetailPage.KeyboardDisclosure(label, target));
+    }
+
+    /// <summary>
+    /// A dotted quad still names a destination: only a shorter numeric run reads as a
+    /// version.
+    /// </summary>
+    [Fact]
+    public void AnIPv4Label_IsStillDisclosed()
+    {
+        Assert.True(ProjectDetailPage.TryGetNavigableUri("https://evil.example/x", out var target));
+
+        Assert.Equal("https://evil.example/x", ProjectDetailPage.KeyboardDisclosure("192.168.1.10", target));
+    }
+
+    /// <summary>
     /// The label is attacker-chosen, so the shape test runs on a normalized form. Each of
     /// these reads as github.com and defeats a shape test applied to the raw label: an
     /// invisible Format character, edge punctuation, an explicit port, a userinfo prefix.
