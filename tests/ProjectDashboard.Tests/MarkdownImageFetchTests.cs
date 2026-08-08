@@ -18,6 +18,7 @@ namespace ProjectDashboard.Tests;
 /// sees a gap that never resolves. The fetch must therefore be bounded end to end, and
 /// whatever ends it must still leave the alt-text placeholder on screen.
 /// </summary>
+[Collection(MarkdownImageCollection.Name)]
 public class MarkdownImageFetchTests
 {
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);

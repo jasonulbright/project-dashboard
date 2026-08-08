@@ -185,6 +185,8 @@ public partial class ProjectDetailPage
         var project = DashboardViewModel.SelectedProject;
         if (project is null) return;
 
+        ReleaseRemoteImagesForProject(project.FullPath);
+
         try
         {
             await _viewModel.SetProjectAsync(project);
@@ -684,21 +686,116 @@ public partial class ProjectDetailPage
     /// <summary>Bytes read from a remote image before the fetch is abandoned.</summary>
     private const long MaxImageBytes = 8L * 1024 * 1024;
 
-    /// <summary>Remote images kept per session, and the count at which the set is dropped.</summary>
-    private const int MaxCachedRemoteImages = 64;
+    /// <summary>
+    /// Decoded remote image bytes held at once. A count cap does not bound memory: an
+    /// entry is between a few KB (a badge) and <see cref="MaxImageEdge"/> squared times
+    /// its pixel stride, so the same count spans three orders of magnitude of retention.
+    /// </summary>
+    internal const long MaxCachedRemoteImageBytes = 32L * 1024 * 1024;
 
     /// <summary>Wall-clock budget for one remote image fetch, headers and body together.</summary>
     private static readonly TimeSpan ImageFetchTimeout = TimeSpan.FromSeconds(15);
 
     private static readonly HttpClient ImageClient = new() { Timeout = ImageFetchTimeout };
 
+    private sealed record RemoteImage(string Url, BitmapImage Bitmap, long Bytes);
+
     /// <summary>
-    /// Decoded remote images by URL. A theme flip re-renders every open document, so
+    /// Decoded remote images by URL, with <see cref="RemoteImageOrder"/> holding the same
+    /// entries most-recently-used first. A theme flip re-renders every open document, so
     /// without this each flip re-fetches every badge in the README. Frozen bitmaps are
-    /// shared across documents; the whole set is dropped at the cap rather than evicted
-    /// entry by entry, which costs one refetch.
+    /// shared across documents, so an evicted entry costs one refetch and never a torn
+    /// image. Every read and write of the three fields takes <see cref="RemoteImageLock"/>:
+    /// a fetch completes on a pool thread while a render reads on the UI thread.
     /// </summary>
-    private static readonly ConcurrentDictionary<string, BitmapImage> RemoteImages = new();
+    private static readonly Dictionary<string, LinkedListNode<RemoteImage>> RemoteImages =
+        new(StringComparer.Ordinal);
+
+    private static readonly LinkedList<RemoteImage> RemoteImageOrder = new();
+    private static long _remoteImageBytes;
+    private static readonly object RemoteImageLock = new();
+
+    /// <summary>Retained decoded bytes currently in the cache.</summary>
+    internal static long RemoteImageCacheBytes
+    {
+        get { lock (RemoteImageLock) return _remoteImageBytes; }
+    }
+
+    /// <summary>Entries currently in the cache.</summary>
+    internal static int RemoteImageCacheCount
+    {
+        get { lock (RemoteImageLock) return RemoteImages.Count; }
+    }
+
+    /// <summary>Decoded size of a frozen bitmap: its stride times its height.</summary>
+    private static long DecodedBytes(BitmapImage bitmap) =>
+        (long)bitmap.PixelHeight * ((bitmap.PixelWidth * bitmap.Format.BitsPerPixel + 7) / 8);
+
+    /// <summary>Cached bitmap for <paramref name="url"/>, promoted to most recently used.</summary>
+    internal static BitmapImage? TakeCachedRemoteImage(string url)
+    {
+        lock (RemoteImageLock)
+        {
+            if (!RemoteImages.TryGetValue(url, out var node)) return null;
+            RemoteImageOrder.Remove(node);
+            RemoteImageOrder.AddFirst(node);
+            return node.Value.Bitmap;
+        }
+    }
+
+    /// <summary>
+    /// Caches a decoded image and evicts least-recently-used entries until the byte cap
+    /// holds. An entry larger than the cap on its own is evicted immediately after it is
+    /// added, which leaves the cache empty rather than looping.
+    /// </summary>
+    internal static void CacheRemoteImage(string url, BitmapImage bitmap)
+    {
+        var entry = new RemoteImage(url, bitmap, DecodedBytes(bitmap));
+        lock (RemoteImageLock)
+        {
+            if (RemoteImages.TryGetValue(url, out var existing))
+            {
+                RemoteImageOrder.Remove(existing);
+                _remoteImageBytes -= existing.Value.Bytes;
+            }
+            var node = RemoteImageOrder.AddFirst(entry);
+            RemoteImages[url] = node;
+            _remoteImageBytes += entry.Bytes;
+
+            while (_remoteImageBytes > MaxCachedRemoteImageBytes && RemoteImageOrder.Last is { } oldest)
+            {
+                RemoteImageOrder.RemoveLast();
+                RemoteImages.Remove(oldest.Value.Url);
+                _remoteImageBytes -= oldest.Value.Bytes;
+            }
+        }
+    }
+
+    /// <summary>Drops every cached image and the bytes they held.</summary>
+    internal static void ClearRemoteImageCache()
+    {
+        lock (RemoteImageLock)
+        {
+            RemoteImages.Clear();
+            RemoteImageOrder.Clear();
+            _remoteImageBytes = 0;
+        }
+    }
+
+    /// <summary>The project whose documents filled the cache; "" before the first render.</summary>
+    private static string _remoteImageProject = "";
+
+    /// <summary>
+    /// Drops the cached images when the page moves to a different project. The images
+    /// belong to one project's README and CHANGELOG and are never rendered again once it
+    /// is left, so holding them to the byte cap would retain a project no longer open.
+    /// </summary>
+    internal static void ReleaseRemoteImagesForProject(string projectPath)
+    {
+        if (string.Equals(_remoteImageProject, projectPath, StringComparison.OrdinalIgnoreCase)) return;
+        _remoteImageProject = projectPath;
+        ClearRemoteImageCache();
+    }
 
     /// <summary>
     /// Fetches that have started and not yet reached the cache, keyed by URL. Renders run
@@ -776,7 +873,7 @@ public partial class ProjectDetailPage
     internal static async Task FillRemoteImageAsync(
         FlowDocument doc, BlockUIContainer block, string url, string alt, TimeSpan? timeout = null)
     {
-        if (RemoteImages.TryGetValue(url, out var cached))
+        if (TakeCachedRemoteImage(url) is { } cached)
         {
             // Before the first await, so a cached badge is present on the first layout.
             ApplyRemoteImage(doc, block, cached, alt);
@@ -811,11 +908,7 @@ public partial class ProjectDetailPage
         }
         catch { }
 
-        if (bitmap is not null)
-        {
-            if (RemoteImages.Count >= MaxCachedRemoteImages) RemoteImages.Clear();
-            RemoteImages[url] = bitmap;
-        }
+        if (bitmap is not null) CacheRemoteImage(url, bitmap);
         RemoteImageFetches.TryRemove(url, out _);
         return bitmap;
     }
