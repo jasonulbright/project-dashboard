@@ -17,6 +17,11 @@ namespace ProjectDashboard.Services.Surgery;
 /// moved — a driver refusal, an aborted rebase — clears it, because a marker for an operation
 /// that never ran trains the user to dismiss the prompt that matters. The backup stays on disk
 /// either way, so undo still works after a refusal.
+///
+/// An operation that creates commits in a repository with commit.gpgsign on is refused until the
+/// caller supplies a <see cref="SigningChoice"/>. Signing is never turned off on this layer's own
+/// initiative: `-c commit.gpgsign=false` is passed only for
+/// <see cref="SigningChoice.ProceedUnsigned"/>.
 /// </summary>
 public sealed class SurgeryCoordinator
 {
@@ -60,23 +65,27 @@ public sealed class SurgeryCoordinator
 
     public Task<SurgeryResult> ReorderAsync(
         string repoPath, int depth, IReadOnlyList<string> shasInNewOrder,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
-        RunRebaseAsync(repoPath, depth, (scope, token) => _driver.ReorderAsync(scope, shasInNewOrder, policy, token), policy, ct);
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunRebaseAsync(repoPath, depth, (scope, unsigned, token) => _driver.ReorderAsync(scope, shasInNewOrder, policy, unsigned, token), signing, ct);
 
     public Task<SurgeryResult> DropAsync(
         string repoPath, int depth, IReadOnlyList<string> shasToDrop,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
-        RunRebaseAsync(repoPath, depth, (scope, token) => _driver.DropAsync(scope, shasToDrop, policy, token), policy, ct);
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunRebaseAsync(repoPath, depth, (scope, unsigned, token) => _driver.DropAsync(scope, shasToDrop, policy, unsigned, token), signing, ct);
 
     public Task<SurgeryResult> SquashAsync(
         string repoPath, int depth, IReadOnlyList<string> shasToFold, string? newMessage = null,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
-        RunRebaseAsync(repoPath, depth, (scope, token) => _driver.SquashAsync(scope, shasToFold, newMessage, policy, token), policy, ct);
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunRebaseAsync(repoPath, depth, (scope, unsigned, token) => _driver.SquashAsync(scope, shasToFold, newMessage, policy, unsigned, token), signing, ct);
 
     public Task<SurgeryResult> RewordAsync(
         string repoPath, int depth, string sha, string newMessage,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
-        RunRebaseAsync(repoPath, depth, (scope, token) => _driver.RewordAsync(scope, sha, newMessage, policy, token), policy, ct);
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunRebaseAsync(repoPath, depth, (scope, unsigned, token) => _driver.RewordAsync(scope, sha, newMessage, policy, unsigned, token), signing, ct);
 
     /// <summary>
     /// Applies one combined plan — reorder, drops, squashes and rewords together — on the same
@@ -85,8 +94,9 @@ public sealed class SurgeryCoordinator
     /// </summary>
     public Task<SurgeryResult> RunPlanAsync(
         string repoPath, int depth, RebaseTodo todo,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
-        RunRebaseAsync(repoPath, depth, (scope, token) => _driver.RunPlanAsync(scope, todo, policy, token), policy, ct);
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunRebaseAsync(repoPath, depth, (scope, unsigned, token) => _driver.RunPlanAsync(scope, todo, policy, unsigned, token), signing, ct);
 
     /// <summary>
     /// Folds the staged changes into an older commit. The tree gate here admits staged changes —
@@ -95,10 +105,11 @@ public sealed class SurgeryCoordinator
     /// </summary>
     public Task<SurgeryResult> InjectStagedIntoAsync(
         string repoPath, string targetCommit,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
-        RunGatedAsync(repoPath, TreeRequirement.NoUnstagedChanges, backup: true, "inject", async token =>
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunGatedAsync(repoPath, TreeRequirement.NoUnstagedChanges, backup: true, "inject", signing, async (unsigned, token) =>
         {
-            var run = await _surgery.InjectStagedIntoAsync(repoPath, targetCommit, policy, token);
+            var run = await _surgery.InjectStagedIntoAsync(repoPath, targetCommit, policy, unsigned, token);
             return (run.Success, run.FailureReason, run, null);
         }, ct);
 
@@ -110,9 +121,10 @@ public sealed class SurgeryCoordinator
     /// </summary>
     public Task<SurgeryResult> ResetAsync(
         string repoPath, string target, ResetMode mode, CancellationToken ct = default) =>
+        // A reset moves a ref; it creates no commit, so the signing gate does not apply.
         RunGatedAsync(repoPath,
             mode == ResetMode.Hard ? TreeRequirement.Clean : TreeRequirement.Any,
-            backup: true, "reset", async token =>
+            backup: true, "reset", null, async (_, token) =>
         {
             var edit = await _edits.ResetAsync(repoPath, target, mode, token);
             return (edit.Success, edit.FailureReason, null, edit);
@@ -123,25 +135,27 @@ public sealed class SurgeryCoordinator
     /// mid-revert deliberately — the journal and backup stay behind so undo still works.
     /// </summary>
     public Task<SurgeryResult> RevertAsync(
-        string repoPath, string commit, bool autoCommit = true, CancellationToken ct = default) =>
-        RunGatedAsync(repoPath, TreeRequirement.Clean, backup: true, "revert", async token =>
+        string repoPath, string commit, bool autoCommit = true,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunGatedAsync(repoPath, TreeRequirement.Clean, backup: true, "revert", signing, async (unsigned, token) =>
         {
-            var edit = await _edits.RevertAsync(repoPath, commit, autoCommit, token);
+            var edit = await _edits.RevertAsync(repoPath, commit, autoCommit, unsigned, token);
             return (edit.Success, edit.FailureReason, null, edit);
         }, ct);
 
     public Task<SurgeryResult> CherryPickAsync(
-        string repoPath, IReadOnlyList<string> commits, CancellationToken ct = default) =>
-        RunGatedAsync(repoPath, TreeRequirement.Clean, backup: true, "cherry-pick", async token =>
+        string repoPath, IReadOnlyList<string> commits,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default) =>
+        RunGatedAsync(repoPath, TreeRequirement.Clean, backup: true, "cherry-pick", signing, async (unsigned, token) =>
         {
-            var edit = await _edits.CherryPickAsync(repoPath, commits, token);
+            var edit = await _edits.CherryPickAsync(repoPath, commits, unsigned, token);
             return (edit.Success, edit.FailureReason, null, edit);
         }, ct);
 
     private Task<SurgeryResult> RunRebaseAsync(
-        string repoPath, int depth, Func<RebaseScope, CancellationToken, Task<RebaseRunResult>> operate,
-        RebaseConflictPolicy policy, CancellationToken ct) =>
-        RunGatedAsync(repoPath, TreeRequirement.Clean, backup: true, "rebase", async token =>
+        string repoPath, int depth, Func<RebaseScope, bool, CancellationToken, Task<RebaseRunResult>> operate,
+        SigningChoice signing, CancellationToken ct) =>
+        RunGatedAsync(repoPath, TreeRequirement.Clean, backup: true, "rebase", signing, async (unsigned, token) =>
         {
             RebaseScope scope;
             try
@@ -153,16 +167,28 @@ public sealed class SurgeryCoordinator
                 return (false, $"the range is not editable: {ex.Message}", null, null);
             }
 
-            var run = await operate(scope, token);
+            var run = await operate(scope, unsigned, token);
             return (run.Success, run.FailureReason, run, null);
         }, ct);
+
+    /// <summary>
+    /// Whether <paramref name="repoPath"/> is configured to sign the commits it creates. An
+    /// unreadable or unset value reads as off, which is git's own default; a repository that does
+    /// sign always has the setting to say so.
+    /// </summary>
+    private async Task<bool> SignsCommitsAsync(string repoPath, CancellationToken ct)
+    {
+        var configured = await _git.RunAsync(repoPath, ["config", "--type=bool", "--get", "commit.gpgsign"], ct);
+        return configured.Success && configured.StdOut.Trim() == "true";
+    }
 
     private async Task<SurgeryResult> RunGatedAsync(
         string repoPath,
         TreeRequirement requirement,
         bool backup,
         string phase,
-        Func<CancellationToken, Task<(bool Success, string? Reason, RebaseRunResult? Rebase, HistoryEditResult? Edit)>> operate,
+        SigningChoice? signing,
+        Func<bool, CancellationToken, Task<(bool Success, string? Reason, RebaseRunResult? Rebase, HistoryEditResult? Edit)>> operate,
         CancellationToken ct)
     {
         // 1. Busy gate: a second destructive operation on the same repo is refused, not queued.
@@ -187,6 +213,25 @@ public sealed class SurgeryCoordinator
             var (refusalKind, refusal) = CheckTree(state, requirement);
             if (refusal is not null)
                 return SurgeryResult.Refused(refusal, refusalKind);
+
+            // 2b. Signing gate, for the operations that create commits. Every commit this
+            // operation writes is signed with the configured key, and a key whose passphrase is
+            // not cached makes git wait on a pinentry prompt no window shows — the operation then
+            // burns its whole timeout and is killed mid-replay. The caller decides, and the
+            // decision is required rather than defaulted: signing off silently would strip
+            // signatures the user asked for.
+            var unsigned = false;
+            if (signing is { } choice && await SignsCommitsAsync(repoPath, ct))
+            {
+                if (choice == SigningChoice.NotChosen)
+                    return SurgeryResult.Refused(
+                        "this repository signs commits (commit.gpgsign is on), and this operation writes commits — " +
+                        "every one of them is re-signed. If the key's passphrase is not cached, git waits on a prompt " +
+                        "this app cannot answer and the operation is killed at its timeout. Choose whether to sign as " +
+                        "configured or to proceed without signing.",
+                        SurgeryRefusal.CommitSigningChoiceRequired);
+                unsigned = choice == SigningChoice.ProceedUnsigned;
+            }
 
             // 3. Verified backup: no destructive operation proceeds without one.
             if (backup)
@@ -222,7 +267,7 @@ public sealed class SurgeryCoordinator
             HistoryEditResult? edit;
             try
             {
-                (success, reason, rebase, edit) = await operate(ct);
+                (success, reason, rebase, edit) = await operate(unsigned, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

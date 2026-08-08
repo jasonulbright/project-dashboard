@@ -39,9 +39,11 @@ namespace ProjectDashboard.Services.Surgery;
 /// used. Sending the wrong one either kills every rebase at startup or makes a deprecation
 /// warning the first line of every failure message.
 ///
-/// Commit signing is deliberately left alone — overriding it would strip signatures the user
-/// asked for. A repository configured to sign with a key whose passphrase is not cached will
-/// stall on a pinentry prompt this app cannot answer; the timeout kills it and aborts.
+/// Commit signing is never overridden on this driver's own initiative — that would strip
+/// signatures the user asked for. A repository configured to sign with a key whose passphrase is
+/// not cached stalls on a pinentry prompt this app cannot answer, and the timeout then kills and
+/// aborts the rebase, so the caller decides: with `disableSigning` the run carries
+/// `-c commit.gpgsign=false`, and without it the replay signs exactly as configured.
 /// </summary>
 public class RebaseDriver
 {
@@ -132,7 +134,7 @@ public class RebaseDriver
     /// <summary>Replays <paramref name="scope"/>'s commits in the given order. The order must be a permutation of the scope.</summary>
     public Task<RebaseRunResult> ReorderAsync(
         RebaseScope scope, IReadOnlyList<string> shasInNewOrder,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
     {
         var index = Index(scope);
         if (shasInNewOrder.Count != scope.Commits.Count)
@@ -150,13 +152,13 @@ public class RebaseDriver
             todo.Add(Pick(commit));
         }
 
-        return RunTodoAsync(scope, todo, EmptyMessages, policy, ct);
+        return RunTodoAsync(scope, todo, EmptyMessages, policy, disableSigning, ct);
     }
 
     /// <summary>Removes commits from the replay. At least one must remain — emptying a branch is a reset, not a rebase.</summary>
     public Task<RebaseRunResult> DropAsync(
         RebaseScope scope, IReadOnlyList<string> shasToDrop,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
     {
         var index = Index(scope);
         var drop = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -174,7 +176,7 @@ public class RebaseDriver
         if (kept.Count == 0)
             return Refuse("dropping every commit in the range would empty the branch — use a reset instead");
 
-        return RunTodoAsync(scope, kept.Select(Pick).ToList(), EmptyMessages, policy, ct);
+        return RunTodoAsync(scope, kept.Select(Pick).ToList(), EmptyMessages, policy, disableSigning, ct);
     }
 
     /// <summary>
@@ -184,7 +186,7 @@ public class RebaseDriver
     /// </summary>
     public Task<RebaseRunResult> SquashAsync(
         RebaseScope scope, IReadOnlyList<string> shasToFold, string? newMessage = null,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
     {
         var index = Index(scope);
         if (shasToFold.Count < 2)
@@ -224,7 +226,7 @@ public class RebaseDriver
                 todo.Add(AmendExec(messageToken));
         }
 
-        return RunTodoAsync(scope, todo, messageFiles, policy, ct);
+        return RunTodoAsync(scope, todo, messageFiles, policy, disableSigning, ct);
     }
 
     /// <summary>
@@ -233,7 +235,7 @@ public class RebaseDriver
     /// </summary>
     public Task<RebaseRunResult> RewordAsync(
         RebaseScope scope, string sha, string newMessage,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(newMessage))
             return Refuse("a commit message cannot be empty");
@@ -251,7 +253,8 @@ public class RebaseDriver
         }
 
         return RunTodoAsync(scope, todo,
-            new Dictionary<string, string>(StringComparer.Ordinal) { [messageToken] = newMessage }, policy, ct);
+            new Dictionary<string, string>(StringComparer.Ordinal) { [messageToken] = newMessage },
+            policy, disableSigning, ct);
     }
 
     /// <summary>
@@ -263,7 +266,7 @@ public class RebaseDriver
     /// </summary>
     public virtual Task<RebaseRunResult> FoldFixupAsync(
         RebaseScope scope, string targetSha, string fixupSha,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
     {
         var index = Index(scope);
         var target = index.Resolve(targetSha);
@@ -285,7 +288,7 @@ public class RebaseDriver
                 todo.Add($"fixup {fixup.Sha} {fixup.Subject}".TrimEnd());
         }
 
-        return RunTodoAsync(scope, todo, EmptyMessages, policy, ct);
+        return RunTodoAsync(scope, todo, EmptyMessages, policy, disableSigning, ct);
     }
 
     /// <summary>
@@ -295,7 +298,7 @@ public class RebaseDriver
     /// </summary>
     public virtual Task<RebaseRunResult> RunPlanAsync(
         RebaseScope scope, RebaseTodo todo,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
     {
         var compiled = RebaseTodoCompiler.Compile(todo, scope.Commits);
         if (!compiled.IsValid)
@@ -321,19 +324,26 @@ public class RebaseDriver
             }
         }
 
-        return RunTodoAsync(scope, lines, messageFiles, policy, ct);
+        return RunTodoAsync(scope, lines, messageFiles, policy, disableSigning, ct);
     }
 
     /// <summary>Runs an explicit todo against a scope. Public so the sequence-editor mechanism itself is directly testable.</summary>
     public virtual Task<RebaseRunResult> RunTodoAsync(
         RebaseScope scope, IReadOnlyList<string> todoLines, IReadOnlyDictionary<string, string> messageFiles,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
-        => RunAsync(scope.RepoPath, scope.BaseSha, todoLines, messageFiles, policy, ct);
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, bool disableSigning = false, CancellationToken ct = default)
+        => RunAsync(scope.RepoPath, scope.BaseSha, todoLines, messageFiles, policy, disableSigning, ct);
 
-    /// <summary>The argument vector for one driven rebase, exposed so the flags themselves are assertable.</summary>
-    public static IReadOnlyList<string> BuildRebaseArgs(string? baseSha, string emptyMode)
+    /// <summary>
+    /// The argument vector for one driven rebase, exposed so the flags themselves are assertable.
+    /// With <paramref name="disableSigning"/> the run carries `-c commit.gpgsign=false`, which git
+    /// exports to every child process it starts, so the amend execs in the todo are covered by the
+    /// same pin rather than needing one of their own.
+    /// </summary>
+    public static IReadOnlyList<string> BuildRebaseArgs(string? baseSha, string emptyMode, bool disableSigning = false)
     {
-        var args = new List<string>(ConfigPins) { "rebase", "-i", "--empty=" + emptyMode };
+        var args = new List<string>(ConfigPins);
+        if (disableSigning) args.AddRange(["-c", "commit.gpgsign=false"]);
+        args.AddRange(["rebase", "-i", "--empty=" + emptyMode]);
         if (baseSha is null) args.Add("--root");
         else { args.Add("--onto"); args.Add(baseSha); args.Add(baseSha); }
         return args;
@@ -374,7 +384,7 @@ public class RebaseDriver
     private async Task<RebaseRunResult> RunAsync(
         string repoPath, string? baseSha, IReadOnlyList<string> todoLines,
         IReadOnlyDictionary<string, string> messageFiles,
-        RebaseConflictPolicy policy, CancellationToken ct)
+        RebaseConflictPolicy policy, bool disableSigning, CancellationToken ct)
     {
         if (todoLines.Count == 0)
             return RebaseRunResult.Failed("the rebase todo is empty — nothing to do");
@@ -400,7 +410,7 @@ public class RebaseDriver
             };
 
             var untrackedBefore = await UntrackedAsync(repoPath, ct);
-            var args = BuildRebaseArgs(baseSha, await EmptyModeAsync(repoPath, ct));
+            var args = BuildRebaseArgs(baseSha, await EmptyModeAsync(repoPath, ct), disableSigning);
             var run = await _git.RunAsync(repoPath, args, env, ct, DefaultTimeout);
 
             if (run.Success && !await IsRebaseInProgressAsync(repoPath, ct))

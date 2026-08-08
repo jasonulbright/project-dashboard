@@ -24,6 +24,27 @@ public enum ResetMode
 }
 
 /// <summary>
+/// What to do about commit signing on an operation that creates commits in a repository
+/// configured to sign them. Every replayed commit is re-signed, and a signing key whose
+/// passphrase is not cached makes git wait on a pinentry prompt this app cannot answer — the
+/// operation then runs out its timeout and is killed.
+///
+/// <see cref="NotChosen"/> is refused rather than defaulted: signing off would drop signatures
+/// the user asked for, signing on would risk the stall, and neither is this layer's call to
+/// make silently.
+/// </summary>
+public enum SigningChoice
+{
+    NotChosen,
+
+    /// <summary>Sign as configured, accepting that an uncached passphrase stalls the operation until its timeout.</summary>
+    KeepSigning,
+
+    /// <summary>Run with `commit.gpgsign=false`; the commits this operation creates or replays come out unsigned.</summary>
+    ProceedUnsigned
+}
+
+/// <summary>
 /// Which gate turned a gated operation away before git ran. <see cref="None"/> once the
 /// operation reached git, whatever it then reported.
 ///
@@ -40,7 +61,10 @@ public enum SurgeryRefusal
     UncommittedChanges,
     UnstagedChanges,
     NothingStaged,
-    BackupFailed
+    BackupFailed,
+
+    /// <summary>The repository signs commits and no <see cref="SigningChoice"/> was made; see that type for why this is not defaulted.</summary>
+    CommitSigningChoiceRequired
 }
 
 /// <summary>What the clean-tree gate demands before a destructive operation runs.</summary>

@@ -35,7 +35,8 @@ public sealed class CommitSurgery
     /// </summary>
     public async Task<RebaseRunResult> InjectStagedIntoAsync(
         string repoPath, string targetCommit,
-        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default)
+        RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+        bool disableSigning = false, CancellationToken ct = default)
     {
         var resolved = await _git.RunAsync(repoPath,
             ["rev-parse", "--verify", "-q", targetCommit + "^{commit}"], ct, ShortTimeout);
@@ -77,8 +78,11 @@ public sealed class CommitSurgery
             return RebaseRunResult.Failed(
                 $"could not measure the range {Short(target)}..HEAD: {ahead.FirstError}");
 
-        var fixup = await _git.RunAsync(repoPath,
-            ["commit", "--no-verify", $"--fixup={target}"], ct, CommitTimeout);
+        // The fixup commit is a commit like any other, so the signing choice covers it too — the
+        // rebase that folds it would otherwise be the only half of the operation honouring it.
+        List<string> fixupArgs = disableSigning ? ["-c", "commit.gpgsign=false"] : [];
+        fixupArgs.AddRange(["commit", "--no-verify", $"--fixup={target}"]);
+        var fixup = await _git.RunAsync(repoPath, fixupArgs, ct, CommitTimeout);
         if (!fixup.Success)
             return RebaseRunResult.Failed($"could not record the fixup commit: {fixup.FirstError}");
 
@@ -113,7 +117,7 @@ public sealed class CommitSurgery
             };
         }
 
-        var result = await _driver.FoldFixupAsync(scope, target, fixupSha, policy, ct);
+        var result = await _driver.FoldFixupAsync(scope, target, fixupSha, policy, disableSigning, ct);
         if (result.Success) return result;
 
         // `rebase --abort` restores the pre-rebase tip, which still carries the fixup commit.

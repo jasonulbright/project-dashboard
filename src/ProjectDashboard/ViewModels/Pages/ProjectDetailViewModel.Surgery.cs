@@ -289,6 +289,7 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private string _surgeryUndoLabel = "";
     [ObservableProperty] private bool _surgeryLeaveStoppedOfferVisible;
     [ObservableProperty] private bool _surgeryStashOfferVisible;
+    [ObservableProperty] private bool _surgerySigningOfferVisible;
 
     // The undo and the conflict retry are bound to the repository they were produced for, never
     // to the live RepoPath: a project switch while the offer is on screen must not replay a
@@ -296,9 +297,12 @@ public partial class ProjectDetailViewModel
     private UndoHandle? _surgeryUndo;
     private string _surgeryUndoRepo = "";
     private string _surgeryUndoOperation = "";
-    private Func<RebaseConflictPolicy, Task<SurgeryResult>>? _surgeryRetry;
+    private Func<RebaseConflictPolicy, SigningChoice, Task<SurgeryResult>>? _surgeryRetry;
     private string _surgeryRetryLabel = "";
     private string _surgeryRetryRepo = "";
+    private RebaseConflictPolicy _surgeryRetryPolicy = RebaseConflictPolicy.AbortAndReport;
+    private bool _surgeryRetryRetryable;
+    private SigningChoice _surgeryRetrySigning = SigningChoice.NotChosen;
 
     /// <summary>Confirm seam: replaced where no window can be shown.</summary>
     internal Func<SurgeryConfirmation, Task<bool>> ConfirmSurgeryAsync { get; set; }
@@ -452,12 +456,15 @@ public partial class ProjectDetailViewModel
         SurgeryUndoLabel = "";
         SurgeryLeaveStoppedOfferVisible = false;
         SurgeryStashOfferVisible = false;
+        SurgerySigningOfferVisible = false;
         _surgeryUndo = null;
         _surgeryUndoRepo = "";
         _surgeryUndoOperation = "";
         _surgeryRetry = null;
         _surgeryRetryLabel = "";
         _surgeryRetryRepo = "";
+        _surgeryRetryRetryable = false;
+        _surgeryRetrySigning = SigningChoice.NotChosen;
     }
 
     // ── Per-commit operations ───────────────────────────────────────────────
@@ -484,7 +491,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"Reword {commit.ShortHash}", repo, gen,
-            policy => surgery.RewordAsync(repo, depth, commit.ShortHash, message, policy),
+            (policy, signing) => surgery.RewordAsync(repo, depth, commit.ShortHash, message, policy, signing),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
 
@@ -515,7 +522,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"Squash {commit.ShortHash} into {previous.ShortHash}", repo, gen,
-            policy => surgery.SquashAsync(repo, depth, [previous.ShortHash, commit.ShortHash], message, policy),
+            (policy, signing) => surgery.SquashAsync(repo, depth, [previous.ShortHash, commit.ShortHash], message, policy, signing),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
 
@@ -538,7 +545,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"Drop {commit.ShortHash}", repo, gen,
-            policy => surgery.DropAsync(repo, depth, [commit.ShortHash], policy),
+            (policy, signing) => surgery.DropAsync(repo, depth, [commit.ShortHash], policy, signing),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
 
@@ -574,7 +581,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"{mode} reset to {commit.ShortHash}", repo, gen,
-            _ => surgery.ResetAsync(repo, commit.ShortHash, mode),
+            (_, _) => surgery.ResetAsync(repo, commit.ShortHash, mode),
             RebaseConflictPolicy.AbortAndReport, retryable: false);
     }
 
@@ -595,7 +602,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"Revert {commit.ShortHash}", repo, gen,
-            _ => surgery.RevertAsync(repo, commit.ShortHash),
+            (_, signing) => surgery.RevertAsync(repo, commit.ShortHash, autoCommit: true, signing),
             RebaseConflictPolicy.AbortAndReport, retryable: false);
     }
 
@@ -616,7 +623,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"Cherry-pick {commit.ShortHash}", repo, gen,
-            _ => surgery.CherryPickAsync(repo, [commit.ShortHash]),
+            (_, signing) => surgery.CherryPickAsync(repo, [commit.ShortHash], signing),
             RebaseConflictPolicy.AbortAndReport, retryable: false);
     }
 
@@ -639,7 +646,7 @@ public partial class ProjectDetailViewModel
             return;
 
         await RunSurgeryAsync($"Fold staged changes into {commit.ShortHash}", repo, gen,
-            policy => surgery.InjectStagedIntoAsync(repo, commit.ShortHash, policy),
+            (policy, signing) => surgery.InjectStagedIntoAsync(repo, commit.ShortHash, policy, signing),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
 
@@ -703,7 +710,7 @@ public partial class ProjectDetailViewModel
 
         var todo = resolution.Todo!;
         await RunSurgeryAsync($"Apply plan ({summary})", repo, gen,
-            policy => surgery.RunPlanAsync(repo, depth, todo, policy),
+            (policy, signing) => surgery.RunPlanAsync(repo, depth, todo, policy, signing),
             RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
 
@@ -730,7 +737,7 @@ public partial class ProjectDetailViewModel
         _surgeryRetry = null;
         SurgeryLeaveStoppedOfferVisible = false;
         await RunSurgeryAsync($"{label}, stopping at the conflict", repo, gen, operate,
-            RebaseConflictPolicy.LeaveStopped, retryable: false);
+            RebaseConflictPolicy.LeaveStopped, retryable: false, _surgeryRetrySigning);
     }
 
     [RelayCommand(CanExecute = nameof(CanUndoLastSurgery))]
@@ -864,9 +871,10 @@ public partial class ProjectDetailViewModel
         string label,
         string repo,
         int gen,
-        Func<RebaseConflictPolicy, Task<SurgeryResult>> operate,
+        Func<RebaseConflictPolicy, SigningChoice, Task<SurgeryResult>> operate,
         RebaseConflictPolicy policy,
-        bool retryable)
+        bool retryable,
+        SigningChoice signing = SigningChoice.NotChosen)
     {
         if (IsBusy || !IsCurrent(gen) || repo.Length == 0) return false;
         IsBusy = true;
@@ -874,9 +882,10 @@ public partial class ProjectDetailViewModel
         SurgeryFailureText = "";
         SurgeryLeaveStoppedOfferVisible = false;
         SurgeryStashOfferVisible = false;
+        SurgerySigningOfferVisible = false;
         try
         {
-            var result = await operate(policy);
+            var result = await operate(policy, signing);
             if (!IsCurrent(gen))
             {
                 // The op still ran against the repo it was bound to; refresh only when that
@@ -885,7 +894,7 @@ public partial class ProjectDetailViewModel
                 return false;
             }
 
-            PublishSurgeryResult(label, repo, result, operate, retryable);
+            PublishSurgeryResult(label, repo, result, operate, retryable, policy, signing);
             await RefreshWorkingStateAsync();
             await ReloadCommitsAsync();
 
@@ -918,8 +927,10 @@ public partial class ProjectDetailViewModel
         string label,
         string repo,
         SurgeryResult result,
-        Func<RebaseConflictPolicy, Task<SurgeryResult>> operate,
-        bool retryable)
+        Func<RebaseConflictPolicy, SigningChoice, Task<SurgeryResult>> operate,
+        bool retryable,
+        RebaseConflictPolicy policy,
+        SigningChoice signing)
     {
         // Every gate refusal returns before the backup step, so a refusal carries no undo at all.
         // Where one is handed back, restoring it ends in a hard reset, so offering it for an
@@ -952,8 +963,66 @@ public partial class ProjectDetailViewModel
             _surgeryRetry = operate;
             _surgeryRetryLabel = label;
             _surgeryRetryRepo = repo;
+            // The retry re-enters the same signing gate, so it carries the choice this run made
+            // rather than asking for one the reader already gave.
+            _surgeryRetrySigning = signing;
             SurgeryLeaveStoppedOfferVisible = true;
         }
+
+        // The signing gate refused before anything ran, so the same call re-issued with a choice
+        // is the whole remedy. The operation is held with its policy so the retry is the run the
+        // reader asked for, not a fresh one under different terms.
+        if (result.Refusal == SurgeryRefusal.CommitSigningChoiceRequired)
+        {
+            _surgeryRetry = operate;
+            _surgeryRetryLabel = label;
+            _surgeryRetryRepo = repo;
+            _surgeryRetryPolicy = policy;
+            _surgeryRetryRetryable = retryable;
+            SurgerySigningOfferVisible = true;
+        }
+    }
+
+    // ── The signing choice ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Re-runs the refused operation signing exactly as the repository is configured to. The
+    /// stall this risks is stated in the refusal text already on screen, so this is the reader
+    /// accepting it rather than being surprised by it.
+    /// </summary>
+    [RelayCommand]
+    private Task RetrySurgerySigned() => RetrySurgeryWithSigningAsync(SigningChoice.KeepSigning);
+
+    /// <summary>
+    /// Re-runs the refused operation with `commit.gpgsign=false`. Confirmed separately from the
+    /// offer click: the commits come back unsigned, and nothing in this app re-signs them.
+    /// </summary>
+    [RelayCommand]
+    private async Task RetrySurgeryUnsigned()
+    {
+        if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
+                "Run without signing commits?",
+                $"Run “{_surgeryRetryLabel}” with commit signing turned off for this run?\n\n" +
+                "Every commit it writes or replays comes out unsigned. This app does not re-sign them; " +
+                "re-signing afterwards is a manual git job.",
+                "Run unsigned")))
+            return;
+        await RetrySurgeryWithSigningAsync(SigningChoice.ProceedUnsigned);
+    }
+
+    private async Task RetrySurgeryWithSigningAsync(SigningChoice signing)
+    {
+        var operate = _surgeryRetry;
+        var label = _surgeryRetryLabel;
+        var repo = _surgeryRetryRepo;
+        var policy = _surgeryRetryPolicy;
+        var retryable = _surgeryRetryRetryable;
+        var gen = _generation;
+        if (operate is null || IsBusy || repo.Length == 0 || repo != RepoPath) return;
+
+        _surgeryRetry = null;
+        SurgerySigningOfferVisible = false;
+        await RunSurgeryAsync(label, repo, gen, operate, policy, retryable, signing);
     }
 
     private string BranchDescription =>

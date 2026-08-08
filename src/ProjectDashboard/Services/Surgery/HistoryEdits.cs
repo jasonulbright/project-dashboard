@@ -65,13 +65,15 @@ public sealed class HistoryEdits
     /// A conflict is reported, not resolved, and the repository stays mid-revert for the terminal.
     /// </summary>
     public async Task<HistoryEditResult> RevertAsync(
-        string repoPath, string commit, bool autoCommit = true, CancellationToken ct = default)
+        string repoPath, string commit, bool autoCommit = true,
+        bool disableSigning = false, CancellationToken ct = default)
     {
         var resolved = await _git.RunAsync(repoPath, ["rev-parse", "--verify", "-q", commit + "^{commit}"], ct, ShortTimeout);
         if (!resolved.Success)
             return HistoryEditResult.Failed($"'{commit}' does not resolve to a commit in this repository");
 
-        var args = new List<string> { "revert", "--no-edit" };
+        var args = SigningPin(disableSigning);
+        args.AddRange(["revert", "--no-edit"]);
         if (!autoCommit) args.Add("--no-commit");
         args.Add(resolved.StdOut.Trim());
 
@@ -102,12 +104,14 @@ public sealed class HistoryEdits
 
     /// <summary>Applies commits onto the current branch in the order given, with the same conflict discipline as revert.</summary>
     public async Task<HistoryEditResult> CherryPickAsync(
-        string repoPath, IReadOnlyList<string> commits, CancellationToken ct = default)
+        string repoPath, IReadOnlyList<string> commits,
+        bool disableSigning = false, CancellationToken ct = default)
     {
         if (commits.Count == 0)
             return HistoryEditResult.Failed("no commits selected to cherry-pick");
 
-        var args = new List<string> { "cherry-pick" };
+        var args = SigningPin(disableSigning);
+        args.Add("cherry-pick");
         foreach (var commit in commits)
         {
             var resolved = await _git.RunAsync(repoPath, ["rev-parse", "--verify", "-q", commit + "^{commit}"], ct, ShortTimeout);
@@ -154,6 +158,10 @@ public sealed class HistoryEdits
             HeadAfter = head
         };
     }
+
+    /// <summary>The leading `-c` pair that turns commit signing off for one call, or an empty vector that leaves the repository's own setting alone.</summary>
+    private static List<string> SigningPin(bool disableSigning) =>
+        disableSigning ? ["-c", "commit.gpgsign=false"] : [];
 
     private async Task<IReadOnlyList<string>> ConflictedPathsAsync(string repoPath, CancellationToken ct)
     {

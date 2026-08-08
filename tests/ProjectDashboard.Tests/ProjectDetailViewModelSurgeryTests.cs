@@ -567,6 +567,52 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     [Fact]
+    public async Task ASigningRepository_OffersTheChoiceAndRunsUnsignedOnlyAfterAConfirm()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        // Signing on, pointed at a program that does not exist, so a signed run fails at once
+        // rather than waiting on a prompt.
+        await repo.GitAsync("config", "commit.gpgsign", "true");
+        await repo.GitAsync("config", "gpg.program", "pd-no-such-signing-program");
+        var vm = await VmForAsync(repo);
+        var seen = CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+
+        Assert.True(vm.SurgerySigningOfferVisible);
+        Assert.Contains("commit.gpgsign", vm.SurgeryFailureText);
+        Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
+        var confirmsBefore = seen.Count;
+
+        await vm.RetrySurgeryUnsignedCommand.ExecuteAsync(null);
+
+        // The unsigned run is its own confirm, separate from the one that authorised the drop.
+        Assert.Equal(confirmsBefore + 1, seen.Count);
+        Assert.Contains("unsigned", seen[^1].Message);
+        Assert.False(vm.SurgerySigningOfferVisible);
+        Assert.Equal(["beta", "seed"], await repo.SubjectsAsync());
+    }
+
+    [Fact]
+    public async Task ASigningRepository_DeclinedUnsignedConfirm_LeavesTheOperationUnrun()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        await repo.GitAsync("config", "commit.gpgsign", "true");
+        await repo.GitAsync("config", "gpg.program", "pd-no-such-signing-program");
+        var vm = await VmForAsync(repo);
+        CaptureConfirmations(vm, answer: true);
+        vm.SelectedCommit = vm.Commits[1];
+        await vm.DropSelectedCommitCommand.ExecuteAsync(null);
+        Assert.True(vm.SurgerySigningOfferVisible);
+
+        CaptureConfirmations(vm, answer: false);
+        await vm.RetrySurgeryUnsignedCommand.ExecuteAsync(null);
+
+        Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
+    }
+
+    [Fact]
     public async Task ARefusalNamingUnstagedChanges_DoesNotOfferTheStashThatWouldTakeTheFix()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
@@ -798,7 +844,8 @@ public class ProjectDetailViewModelSurgeryTests
 
         public override Task<RebaseRunResult> RunTodoAsync(
             RebaseScope scope, IReadOnlyList<string> todoLines, IReadOnlyDictionary<string, string> messageFiles,
-            RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport, CancellationToken ct = default) =>
+            RebaseConflictPolicy policy = RebaseConflictPolicy.AbortAndReport,
+            bool disableSigning = false, CancellationToken ct = default) =>
             throw new IOException("the prepared todo could not be written");
     }
 

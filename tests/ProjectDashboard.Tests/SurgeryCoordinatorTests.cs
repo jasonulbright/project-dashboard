@@ -32,6 +32,90 @@ public class SurgeryCoordinatorTests
             driver);
     }
 
+    // ── the signing gate ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Turns commit signing on and points it at a program that does not exist, so a run that
+    /// signs fails immediately instead of waiting on a pinentry prompt no test can answer.
+    /// </summary>
+    private static async Task ConfigureSigningAsync(SurgeryRepo repo)
+    {
+        await repo.GitAsync("config", "commit.gpgsign", "true");
+        await repo.GitAsync("config", "gpg.program", "pd-no-such-signing-program");
+    }
+
+    [Fact]
+    public async Task SigningRepositoryWithoutAChoice_RefusesBeforeAnyBackupIsTaken()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        await ConfigureSigningAsync(repo);
+        var before = await repo.RefStateAsync();
+
+        var shas = await repo.RangeShasAsync(2);
+        var result = await NewCoordinator().ReorderAsync(repo.Path, 2, [shas[1], shas[0]]);
+
+        Assert.False(result.Success);
+        Assert.Equal(SurgeryRefusal.CommitSigningChoiceRequired, result.Refusal);
+        Assert.True(result.RepositoryUntouched);
+        Assert.Contains("commit.gpgsign", result.FailureReason);
+        Assert.Equal(before, await repo.RefStateAsync());
+        Assert.Empty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(repo.Path));
+        _output.WriteLine($"signing gate: {result.FailureReason}");
+    }
+
+    [Fact]
+    public async Task SigningRepositoryWithExplicitConsent_RunsUnsignedAndSucceeds()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        await ConfigureSigningAsync(repo);
+
+        var shas = await repo.RangeShasAsync(2);
+        var result = await NewCoordinator().ReorderAsync(
+            repo.Path, 2, [shas[1], shas[0]], signing: SigningChoice.ProceedUnsigned);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(SurgeryRefusal.None, result.Refusal);
+        // Unsigned, as consented to: `%G?` reports N for a commit with no signature.
+        var statuses = await repo.GitAsync("log", "-n", "2", "--format=%G?");
+        Assert.DoesNotContain("G", statuses);
+    }
+
+    [Fact]
+    public async Task SigningRepositoryKeepingSignatures_ReachesGitRatherThanBeingRefusedByTheGate()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        await ConfigureSigningAsync(repo);
+
+        var shas = await repo.RangeShasAsync(2);
+        var result = await NewCoordinator().ReorderAsync(
+            repo.Path, 2, [shas[1], shas[0]], signing: SigningChoice.KeepSigning);
+
+        // The unreachable signing program makes git fail, which is the point: the gate let the
+        // run through with signing on rather than quietly turning it off.
+        Assert.False(result.Success);
+        Assert.Equal(SurgeryRefusal.None, result.Refusal);
+    }
+
+    [Fact]
+    public async Task ResetInASigningRepository_IsNotGated_BecauseItWritesNoCommit()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha", "beta");
+        await ConfigureSigningAsync(repo);
+        var shas = await repo.RangeShasAsync(2);
+
+        var result = await NewCoordinator().ResetAsync(repo.Path, shas[0], ResetMode.Soft);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(SurgeryRefusal.None, result.Refusal);
+    }
+
+    [Fact]
+    public void RebaseArgs_CarryTheSigningOverrideOnlyOnConsent()
+    {
+        Assert.DoesNotContain("commit.gpgsign=false", RebaseDriver.BuildRebaseArgs("deadbeef", "stop"));
+        Assert.Contains("commit.gpgsign=false", RebaseDriver.BuildRebaseArgs("deadbeef", "stop", disableSigning: true));
+    }
+
     // ── the gates ─────────────────────────────────────────────────────────
 
     [Fact]

@@ -807,6 +807,16 @@
                                            Visibility="{Binding SurgeryStashOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                            AutomationProperties.Name="Stash the uncommitted changes blocking this edit" />
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
+                                            Visibility="{Binding SurgerySigningOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <ui:Button Content="Sign as configured" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                                               Command="{Binding RetrySurgerySignedCommand}"
+                                               AutomationProperties.Name="Run the edit, signing every commit as this repository is configured to" />
+                                    <ui:Button Content="Run without signing" FontSize="11" Padding="8,3"
+                                               Appearance="Caution"
+                                               Command="{Binding RetrySurgeryUnsignedCommand}"
+                                               AutomationProperties.Name="Run the edit with commit signing turned off for this run" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
                                             Visibility="{Binding SurgeryUndoVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <ui:Button Content="{Binding SurgeryUndoLabel}" FontSize="11" Padding="10,3"
                                                Appearance="Caution" Margin="0,0,6,0"
