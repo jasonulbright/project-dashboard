@@ -142,7 +142,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- Cloud chip: GitHub repos not cloned locally (ROADMAP v1.1) -->
+            <!-- Cloud chip: GitHub repos not cloned locally -->
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                     CornerRadius="8" Padding="12,8" Margin="0,0,8,0"
                     Cursor="Hand" ToolTip="Show GitHub repos that aren't cloned locally"
