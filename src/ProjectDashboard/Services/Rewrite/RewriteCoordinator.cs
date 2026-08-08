@@ -76,17 +76,8 @@ public sealed class RewriteCoordinator
     /// Reclaims scratch trees no disposal ever reached — a crash, a kill, or a process exit
     /// while a release was still queued on the pool.
     ///
-    /// Runs off the construction path: a populated work root costs a recursive delete plus a
-    /// retry sleep per tree that refuses one, and construction happens on whatever thread first
-    /// resolves this service — the dispatcher, in the running application, where that is a
-    /// frozen window.
-    ///
-    /// What separates a leak from a tree a live session owns is <see cref="ScratchGrace"/> and
-    /// the GUID <see cref="NewScratch"/> gives every tree, not when this runs. A tree created
-    /// after the enumeration below is not in it; one created before it carries a write time of
-    /// now and fails the cutoff; and a path this sweep selected can never be the path a later
-    /// session creates. So no ordering against a session — this instance's or another process's
-    /// — puts a live tree within reach.
+    /// The GUID <see cref="NewScratch"/> gives every tree plus <see cref="ScratchGrace"/> — not
+    /// when this sweep runs — is what keeps a tree a live session owns out of reach.
     /// </summary>
     private void SweepStaleScratch()
     {

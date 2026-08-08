@@ -76,22 +76,25 @@ public class GitService
     /// <summary>
     /// Everything a dashboard card is built from, read in one pass: the repository's status and
     /// its recent-commit window. The window's first row IS the tip, so the summary's last-commit
-    /// date and subject are taken from it rather than from a <c>git log</c> of their own.
+    /// date and subject are taken from it rather than from a <c>git log</c> of their own — but
+    /// only when the walk that produced the window completed. A walk that died partway through
+    /// history yields the same empty window a commitless repository does, and passing that on
+    /// would report a damaged repository as having no commits.
     /// </summary>
     public async Task<RepoCardState> GetCardStateAsync(string repoPath, int commitCount, CancellationToken ct = default)
     {
-        var commits = await GetRecentCommitsAsync(repoPath, commitCount, ct);
-        return new RepoCardState(await GetStatusAsync(repoPath, commits, ct), commits);
+        var (walked, commits) = await ReadRecentCommitsAsync(repoPath, commitCount, ct);
+        return new RepoCardState(await GetStatusAsync(repoPath, walked ? commits : null, ct), commits);
     }
 
     public Task<GitStatus> GetStatusAsync(string repoPath, CancellationToken ct = default) =>
         GetStatusAsync(repoPath, recentCommits: null, ct);
 
     /// <summary>
-    /// <paramref name="recentCommits"/> is a window this repository's log was already read into,
-    /// walking HEAD from the tip — the same walk the tip read below performs. Null means none was
-    /// read and the tip is read here; empty means the walk found no commits, which is what a
-    /// repository with no commits yet reports and leaves the tip fields blank.
+    /// <paramref name="recentCommits"/> is a window a completed walk of HEAD from the tip read
+    /// this repository's log into — the same walk the tip read below performs. Null means no such
+    /// window exists and the tip is read here; empty means the completed walk found no commits,
+    /// which is what a repository with no commits yet reports and leaves the tip fields blank.
     /// </summary>
     private async Task<GitStatus> GetStatusAsync(
         string repoPath, IReadOnlyList<GitCommit>? recentCommits, CancellationToken ct)
@@ -166,9 +169,20 @@ public class GitService
         return status;
     }
 
-    public async Task<List<GitCommit>> GetRecentCommitsAsync(string repoPath, int count = 20, CancellationToken ct = default)
+    public async Task<List<GitCommit>> GetRecentCommitsAsync(string repoPath, int count = 20, CancellationToken ct = default) =>
+        (await ReadRecentCommitsAsync(repoPath, count, ct)).Commits;
+
+    /// <summary>
+    /// The recent-commit window plus whether the walk that produced it ran to completion.
+    /// An empty window says nothing on its own: a repository with no commits, a walk that died on
+    /// a missing object partway through history, and a window nobody asked for all produce one.
+    /// Only a completed walk of a window someone asked for describes what HEAD actually has.
+    /// </summary>
+    private async Task<(bool Walked, List<GitCommit> Commits)> ReadRecentCommitsAsync(
+        string repoPath, int count, CancellationToken ct)
     {
         var commits = new List<GitCommit>();
+        if (count <= 0) return (false, commits);
 
         try
         {
@@ -179,9 +193,10 @@ public class GitService
         catch (Exception ex)
         {
             Log.Warn($"git log failed for {repoPath}", ex);
+            return (false, commits);
         }
 
-        return commits;
+        return (true, commits);
     }
 
     /// <summary>

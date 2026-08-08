@@ -136,6 +136,53 @@ public class GitServiceScanCostTests
     }
 
     /// <summary>
+    /// A window walk that dies partway through — an object missing from the middle of history —
+    /// reports no commits, which must not be read as a repository that has none. The summary's
+    /// last-commit facts fall back to their own tip read, so a damaged repository still shows the
+    /// commit it is parked on instead of presenting as commitless.
+    /// </summary>
+    [Fact]
+    public async Task CardState_WhenTheWindowWalkFails_StillReportsTheTipFacts()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("card-damaged");
+        for (var i = 2; i <= 6; i++)
+        {
+            repo.WriteFile("file.txt", $"line {i}\n");
+            await repo.CommitAllAsync($"subject {i}");
+        }
+        var missing = (await repo.GitAsync("rev-parse", "HEAD~3")).Trim();
+        var loose = Path.Combine(repo.Path, ".git", "objects", missing[..2], missing[2..]);
+        // git writes loose objects read-only.
+        File.SetAttributes(loose, FileAttributes.Normal);
+        File.Delete(loose);
+
+        // The damage this fixture depends on: the tip reads fine, the window walk does not.
+        Assert.Equal(0, (await Git.TryRunAsync(repo.Path, "log", "-1", "--format=%s")).ExitCode);
+        Assert.NotEqual(0, (await Git.TryRunAsync(repo.Path, "log", "-n", "20", "--format=%s")).ExitCode);
+
+        var card = await new GitService().GetCardStateAsync(repo.Path, 20);
+
+        Assert.Equal("subject 6", card.Status.LastCommitMessage);
+        Assert.NotNull(card.Status.LastCommitDate);
+    }
+
+    /// <summary>
+    /// A window of zero rows is a window nobody asked for, not a repository with no commits: the
+    /// summary's last-commit facts still come from a tip read of their own.
+    /// </summary>
+    [Fact]
+    public async Task CardState_WithAZeroCommitWindow_StillReportsTheTipFacts()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("card-zero-window");
+
+        var card = await new GitService().GetCardStateAsync(repo.Path, 0);
+
+        Assert.Empty(card.RecentCommits);
+        Assert.Equal("initial commit", card.Status.LastCommitMessage);
+        Assert.NotNull(card.Status.LastCommitDate);
+    }
+
+    /// <summary>
     /// The commit log's fields are separated by a control character no author name or subject can
     /// contain. A printable delimiter splits a name carrying it, and every field after that one
     /// shifts — the subject shown against a commit then belongs to no commit at all.
