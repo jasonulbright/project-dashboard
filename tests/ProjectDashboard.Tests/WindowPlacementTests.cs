@@ -386,3 +386,117 @@ public class WindowRectApplicationTests
         Assert.True(MainWindow.RectApplied(fractional, new MainWindow.ScreenRect(300, 150, 2026, 1028)));
     }
 }
+
+/// <summary>
+/// What a close persists. The WINDOWPLACEMENT fields are passed as values, so no
+/// window or display is involved; the two legs are the workspace-to-screen conversion
+/// and the maximized preference a non-normal state still carries.
+/// </summary>
+public class ClosingPlacementTests
+{
+    private const int SwShowNormal = 1, SwShowMinimized = 2, SwShowMaximized = 3,
+                      SwMinimize = 6, SwShowMinNoActive = 7;
+    private const int WpfRestoreToMaximized = 0x0002;
+
+    // Taskbar docked to the top of a 1920x1080 primary: workspace coordinates start
+    // 48 px below screen coordinates on the vertical axis.
+    private static readonly MainWindow.ScreenRect TopTaskbar = new(0, 48, 1920, 1032);
+
+    // The ordinary bottom taskbar, where the two coordinate systems agree.
+    private static readonly MainWindow.ScreenRect BottomTaskbar = new(0, 0, 1920, 1032);
+
+    // Taskbar docked to the left edge.
+    private static readonly MainWindow.ScreenRect LeftTaskbar = new(72, 0, 1848, 1080);
+
+    [Fact]
+    public void NormalRect_UnderATopTaskbar_ShiftsIntoScreenCoordinates()
+    {
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1200, 800), SwShowNormal, 0, TopTaskbar);
+
+        Assert.Equal(new MainWindow.ScreenRect(300, 148, 1200, 800), closing.Rect);
+    }
+
+    [Fact]
+    public void NormalRect_UnderALeftTaskbar_ShiftsIntoScreenCoordinates()
+    {
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1200, 800), SwShowNormal, 0, LeftTaskbar);
+
+        Assert.Equal(new MainWindow.ScreenRect(372, 100, 1200, 800), closing.Rect);
+    }
+
+    [Fact]
+    public void NormalRect_UnderABottomTaskbar_IsAlreadyInScreenCoordinates()
+    {
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1200, 800), SwShowNormal, 0, BottomTaskbar);
+
+        Assert.Equal(new MainWindow.ScreenRect(300, 100, 1200, 800), closing.Rect);
+    }
+
+    [Fact]
+    public void NegativeNormalRect_KeepsItsSignThroughTheConversion()
+    {
+        // Resized on a monitor left of the primary, then closed: the workspace
+        // origin shifts the position without reflecting it.
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(-1800, 52, 1200, 800), SwShowNormal, 0, TopTaskbar);
+
+        Assert.Equal(new MainWindow.ScreenRect(-1800, 100, 1200, 800), closing.Rect);
+    }
+
+    [Fact]
+    public void MaximizedClose_PersistsTheNormalRectAndTheMaximizedState()
+    {
+        // Resized, then maximized, then closed: the normal rect is the in-session
+        // size, not the monitor the maximized window covers.
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1400, 900), SwShowMaximized, 0, BottomTaskbar);
+
+        Assert.Equal(new MainWindow.ScreenRect(300, 100, 1400, 900), closing.Rect);
+        Assert.True(closing.Maximized);
+    }
+
+    [Fact]
+    public void NormalClose_PersistsNotMaximized()
+    {
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1200, 800), SwShowNormal, 0, BottomTaskbar);
+
+        Assert.False(closing.Maximized);
+    }
+
+    [Theory]
+    [InlineData(SwShowMinimized)]
+    [InlineData(SwMinimize)]
+    [InlineData(SwShowMinNoActive)]
+    public void MinimizedCloseFromAMaximizedWindow_KeepsTheMaximizedPreference(int showCmd)
+    {
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1400, 900), showCmd, WpfRestoreToMaximized, BottomTaskbar);
+
+        Assert.True(closing.Maximized);
+        Assert.Equal(new MainWindow.ScreenRect(300, 100, 1400, 900), closing.Rect);
+    }
+
+    [Fact]
+    public void MinimizedCloseFromANormalWindow_PersistsNotMaximized()
+    {
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1200, 800), SwShowMinimized, 0, BottomTaskbar);
+
+        Assert.False(closing.Maximized);
+    }
+
+    [Fact]
+    public void RestoreToMaximizedOnANonMinimizedState_IsIgnored()
+    {
+        // The flag only describes what a minimized window comes back to; a stale bit
+        // on a normal window does not turn the close into a maximized preference.
+        var closing = MainWindow.ClosingPlacementOf(
+            new MainWindow.ScreenRect(300, 100, 1200, 800), SwShowNormal, WpfRestoreToMaximized, BottomTaskbar);
+
+        Assert.False(closing.Maximized);
+    }
+}

@@ -157,10 +157,9 @@ public partial class MainWindow : INavigationWindow
         Closing += (_, _) =>
         {
             var s = settingsService.Load();
-            s.WindowMaximized = WindowState == WindowState.Maximized;
-            // A maximized window's rect describes the monitor, not the placement to
-            // come back to, so the stored one stands.
-            if (WindowState == WindowState.Normal && DeviceRect() is { } rect)
+            var closing = ClosingState();
+            s.WindowMaximized = closing.Maximized;
+            if (closing.Rect is { } rect)
                 s.WindowDeviceRect = new SavedWindowRect(
                     (int)rect.Left, (int)rect.Top, (int)rect.Width, (int)rect.Height);
             s.PaneOpen = RootNavigation.IsPaneOpen;
@@ -180,6 +179,12 @@ public partial class MainWindow : INavigationWindow
 
     /// <summary>Startup geometry: a rect already corrected onto a live monitor, and the state to apply after it.</summary>
     public readonly record struct RestoredPlacement(ScreenRect Rect, bool Maximized);
+
+    /// <summary>
+    /// What a close persists, in device pixels. A null rect means nothing about the
+    /// window's normal geometry is readable and the stored rect stands.
+    /// </summary>
+    public readonly record struct ClosingPlacement(ScreenRect? Rect, bool Maximized);
 
     /// <summary>
     /// Startup placement for the saved window state, in device pixels. The clamp runs
@@ -326,12 +331,71 @@ public partial class MainWindow : INavigationWindow
         && (int)requested.Width == (int)observed.Width
         && (int)requested.Height == (int)observed.Height;
 
+    /// <summary>
+    /// The rect and maximized preference a close persists, in screen device pixels.
+    /// A WINDOWPLACEMENT normal rect is in workspace coordinates — relative to the
+    /// PRIMARY monitor's work-area origin, which a top or left taskbar moves off
+    /// (0, 0) — while the monitor rectangles, the clamp and the saved rect are all
+    /// screen coordinates, so the origin is added here and workspace coordinates
+    /// reach nothing beyond it. showCmd names the current state only: a minimized
+    /// window records its restore target in WPF_RESTORETOMAXIMIZED, and reading the
+    /// state alone drops the maximized preference of a window closed from the taskbar.
+    /// </summary>
+    public static ClosingPlacement ClosingPlacementOf(
+        ScreenRect normalPosition, int showCmd, int placementFlags, ScreenRect primaryWorkArea) =>
+        new(normalPosition with
+            {
+                Left = normalPosition.Left + primaryWorkArea.Left,
+                Top = normalPosition.Top + primaryWorkArea.Top,
+            },
+            showCmd == SwShowMaximized
+            || (showCmd is SwShowMinimized or SwMinimize or SwShowMinNoActive
+                && (placementFlags & WpfRestoreToMaximized) != 0));
+
+    /// <summary>
+    /// The normal rect and maximized preference to persist. The live window rect is
+    /// not a substitute: while maximized it describes the monitor, while minimized an
+    /// off-screen position, so an in-session resize is lost unless the normal rect the
+    /// window restores to is read instead.
+    /// </summary>
+    private ClosingPlacement ClosingState()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var placement = new WindowPlacement { length = Marshal.SizeOf<WindowPlacement>() };
+        if (hwnd != IntPtr.Zero && GetWindowPlacement(hwnd, ref placement))
+        {
+            var normal = placement.rcNormalPosition;
+            return ClosingPlacementOf(
+                new ScreenRect(normal.Left, normal.Top,
+                    normal.Right - normal.Left, normal.Bottom - normal.Top),
+                placement.showCmd, placement.flags, PrimaryWorkArea());
+        }
+
+        return new ClosingPlacement(
+            WindowState == WindowState.Normal ? DeviceRect() : null,
+            WindowState == WindowState.Maximized);
+    }
+
     /// <summary>The window's own rect in device pixels; null before its HWND exists.</summary>
     private ScreenRect? DeviceRect()
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return null;
         return new ScreenRect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+    }
+
+    /// <summary>
+    /// Work area of the primary monitor in device pixels: the origin workspace
+    /// coordinates are measured from. A zero origin when the query fails matches the
+    /// taskbar placements under which the two coordinate systems already agree.
+    /// </summary>
+    private static ScreenRect PrimaryWorkArea()
+    {
+        var monitor = MonitorFromPoint(default, MonitorDefaultToPrimary);
+        var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (monitor == IntPtr.Zero || !GetMonitorInfoW(monitor, ref info)) return default;
+        return new ScreenRect(info.rcWork.Left, info.rcWork.Top,
+            info.rcWork.Right - info.rcWork.Left, info.rcWork.Bottom - info.rcWork.Top);
     }
 
     /// <summary>
@@ -363,9 +427,27 @@ public partial class MainWindow : INavigationWindow
     private const int SmXVirtualScreen = 76, SmYVirtualScreen = 77,
                       SmCxVirtualScreen = 78, SmCyVirtualScreen = 79;
     private const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+    private const int SwShowMinimized = 2, SwShowMaximized = 3,
+                      SwMinimize = 6, SwShowMinNoActive = 7;
+    private const int WpfRestoreToMaximized = 0x0002;
+    private const uint MonitorDefaultToPrimary = 0x0001;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Win32Rect { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32Point { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowPlacement
+    {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public Win32Point ptMinPosition;
+        public Win32Point ptMaxPosition;
+        public Win32Rect rcNormalPosition;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MonitorInfo
@@ -389,6 +471,13 @@ public partial class MainWindow : INavigationWindow
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter,
         int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowPlacement(IntPtr hWnd, ref WindowPlacement placement);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(Win32Point point, uint flags);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
