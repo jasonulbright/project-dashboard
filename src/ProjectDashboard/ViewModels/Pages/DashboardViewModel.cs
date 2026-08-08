@@ -170,57 +170,68 @@ public partial class DashboardViewModel : ObservableObject
         _watcher.Changed += OnRepoDirsChanged;
     }
 
-    /// <summary>Watcher fired: refresh just the affected repos (empty = full refresh). Marshals to UI.</summary>
-    private void OnRepoDirsChanged(IReadOnlyCollection<string> repoDirs)
+    /// <summary>
+    /// Watcher fired: refresh just the affected repos (empty = full refresh). Marshals through
+    /// the same UI post every other off-thread signal takes, so a host without an
+    /// <see cref="Application"/> still runs the handler instead of dropping it.
+    /// </summary>
+    internal void OnRepoDirsChanged(IReadOnlyCollection<string> repoDirs) =>
+        _uiPost(() => _ = HandleRepoDirsChangedAsync(repoDirs));
+
+    private async Task HandleRepoDirsChangedAsync(IReadOnlyCollection<string> repoDirs)
     {
-        _ = Application.Current?.Dispatcher.InvokeAsync(async () =>
+        // A bulk op (sync all / clone) is already writing git state; don't read a repo
+        // mid-write (index.lock contention) only to have the op's own refresh clobber it.
+        // A full scan in flight owns the project list; a second one replaces it underneath.
+        if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning)
         {
-            // A bulk op (sync all / clone) is already writing git state; don't read a repo
-            // mid-write (index.lock contention) only to have the op's own refresh clobber it.
-            // A full scan in flight owns the project list; a second one replaces it underneath.
-            if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning) return;
-            try
+            // The full-refresh signal names no repositories, and the watcher cleared its
+            // pending set to raise it: refusing it here loses the overflow it reports with
+            // nothing left to replay, so it queues on the drain instead.
+            if (repoDirs.Count == 0) RequestRescan();
+            return;
+        }
+        try
+        {
+            if (repoDirs.Count == 0)
             {
-                if (repoDirs.Count == 0)
-                {
-                    await LoadProjectsCommand.ExecuteAsync(null);
-                    return;
-                }
-
-                var names = new HashSet<string>(repoDirs, StringComparer.OrdinalIgnoreCase);
-                // Never read a repo a destructive op is actively rewriting: its refs are mid-swap.
-                var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)
-                    && !_busyRegistry.IsBusy(p.FullPath)).ToList();
-                var changed = false;
-                foreach (var project in affected)
-                {
-                    // Local-only refresh — the watcher fires on every save; no gh/network here.
-                    var refreshed = await _discoveryService.RefreshProjectLocalAsync(project.FullPath);
-                    if (refreshed is null) continue;
-
-                    // Carry forward GitHub-derived data a local refresh can't know, so the card
-                    // doesn't flip to "local"/no-issues and drop out of a filtered view.
-                    if (project.GitStatus.Visibility is "public" or "private" or "internal" or "unknown")
-                        refreshed.GitStatus.Visibility = project.GitStatus.Visibility;
-
-                    // Mutate the EXISTING instance in place (raises change) rather than replacing
-                    // it — keeps sidebar/palette references valid and avoids a full sidebar rebuild
-                    // (which would drop the current selection/focus on every save).
-                    project.GitStatus = refreshed.GitStatus;
-                    project.RecentCommits = refreshed.RecentCommits;
-                    changed = true;
-                }
-                if (changed)
-                {
-                    ApplyFilters();
-                    NotifySummary();
-                }
+                await LoadProjectsCommand.ExecuteAsync(null);
+                return;
             }
-            catch (Exception ex)
+
+            var names = new HashSet<string>(repoDirs, StringComparer.OrdinalIgnoreCase);
+            // Never read a repo a destructive op is actively rewriting: its refs are mid-swap.
+            var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)
+                && !_busyRegistry.IsBusy(p.FullPath)).ToList();
+            var changed = false;
+            foreach (var project in affected)
             {
-                Log.Warn("watcher-driven refresh failed", ex);
+                // Local-only refresh — the watcher fires on every save; no gh/network here.
+                var refreshed = await _discoveryService.RefreshProjectLocalAsync(project.FullPath);
+                if (refreshed is null) continue;
+
+                // Carry forward GitHub-derived data a local refresh can't know, so the card
+                // doesn't flip to "local"/no-issues and drop out of a filtered view.
+                if (project.GitStatus.Visibility is "public" or "private" or "internal" or "unknown")
+                    refreshed.GitStatus.Visibility = project.GitStatus.Visibility;
+
+                // Mutate the EXISTING instance in place (raises change) rather than replacing
+                // it — keeps sidebar/palette references valid and avoids a full sidebar rebuild
+                // (which would drop the current selection/focus on every save).
+                project.GitStatus = refreshed.GitStatus;
+                project.RecentCommits = refreshed.RecentCommits;
+                changed = true;
             }
-        });
+            if (changed)
+            {
+                ApplyFilters();
+                NotifySummary();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("watcher-driven refresh failed", ex);
+        }
     }
 
     private void StartRefreshTimer()
@@ -1308,6 +1319,7 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     private Task _forceRefresh = Task.CompletedTask;
+    private bool _forceRefreshAgain;
 
     /// <summary>
     /// The one in-flight force refresh, shared by every caller. The command's CanExecute
@@ -1319,24 +1331,40 @@ public partial class DashboardViewModel : ObservableObject
     /// ForceRefreshCommand. Neither leaves the re-scan gate reading idle: a settings write
     /// arriving during an unguarded direct call passes the gate, coalesces onto the scan
     /// already in flight, and its change never reaches the grid.
+    ///
+    /// A request that arrives mid-flight arms a re-run instead of settling for the running
+    /// scan's results: that scan read the disk before the request, so coalescing onto it
+    /// answers with a picture that predates the change the requester wants to see. The
+    /// returned task therefore completes only once a scan that started after the request has.
     /// </summary>
-    private Task ForceRefreshAsync() =>
-        _forceRefresh.IsCompleted ? _forceRefresh = RunForceRefreshAsync() : _forceRefresh;
+    private Task ForceRefreshAsync()
+    {
+        if (_forceRefresh.IsCompleted) return _forceRefresh = RunForceRefreshAsync();
+        _forceRefreshAgain = true;
+        return _forceRefresh;
+    }
 
     private async Task RunForceRefreshAsync()
     {
-        try
+        do
         {
-            ProbeConfiguredRoot();
-            var results = await _discoveryService.ForceRefreshAllAsync();
-            UpdateProjectList(results);
-            DiscoveryErrorVisible = false;
+            // Cleared before the scan reads anything, so a request arriving while it runs
+            // arms the next pass rather than being answered by this one's results.
+            _forceRefreshAgain = false;
+            try
+            {
+                ProbeConfiguredRoot();
+                var results = await _discoveryService.ForceRefreshAllAsync();
+                UpdateProjectList(results);
+                DiscoveryErrorVisible = false;
+            }
+            catch (Exception ex)
+            {
+                ReportDiscoveryFailure(ex);
+            }
+            await UpdateGhBannerAsync();
         }
-        catch (Exception ex)
-        {
-            ReportDiscoveryFailure(ex);
-        }
-        await UpdateGhBannerAsync();
+        while (_forceRefreshAgain);
     }
 
     private void ReportDiscoveryFailure(Exception ex)

@@ -619,7 +619,7 @@ public class DashboardLiveApplyTests
     }
 
     [Fact]
-    public async Task AScanTriggeredDuringADrain_IsCoalescedIntoIt()
+    public async Task AScanTriggeredDuringADrain_JoinsItAndArmsOneReRun()
     {
         var first = TestEnv.NewDir("live-drain-first");
         var second = TestEnv.NewDir("live-drain-second");
@@ -642,7 +642,7 @@ public class DashboardLiveApplyTests
         Assert.False(dashboard.ForceRefreshCommand.CanExecute(null));
 
         // The palette/F5 and Settings "Force sync" paths execute without consulting
-        // CanExecute; both must join the running scan rather than start a second fan-out.
+        // CanExecute; neither may start a second fan-out alongside the running one.
         dashboard.ForceRefreshCommand.Execute(null);
         var forceSync = dashboard.ForceRefreshCommand.ExecuteAsync(null);
         Assert.Equal(1, discovery.Started);
@@ -651,7 +651,10 @@ public class DashboardLiveApplyTests
         await forceSync;
         await dashboard.PendingRescan;
 
-        Assert.Equal(1, discovery.Started);
+        // Both requests arrived after the running scan had read the disk, so they are
+        // answered by one further pass rather than by results that predate them — two
+        // sequential fan-outs, never two at once.
+        Assert.Equal(2, discovery.Started);
         Assert.Equal(second, dashboard.ConfiguredRootPath);
         Assert.Equal("", dashboard.RescanStatus);
     }
