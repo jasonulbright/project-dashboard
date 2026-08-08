@@ -557,9 +557,11 @@ public partial class ProjectDetailViewModel
     }
 
     /// <summary>
-    /// Writes the editor's text to the repository's root .gitignore. A plain file write: the rules
-    /// take effect for what git ignores from here on, and the file itself is left unstaged, so the
-    /// change shows up on the Changes tab like any other edit.
+    /// Writes the editor's text to the repository's root .gitignore. No git command runs, but the
+    /// write goes through the same gate every mutation does: a rewrite holds the repository's
+    /// working tree, and a file landing in the middle of one belongs to neither history.
+    /// The file itself is left unstaged, so the change shows up on the Changes tab like any
+    /// other edit.
     /// </summary>
     [RelayCommand]
     private async Task SaveGitignore()
@@ -567,26 +569,25 @@ public partial class ProjectDetailViewModel
         var repo = RepoPath;
         var gen = _generation;
         var content = GitignoreText;
-        if (repo.Length == 0) return;
-
-        try
-        {
-            await _gitService.SaveGitignoreAsync(repo, content);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"could not write the .gitignore of {repo}", ex);
-            if (IsCurrent(gen)) GitignoreErrorText = $"Could not save .gitignore: {ex.Message}";
-            return;
-        }
-        if (!IsCurrent(gen)) return;
+        if (repo.Length == 0 || IsBusy) return;
 
         GitignoreErrorText = "";
+        var ok = await RunOp(async r =>
+        {
+            await _gitService.SaveGitignoreAsync(r, content);
+            return new ProcessResult(0, "", "", TimedOut: false);
+        }, "Save .gitignore", repo, gen);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            GitignoreErrorText = SyncStatusText;
+            return;
+        }
         GitignoreExists = true;
         GitignoreDirty = false;
         GitignoreStatusText = "Saved .gitignore. It is an ordinary edit — commit it like any other file. " +
                               "A file already tracked stays tracked no matter what the rules say.";
-        await SafeRefreshWorkingStateAsync();
     }
 
     [RelayCommand]

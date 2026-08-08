@@ -21,8 +21,9 @@ public class InternalsSurfaceTests
     }
 
     /// <summary>Answers the confirmation and the folder picker without a window.</summary>
-    private sealed class InternalsViewModel(bool confirm = true, SubmoduleService? submodules = null)
-        : ProjectDetailViewModel(null!, new GitService(), null!, null, new RepoBusyRegistry(),
+    private sealed class InternalsViewModel(bool confirm = true, SubmoduleService? submodules = null,
+        RepoBusyRegistry? busy = null)
+        : ProjectDetailViewModel(null!, new GitService(), null!, null, busy ?? new RepoBusyRegistry(),
             submodules: submodules)
     {
         public int Confirmations { get; private set; }
@@ -411,6 +412,30 @@ public class InternalsSurfaceTests
         Assert.True(vm.GitignoreExists);
         Assert.False(vm.GitignoreDirty);
         Assert.Contains("stays tracked", vm.GitignoreStatusText);
+    }
+
+    /// <summary>
+    /// No git command runs, but a rewrite holds the working tree while it replaces it — a file
+    /// landing mid-swap belongs to neither history, so the write takes the same lease.
+    /// </summary>
+    [Fact]
+    public async Task SavingTheIgnoreRules_IsRefusedWhileAnotherOperationHoldsTheRepository()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-busy");
+        var registry = new RepoBusyRegistry();
+        var vm = new InternalsViewModel(busy: registry, submodules: new SubmoduleService(new GitService()));
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(repo.Path));
+        await vm.LoadInternalsCommand.ExecuteAsync(null);
+
+        vm.GitignoreText = "bin/\n";
+        Assert.True(registry.TryAcquire(repo.Path, out var lease));
+        using (lease)
+            await vm.SaveGitignoreCommand.ExecuteAsync(null);
+
+        Assert.False(repo.FileExists(".gitignore"));
+        Assert.True(vm.GitignoreDirty);
+        Assert.Contains("another operation is running", vm.GitignoreErrorText);
     }
 
     [Fact]
