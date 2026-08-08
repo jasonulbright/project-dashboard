@@ -52,6 +52,15 @@ public class GitService
     internal static string LiteralPathspec(string path) => ":(literal)" + path;
 
     /// <summary>
+    /// git's own default for a message it is handed rather than opening an editor for, pinned so
+    /// a repository configured with commit.cleanup=strip cannot rewrite one. Under strip every
+    /// line of the message starting with the comment character is deleted, which silently drops
+    /// an issue reference like "#42 …" and — when that was the whole subject — aborts the commit
+    /// as empty. Every commit and amend this app runs carries the pin.
+    /// </summary>
+    internal const string MessageCleanupPin = "--cleanup=whitespace";
+
+    /// <summary>
     /// True when the directory is a git checkout. A primary checkout has a .git
     /// DIRECTORY; a linked worktree or submodule has a .git FILE — accept both.
     /// </summary>
@@ -207,7 +216,7 @@ public class GitService
         var add = await RunAsync(repoPath, ["add", "-A"], ct);
         if (!add.Success) return $"git add failed: {add.FirstError}";
 
-        var commit = await RunAsync(repoPath, ["commit", "-m", commitMessage], ct);
+        var commit = await RunAsync(repoPath, ["commit", MessageCleanupPin, "-m", commitMessage], ct);
         if (!commit.Success) return $"git commit failed: {commit.FirstError}";
 
         return null;
@@ -348,7 +357,7 @@ public class GitService
 
     public Task<ProcessResult> CommitAsync(string repoPath, string message, bool amend, CancellationToken ct = default)
     {
-        var args = new List<string> { "commit", "-m", message };
+        var args = new List<string> { "commit", MessageCleanupPin, "-m", message };
         if (amend) args.Add("--amend");
         return RunAsync(repoPath, args, ct, TimeSpan.FromSeconds(30));
     }

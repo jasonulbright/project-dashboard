@@ -229,6 +229,43 @@ public class GitServiceTests
         Assert.Equal("second commit, reworded", await _git.GetLastCommitMessageAsync(repo.Path));
     }
 
+    /// <summary>
+    /// commit.cleanup=strip deletes every comment line from a message, including one typed as
+    /// the whole subject: an issue reference like "#42 …" either vanishes from a multi-line
+    /// message or aborts the commit as empty. The message a reader typed is what gets recorded,
+    /// so the pin overrides the setting on every commit and amend the app runs.
+    /// </summary>
+    [Fact]
+    public async Task CommitAndAmend_UnderCleanupStrip_RecordAHashLeadingMessageVerbatim()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("cleanup-strip");
+        await repo.GitAsync("config", "commit.cleanup", "strip");
+        repo.WriteFile("file.txt", "changed\n");
+        Assert.True((await _git.StageAllAsync(repo.Path)).Success);
+
+        Assert.True((await _git.CommitAsync(repo.Path, "#42 close the leak", amend: false)).Success);
+        Assert.Equal("#42 close the leak", await repo.HeadSubjectAsync());
+
+        Assert.True((await _git.CommitAsync(repo.Path, "#42 close the leak\n\n#43 and this line too\n", amend: true)).Success);
+        Assert.Equal("#42 close the leak\n\n#43 and this line too",
+            (await _git.GetLastCommitMessageAsync(repo.Path)).Replace("\r\n", "\n"));
+    }
+
+    /// <summary>The scaffold's first commit takes a caller-supplied message and the same pin.</summary>
+    [Fact]
+    public async Task InitWithFirstCommit_UnderCleanupStrip_RecordsAHashLeadingMessageVerbatim()
+    {
+        using var repo = TempRepo.CreateEmptyDir("init-cleanup-strip");
+        // The setting has to exist before the commit, and only a repository can hold it; the
+        // re-init the call makes over this one is a no-op that keeps the config.
+        await repo.GitAsync("init", "-b", "main");
+        await repo.GitAsync("config", "commit.cleanup", "strip");
+        repo.WriteFile("readme.md", "hello\n");
+
+        Assert.Null(await _git.InitWithFirstCommitAsync(repo.Path, "#1 initial scaffold"));
+        Assert.Equal("#1 initial scaffold", await repo.HeadSubjectAsync());
+    }
+
     [Fact]
     public async Task BranchCreateSwitchDelete_SafeDeleteRefusesUnmerged()
     {
