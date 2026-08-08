@@ -63,6 +63,25 @@ public sealed class ScrubCheckResult
 }
 
 /// <summary>
+/// What the export normalizes away before any operation runs, read from the source repository
+/// before the export starts. The mandated export flags re-encode a commit message carrying a
+/// non-UTF-8 `encoding` header into UTF-8 and strip a tag's signature, so a commit or tag
+/// counted here comes back changed even when no op touched it, and a stripped signature cannot
+/// be reattached. Both counts are zero for the ordinary repository, which is why the wizard
+/// says nothing about normalization unless one of them is not.
+/// </summary>
+public sealed record NormalizationScan(
+    int CommitsReencoded,
+    IReadOnlyList<string> Encodings,
+    int SignedTagsStripped,
+    IReadOnlyList<string> SignedTags)
+{
+    public static NormalizationScan None { get; } = new(0, [], 0, []);
+
+    public bool Any => CommitsReencoded > 0 || SignedTagsStripped > 0;
+}
+
+/// <summary>
 /// Everything a rewrite run proved about itself: what changed, what was skipped, how old
 /// commits map to new ones, and what the verification greps found. Serializable with
 /// System.Text.Json in both directions.
@@ -134,6 +153,9 @@ public sealed class RewriteReport
 
     /// <summary>Shared blobs split so an in-scope rewrite did not corrupt out-of-scope history.</summary>
     public int BlobsSplit { get; init; }
+
+    /// <summary>What the export normalizes regardless of the operations chosen — see <see cref="NormalizationScan"/>.</summary>
+    public NormalizationScan Normalization { get; init; } = NormalizationScan.None;
 
     /// <summary>
     /// Writes the report as indented JSON to exactly <paramref name="reportPath"/>. The

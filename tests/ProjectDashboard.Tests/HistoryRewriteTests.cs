@@ -626,6 +626,52 @@ public class HistoryRewriterTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task NormalizationScanNamesReencodedCommitsAndSignedTags()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "clean\n");
+        f.CommitAll("plain utf-8");
+        f.Git("-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "--allow-empty", "-m", "latin message");
+
+        // A crafted tag object rather than a real signature: `%(contents:signature)` reads the
+        // tag body for the armoured block and never invokes gpg, so no key is needed to prove
+        // the scan sees a signed tag.
+        var head = f.Git("rev-parse", "HEAD").Trim();
+        var tagBody =
+            $"object {head}\ntype commit\ntag signed-v1\n" +
+            "tagger T <t@t> 1700000000 +0000\n\nsigned tag message\n" +
+            "-----BEGIN PGP SIGNATURE-----\n\nnot-a-real-signature\n-----END PGP SIGNATURE-----\n";
+        var tagOid = f.GitWithStdin(Encoding.UTF8.GetBytes(tagBody), "hash-object", "-t", "tag", "-w", "--stdin").Trim();
+        f.Git("update-ref", "refs/tags/signed-v1", tagOid);
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        Assert.True(report.Normalization.Any);
+        Assert.Equal(1, report.Normalization.CommitsReencoded);
+        Assert.Contains("ISO-8859-1", report.Normalization.Encodings);
+        Assert.Equal(1, report.Normalization.SignedTagsStripped);
+        Assert.Contains("refs/tags/signed-v1", report.Normalization.SignedTags);
+        // The target really does lose the signature, which is what the disclosure is for.
+        Assert.DoesNotContain("BEGIN PGP SIGNATURE",
+            FixtureRepo.RunGit(f.TargetPath, ["for-each-ref", "refs/tags/signed-v1", "--format=%(contents)"], null, null));
+    }
+
+    [Fact]
+    public async Task NormalizationScanIsEmptyForAnOrdinaryRepository()
+    {
+        using var f = Fixture();
+        f.Write("a.txt", "clean\n");
+        f.CommitAll("plain");
+        f.Git("tag", "-a", "v1", "-m", "annotated");
+
+        var report = await RewriteAsync(f, LiteralScrub());
+
+        Assert.False(report.Normalization.Any);
+        Assert.Empty(report.Normalization.Encodings);
+        Assert.Empty(report.Normalization.SignedTags);
+    }
+
+    [Fact]
     public async Task NoOpTransformReproducesIdenticalRefs()
     {
         using var f = Fixture();

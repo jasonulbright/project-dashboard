@@ -139,6 +139,25 @@ public class RewriteWizardViewModelTests
         }
     }
 
+    private static RewriteReport NewReport(NormalizationScan normalization, params ScrubCheckResult[] checks)
+    {
+        var report = NewReport(checks);
+        return new RewriteReport
+        {
+            SourceRepository = report.SourceRepository,
+            TargetBareRepository = report.TargetBareRepository,
+            CommitCount = report.CommitCount,
+            BlobsChanged = report.BlobsChanged,
+            BytesDelta = report.BytesDelta,
+            BinarySkips = report.BinarySkips,
+            CommitMap = report.CommitMap,
+            CommitsWithChangedTrees = report.CommitsWithChangedTrees,
+            FsckOutput = report.FsckOutput,
+            ScrubChecks = report.ScrubChecks,
+            Normalization = normalization
+        };
+    }
+
     private static RewriteReport NewReport(params ScrubCheckResult[] checks) => new()
     {
         SourceRepository = @"C:\repo",
@@ -380,6 +399,35 @@ public class RewriteWizardViewModelTests
         // Closing the wizard drops the one-click undo, so the promise names its lifetime.
         Assert.Contains("goes away when you close this wizard", vm.RewriteConfirmMessage);
         Assert.Contains($"Type {vm.RewriteConfirmPhrase} below", vm.RewriteConfirmMessage);
+    }
+
+    [Fact]
+    public async Task ConfirmMessage_DisclosesTheNormalizationTheExportPerformsRegardless()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-normalize");
+        using var __ = repo;
+        session.PreviewResult = new RewritePreviewOutcome(
+            NewReport(new NormalizationScan(3, ["ISO-8859-1"], 1, ["refs/tags/signed"])), null);
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+
+        Assert.Contains("re-encodes them to UTF-8", vm.RewriteConfirmMessage);
+        Assert.Contains("ISO-8859-1", vm.RewriteConfirmMessage);
+        Assert.Contains("strips those signatures", vm.RewriteConfirmMessage);
+        Assert.Contains("refs/tags/signed", vm.RewriteConfirmMessage);
+    }
+
+    [Fact]
+    public async Task ConfirmMessage_SaysNothingAboutNormalizationWhenThereIsNone()
+    {
+        var (repo, vm, _) = await OpenWizardAsync("rw-normalize-none");
+        using var __ = repo;
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("normalizes this repository", vm.RewriteConfirmMessage);
     }
 
     /// <summary>

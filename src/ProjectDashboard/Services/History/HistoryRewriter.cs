@@ -84,6 +84,7 @@ public sealed class HistoryRewriter
         // Resolve the commit scope against the source before any export work; a bad ref
         // fails here for nothing rather than after a full export.
         var inScopeCommitOids = await ResolveCommitScopeAsync(rewrite.CommitScope, request, ct);
+        var normalization = await ScanNormalizationAsync(request, ct);
 
         TransformTally? legacyTally = null;
         ScopedRewriteOutcome? scoped = null;
@@ -166,7 +167,8 @@ public sealed class HistoryRewriter
             IdentitiesRewritten = scoped?.IdentitiesRewritten ?? 0,
             FileCommandsRemoved = scoped?.FileCommandsRemoved ?? 0,
             CommitsPruned = prunedMarks.Count,
-            BlobsSplit = scoped?.Splits.Count ?? 0
+            BlobsSplit = scoped?.Splits.Count ?? 0,
+            Normalization = normalization
         };
         if (request.ReportPath is { } reportPath)
             await report.WriteAsync(reportPath, ct);
@@ -227,6 +229,55 @@ public sealed class HistoryRewriter
                 throw new NotSupportedException($"commit scope {scope.GetType().Name} is not supported");
         }
     }
+
+    /// <summary>
+    /// What the export will normalize away, read from the source before it runs. The scan is
+    /// whole-repository regardless of scope: the export is whole-repository, so a commit or tag
+    /// outside the chosen scope is normalized just the same.
+    ///
+    /// Encodings come from `%e`, which reports the commit's own `encoding` header without
+    /// decoding anything; signatures come from `%(contents:signature)`, which reads the tag body
+    /// rather than verifying it, so neither probe can invoke gpg or stall on a missing key. A
+    /// probe git refuses reports nothing rather than throwing: normalization is disclosure, and
+    /// failing the whole rewrite over an unreadable disclosure would be the worse trade.
+    /// </summary>
+    private async Task<NormalizationScan> ScanNormalizationAsync(HistoryRewriteRequest request, CancellationToken ct)
+    {
+        var encodings = new List<string>();
+        var reencoded = 0;
+        var log = await ProcessRunner.RunAsync(
+            _gitExe, ["log", "--all", "--format=%e"], request.SourceRepository,
+            request.VerificationTimeout, GitEnvironment, ct);
+        if (log.Success)
+            foreach (var line in SplitLines(log.StdOut))
+            {
+                // An absent header is an empty field; git's own default is UTF-8, and a header
+                // naming it is re-emitted unchanged, so neither is a normalization.
+                var encoding = line.Trim();
+                if (encoding.Length == 0 || IsUtf8Name(encoding)) continue;
+                reencoded++;
+                if (!encodings.Contains(encoding, StringComparer.OrdinalIgnoreCase))
+                    encodings.Add(encoding);
+            }
+
+        var signedTags = new List<string>();
+        var tags = await ProcessRunner.RunAsync(
+            _gitExe,
+            ["for-each-ref", "refs/tags", "--format=%(refname)%1f%(if)%(contents:signature)%(then)signed%(else)plain%(end)"],
+            request.SourceRepository, request.VerificationTimeout, GitEnvironment, ct);
+        if (tags.Success)
+            foreach (var line in SplitLines(tags.StdOut))
+            {
+                var fields = line.Split('\x1f');
+                if (fields.Length == 2 && fields[1] == "signed")
+                    signedTags.Add(fields[0]);
+            }
+
+        return new NormalizationScan(reencoded, encodings, signedTags.Count, signedTags);
+    }
+
+    private static bool IsUtf8Name(string encoding) =>
+        encoding.Replace("-", "").Equals("utf8", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Running counts and coverage material collected during the single transform pass.</summary>
     private sealed class TransformTally

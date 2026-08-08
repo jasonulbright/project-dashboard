@@ -268,6 +268,34 @@ public static class RewriteReportFacts
         new("Payloads skipped", report.BinarySkips.Count.ToString("N0")),
     ];
 
+    /// <summary>
+    /// What the export normalizes whatever the operation was, as sentences for the confirm
+    /// screen; empty for a repository with nothing to normalize, so the screen gains a paragraph
+    /// only when there is something to disclose.
+    /// </summary>
+    public static IReadOnlyList<string> NormalizationLines(NormalizationScan scan)
+    {
+        var lines = new List<string>();
+        if (scan.CommitsReencoded > 0)
+            lines.Add(
+                $"{scan.CommitsReencoded:N0} commit message(s) are stored in {Name(scan.Encodings)} rather than UTF-8. " +
+                "The rewrite re-encodes them to UTF-8, so those commits change even where nothing else does.");
+        if (scan.SignedTagsStripped > 0)
+            lines.Add(
+                $"{scan.SignedTagsStripped:N0} tag(s) are signed ({Name(scan.SignedTags)}). " +
+                "The rewrite strips those signatures and cannot put them back — re-sign the tags afterwards if you need them.");
+        return lines;
+    }
+
+    /// <summary>The first few names, with a count standing in for the rest — a long list would bury the sentence carrying it.</summary>
+    private static string Name(IReadOnlyList<string> names)
+    {
+        if (names.Count == 0) return "an unnamed source";
+        var shown = names.Take(3).ToList();
+        var text = string.Join(", ", shown);
+        return names.Count > shown.Count ? $"{text}, +{names.Count - shown.Count} more" : text;
+    }
+
     /// <summary>Each skipped payload as one readable line, so an incomplete scrub names its gaps.</summary>
     public static IReadOnlyList<string> SkipLines(RewriteReport report) =>
         report.BinarySkips

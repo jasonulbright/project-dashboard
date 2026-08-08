@@ -891,6 +891,19 @@ public partial class ProjectDetailViewModel
 
     private bool CanExecuteRewrite() => RewritePreviewAvailable && RewriteConfirmSatisfied && !RewriteRunning;
 
+    /// <summary>
+    /// The normalization the export performs whatever the reader chose — a non-UTF-8 commit
+    /// message re-encoded, a tag signature stripped — as its own paragraph on the confirm screen.
+    /// Empty when the dry run found nothing to normalize.
+    /// </summary>
+    private string BuildNormalizationParagraph()
+    {
+        if (_rewriteReport?.Normalization is not { Any: true } scan) return "";
+        return "Before any operation runs, the export normalizes this repository:\n" +
+               string.Join("\n", RewriteReportFacts.NormalizationLines(scan).Select(l => "• " + l)) +
+               "\n\n";
+    }
+
     private string BuildConfirmMessage()
     {
         var name = RewriteConfirmPhrase;
@@ -898,6 +911,7 @@ public partial class ProjectDetailViewModel
         return
             $"{BuildOperationSummary()}\n" +
             $"Applies to: {DescribeScope()}\n\n" +
+            BuildNormalizationParagraph() +
             $"This rewrites {commits} commit(s) in {name}. Every rewritten commit gets a new hash, so this " +
             "local history stops matching the remote until you force-push it yourself — Project Dashboard never pushes.\n\n" +
             "A verified backup bundle is written first, and Undo restores the exact refs this repository had before the " +
