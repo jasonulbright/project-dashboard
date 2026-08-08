@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # A published release is never rewritten, so every disagreement between the tag,
+      # the assembly version, and the packaged version fails before anything is built.
+      # build-portable.ps1 covers the project-file/installer half of that chain.
+      - name: Resolve version
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            throw "Tag '${{ github.ref_name }}' is not a version tag."
+          }
+          $projectFile = 'src/ProjectDashboard/ProjectDashboard.csproj'
+          $projectVersion = ([xml](Get-Content -LiteralPath $projectFile -Raw)).
+            SelectSingleNode('/Project/PropertyGroup/Version').InnerText.Trim()
+          if ($projectVersion -ne $version) {
+            throw "Tag says $version, $projectFile says $projectVersion."
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore -warnaserror
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build --logger trx --results-directory TestResults
+
+      - name: Verify test tally
+        run: |
+          $trx = Get-ChildItem TestResults -Filter *.trx -Recurse
+          if (-not $trx) { throw 'No .trx produced by the test run.' }
+          $total = 0
+          $failed = 0
+          foreach ($file in $trx) {
+            $counters = ([xml](Get-Content -LiteralPath $file.FullName -Raw)).TestRun.ResultSummary.Counters
+            $total  += [int] $counters.total
+            $failed += [int] $counters.failed
+          }
+          Write-Host "Total $total, failed $failed across $($trx.Count) result file(s)."
+          if ($total -eq 0) { throw 'The test run collected no tests.' }
+          if ($failed -ne 0) { throw "$failed test(s) failed." }
+
+      # build-portable.ps1 publishes into installer\payload, which is exactly what the
+      # installer script packs, so the portable archive is built before makensis runs.
+      - name: Build portable archive
+        run: pwsh -File installer/build-portable.ps1 -OutputDirectory dist
+
+      - name: Resolve makensis
+        run: |
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis)) {
+            $onPath = Get-Command makensis -ErrorAction SilentlyContinue
+            if ($onPath) {
+              $makensis = $onPath.Source
+            }
+            else {
+              choco install nsis --no-progress --yes
+              if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed with exit code $LASTEXITCODE." }
+            }
+          }
+          if (-not (Test-Path -LiteralPath $makensis)) { throw 'makensis.exe not found after install.' }
+          "MAKENSIS=$makensis" >> $env:GITHUB_ENV
+
+      - name: Build installer
+        working-directory: installer
+        run: |
+          & $env:MAKENSIS project-dashboard.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
+
+      - name: Extract release notes
+        run: pwsh -File installer/extract-changelog.ps1 -Version $env:VERSION -OutputPath dist/release-notes.md
+
+      # Assets are named explicitly: a wildcard would attach any stale artifact left in
+      # the tree by an earlier step.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $installer = "installer/ProjectDashboard-Setup-$env:VERSION.exe"
+          $portable  = "dist/ProjectDashboard-Portable-$env:VERSION.zip"
+          foreach ($asset in @($installer, $portable)) {
+            if (-not (Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset." }
+          }
+          gh release create '${{ github.ref_name }}' `
+            --verify-tag `
+            --title "Project Dashboard $env:VERSION" `
+            --notes-file dist/release-notes.md `
+            $installer $portable
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
