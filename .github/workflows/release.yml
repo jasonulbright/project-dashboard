@@ -72,15 +72,21 @@ jobs:
           $trx = Get-ChildItem TestResults -Filter *.trx -Recurse
           if (-not $trx) { throw 'No .trx produced by the test run.' }
           $total = 0
-          $failed = 0
           foreach ($file in $trx) {
             $counters = ([xml](Get-Content -LiteralPath $file.FullName -Raw)).TestRun.ResultSummary.Counters
-            $total  += [int] $counters.total
-            $failed += [int] $counters.failed
+            $fileTotal    = [int] $counters.total
+            $fileExecuted = [int] $counters.executed
+            $failed       = [int] $counters.failed
+            $errored      = [int] $counters.error + [int] $counters.timeout + [int] $counters.aborted + [int] $counters.inconclusive
+            $skipped      = $fileTotal - $fileExecuted
+            Write-Host "$($file.Name): total $fileTotal, executed $fileExecuted, failed $failed, errored $errored."
+            if ($fileTotal -eq 0) { throw "$($file.Name) collected no tests." }
+            if ($failed -ne 0) { throw "$failed test(s) failed in $($file.Name)." }
+            if ($errored -ne 0) { throw "$errored test(s) errored in $($file.Name)." }
+            if ($skipped -ne 0) { throw "$skipped test(s) did not execute in $($file.Name)." }
+            $total += $fileTotal
           }
-          Write-Host "Total $total, failed $failed across $($trx.Count) result file(s)."
-          if ($total -eq 0) { throw 'The test run collected no tests.' }
-          if ($failed -ne 0) { throw "$failed test(s) failed." }
+          Write-Host "Total $total across $($trx.Count) result file(s)."
 
       # build-portable.ps1 publishes into installer\payload, which is exactly what the
       # installer script packs, so the portable archive is built before makensis runs.
