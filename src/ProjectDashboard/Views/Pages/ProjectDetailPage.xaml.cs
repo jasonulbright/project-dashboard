@@ -289,6 +289,14 @@ public partial class ProjectDetailPage
             return;
         }
 
+        // Reached only with no overlay up, so a refresh never runs behind the wizard's scrim.
+        if (e.Key == Key.F5)
+        {
+            _viewModel.RefreshWorkingCopyCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key != Key.Enter && e.Key != Key.Space) return;
         if (Keyboard.FocusedElement is not Border border) return;
 

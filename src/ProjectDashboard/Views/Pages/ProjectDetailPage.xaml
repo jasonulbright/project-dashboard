@@ -421,6 +421,11 @@
                                AutomationProperties.Name="{Binding UndoOfferLabel}" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ui:Button Content="Refresh" FontSize="12" Padding="10,4" Margin="0,0,6,0"
+                               Icon="{ui:SymbolIcon ArrowSync24}"
+                               Command="{Binding RefreshWorkingCopyCommand}"
+                               ToolTip="Re-read the working tree (F5)"
+                               AutomationProperties.Name="Refresh the working tree" />
                     <ui:Button Content="Fetch" FontSize="12" Padding="10,4" Margin="0,0,6,0"
                                Icon="{ui:SymbolIcon ArrowDownload24}"
                                Command="{Binding FetchCommand}" />

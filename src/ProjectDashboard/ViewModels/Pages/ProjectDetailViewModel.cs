@@ -48,7 +48,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         Services.Safety.RewriteRecoveryService? recovery = null,
         Services.Rewrite.ForcePushService? forcePush = null,
         Services.Safety.DeepCleanService? deepClean = null,
-        SubmoduleService? submodules = null)
+        SubmoduleService? submodules = null,
+        ProjectWatcherService? watcher = null,
+        Action<Action>? uiPost = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
@@ -63,6 +65,11 @@ public partial class ProjectDetailViewModel : ObservableObject
         _forcePush = forcePush;
         _deepClean = deepClean;
         _submoduleService = submodules;
+        _watcher = watcher;
+        // A host without an Application has no dispatcher to marshal through, and a default
+        // that silently dropped the callback would drop the refresh a watcher signal owes.
+        _uiPost = uiPost ?? PostToApplicationDispatcher;
+        SubscribeToRepoChanges();
         ConfirmPrompt = ConfirmAsync;
         ConfirmSurgeryAsync = c => ConfirmAsync(c.Title, c.Message, c.ConfirmLabel);
 
@@ -199,6 +206,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedDiffLine = null;
         CommitMessage = "";
         AmendMode = false;
+        // The held signal named the repository being left; the incoming one is read below.
+        _watcherRefreshPending = false;
         IsBusy = false;
         SyncStatusText = "";
         // The retry offer belongs to the previous project's failure; left set it

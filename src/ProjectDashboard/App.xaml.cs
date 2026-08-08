@@ -127,7 +127,8 @@ public partial class App : Application
                     sp.GetRequiredService<Services.Safety.RewriteRecoveryService>(),
                     sp.GetRequiredService<Services.Rewrite.ForcePushService>(),
                     sp.GetRequiredService<Services.Safety.DeepCleanService>(),
-                    sp.GetRequiredService<SubmoduleService>())
+                    sp.GetRequiredService<SubmoduleService>(),
+                    sp.GetRequiredService<ProjectWatcherService>())
                 {
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });
