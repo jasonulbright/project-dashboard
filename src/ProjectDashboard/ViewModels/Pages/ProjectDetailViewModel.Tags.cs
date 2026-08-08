@@ -49,6 +49,8 @@ public partial class ProjectDetailViewModel
     /// <summary>Names of this repository's remotes, read when the viewer opens; empty when it has none.</summary>
     [ObservableProperty] private ObservableCollection<string> _tagRemoteNames = [];
 
+    private const string RemotesUnreadablePrefix = "Could not read this repository's remotes: ";
+
     /// <summary>The read the viewer started and did not await, so a caller can wait for the list rather than poll.</summary>
     internal Task TagsRefresh { get; private set; } = Task.CompletedTask;
 
@@ -132,10 +134,9 @@ public partial class ProjectDetailViewModel
 
         // "No tags" is a fact about the repository; a ref read that failed establishes no such
         // fact, and the empty state would claim one.
-        if (tags.HasError || remotes.HasError)
+        if (tags.HasError)
         {
-            TagsErrorText = "Could not read this repository's tags: " +
-                (tags.HasError ? tags.ErrorText : remotes.ErrorText);
+            TagsErrorText = $"Could not read this repository's tags: {tags.ErrorText}";
             TagsEmpty = false;
             return;
         }
@@ -146,6 +147,14 @@ public partial class ProjectDetailViewModel
         TagsEmpty = Tags.Count == 0;
         TagRemoteNames = new ObservableCollection<string>(remotes.Remotes.Select(r => r.Name));
         SelectedTag = Tags.FirstOrDefault(t => t.Name == keep) ?? Tags.FirstOrDefault();
+
+        // The two reads answer different questions: a refused remote read leaves the push targets
+        // unknown and establishes nothing about the tags it never touched, so it is reported
+        // beside the list rather than in place of it — it is what explains an empty push
+        // dropdown. A read that answered clears this notice only, leaving the status an
+        // operation left in place.
+        if (remotes.HasError) TagsStatusText = RemotesUnreadablePrefix + remotes.ErrorText;
+        else if (TagsStatusText.StartsWith(RemotesUnreadablePrefix, StringComparison.Ordinal)) TagsStatusText = "";
     }
 
     // ── Create ──────────────────────────────────────────────────────────────────

@@ -128,6 +128,46 @@ public class TagsSurfaceTests
         }
     }
 
+    /// <summary>
+    /// The viewer runs two reads with separate answers. A refused remote read says nothing about
+    /// the tags, so the tags render; what it does explain is a push dropdown with no targets in
+    /// it, which is reported on its own line rather than as a tag failure that blanks the list.
+    /// </summary>
+    [Fact]
+    public async Task ARemoteReadThatExitsNonZero_LeavesTheTagsListedAndReportsTheRemoteFailureSeparately()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tags-remote-exit");
+        await repo.GitAsync("tag", "v1");
+
+        var vm = new TagViewModel(git: new RemoteReadRefusingGit());
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(await ProjectForAsync(repo));
+        await vm.LoadBranchesCommand.ExecuteAsync(null);
+        await vm.OpenTagsCommand.ExecuteAsync(null);
+
+        Assert.Single(vm.Tags);
+        Assert.Equal("v1", vm.Tags[0].Name);
+        Assert.False(vm.TagsEmpty);
+        Assert.Equal("", vm.TagsErrorText);
+        Assert.Empty(vm.TagRemoteNames);
+        Assert.Contains("Could not read this repository's remotes", vm.TagsStatusText);
+        Assert.Contains("refused by the fixture", vm.TagsStatusText);
+    }
+
+    /// <summary>Exits the remote listing non-zero the way git does, leaving every other read real.</summary>
+    private sealed class RemoteReadRefusingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list is ["remote", "-v"]
+                ? Task.FromResult(new ProcessResult(128, "", "refused by the fixture", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
     [Fact]
     public async Task CreatingATag_LandsOnTheSelectedCommitRatherThanHead()
     {
