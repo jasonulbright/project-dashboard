@@ -303,6 +303,14 @@ public partial class DashboardViewModel : ObservableObject
     private const string BulkOpBusyNotice = "Another operation is in progress — try again in a moment.";
 
     /// <summary>
+    /// Tail of the report for a mutation whose settings write did not reach disk. Every
+    /// dashboard mutation that persists through settings applies its in-memory effect only
+    /// after the write succeeds, so a refused write leaves a card reading exactly what the
+    /// file holds rather than a preference that silently reverts on the next launch.
+    /// </summary>
+    internal const string SettingsWriteFailure = "the settings file could not be written.";
+
+    /// <summary>
     /// Claims the bulk-op gate, or null when another operation already holds it. The test
     /// and the claim are one statement with no await between them, which is what makes
     /// the gate a gate: a clone that read it free, then spent a repository fetch and a
@@ -368,12 +376,19 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private void ToggleDensity()
     {
-        IsCompactDensity = !IsCompactDensity;
+        var compact = !IsCompactDensity;
         // Load-mutate-save, never a fresh AppSettings: the window geometry and every
         // other key live in the same file and a wholesale write would reset them.
         var settings = _settingsService.Load();
-        settings.CardDensity = IsCompactDensity ? "compact" : "comfortable";
-        _settingsService.Save(settings);
+        settings.CardDensity = compact ? "compact" : "comfortable";
+        if (!_settingsService.Save(settings))
+        {
+            OpStatusText = $"Card density unchanged — {SettingsWriteFailure}";
+            return;
+        }
+
+        IsCompactDensity = compact;
+        OpStatusText = compact ? "Cards are now compact." : "Cards are now comfortable.";
     }
 
     [RelayCommand]
@@ -383,20 +398,24 @@ public partial class DashboardViewModel : ObservableObject
         if (project is null || project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return;
 
         var key = DashboardOrdering.RepoKey(project.FullPath);
+        var pinning = !_pinnedKeys.Contains(key);
         var settings = _settingsService.Load();
+        settings.PinnedProjectPaths = pinning
+            ? DashboardOrdering.WithPin(settings.PinnedProjectPaths, project.FullPath)
+            : DashboardOrdering.WithoutPin(settings.PinnedProjectPaths, project.FullPath);
 
-        if (_pinnedKeys.Remove(key))
-            settings.PinnedProjectPaths = DashboardOrdering.WithoutPin(settings.PinnedProjectPaths, project.FullPath);
-        else
+        if (!_settingsService.Save(settings))
         {
-            _pinnedKeys.Add(key);
-            settings.PinnedProjectPaths = DashboardOrdering.WithPin(settings.PinnedProjectPaths, project.FullPath);
+            OpStatusText = $"{(pinning ? "Pin" : "Unpin")} {project.DisplayName}: {SettingsWriteFailure}";
+            return;
         }
 
-        _settingsService.Save(settings);
+        if (pinning) _pinnedKeys.Add(key);
+        else _pinnedKeys.Remove(key);
 
         ApplyPinnedFlags();
         ApplyFilters();
+        OpStatusText = pinning ? $"Pinned {project.DisplayName}." : $"Unpinned {project.DisplayName}.";
     }
 
     private void ApplyPinnedFlags()
@@ -1011,7 +1030,7 @@ public partial class DashboardViewModel : ObservableObject
     private void OpenGitHub(ProjectInfo? project)
     {
         if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
-        Process.Start(new ProcessStartInfo($"https://github.com/{project.GitHubSlug}") { UseShellExecute = true });
+        Launch($"https://github.com/{project.GitHubSlug}", null, "Open on GitHub");
     }
 
     /// <summary>Opens the repo's open-issues list on GitHub (the same set the card count reflects).</summary>
@@ -1019,8 +1038,7 @@ public partial class DashboardViewModel : ObservableObject
     private void OpenIssues(ProjectInfo? project)
     {
         if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
-        Process.Start(new ProcessStartInfo(
-            $"https://github.com/{project.GitHubSlug}/issues?q=is:issue+is:open") { UseShellExecute = true });
+        Launch($"https://github.com/{project.GitHubSlug}/issues?q=is:issue+is:open", null, "Open issues");
     }
 
     /// <summary>Opens the repo's open pull-requests list on GitHub.</summary>
@@ -1028,8 +1046,7 @@ public partial class DashboardViewModel : ObservableObject
     private void OpenPullRequests(ProjectInfo? project)
     {
         if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
-        Process.Start(new ProcessStartInfo(
-            $"https://github.com/{project.GitHubSlug}/pulls") { UseShellExecute = true });
+        Launch($"https://github.com/{project.GitHubSlug}/pulls", null, "Open pull requests");
     }
 
     /// <summary>Opens a pre-filled, labeled GitHub "new issue" page for the project.</summary>
@@ -1041,13 +1058,34 @@ public partial class DashboardViewModel : ObservableObject
     private void RequestFeature(ProjectInfo? project)
         => OpenNewIssue(project, "enhancement", "");
 
-    private static void OpenNewIssue(ProjectInfo? project, string label, string body)
+    private void OpenNewIssue(ProjectInfo? project, string label, string body)
     {
         if (project is null || string.IsNullOrEmpty(project.GitHubSlug)) return;
         var url = $"https://github.com/{project.GitHubSlug}/issues/new"
                 + $"?labels={Uri.EscapeDataString(label)}"
                 + $"&body={Uri.EscapeDataString(body)}";
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        Launch(url, null, "New issue");
+    }
+
+    /// <summary>
+    /// Hands a target to the shell and reports a launch that never happened. An absent
+    /// terminal, an unregistered http handler, or a folder removed since the scan each make
+    /// Process.Start throw: unhandled on the UI thread that is a crash, and swallowed it is
+    /// a menu item that does nothing.
+    /// </summary>
+    private void Launch(string target, string? arguments, string what)
+    {
+        try
+        {
+            Process.Start(arguments is null
+                ? new ProcessStartInfo(target) { UseShellExecute = true }
+                : new ProcessStartInfo(target, arguments) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            OpStatusText = $"{what} failed — {ex.Message}";
+            Log.Warn($"could not launch {target}", ex);
+        }
     }
 
     private static string BugReportBody()
@@ -1073,11 +1111,16 @@ public partial class DashboardViewModel : ObservableObject
         settings.ExcludedDirectories = excluded.Distinct().ToArray();
         // The exclusion change is what schedules the re-scan; a second direct scan here
         // would run concurrently with it over the same grid.
-        _settingsService.Save(settings);
+        if (!_settingsService.Save(settings))
+        {
+            OpStatusText = $"Hide {project.DisplayName}: {SettingsWriteFailure}";
+            return;
+        }
 
         await DrainRescanAsync();
-        if (RescanQueued)
-            OpStatusText = $"{project.DisplayName} is now hidden — its card clears when the queued rescan runs.";
+        OpStatusText = RescanQueued
+            ? $"{project.DisplayName} is now hidden — its card clears when the queued rescan runs."
+            : $"{project.DisplayName} is now hidden.";
     }
 
     [RelayCommand]
@@ -1089,14 +1132,19 @@ public partial class DashboardViewModel : ObservableObject
         var excluded = new List<string>(settings.ExcludedDirectories);
         excluded.Remove(project.DirectoryName);
         settings.ExcludedDirectories = excluded.ToArray();
-        _settingsService.Save(settings);
+        if (!_settingsService.Save(settings))
+        {
+            OpStatusText = $"Unhide {project.DisplayName}: {SettingsWriteFailure}";
+            return;
+        }
 
         // Refresh main list first, then re-render the hidden view without the unhidden repo.
         await DrainRescanAsync();
         // The hidden view drops it either way; without the re-scan the grid has not picked
         // it up yet, so the card is in neither list until the queued scan runs.
-        if (RescanQueued)
-            OpStatusText = $"{project.DisplayName} is no longer hidden — it returns to the grid when the queued rescan runs.";
+        OpStatusText = RescanQueued
+            ? $"{project.DisplayName} is no longer hidden — it returns to the grid when the queued rescan runs."
+            : $"{project.DisplayName} is no longer hidden.";
         await ShowHiddenProjectsAsync();
     }
 
@@ -1167,15 +1215,14 @@ public partial class DashboardViewModel : ObservableObject
         if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
         // Shell-execute the folder itself — passing it as an unquoted explorer.exe
         // argument split paths containing spaces into multiple tokens.
-        Process.Start(new ProcessStartInfo(project.FullPath) { UseShellExecute = true });
+        Launch(project.FullPath, null, $"Open folder for {project.DisplayName}");
     }
 
     [RelayCommand]
     private void OpenTerminal(ProjectInfo? project)
     {
         if (project is null || string.IsNullOrEmpty(project.FullPath)) return;
-        Process.Start(new ProcessStartInfo("wt.exe", $"-d \"{project.FullPath}\"")
-            { UseShellExecute = true });
+        Launch("wt.exe", $"-d \"{project.FullPath}\"", $"Open terminal in {project.DisplayName}");
     }
 
     private string _watchedRoot = "";
