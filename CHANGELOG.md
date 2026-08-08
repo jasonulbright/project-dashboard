@@ -2,7 +2,7 @@
 
 ## [1.2.0] - 2026-07-17
 
-The GitHub Desktop release — the dashboard becomes a full local git client.
+The desktop client release — the dashboard becomes a full local git client.
 
 ### Added
 - **Per-repository work area** in the detail view, as tabs: Overview, Changes, History, Branches, Issues, Pull Requests, Stashes (Ctrl+1–7 to switch)
@@ -181,7 +181,7 @@ The GitHub Desktop release — the dashboard becomes a full local git client.
 ### Fixed
 - Sidebar project icons now update after refresh (CollectionChanged listener)
 
-## [1.2.0] - 2026-03-28
+## [1.2.0-legacy] - 2026-03-28
 
 ### Added
 - TODO filter badge (counts projects with TODO: in notes)
