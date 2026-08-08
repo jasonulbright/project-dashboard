@@ -108,7 +108,19 @@ public class ProjectTemplateCatalogueTests
         var preview = DashboardViewModel.CreatesPreview(ProjectTemplates.ById("empty")!, "...");
 
         Assert.StartsWith("Folder: none — ", preview);
+        Assert.Contains("lowercase letters a-z, digits and hyphens", preview);
         Assert.Contains("\"...\"", preview);
+        Assert.DoesNotContain("Creates:", preview);
+    }
+
+    [Fact]
+    public void ThePreviewForANonLatinName_NamesTheSlugRuleRatherThanTheFilesystem()
+    {
+        var preview = DashboardViewModel.CreatesPreview(ProjectTemplates.ById("empty")!, "Проект");
+
+        Assert.StartsWith("Folder: none — ", preview);
+        Assert.Contains("lowercase letters a-z, digits and hyphens", preview);
+        Assert.Contains("\"Проект\"", preview);
         Assert.DoesNotContain("Creates:", preview);
     }
 
@@ -118,7 +130,11 @@ public class ProjectTemplateCatalogueTests
         var notice = DashboardViewModel.EmptyNameNotice("  ///  ");
 
         Assert.StartsWith("New project: nothing was created — ", notice);
+        Assert.Contains("lowercase letters a-z, digits and hyphens", notice);
         Assert.Contains("\"///\"", notice);
+
+        Assert.Equal("New project: nothing was created — type a name first.",
+            DashboardViewModel.EmptyNameNotice("   "));
     }
 }
 

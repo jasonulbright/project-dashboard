@@ -207,8 +207,9 @@ public class PortfolioExportTests
         Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("src=", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("@import", html, StringComparison.OrdinalIgnoreCase);
-        // No project here has a remote, so any scheme in the page would be the page's own.
-        Assert.DoesNotContain("http", html, StringComparison.OrdinalIgnoreCase);
+        // Only the chrome is scheme-free by construction; row cells carry whatever a project holds.
+        var chrome = html[..html.IndexOf("<tbody>", StringComparison.Ordinal)];
+        Assert.DoesNotContain("http", chrome, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -217,7 +218,8 @@ public class PortfolioExportTests
         var html = PortfolioExport.ToHtml([NewProject("alpha")]);
 
         Assert.Contains("Project Dashboard", html, StringComparison.Ordinal);
-        Assert.Contains($"exported {DateTime.Now:yyyy-MM-dd}", html, StringComparison.Ordinal);
+        // A literal date would fail on a run that straddles midnight; the shape is the claim.
+        Assert.Matches(@"· exported \d{4}-\d{2}-\d{2} \d{2}:\d{2}", html);
         Assert.Contains("1 project ", html, StringComparison.Ordinal);
     }
 

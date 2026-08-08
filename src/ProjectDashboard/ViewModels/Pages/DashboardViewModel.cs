@@ -187,10 +187,11 @@ public partial class DashboardViewModel : ObservableObject
         // A full scan in flight owns the project list; a second one replaces it underneath.
         if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning)
         {
-            // A signal naming repositories is dropped: a bulk op that changed one ends in
-            // ForceRefreshAsync while still holding the gate, and a scan in flight is already
-            // re-reading every repository. The overflow signal names none, so nothing replays
-            // it — it queues on the drain instead.
+            // A signal naming repositories is dropped: a bulk op that changed a repository
+            // ends in ForceRefreshAsync while still holding the gate, and a scan in flight is
+            // already re-reading every repository. A failed clone skips that refresh, having
+            // changed nothing the gate covers; the periodic reconcile closes that window.
+            // The overflow signal names none, so nothing replays it — it queues on the drain.
             if (repoDirs.Count == 0) RequestRescan();
             return;
         }
@@ -649,7 +650,9 @@ public partial class DashboardViewModel : ObservableObject
             typed.Trim().ToLowerInvariant().Replace(' ', '-'), @"[^a-z0-9\-]", "");
 
     private static string NoFolderNameReason(string typed) =>
-        $"\"{typed.Trim()}\" leaves no folder name once the characters a folder cannot hold are removed.";
+        typed.Trim() is { Length: > 0 } trimmed
+            ? $"a folder name here uses lowercase letters a-z, digits and hyphens, and \"{trimmed}\" has none of those."
+            : "type a name first.";
 
     /// <summary>
     /// What the picker shows for a typed name and a chosen layout: the folder that name
