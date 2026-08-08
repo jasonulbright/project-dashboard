@@ -47,7 +47,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         Services.Safety.BackupService? backups = null,
         Services.Safety.RewriteRecoveryService? recovery = null,
         Services.Rewrite.ForcePushService? forcePush = null,
-        Services.Safety.DeepCleanService? deepClean = null)
+        Services.Safety.DeepCleanService? deepClean = null,
+        SubmoduleService? submodules = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
@@ -61,6 +62,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         _recovery = recovery;
         _forcePush = forcePush;
         _deepClean = deepClean;
+        _submoduleService = submodules;
         ConfirmPrompt = ConfirmAsync;
         ConfirmSurgeryAsync = c => ConfirmAsync(c.Title, c.Message, c.ConfirmLabel);
 
@@ -207,6 +209,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         BranchCompareText = "";
         BranchExtrasStatusText = "";
         BranchExtrasErrorText = "";
+        ResetInternalsState();
         Stashes = [];
         StashesLoaded = false;
         SelectedCommit = null;

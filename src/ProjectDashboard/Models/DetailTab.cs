@@ -17,4 +17,5 @@ public enum DetailTab
     Actions,
     Releases,
     Repo,
+    Internals,
 }

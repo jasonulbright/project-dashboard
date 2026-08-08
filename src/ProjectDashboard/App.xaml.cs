@@ -69,6 +69,7 @@ public partial class App : Application
                 services.AddSingleton<GitHubService>();
                 services.AddSingleton<ProjectDiscoveryService>();
                 services.AddSingleton<ProjectWatcherService>();
+                services.AddSingleton<SubmoduleService>();
 
                 // Safety rails: shared singletons for the destructive stages.
                 services.AddSingleton<Services.Safety.RepoBusyRegistry>();
@@ -124,7 +125,8 @@ public partial class App : Application
                     sp.GetRequiredService<Services.Safety.BackupService>(),
                     sp.GetRequiredService<Services.Safety.RewriteRecoveryService>(),
                     sp.GetRequiredService<Services.Rewrite.ForcePushService>(),
-                    sp.GetRequiredService<Services.Safety.DeepCleanService>())
+                    sp.GetRequiredService<Services.Safety.DeepCleanService>(),
+                    sp.GetRequiredService<SubmoduleService>())
                 {
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });

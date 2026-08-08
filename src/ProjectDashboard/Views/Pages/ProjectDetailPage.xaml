@@ -2847,6 +2847,354 @@
                     </ScrollViewer>
                 </Grid>
             </TabItem>
+
+            <!-- ── INTERNALS ── -->
+            <TabItem Header="Internals" Tag="{x:Static models:DetailTab.Internals}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="460" />
+                    </Grid.ColumnDefinitions>
+
+                    <DockPanel Grid.Row="0" Grid.ColumnSpan="2" Margin="0,0,0,10">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding LoadInternalsCommand}"
+                                   AutomationProperties.Name="Reload the worktrees, submodules, and ignore rules" />
+                        <TextBlock FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   Text="What this checkout is made of: the worktrees sharing this repository, the submodules it declares, and the ignore rules at its root. Everything here is local — nothing on this tab contacts a remote except a submodule update, which clones what it is missing." />
+                    </DockPanel>
+
+                    <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- ── WORKTREES ── -->
+                        <Border Grid.Row="0" Margin="0,0,0,12"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="Worktrees" Style="{StaticResource PaneHeader}" />
+
+                                <ListBox Grid.Row="1" ItemsSource="{Binding Worktrees}"
+                                         SelectedItem="{Binding SelectedWorktree}"
+                                         Background="Transparent" BorderThickness="0"
+                                         HorizontalContentAlignment="Stretch"
+                                         AutomationProperties.Name="Worktrees of this repository">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,3">
+                                                <DockPanel>
+                                                    <Border DockPanel.Dock="Right" Background="{StaticResource StatusInfoBg}"
+                                                            CornerRadius="4" Padding="6,1" Margin="10,0,0,0"
+                                                            VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding BranchLabel}" FontSize="10"
+                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                    </Border>
+                                                    <TextBlock Text="{Binding Path}" FontSize="12"
+                                                               FontFamily="Cascadia Code,Consolas"
+                                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"
+                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding StateLabel}" FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding StateLabel}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                    <DockPanel Margin="0,0,0,6">
+                                        <ui:TextBox DockPanel.Dock="Left" Width="150"
+                                                    Text="{Binding NewWorktreeBranch, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="new branch (optional)" FontSize="12" Margin="0,0,8,0"
+                                                    FontFamily="Cascadia Code,Consolas"
+                                                    AutomationProperties.Name="Branch to create in the new worktree" />
+                                        <ui:Button DockPanel.Dock="Right" Content="Add" FontSize="11" Padding="12,3"
+                                                   Margin="8,0,0,0" Appearance="Primary"
+                                                   Command="{Binding AddWorktreeCommand}"
+                                                   AutomationProperties.Name="Add the worktree" />
+                                        <ui:Button DockPanel.Dock="Right" Content="Browse…" FontSize="11" Padding="10,3"
+                                                   Margin="8,0,0,0"
+                                                   Command="{Binding ChooseWorktreePathCommand}"
+                                                   AutomationProperties.Name="Choose where the new worktree goes" />
+                                        <ui:TextBox Text="{Binding NewWorktreePath, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="path for the new worktree" FontSize="12"
+                                                    AutomationProperties.Name="Path for the new worktree">
+                                            <ui:TextBox.InputBindings>
+                                                <KeyBinding Key="Enter" Command="{Binding AddWorktreeCommand}" />
+                                            </ui:TextBox.InputBindings>
+                                        </ui:TextBox>
+                                    </DockPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <ui:Button Content="Remove worktree" FontSize="11" Padding="10,3"
+                                                   Appearance="Danger" Margin="0,0,8,0"
+                                                   Command="{Binding RemoveWorktreeCommand}"
+                                                   AutomationProperties.Name="Remove the selected worktree" />
+                                        <ui:Button Content="Prune stale entries…" FontSize="11" Padding="10,3"
+                                                   Command="{Binding PruneWorktreesCommand}"
+                                                   ToolTip="Clear the administrative entries whose working tree is gone"
+                                                   AutomationProperties.Name="Prune the stale worktree entries" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding WorktreesStatusText}" FontSize="11" TextWrapping="Wrap"
+                                               Margin="0,6,0,0"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               AutomationProperties.AutomationId="WorktreesStatusText" />
+                                    <TextBlock Text="{Binding WorktreesErrorText}" FontSize="11" TextWrapping="Wrap"
+                                               Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                               AutomationProperties.AutomationId="WorktreesErrorText" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- ── SUBMODULES ── -->
+                        <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="Submodules" Style="{StaticResource PaneHeader}" />
+
+                                <Border Grid.Row="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
+                                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                        AutomationProperties.AutomationId="SubmodulesEmptyState">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Submodules.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Text="This repository declares no submodules and records no gitlinks." />
+                                </Border>
+
+                                <ListBox Grid.Row="2" ItemsSource="{Binding Submodules}"
+                                         SelectedItem="{Binding SelectedSubmodule}"
+                                         Background="Transparent" BorderThickness="0"
+                                         HorizontalContentAlignment="Stretch"
+                                         AutomationProperties.Name="Submodules of this repository">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:SubmoduleEntry}">
+                                            <StackPanel Margin="0,3">
+                                                <TextBlock Text="{Binding Path}" FontSize="12"
+                                                           FontFamily="Cascadia Code,Consolas"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                    <Border CornerRadius="4" Padding="6,1" Margin="0,0,6,0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsInitialized}" Value="True">
+                                                                        <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock FontSize="10"
+                                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="not initialized" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsInitialized}" Value="True">
+                                                                            <Setter Property="Text" Value="initialized" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Border>
+                                                    <Border Background="{StaticResource StatusBadBg}" CornerRadius="4"
+                                                            Padding="6,1" Margin="0,0,6,0"
+                                                            Visibility="{Binding IsConflicted, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <TextBlock Text="conflicted" FontSize="10"
+                                                                   Foreground="{StaticResource StatusBadFg}" />
+                                                    </Border>
+                                                    <Border Background="{StaticResource StatusWarnBg}" CornerRadius="4"
+                                                            Padding="6,1" Margin="0,0,6,0"
+                                                            Visibility="{Binding IsDirty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <TextBlock Text="dirty" FontSize="10"
+                                                                   Foreground="{StaticResource StatusWarnFg}" />
+                                                    </Border>
+                                                    <Border Background="{StaticResource StatusWarnBg}" CornerRadius="4"
+                                                            Padding="6,1" Margin="0,0,6,0"
+                                                            Visibility="{Binding CommitDiffersFromRecorded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <TextBlock Text="off the recorded commit" FontSize="10"
+                                                                   Foreground="{StaticResource StatusWarnFg}" />
+                                                    </Border>
+                                                    <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4"
+                                                            Padding="6,1" Margin="0,0,6,0"
+                                                            Visibility="{Binding HasNestedSubmodules, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <TextBlock Text="has submodules of its own" FontSize="10"
+                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                    </Border>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <ui:Button Content="Init" FontSize="11" Padding="12,3" Margin="0,0,6,0"
+                                                   Command="{Binding InitSubmoduleCommand}"
+                                                   ToolTip="Register the submodule in this repository's config without cloning it"
+                                                   AutomationProperties.Name="Initialize the selected submodule" />
+                                        <ui:Button Content="Update" FontSize="11" Padding="12,3" Margin="0,0,6,0"
+                                                   Appearance="Primary"
+                                                   Command="{Binding UpdateSubmoduleCommand}"
+                                                   ToolTip="Clone if needed and check out the commit this repository records"
+                                                   AutomationProperties.Name="Update the selected submodule" />
+                                        <ui:Button Content="Sync" FontSize="11" Padding="12,3" Margin="0,0,6,0"
+                                                   Command="{Binding SyncSubmoduleCommand}"
+                                                   ToolTip="Rewrite the submodule's configured URL from .gitmodules"
+                                                   AutomationProperties.Name="Sync the selected submodule's URL" />
+                                        <ui:Button Content="Deinitialize…" FontSize="11" Padding="12,3"
+                                                   Appearance="Danger"
+                                                   Command="{Binding DeinitSubmoduleCommand}"
+                                                   ToolTip="Empty the submodule's working tree and unregister it"
+                                                   AutomationProperties.Name="Deinitialize the selected submodule" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <CheckBox Content="Force" FontSize="11" Margin="0,0,12,0"
+                                                  IsChecked="{Binding SubmoduleForce}"
+                                                  ToolTip="Adds --force to update and deinitialize"
+                                                  AutomationProperties.Name="Add force to the submodule action" />
+                                        <CheckBox FontSize="11"
+                                                  Content="I understand a forced update discards work in the submodule"
+                                                  IsChecked="{Binding SubmoduleConfirmDiscard}"
+                                                  AutomationProperties.Name="Acknowledge that a forced update discards work in the submodule" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding SubmodulesStatusText}" FontSize="11" TextWrapping="Wrap"
+                                               Margin="0,6,0,0"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               AutomationProperties.AutomationId="SubmodulesStatusText" />
+                                    <TextBlock Text="{Binding SubmodulesErrorText}" FontSize="11" TextWrapping="Wrap"
+                                               Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                               AutomationProperties.AutomationId="SubmodulesErrorText" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- ── IGNORE RULES ── -->
+                    <Border Grid.Row="1" Grid.Column="1"
+                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            CornerRadius="8" Padding="10,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="Ignore rules" Style="{StaticResource PaneHeader}" />
+
+                            <TextBlock Grid.Row="1" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       Text="The .gitignore at this repository's root. Saving writes the file and nothing else — it is an ordinary edit to commit, and a file git already tracks stays tracked whatever the rules say.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="The .gitignore at this repository's root. Saving writes the file and nothing else — it is an ordinary edit to commit, and a file git already tracks stays tracked whatever the rules say." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding GitignoreExists}" Value="False">
+                                                <Setter Property="Text" Value="This repository has no .gitignore at its root. Saving creates one — an ordinary new file to commit. A file git already tracks stays tracked whatever the rules say." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <ui:TextBox Grid.Row="2" Text="{Binding GitignoreText, UpdateSourceTrigger=PropertyChanged}"
+                                        AcceptsReturn="True" AcceptsTab="True" TextWrapping="NoWrap"
+                                        VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                        FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                        PlaceholderText="one pattern per line"
+                                        AutomationProperties.AutomationId="GitignoreEditor"
+                                        AutomationProperties.Name="Ignore rules for this repository" />
+
+                            <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <ui:Button Content="Save" FontSize="11" Padding="14,3" Margin="0,0,6,0"
+                                               Appearance="Primary"
+                                               Command="{Binding SaveGitignoreCommand}"
+                                               AutomationProperties.Name="Save the ignore rules" />
+                                    <ui:Button Content="Reload from disk" FontSize="11" Padding="12,3"
+                                               Command="{Binding RevertGitignoreCommand}"
+                                               AutomationProperties.Name="Discard the edits and reload the ignore rules" />
+                                    <TextBlock Text="unsaved" FontSize="11" VerticalAlignment="Center" Margin="10,0,0,0"
+                                               Foreground="{StaticResource StatusWarnFg}"
+                                               Visibility="{Binding GitignoreDirty, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                </StackPanel>
+
+                                <TextBlock Text="Test a path against the rules" Style="{StaticResource PaneHeader}" />
+                                <DockPanel Margin="0,0,0,6">
+                                    <ui:Button DockPanel.Dock="Right" Content="Test" FontSize="11" Padding="12,3"
+                                               Margin="8,0,0,0"
+                                               Command="{Binding ProbeIgnorePathCommand}"
+                                               AutomationProperties.Name="Ask git whether the path is ignored" />
+                                    <ui:TextBox Text="{Binding IgnoreProbePath, UpdateSourceTrigger=PropertyChanged}"
+                                                PlaceholderText="path relative to the repository root"
+                                                FontSize="12" FontFamily="Cascadia Code,Consolas"
+                                                AutomationProperties.Name="Path to test against the ignore rules">
+                                        <ui:TextBox.InputBindings>
+                                            <KeyBinding Key="Enter" Command="{Binding ProbeIgnorePathCommand}" />
+                                        </ui:TextBox.InputBindings>
+                                    </ui:TextBox>
+                                </DockPanel>
+                                <TextBlock Text="{Binding IgnoreProbeResult}" FontSize="11" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                           AutomationProperties.AutomationId="IgnoreProbeResult" />
+                                <TextBlock Text="{Binding GitignoreStatusText}" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,6,0,0"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           AutomationProperties.AutomationId="GitignoreStatusText" />
+                                <TextBlock Text="{Binding GitignoreErrorText}" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                           AutomationProperties.AutomationId="GitignoreErrorText" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <!-- ═══ REWRITE WIZARD ═══

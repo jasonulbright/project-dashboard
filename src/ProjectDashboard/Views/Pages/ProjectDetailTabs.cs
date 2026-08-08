@@ -13,6 +13,7 @@ public enum DetailTabLoad
     WorkflowRuns,
     Releases,
     RepoTab,
+    Internals,
 }
 
 /// <summary>
@@ -26,7 +27,8 @@ public readonly record struct DetailTabLoadState(
     bool PullRequests,
     bool WorkflowRuns,
     bool Releases,
-    bool RepoTab);
+    bool RepoTab,
+    bool Internals);
 
 /// <summary>
 /// Pure tab-routing logic for the detail page, kept free of control/git state so
@@ -81,6 +83,7 @@ public static class ProjectDetailTabs
             DetailTab.Actions when !loaded.WorkflowRuns => DetailTabLoad.WorkflowRuns,
             DetailTab.Releases when !loaded.Releases => DetailTabLoad.Releases,
             DetailTab.Repo when !loaded.RepoTab => DetailTabLoad.RepoTab,
+            DetailTab.Internals when !loaded.Internals => DetailTabLoad.Internals,
             _ => DetailTabLoad.None,
         };
 }

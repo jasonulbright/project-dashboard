@@ -351,7 +351,8 @@ public partial class ProjectDetailPage
             PullRequests: _viewModel.PullRequestsLoaded,
             WorkflowRuns: _viewModel.WorkflowRunsLoaded,
             Releases: _viewModel.ReleasesLoaded,
-            RepoTab: _viewModel.RepoSettingsLoaded));
+            RepoTab: _viewModel.RepoSettingsLoaded,
+            Internals: _viewModel.InternalsLoaded));
         switch (load)
         {
             case DetailTabLoad.Branches:
@@ -371,6 +372,9 @@ public partial class ProjectDetailPage
                 break;
             case DetailTabLoad.RepoTab:
                 _viewModel.LoadRepoTabCommand.Execute(null);
+                break;
+            case DetailTabLoad.Internals:
+                _viewModel.LoadInternalsCommand.Execute(null);
                 break;
         }
     }
