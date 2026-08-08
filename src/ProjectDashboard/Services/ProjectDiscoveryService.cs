@@ -36,7 +36,9 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     }
 
     /// <summary>
-    /// Forces a full re-scan, ignoring cache.
+    /// Forces a full re-scan, ignoring cache. Virtual for the substituting double the
+    /// scan-drain tests park a fan-out in; sealing it leaves those tests unable to hold a
+    /// scan in flight.
     /// </summary>
     public virtual async Task<List<ProjectInfo>> ForceRefreshAllAsync(CancellationToken ct = default)
     {
