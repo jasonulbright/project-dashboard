@@ -194,12 +194,20 @@ internal static class SurgeryText
 {
     internal static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
 
-    /// <summary>The subject line of a commit message, or null for a null message.</summary>
+    /// <summary>
+    /// The subject line of a commit message, or null for a null message. git takes the first
+    /// NON-empty line, so a message that opens with blank lines has a subject further down;
+    /// reading line zero would show the whole message as one commit's subject.
+    /// </summary>
     internal static string? FirstLine(string? message)
     {
         if (message is null) return null;
-        var line = message.ReplaceLineEndings("\n").Split('\n')[0].Trim();
-        return line.Length == 0 ? message.Trim() : line;
+        foreach (var line in message.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length != 0) return trimmed;
+        }
+        return "";
     }
 }
 

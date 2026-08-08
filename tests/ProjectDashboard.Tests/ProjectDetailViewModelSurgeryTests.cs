@@ -340,6 +340,7 @@ public class ProjectDetailViewModelSurgeryTests
     [InlineData("drops")]
     [InlineData("reorder")]
     [InlineData("reword")]
+    [InlineData("leading-blank-reword")]
     [InlineData("root-fold")]
     [InlineData("root-reorder")]
     [InlineData("reorder+drop")]
@@ -371,6 +372,9 @@ public class ProjectDetailViewModelSurgeryTests
                     list[3].Drop = true;
                     break;
                 case "reword": list[2].NewMessage = "b, said differently\n\nand a body"; break;
+                // git stores the first NON-empty line as the subject, so a preview reading line
+                // zero would show a three-line "commit" for the one this replay produces.
+                case "leading-blank-reword": list[2].NewMessage = "\nb, reworded\n\nand a body"; break;
                 case "root-fold": list[1].SquashIntoPrevious = true; break;
                 case "root-reorder": HistoryPlan.MoveDown(list, 0); break;
                 case "reorder+drop":

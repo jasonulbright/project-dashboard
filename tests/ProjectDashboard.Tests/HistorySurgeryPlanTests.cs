@@ -136,6 +136,18 @@ public class HistorySurgeryPlanTests
         Assert.Equal($"{Sha("a")[..8]}  the subject", Assert.Single(HistoryPlan.Preview([commit])));
     }
 
+    [Fact]
+    public void ARewordThatOpensWithBlankLines_TakesTheSubjectGitWouldStore()
+    {
+        // git's subject is the first non-empty line; a preview reading line zero would show the
+        // whole message as one commit's subject.
+        var commit = new PlannedCommit { Sha = Sha("a"), Subject = "a" };
+        commit.NewMessage = "\r\n\n  the subject  \n\nthe body";
+
+        Assert.Equal("the subject", commit.EffectiveSubject);
+        Assert.Equal($"{Sha("a")[..8]}  the subject", Assert.Single(HistoryPlan.Preview([commit])));
+    }
+
     // ── resolution ─────────────────────────────────────────────────────────
 
     [Fact]

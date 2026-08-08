@@ -906,7 +906,7 @@ public partial class ProjectDetailViewModel
 
     private static string FirstLine(string text)
     {
-        var line = text.ReplaceLineEndings("\n").Split('\n')[0].Trim();
+        var line = SurgeryText.FirstLine(text) ?? text;
         return line.Length > 100 ? line[..100] + "…" : line;
     }
 }
