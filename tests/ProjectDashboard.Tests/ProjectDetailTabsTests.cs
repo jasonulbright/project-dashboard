@@ -24,12 +24,12 @@ public class ProjectDetailTabsTests
     }
 
     [Theory]
-    [InlineData(Key.D8)] // 8th index (7) — no tab yet
-    [InlineData(Key.D9)] // 9th index (8) — no tab yet
-    [InlineData(Key.D0)] // 10th index (9) — no tab yet
+    [InlineData(Key.D8)] // 8th index (7) — beyond a seven-tab page
+    [InlineData(Key.D9)] // 9th index (8) — beyond a seven-tab page
+    [InlineData(Key.D0)] // 10th index (9) — beyond a seven-tab page
     public void TabIndexForDigit_BeyondLiveTabsIsInert(Key key)
     {
-        // Seven tabs today: Ctrl+8/9/0 must be inert no-ops, not out-of-range jumps.
+        // Digits past the live tab count must be inert no-ops, not out-of-range jumps.
         Assert.Null(ProjectDetailTabs.TabIndexForDigit(key, tabCount: 7));
     }
 
@@ -49,26 +49,54 @@ public class ProjectDetailTabsTests
         Assert.Null(ProjectDetailTabs.TabIndexForDigit(key, tabCount: 10));
     }
 
-    [Fact]
-    public void LoadForTab_LazyTabsFetchWhenNotYetLoaded()
+    /// <summary>Nothing fetched yet — the state every project switch resets to.</summary>
+    private static DetailTabLoadState Nothing => new(false, false, false, false, false, false);
+
+    [Theory]
+    [InlineData(DetailTab.Branches, DetailTabLoad.Branches)]
+    [InlineData(DetailTab.Stashes, DetailTabLoad.Stashes)]
+    [InlineData(DetailTab.PullRequests, DetailTabLoad.PullRequests)]
+    [InlineData(DetailTab.Actions, DetailTabLoad.WorkflowRuns)]
+    [InlineData(DetailTab.Releases, DetailTabLoad.Releases)]
+    [InlineData(DetailTab.Repo, DetailTabLoad.RepoTab)]
+    public void LoadForTab_LazyTabsFetchWhenNotYetLoaded(DetailTab tab, DetailTabLoad expected)
     {
-        Assert.Equal(DetailTabLoad.Branches,
-            ProjectDetailTabs.LoadForTab(DetailTab.Branches, branchesLoaded: false, stashesLoaded: false, pullRequestsLoaded: false));
-        Assert.Equal(DetailTabLoad.Stashes,
-            ProjectDetailTabs.LoadForTab(DetailTab.Stashes, branchesLoaded: false, stashesLoaded: false, pullRequestsLoaded: false));
-        Assert.Equal(DetailTabLoad.PullRequests,
-            ProjectDetailTabs.LoadForTab(DetailTab.PullRequests, branchesLoaded: false, stashesLoaded: false, pullRequestsLoaded: false));
+        Assert.Equal(expected, ProjectDetailTabs.LoadForTab(tab, Nothing));
     }
 
     [Fact]
     public void LoadForTab_LazyTabsStayInertOnceLoaded()
     {
         Assert.Equal(DetailTabLoad.None,
-            ProjectDetailTabs.LoadForTab(DetailTab.Branches, branchesLoaded: true, stashesLoaded: false, pullRequestsLoaded: false));
+            ProjectDetailTabs.LoadForTab(DetailTab.Branches, Nothing with { Branches = true }));
         Assert.Equal(DetailTabLoad.None,
-            ProjectDetailTabs.LoadForTab(DetailTab.Stashes, branchesLoaded: false, stashesLoaded: true, pullRequestsLoaded: false));
+            ProjectDetailTabs.LoadForTab(DetailTab.Stashes, Nothing with { Stashes = true }));
         Assert.Equal(DetailTabLoad.None,
-            ProjectDetailTabs.LoadForTab(DetailTab.PullRequests, branchesLoaded: false, stashesLoaded: false, pullRequestsLoaded: true));
+            ProjectDetailTabs.LoadForTab(DetailTab.PullRequests, Nothing with { PullRequests = true }));
+        Assert.Equal(DetailTabLoad.None,
+            ProjectDetailTabs.LoadForTab(DetailTab.Actions, Nothing with { WorkflowRuns = true }));
+        Assert.Equal(DetailTabLoad.None,
+            ProjectDetailTabs.LoadForTab(DetailTab.Releases, Nothing with { Releases = true }));
+        Assert.Equal(DetailTabLoad.None,
+            ProjectDetailTabs.LoadForTab(DetailTab.Repo, Nothing with { RepoTab = true }));
+    }
+
+    /// <summary>
+    /// The six lazy surfaces differ only by identically typed flags: a transposed pair
+    /// would route one tab's load to another and show the wrong repository data.
+    /// </summary>
+    [Fact]
+    public void LoadForTab_EachTabReadsOnlyItsOwnFlag()
+    {
+        Assert.Equal(DetailTabLoad.WorkflowRuns,
+            ProjectDetailTabs.LoadForTab(DetailTab.Actions,
+                new DetailTabLoadState(true, true, true, false, true, true)));
+        Assert.Equal(DetailTabLoad.Releases,
+            ProjectDetailTabs.LoadForTab(DetailTab.Releases,
+                new DetailTabLoadState(true, true, true, true, false, true)));
+        Assert.Equal(DetailTabLoad.RepoTab,
+            ProjectDetailTabs.LoadForTab(DetailTab.Repo,
+                new DetailTabLoadState(true, true, true, true, true, false)));
     }
 
     [Theory]
@@ -78,7 +106,6 @@ public class ProjectDetailTabsTests
     [InlineData(DetailTab.Issues)]
     public void LoadForTab_NonLazyTabsNeverFetch(DetailTab tab)
     {
-        Assert.Equal(DetailTabLoad.None,
-            ProjectDetailTabs.LoadForTab(tab, branchesLoaded: false, stashesLoaded: false, pullRequestsLoaded: false));
+        Assert.Equal(DetailTabLoad.None, ProjectDetailTabs.LoadForTab(tab, Nothing));
     }
 }

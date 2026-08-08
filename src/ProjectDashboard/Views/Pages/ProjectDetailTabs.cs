@@ -10,7 +10,23 @@ public enum DetailTabLoad
     Branches,
     Stashes,
     PullRequests,
+    WorkflowRuns,
+    Releases,
+    RepoTab,
 }
+
+/// <summary>
+/// What each lazy surface has already fetched for the project on screen. Named
+/// members rather than positional flags: the surfaces differ only by type-identical
+/// booleans, and a transposed pair would route a load to the wrong tab silently.
+/// </summary>
+public readonly record struct DetailTabLoadState(
+    bool Branches,
+    bool Stashes,
+    bool PullRequests,
+    bool WorkflowRuns,
+    bool Releases,
+    bool RepoTab);
 
 /// <summary>
 /// Pure tab-routing logic for the detail page, kept free of control/git state so
@@ -35,16 +51,19 @@ public static class ProjectDetailTabs
     }
 
     /// <summary>
-    /// The lazy load a tab needs on activation. Only Branches/Stashes/PullRequests
+    /// The lazy load a tab needs on activation. Only the remote/expensive surfaces
     /// fetch; each guard mirrors its command's own "already loaded" check so a
     /// revisit stays inert.
     /// </summary>
-    public static DetailTabLoad LoadForTab(DetailTab tab, bool branchesLoaded, bool stashesLoaded, bool pullRequestsLoaded)
+    public static DetailTabLoad LoadForTab(DetailTab tab, DetailTabLoadState loaded)
         => tab switch
         {
-            DetailTab.Branches when !branchesLoaded => DetailTabLoad.Branches,
-            DetailTab.Stashes when !stashesLoaded => DetailTabLoad.Stashes,
-            DetailTab.PullRequests when !pullRequestsLoaded => DetailTabLoad.PullRequests,
+            DetailTab.Branches when !loaded.Branches => DetailTabLoad.Branches,
+            DetailTab.Stashes when !loaded.Stashes => DetailTabLoad.Stashes,
+            DetailTab.PullRequests when !loaded.PullRequests => DetailTabLoad.PullRequests,
+            DetailTab.Actions when !loaded.WorkflowRuns => DetailTabLoad.WorkflowRuns,
+            DetailTab.Releases when !loaded.Releases => DetailTabLoad.Releases,
+            DetailTab.Repo when !loaded.RepoTab => DetailTabLoad.RepoTab,
             _ => DetailTabLoad.None,
         };
 }
