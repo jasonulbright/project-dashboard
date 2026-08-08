@@ -18,6 +18,7 @@ public partial class DashboardViewModel : ObservableObject
     private readonly GitService _gitService;
     private readonly ProjectWatcherService _watcher;
     private readonly RepoBusyRegistry _busyRegistry;
+    private readonly Action<Action> _uiPost;
     private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
@@ -75,7 +76,13 @@ public partial class DashboardViewModel : ObservableObject
     public IAsyncRelayCommand LoadProjectsCommand { get; }
     public IAsyncRelayCommand ForceRefreshCommand { get; }
 
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry)
+    /// <summary>
+    /// <paramref name="uiPost"/> runs a callback on the UI thread; null takes the running
+    /// application's dispatcher. A host without an <see cref="Application"/> has no
+    /// dispatcher to marshal through, and a default that silently drops the callback there
+    /// would drop the re-scan that a released repository lease is supposed to start.
+    /// </summary>
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
@@ -84,6 +91,7 @@ public partial class DashboardViewModel : ObservableObject
         _gitService = gitService;
         _watcher = watcher;
         _busyRegistry = busyRegistry;
+        _uiPost = uiPost ?? PostToApplicationDispatcher;
         _searchService = new RepoSearchService(gitService, busyRegistry);
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
@@ -132,7 +140,8 @@ public partial class DashboardViewModel : ObservableObject
         {
             // A bulk op (sync all / clone) is already writing git state; don't read a repo
             // mid-write (index.lock contention) only to have the op's own refresh clobber it.
-            if (_bulkOpRunning || LoadProjectsCommand.IsRunning) return;
+            // A full scan in flight owns the project list; a second one replaces it underneath.
+            if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning) return;
             try
             {
                 if (repoDirs.Count == 0)
@@ -185,8 +194,8 @@ public partial class DashboardViewModel : ObservableObject
         };
         _refreshTimer.Tick += async (_, _) =>
         {
-            // Don't let the periodic reconcile collide with a bulk op or an in-flight load.
-            if (LoadProjectsCommand.IsRunning || _bulkOpRunning) return;
+            // Don't let the periodic reconcile collide with a bulk op or any scan in flight.
+            if (LoadProjectsCommand.IsRunning || _bulkOpRunning || ForceRefreshCommand.IsRunning) return;
             try
             {
                 await LoadProjectsCommand.ExecuteAsync(null);
@@ -961,6 +970,8 @@ public partial class DashboardViewModel : ObservableObject
         _settingsService.Save(settings);
 
         await DrainRescanAsync();
+        if (RescanQueued)
+            OpStatusText = $"{project.DisplayName} is now hidden — its card clears when the queued rescan runs.";
     }
 
     [RelayCommand]
@@ -976,6 +987,10 @@ public partial class DashboardViewModel : ObservableObject
 
         // Refresh main list first, then re-render the hidden view without the unhidden repo.
         await DrainRescanAsync();
+        // The hidden view drops it either way; without the re-scan the grid has not picked
+        // it up yet, so the card is in neither list until the queued scan runs.
+        if (RescanQueued)
+            OpStatusText = $"{project.DisplayName} is no longer hidden — it returns to the grid when the queued rescan runs.";
         await ShowHiddenProjectsAsync();
     }
 
@@ -1085,6 +1100,9 @@ public partial class DashboardViewModel : ObservableObject
     /// <summary>The re-scan currently in flight, or a completed task when none is.</summary>
     internal Task PendingRescan => _rescanDrain;
 
+    /// <summary>True while a re-scan is waiting for the repositories to be free.</summary>
+    internal bool RescanQueued => _rescanQueued;
+
     /// <summary>
     /// Applies a settings write to the running app. Every branch is a re-derive from the
     /// new state, never a mutation of what the writer already changed, so a write from any
@@ -1114,8 +1132,11 @@ public partial class DashboardViewModel : ObservableObject
         if (!_rescanQueued) return;
         // The registry raises from whichever thread released the lease; the drain touches
         // bound state and the discovery pipeline, both of which belong to the UI thread.
-        _ = Application.Current?.Dispatcher.InvokeAsync(() => _ = DrainRescanAsync());
+        _uiPost(() => _ = DrainRescanAsync());
     }
+
+    private static void PostToApplicationDispatcher(Action callback) =>
+        _ = Application.Current?.Dispatcher.InvokeAsync(callback);
 
     private void RequestRescan()
     {
@@ -1149,7 +1170,10 @@ public partial class DashboardViewModel : ObservableObject
 
                 _rescanQueued = false;
                 RescanStatus = DashboardRescan.RunningStatus;
-                await ForceRefreshAsync();
+                // Through the command: its IsRunning is what the gate below and every
+                // other scan trigger read, and a direct call leaves them reading idle for
+                // the whole drain.
+                await ForceRefreshCommand.ExecuteAsync(null);
             }
             RescanStatus = "";
         }
@@ -1183,7 +1207,18 @@ public partial class DashboardViewModel : ObservableObject
         await UpdateGhBannerAsync();
     }
 
-    private async Task ForceRefreshAsync()
+    private Task _forceRefresh = Task.CompletedTask;
+
+    /// <summary>
+    /// The one in-flight force refresh, shared by every caller. The command's CanExecute
+    /// stops a second toolbar press, but the palette, F5, the Settings page, and the
+    /// settings-driven drain all execute without consulting it; two overlapping runs each
+    /// replace the project list from a git fan-out the other is still running.
+    /// </summary>
+    private Task ForceRefreshAsync() =>
+        _forceRefresh.IsCompleted ? _forceRefresh = RunForceRefreshAsync() : _forceRefresh;
+
+    private async Task RunForceRefreshAsync()
     {
         try
         {

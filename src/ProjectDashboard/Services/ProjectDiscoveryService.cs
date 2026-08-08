@@ -38,7 +38,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// <summary>
     /// Forces a full re-scan, ignoring cache.
     /// </summary>
-    public async Task<List<ProjectInfo>> ForceRefreshAllAsync(CancellationToken ct = default)
+    public virtual async Task<List<ProjectInfo>> ForceRefreshAllAsync(CancellationToken ct = default)
     {
         var settings = settingsService.Load();
         var results = await DiscoverFromDiskAsync(settings, ct);

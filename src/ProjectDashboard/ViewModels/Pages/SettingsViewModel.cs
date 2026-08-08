@@ -110,15 +110,19 @@ public partial class SettingsViewModel : ObservableObject
             : $"Save failed — could not write {AppPaths.SettingsFile}. See the log for details.";
     }
 
+    /// <summary>Reports the deferral in the save notice, phrased as a fact about the save.</summary>
+    internal const string QueuedRescanNotice = "rescan queued behind a repository operation.";
+
     /// <summary>
-    /// The success notice, carrying what the save set in motion beyond the file write. The
-    /// dashboard reacts to the write synchronously, so its re-scan state is already settled
-    /// here; a re-scan queued behind a running operation would otherwise read as a save
-    /// that changed nothing on screen.
+    /// The success notice, carrying what the save set in motion beyond the file write. Only
+    /// the deferral is carried: a bare "Saved" against a re-scan that cannot start yet reads
+    /// as a save that changed nothing on screen, while a re-scan already under way finishes
+    /// seconds later and the notice does not, so quoting it leaves the page claiming a scan
+    /// is running for the rest of the session.
     /// </summary>
     internal static string SavedMessage(DateTime at, string rescanStatus) =>
-        rescanStatus.Length > 0
-            ? $"Saved at {at:HH:mm:ss} — {rescanStatus}"
+        rescanStatus == DashboardRescan.QueuedStatus
+            ? $"Saved at {at:HH:mm:ss} — {QueuedRescanNotice}"
             : $"Saved at {at:HH:mm:ss}";
 
     [RelayCommand]

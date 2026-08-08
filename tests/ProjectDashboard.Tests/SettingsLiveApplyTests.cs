@@ -279,6 +279,53 @@ public class SettingsChangeNotificationTests
 }
 
 /// <summary>
+/// Publication ordering for the Changed event. The event is raised outside the file lock,
+/// so with more than one writer the raise order is not the write order; a subscriber handed
+/// the older snapshot last would keep running the app on settings the file no longer holds,
+/// with nothing to correct it until the next write.
+/// </summary>
+public class PublicationOrderTests
+{
+    [Fact]
+    public void WritesThatPublishInOrder_AreAllDelivered()
+    {
+        var order = new PublicationOrder();
+
+        Assert.True(order.TryPublish(order.NextSequence()));
+        Assert.True(order.TryPublish(order.NextSequence()));
+        Assert.True(order.TryPublish(order.NextSequence()));
+    }
+
+    [Fact]
+    public void TwoInterleavedWrites_DeliverOnlyTheNewestSnapshot()
+    {
+        var order = new PublicationOrder();
+
+        // Both writes are stamped before either publishes — the interleaving a writer off
+        // the UI thread creates.
+        var older = order.NextSequence();
+        var newer = order.NextSequence();
+
+        var delivered = new List<string>();
+        if (order.TryPublish(newer)) delivered.Add("newer");
+        if (order.TryPublish(older)) delivered.Add("older");
+
+        Assert.Equal(["newer"], delivered);
+    }
+
+    [Fact]
+    public void AWriteAlreadyOvertaken_StaysDropped()
+    {
+        var order = new PublicationOrder();
+        var older = order.NextSequence();
+
+        Assert.True(order.TryPublish(order.NextSequence()));
+        Assert.False(order.TryPublish(older));
+        Assert.False(order.TryPublish(older));
+    }
+}
+
+/// <summary>
 /// The gate on a settings-driven re-scan. R-08 keeps a repository under a rewrite or
 /// surgery off-limits to background readers; a settings change must queue behind that
 /// operation rather than interrupt it or be dropped.
@@ -393,16 +440,16 @@ public class SettingsSaveNoticeTests
     public void AQueuedRescan_IsCarriedIntoTheNotice()
     {
         Assert.Equal(
-            $"Saved at 14:05:09 — {DashboardRescan.QueuedStatus}",
+            $"Saved at 14:05:09 — {SettingsViewModel.QueuedRescanNotice}",
             SettingsViewModel.SavedMessage(At, DashboardRescan.QueuedStatus));
     }
 
     [Fact]
-    public void ARunningRescan_IsCarriedIntoTheNotice()
+    public void ARunningRescan_IsNotCarriedIntoTheNotice()
     {
-        Assert.Equal(
-            $"Saved at 14:05:09 — {DashboardRescan.RunningStatus}",
-            SettingsViewModel.SavedMessage(At, DashboardRescan.RunningStatus));
+        // The scan finishes seconds later; the notice stays until the next save, so a
+        // snapshot of it would leave the page claiming a scan is running all session.
+        Assert.Equal("Saved at 14:05:09", SettingsViewModel.SavedMessage(At, DashboardRescan.RunningStatus));
     }
 }
 
@@ -426,17 +473,47 @@ public class DashboardLiveApplyTests
     };
 
     private static DashboardViewModel NewDashboard(
-        SettingsService settings, ProjectWatcherService watcher, RepoBusyRegistry busy)
+        SettingsService settings, ProjectWatcherService watcher, RepoBusyRegistry busy,
+        ProjectDiscoveryService? discovery = null)
     {
         var gitHub = new GitHubService(settings);
         return new DashboardViewModel(
-            new ProjectDiscoveryService(new GitService(), gitHub, settings, new ManifestStore()),
+            discovery ?? new ProjectDiscoveryService(new GitService(), gitHub, settings, new ManifestStore()),
             navigationService: null!,
             settings,
             gitHub,
             new GitService(),
             watcher,
-            busy);
+            busy,
+            // There is no Application in the test host, so the default post target has no
+            // dispatcher and would drop every callback — including the lease-release drain,
+            // which is the only signal that starts a queued re-scan.
+            uiPost: callback => callback());
+    }
+
+    /// <summary>
+    /// A discovery service whose force refresh parks until released, so another scan trigger
+    /// can be fired while the first scan is provably still in flight, and counts how many
+    /// full fan-outs actually started.
+    /// </summary>
+    private sealed class GatedDiscovery : ProjectDiscoveryService
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _started;
+
+        public GatedDiscovery(SettingsService settings, GitHubService gitHub)
+            : base(new GitService(), gitHub, settings, new ManifestStore()) { }
+
+        public int Started => Volatile.Read(ref _started);
+
+        public void Release() => _gate.TrySetResult();
+
+        public override async Task<List<ProjectInfo>> ForceRefreshAllAsync(CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _started);
+            await _gate.Task;
+            return await base.ForceRefreshAllAsync(ct);
+        }
     }
 
     [Fact]
@@ -520,18 +597,128 @@ public class DashboardLiveApplyTests
         await dashboard.LoadProjectsCommand.ExecutionTask!;
 
         // A rewrite holds the lease: nothing may read the repositories underneath it.
-        using (busy.Acquire(TestEnv.NewDir("live-busy-repo")))
-        {
-            var moved = settings.Load();
-            moved.ProjectsRootPath = second;
-            settings.Save(moved);
-            await dashboard.PendingRescan;
+        var lease = busy.Acquire(TestEnv.NewDir("live-busy-repo"));
 
-            Assert.Equal(DashboardRescan.QueuedStatus, dashboard.RescanStatus);
-            Assert.Equal(first, dashboard.ConfiguredRootPath);
-            // The watcher is not a repository reader; it re-points immediately.
-            Assert.Equal(second, watcher.WatchedRoot, ignoreCase: true);
-        }
+        var moved = settings.Load();
+        moved.ProjectsRootPath = second;
+        settings.Save(moved);
+        await dashboard.PendingRescan;
+
+        Assert.Equal(DashboardRescan.QueuedStatus, dashboard.RescanStatus);
+        Assert.Equal(first, dashboard.ConfiguredRootPath);
+        // The watcher is not a repository reader; it re-points immediately.
+        Assert.Equal(second, watcher.WatchedRoot, ignoreCase: true);
+
+        // Releasing the last lease is the only signal left — no further settings write is
+        // coming — so the queued scan has to start from the registry notification alone.
+        lease.Dispose();
+        await dashboard.PendingRescan;
+
+        Assert.Equal(second, dashboard.ConfiguredRootPath);
+        Assert.Equal("", dashboard.RescanStatus);
+    }
+
+    [Fact]
+    public async Task AScanTriggeredDuringADrain_IsCoalescedIntoIt()
+    {
+        var first = TestEnv.NewDir("live-drain-first");
+        var second = TestEnv.NewDir("live-drain-second");
+        var settings = new SettingsService();
+        settings.Save(BaseSettings(first));
+
+        using var watcher = new ProjectWatcherService();
+        var discovery = new GatedDiscovery(settings, new GitHubService(settings));
+        var dashboard = NewDashboard(settings, watcher, new RepoBusyRegistry(), discovery);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+
+        var moved = settings.Load();
+        moved.ProjectsRootPath = second;
+        settings.Save(moved);
+
+        // The drain is parked inside the gated scan, and the command says so — the toolbar
+        // button is disabled for the whole drain, not just for a direct press.
+        Assert.Equal(1, discovery.Started);
+        Assert.True(dashboard.ForceRefreshCommand.IsRunning);
+        Assert.False(dashboard.ForceRefreshCommand.CanExecute(null));
+
+        // The palette/F5 and Settings "Force sync" paths execute without consulting
+        // CanExecute; both must join the running scan rather than start a second fan-out.
+        dashboard.ForceRefreshCommand.Execute(null);
+        var forceSync = dashboard.ForceRefreshCommand.ExecuteAsync(null);
+        Assert.Equal(1, discovery.Started);
+
+        discovery.Release();
+        await forceSync;
+        await dashboard.PendingRescan;
+
+        Assert.Equal(1, discovery.Started);
+        Assert.Equal(second, dashboard.ConfiguredRootPath);
+        Assert.Equal("", dashboard.RescanStatus);
+    }
+
+    [Fact]
+    public async Task HidingWithTheRescanQueued_SaysTheGridHasNotCaughtUp()
+    {
+        var root = TestEnv.NewDir("live-hide");
+        var settings = new SettingsService();
+        settings.Save(BaseSettings(root));
+
+        using var watcher = new ProjectWatcherService();
+        var busy = new RepoBusyRegistry();
+        var dashboard = NewDashboard(settings, watcher, busy);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+
+        var project = new ProjectInfo
+        {
+            DirectoryName = "alpha",
+            DisplayName = "alpha",
+            FullPath = Path.Combine(root, "alpha")
+        };
+
+        var lease = busy.Acquire(TestEnv.NewDir("live-hide-repo"));
+        await dashboard.HideProjectCommand.ExecuteAsync(project);
+
+        // The card is still on the grid: without a notice the click reads as ignored.
+        Assert.Equal(DashboardRescan.QueuedStatus, dashboard.RescanStatus);
+        Assert.Contains("alpha", dashboard.OpStatusText);
+        Assert.Contains("queued rescan", dashboard.OpStatusText);
+
+        lease.Dispose();
+        await dashboard.PendingRescan;
+    }
+
+    [Fact]
+    public async Task UnhidingWithTheRescanQueued_SaysTheGridHasNotCaughtUp()
+    {
+        var root = TestEnv.NewDir("live-unhide");
+        var settings = new SettingsService();
+        var seeded = BaseSettings(root);
+        seeded.ExcludedDirectories = ["alpha"];
+        settings.Save(seeded);
+
+        using var watcher = new ProjectWatcherService();
+        var busy = new RepoBusyRegistry();
+        var dashboard = NewDashboard(settings, watcher, busy);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+
+        var project = new ProjectInfo
+        {
+            DirectoryName = "alpha",
+            DisplayName = "alpha",
+            FullPath = Path.Combine(root, "alpha")
+        };
+
+        var lease = busy.Acquire(TestEnv.NewDir("live-unhide-repo"));
+        await dashboard.UnhideProjectCommand.ExecuteAsync(project);
+
+        // It has left the hidden view and has not reached the grid; saying nothing would
+        // leave the repository apparently gone from both.
+        Assert.Equal(DashboardRescan.QueuedStatus, dashboard.RescanStatus);
+        Assert.Contains("alpha", dashboard.OpStatusText);
+        Assert.Contains("queued rescan", dashboard.OpStatusText);
+
+        lease.Dispose();
+        await dashboard.PendingRescan;
     }
 
     [Fact]
