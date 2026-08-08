@@ -39,7 +39,24 @@ public class DetailPageMarkupTests
             SideBySidePane_SplitsEvenlyAndScrollsToTheEndOfALongLine(page);
             ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(page);
             StatusLines_CarryTheirValueAndAreAnnouncedAsTheyChange(page);
+            // Last: it applies a theme, and the assertions above read the brushes in force.
+            TheStatusPalette_OutranksTheThemeDictionary();
         });
+
+    /// <summary>
+    /// Applying a theme rebuilds the merged dictionaries, so the palette has to be re-appended
+    /// after it. A palette that is merged before the theme dictionary resolves to the theme's
+    /// own value, and the contrast-corrected colours silently stop being the ones on screen.
+    /// </summary>
+    private static void TheStatusPalette_OutranksTheThemeDictionary()
+    {
+        Wpf.Ui.Appearance.ApplicationThemeManager.Apply(Wpf.Ui.Appearance.ApplicationTheme.Dark);
+        Wpf.Ui.Appearance.ApplicationThemeManager.Apply(Wpf.Ui.Appearance.ApplicationTheme.Light);
+        ProjectDashboard.Views.Windows.MainWindow.ApplyPalette(Wpf.Ui.Appearance.ApplicationTheme.Light);
+
+        var secondary = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+        Assert.Equal(Color.FromRgb(0x5C, 0x5C, 0x5C), secondary.Color);
+    }
 
     /// <summary>
     /// An item container with no <see cref="AutomationProperties.Name"/> is announced as the

@@ -49,6 +49,9 @@ public sealed class SideBySideRowNarrator : IValueConverter
 
     internal static string Narrate(SideBySideRow row)
     {
+        // The marker spans both columns like a header, so the header branch would otherwise
+        // announce it as one.
+        if (row.Header?.IsNoNewlineMarker == true) return "No newline at end of file";
         if (row.IsHeader) return $"Hunk header {row.HeaderText}";
 
         var left = Join(row.LeftSegments);

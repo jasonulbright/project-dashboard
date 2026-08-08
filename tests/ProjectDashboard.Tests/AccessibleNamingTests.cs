@@ -71,7 +71,13 @@ public class AccessibleNamingTests
             new DiffLine { Kind = DiffLineKind.HunkHeader, Text = "@@ -1,2 +1,2 @@", HunkIndex = 0 },
             new DiffLine { Kind = DiffLineKind.Context, Text = "kept", OldNumber = "1", NewNumber = "1" },
             new DiffLine { Kind = DiffLineKind.Removed, Text = "gone", OldNumber = "2" },
-            new DiffLine { Kind = DiffLineKind.Added, Text = "fresh", NewNumber = "2" }
+            new DiffLine { Kind = DiffLineKind.Added, Text = "fresh", NewNumber = "2" },
+            new DiffLine
+            {
+                Kind = DiffLineKind.Context,
+                Text = @"\ No newline at end of file",
+                IsNoNewlineMarker = true
+            }
         ]);
 
         var narrated = rows.Select(Helpers.SideBySideRowNarrator.Narrate).ToList();
@@ -82,5 +88,8 @@ public class AccessibleNamingTests
             n.Contains("gone") && (n.StartsWith("Removed line") || n.StartsWith("Changed line")));
         Assert.Contains(narrated, n =>
             n.Contains("fresh") && (n.StartsWith("Added line") || n.StartsWith("Changed line")));
+        // The marker spans both columns, which is how a hunk header is carried too.
+        Assert.Contains("No newline at end of file", narrated);
+        Assert.DoesNotContain(narrated, n => n.StartsWith("Hunk header \\"));
     }
 }

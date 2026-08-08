@@ -216,7 +216,7 @@ public partial class MainWindow : INavigationWindow
     /// rather than edited in place: applying a theme rebuilds the merged dictionaries, and a
     /// palette that is not last is outranked by the theme dictionary's own keys.
     /// </summary>
-    private static void ApplyPalette(Wpf.Ui.Appearance.ApplicationTheme theme)
+    internal static void ApplyPalette(Wpf.Ui.Appearance.ApplicationTheme theme)
     {
         var merged = Application.Current?.Resources.MergedDictionaries;
         if (merged is null) return;

@@ -231,6 +231,12 @@
             <TextBlock Text="{Binding OpStatusText}"
                        AutomationProperties.LiveSetting="Polite" FontSize="12" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <!-- The bulk-op tally changes once per repository. It carries no live setting: a
+                 polite region here queues one announcement per repository and the result
+                 arrives behind all of them. -->
+            <TextBlock Text="{Binding OpProgressText}"
+                       FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <TextBlock Text="{Binding RescanStatus}"
                        AutomationProperties.LiveSetting="Polite" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
@@ -374,15 +380,39 @@
                  walks the focused card's actions and then leaves the grid. Local here
                  instead costs a stop per card plus three per card's buttons, which puts
                  anything below a large grid out of reach. -->
-            <ItemsControl ItemsSource="{Binding FilteredProjects}"
-                          KeyboardNavigation.TabNavigation="Once"
-                          KeyboardNavigation.DirectionalNavigation="Cycle"
-                          AutomationProperties.Name="Project cards">
-                <!-- The card Border below is focusable but carries no automation peer, so its own
-                     name never reaches a reader; the generated container is what gets announced,
-                     and with no name it falls back to the item's ToString. -->
-                <ItemsControl.ItemContainerStyle>
-                    <Style TargetType="ContentPresenter">
+            <!-- The card Border below carries no automation peer, so the generated container is
+                 the only element whose name reaches a reader; a name on the Border does not.
+                 The container is announced as a list item rather than as an untyped data item,
+                 which is what a grid a reader steps through owes it. -->
+            <ListBox ItemsSource="{Binding FilteredProjects}"
+                     KeyboardNavigation.TabNavigation="Once"
+                     KeyboardNavigation.DirectionalNavigation="Cycle"
+                     IsSynchronizedWithCurrentItem="False"
+                     AutomationProperties.Name="Project cards">
+                <!-- The list is the grid itself: it sits inside the page's ScrollViewer, so its
+                     own template must add no second scroller, no border, and no background. -->
+                <ListBox.Template>
+                    <ControlTemplate TargetType="ListBox">
+                        <ItemsPresenter />
+                    </ControlTemplate>
+                </ListBox.Template>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <!-- Focus stays on the card Border, which owns the click, Enter, and Space
+                             bindings; a key event starting on the container would bubble past it.
+                             A container that cannot take focus is also never selected, so the
+                             grid gains no selection state and no selection chrome. -->
+                        <Setter Property="Focusable" Value="False" />
+                        <Setter Property="IsTabStop" Value="False" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter />
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
                         <Setter Property="AutomationProperties.Name">
                             <Setter.Value>
                                 <MultiBinding StringFormat="{}{0}, branch {1}, {2} uncommitted {3}">
@@ -394,14 +424,14 @@
                             </Setter.Value>
                         </Setter>
                     </Style>
-                </ItemsControl.ItemContainerStyle>
-                <ItemsControl.ItemsPanel>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
                         <WrapPanel />
                     </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
+                </ListBox.ItemsPanel>
 
-                <ItemsControl.ItemTemplate>
+                <ListBox.ItemTemplate>
                     <DataTemplate DataType="{x:Type models:ProjectInfo}">
                         <Border Width="320" Margin="8"
                                 MinHeight="{Binding DataContext.CardMinHeight, RelativeSource={RelativeSource AncestorType=Page}}"
@@ -1138,8 +1168,8 @@
                             </Grid>
                         </Border>
                     </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                </ListBox.ItemTemplate>
+            </ListBox>
         </ScrollViewer>
         </Grid>
     </DockPanel>

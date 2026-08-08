@@ -4,15 +4,16 @@
 
     <!-- The dark palette's foregrounds are tuned against a near-black surface and fall to
          around 2:1 on a near-white one. These are the same hues darkened until each clears
-         4.5:1 against #FDFDFD and against its own tint. -->
-    <SolidColorBrush x:Key="StatusGoodFg" Color="#1A7F37" />
+         4.5:1 against the #FDFDFD page and against its own tint composited over that page;
+         the floor across the six is 5:1 on tint. -->
+    <SolidColorBrush x:Key="StatusGoodFg" Color="#186E30" />
     <SolidColorBrush x:Key="StatusWarnFg" Color="#8A5300" />
     <SolidColorBrush x:Key="StatusBadFg" Color="#B32020" />
     <SolidColorBrush x:Key="StatusPrivateFg" Color="#6534C8" />
     <SolidColorBrush x:Key="StatusInfoFg" Color="#1F5FA8" />
     <SolidColorBrush x:Key="StatusNeutralFg" Color="#5A6066" />
 
-    <SolidColorBrush x:Key="StatusGoodBg" Color="#1F1A7F37" />
+    <SolidColorBrush x:Key="StatusGoodBg" Color="#1F186E30" />
     <SolidColorBrush x:Key="StatusWarnBg" Color="#1F8A5300" />
     <SolidColorBrush x:Key="StatusBadBg" Color="#1FB32020" />
     <SolidColorBrush x:Key="StatusPrivateBg" Color="#1F6534C8" />

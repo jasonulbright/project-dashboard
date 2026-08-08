@@ -1530,7 +1530,8 @@
                                        AutomationProperties.LiveSetting="Polite" />
                             <TextBlock Text="{Binding BranchExtrasErrorText}" FontSize="11" TextWrapping="Wrap"
                                        Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
-                                       AutomationProperties.AutomationId="BranchExtrasErrorText" />
+                                       AutomationProperties.AutomationId="BranchExtrasErrorText"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                     </Border>
 
@@ -1678,7 +1679,8 @@
                                            AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock Text="{Binding RemotesErrorText}" FontSize="11" TextWrapping="Wrap"
                                            Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
-                                           AutomationProperties.AutomationId="RemotesErrorText" />
+                                           AutomationProperties.AutomationId="RemotesErrorText"
+                                           AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -3474,7 +3476,8 @@
                                                AutomationProperties.LiveSetting="Polite" />
                                     <TextBlock Text="{Binding WorktreesErrorText}" FontSize="11" TextWrapping="Wrap"
                                                Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
-                                               AutomationProperties.AutomationId="WorktreesErrorText" />
+                                               AutomationProperties.AutomationId="WorktreesErrorText"
+                                               AutomationProperties.LiveSetting="Polite" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -3619,7 +3622,8 @@
                                                AutomationProperties.LiveSetting="Polite" />
                                     <TextBlock Text="{Binding SubmodulesErrorText}" FontSize="11" TextWrapping="Wrap"
                                                Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
-                                               AutomationProperties.AutomationId="SubmodulesErrorText" />
+                                               AutomationProperties.AutomationId="SubmodulesErrorText"
+                                               AutomationProperties.LiveSetting="Polite" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -3705,7 +3709,8 @@
                                            AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock Text="{Binding GitignoreErrorText}" FontSize="11" TextWrapping="Wrap"
                                            Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
-                                           AutomationProperties.AutomationId="GitignoreErrorText" />
+                                           AutomationProperties.AutomationId="GitignoreErrorText"
+                                           AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Grid>
                     </Border>

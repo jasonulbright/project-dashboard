@@ -79,7 +79,6 @@
              keystroke, and the page behind it stays fully operable otherwise. -->
         <Grid x:Name="PaletteOverlay" Grid.Row="0" Grid.RowSpan="2"
               Background="#99000000" Visibility="Collapsed"
-              AutomationProperties.Name="Command palette"
               KeyboardNavigation.TabNavigation="Cycle"
               KeyboardNavigation.ControlTabNavigation="Cycle"
               KeyboardNavigation.DirectionalNavigation="Cycle">
@@ -163,7 +162,6 @@
         <!-- ═══ ? SHORTCUT CHEAT SHEET ═══ -->
         <Grid x:Name="ShortcutOverlay" Grid.Row="0" Grid.RowSpan="2"
               Background="#99000000" Visibility="Collapsed"
-              AutomationProperties.Name="Keyboard shortcuts"
               KeyboardNavigation.TabNavigation="Cycle"
               KeyboardNavigation.ControlTabNavigation="Cycle"
               KeyboardNavigation.DirectionalNavigation="Cycle">

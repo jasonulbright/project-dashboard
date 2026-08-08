@@ -283,8 +283,14 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private bool _recoveryBannerVisible;
     [ObservableProperty] private string _recoveryBannerText = "";
 
-    // Transient operation feedback (clone / bulk sync progress and outcomes).
+    // Transient operation feedback (clone / bulk sync progress and outcomes). OpStatusText is
+    // announced as it changes, so it carries milestones only: a per-repository counter written
+    // here would queue one announcement per repository and bury the result behind them.
     [ObservableProperty] private string _opStatusText = "";
+
+    // The running tally of a bulk op, which changes once per repository and is shown but not
+    // announced.
+    [ObservableProperty] private string _opProgressText = "";
 
     private bool _bulkOpActive;
     private object? _bulkOpHolder;
@@ -1127,6 +1133,8 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         if (TryClaimBulkOp() is not { } claim) { OpStatusText = BulkOpBusyNotice; return; }
+        OpStatusText = $"Sync all: syncing {candidates.Count} repos…";
+        OpProgressText = $"0/{candidates.Count}";
         var outcomes = new System.Collections.Concurrent.ConcurrentBag<string>();
         var done = 0;
         var semaphore = new SemaphoreSlim(4);
@@ -1175,7 +1183,7 @@ public partial class DashboardViewModel : ObservableObject
             finally
             {
                 var n = Interlocked.Increment(ref done);
-                OpStatusText = $"Sync all: {n}/{candidates.Count}…";
+                OpProgressText = $"{n}/{candidates.Count}";
                 semaphore.Release();
             }
         }));
@@ -1187,7 +1195,7 @@ public partial class DashboardViewModel : ObservableObject
 
         await ForceRefreshAsync();
         }
-        finally { ReleaseBulkOp(claim); }
+        finally { OpProgressText = ""; ReleaseBulkOp(claim); }
 
         // Outside the gate: the sync is over, and a report left open overnight would hold every
         // queued re-scan and every other bulk op for as long as the dialog stands.

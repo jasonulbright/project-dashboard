@@ -67,15 +67,17 @@ public class DashboardCardNavigationTests
     private const int Height = 600;
 
     /// <summary>
-    /// Mirrors the grid's focus structure — scroller, items control, one focusable
-    /// Border per card, three action buttons inside each — with the navigation modes
-    /// the page declares. Two cards fit per row at this width.
+    /// Mirrors the grid's focus structure — scroller, list, one generated container per
+    /// card, one focusable Border inside each, three action buttons inside that — with the
+    /// navigation modes and container focus settings the page declares. The containers are
+    /// what a reader is announced, and a container that took focus would put the keyboard on
+    /// an element that carries none of the card's bindings. Two cards fit per row at this width.
     /// </summary>
     private static Probe BuildProbe(int cardCount)
     {
         var markup = new XmlDocument();
         markup.LoadXml(RepoSource.Read(PageXaml));
-        var gridElement = Element(markup, "//*[local-name()='ScrollViewer']/*[local-name()='ItemsControl']");
+        var gridElement = Element(markup, "//*[local-name()='ScrollViewer']/*[local-name()='ListBox']");
         var cardElement = Element(markup, "//*[local-name()='DataTemplate']/*[local-name()='Border']");
         var actionsElement = Element(markup,
             "//*[local-name()='StackPanel'][*[local-name()='Button'][@Content='Fetch']]");
@@ -84,7 +86,14 @@ public class DashboardCardNavigationTests
         root.RowDefinitions.Add(new RowDefinition());
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var items = new ItemsControl { Name = "cards" };
+        var items = new ListBox { Name = "cards" };
+        // The shipped list draws no chrome of its own: it sits inside the page's ScrollViewer,
+        // and a second scroller in the template would give the probe a different focus scope.
+        items.Template = new ControlTemplate(typeof(ListBox))
+        {
+            VisualTree = new FrameworkElementFactory(typeof(ItemsPresenter)),
+        };
+        items.ItemContainerStyle = ContainerStyle(markup);
         KeyboardNavigation.SetTabNavigation(items, TabMode(gridElement));
         KeyboardNavigation.SetDirectionalNavigation(items, DirectionalMode(gridElement));
         items.ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(WrapPanel)));
@@ -165,6 +174,31 @@ public class DashboardCardNavigationTests
             if (ReferenceEquals(next, probe.AfterGrid)) break;
         }
         return visited;
+    }
+
+    /// <summary>
+    /// The item-container style the page declares, rebuilt from its markup: the focus settings
+    /// are what keep the generated container out of the keyboard's path, and a chrome-free
+    /// template is what keeps it out of the layout.
+    /// </summary>
+    private static Style ContainerStyle(XmlDocument markup)
+    {
+        var style = new Style(typeof(ListBoxItem));
+        style.Setters.Add(new Setter(UIElement.FocusableProperty, SetterFlag(markup, "Focusable")));
+        style.Setters.Add(new Setter(Control.IsTabStopProperty, SetterFlag(markup, "IsTabStop")));
+        style.Setters.Add(new Setter(Control.TemplateProperty, new ControlTemplate(typeof(ListBoxItem))
+        {
+            VisualTree = new FrameworkElementFactory(typeof(ContentPresenter)),
+        }));
+        return style;
+    }
+
+    private static bool SetterFlag(XmlDocument markup, string property)
+    {
+        var setter = Element(markup,
+            $"//*[local-name()='ListBox.ItemContainerStyle']/*[local-name()='Style']" +
+            $"/*[local-name()='Setter'][@Property='{property}']");
+        return bool.Parse(setter.GetAttribute("Value"));
     }
 
     private static XmlElement Element(XmlDocument markup, string xpath)
