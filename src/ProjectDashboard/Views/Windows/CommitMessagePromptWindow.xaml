@@ -35,7 +35,8 @@
                     VerticalContentAlignment="Top"
                     VerticalScrollBarVisibility="Auto"
                     FontFamily="Cascadia Code,Consolas" FontSize="13"
-                    AutomationProperties.Name="Commit message" />
+                    AutomationProperties.Name="Commit message"
+                    AutomationProperties.HelpText="{Binding Text, ElementName=PromptText}" />
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,0,16,16">
             <TextBlock Text="Ctrl+Enter saves, Esc cancels." FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"

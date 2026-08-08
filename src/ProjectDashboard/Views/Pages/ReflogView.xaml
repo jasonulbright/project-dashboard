@@ -32,7 +32,7 @@
                 KeyboardNavigation.ControlTabNavigation="Cycle"
                 KeyboardNavigation.DirectionalNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
-                BorderBrush="{StaticResource StatusInfoFg}" BorderThickness="1">
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -49,7 +49,7 @@
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="ClockArrowDownload24" FontSize="16" VerticalAlignment="Center"
-                                           Margin="0,0,8,0" Foreground="{StaticResource StatusInfoFg}" />
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusInfoFg}" />
                             <TextBlock Text="Reflog" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
@@ -110,6 +110,21 @@
                                  SelectedItem="{Binding SelectedReflogEntry}"
                                  Background="Transparent" HorizontalContentAlignment="Stretch"
                                  AutomationProperties.Name="Reflog entries">
+                            <!-- Without an automation name the row is announced as its type's
+                                 name: an item container falls back to the item's ToString. -->
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name">
+                                        <Setter.Value>
+                                            <MultiBinding StringFormat="{}{0}, {1}, {2}">
+                                                <Binding Path="Selector" />
+                                                <Binding Path="ShortSha" />
+                                                <Binding Path="Description" />
+                                            </MultiBinding>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:ReflogEntry}">
                                     <DockPanel Margin="0,3">
@@ -119,11 +134,11 @@
                                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                                         <TextBlock DockPanel.Dock="Left" Width="76" Text="{Binding ShortSha}"
                                                    FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                         <TextBlock DockPanel.Dock="Left" Width="110" Text="{Binding Action}"
                                                    FontSize="12" TextTrimming="CharacterEllipsis"
                                                    ToolTip="{Binding Action}"
-                                                   Foreground="{StaticResource StatusWarnFg}" />
+                                                   Foreground="{DynamicResource StatusWarnFg}" />
                                         <TextBlock DockPanel.Dock="Right" MinWidth="72"
                                                    Text="{Binding When, Converter={StaticResource ReflogRelativeTime}}"
                                                    FontSize="11" HorizontalAlignment="Right"
@@ -162,7 +177,7 @@
 
                 <!-- ═══ FOOTER ═══ -->
                 <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                             BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -181,7 +196,8 @@
 
                     <TextBlock Text="{Binding ReflogStatusText}" FontSize="12" TextWrapping="Wrap"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               AutomationProperties.AutomationId="ReflogStatusText" />
+                               AutomationProperties.AutomationId="ReflogStatusText"
+                               AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
             </Grid>
         </Border>

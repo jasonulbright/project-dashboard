@@ -37,8 +37,10 @@
                 <ui:Button DockPanel.Dock="Right"
                            Content="Browse"
                            Command="{Binding BrowseFolderCommand}"
+                           AutomationProperties.Name="Browse for the projects root folder"
                            Margin="8,0,0,0" />
                 <ui:TextBox Text="{Binding ProjectsRootPath, UpdateSourceTrigger=PropertyChanged}"
+                            AutomationProperties.Name="Projects root path"
                             PlaceholderText="C:\projects" />
             </DockPanel>
 
@@ -50,13 +52,15 @@
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
                 <ui:TextBox Text="{Binding RefreshIntervalSeconds, UpdateSourceTrigger=PropertyChanged}"
+                            AutomationProperties.Name="Refresh interval in seconds"
                             PlaceholderText="300"
                             Width="150" />
                 <ui:Button Content="Sync Now"
                            Icon="{ui:SymbolIcon ArrowSync24}"
                            Command="{Binding ForceSyncCommand}"
                            Margin="8,0,0,0" />
-                <TextBlock Text="{Binding SyncStatus}" FontSize="12"
+                <TextBlock Text="{Binding SyncStatus}"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            VerticalAlignment="Center" Margin="12,0,0,0" />
             </StackPanel>
@@ -68,6 +72,7 @@
                        FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <ui:TextBox Text="{Binding ExcludedDirectories, UpdateSourceTrigger=PropertyChanged}"
+                        AutomationProperties.Name="Excluded directory names"
                         PlaceholderText="Internal, games, Archive"
                         Margin="0,0,0,24" />
 
@@ -82,7 +87,8 @@
                            Appearance="Primary"
                            Command="{Binding SaveSettingsCommand}" />
                 <TextBlock Grid.Column="1"
-                           Text="{Binding SaveStatus}" FontSize="12" TextWrapping="Wrap"
+                           Text="{Binding SaveStatus}"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            VerticalAlignment="Center" Margin="12,0,0,0" />
             </Grid>
@@ -95,14 +101,14 @@
                     <ui:SymbolIcon.Style>
                         <Style TargetType="ui:SymbolIcon">
                             <Setter Property="Symbol" Value="PlugDisconnected24" />
-                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding GitHubStatus}" Value="Signed in">
                                     <Setter Property="Symbol" Value="PlugConnected24" />
-                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding GitHubStatus}" Value="GitHub CLI not found">
-                                    <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -122,8 +128,10 @@
                 <ui:Button DockPanel.Dock="Right"
                            Content="Browse"
                            Command="{Binding BrowseGhCommand}"
+                           AutomationProperties.Name="Browse for the GitHub CLI executable"
                            Margin="8,0,0,0" />
                 <ui:TextBox Text="{Binding GhPath, UpdateSourceTrigger=PropertyChanged}"
+                            AutomationProperties.Name="Path to the GitHub CLI executable"
                             PlaceholderText="Auto-detect (leave blank to use PATH)" />
             </DockPanel>
 

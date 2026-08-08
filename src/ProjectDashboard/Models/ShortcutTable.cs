@@ -33,6 +33,9 @@ public static class ShortcutTable
 
         new(DetailGroup, "Ctrl+1 … Ctrl+9", "Jump to work-area tabs 1–9"),
         new(DetailGroup, "Ctrl+0", "Jump to work-area tab 10"),
+        // There are eleven tabs and only ten digits, so the eleventh is reachable by
+        // arrow key alone; a sheet that omitted this would read as though it were unreachable.
+        new(DetailGroup, "Left / Right", "Move between all eleven work-area tabs, including the eleventh"),
         new(DetailGroup, "Ctrl+Enter", "Commit the staged changes"),
         new(DetailGroup, "Enter / Space", "Open the focused list row"),
     ];

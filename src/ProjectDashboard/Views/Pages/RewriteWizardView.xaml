@@ -37,22 +37,22 @@
         <!-- One scrub check: the verdict word, its sentence, and the evidence behind it. -->
         <DataTemplate x:Key="ScrubVerdictTemplate" DataType="{x:Type vm:ScrubVerdictLine}">
             <Border CornerRadius="6" Padding="12,8" Margin="0,0,0,8"
-                    Background="{StaticResource StatusGoodBg}" BorderThickness="1"
-                    BorderBrush="{StaticResource StatusGoodFg}">
+                    Background="{DynamicResource StatusGoodBg}" BorderThickness="1"
+                    BorderBrush="{DynamicResource StatusGoodFg}">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding Verdict}" Value="OccurrencesRemain">
-                                <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource StatusBadFg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource StatusBadFg}" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding Verdict}" Value="NotVerified">
-                                <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource StatusBadFg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource StatusBadFg}" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding Verdict}" Value="CleanWithinScope">
-                                <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource StatusWarnFg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource StatusWarnFg}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -100,16 +100,16 @@
                                     <Setter Property="Visibility" Value="Collapsed" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding RewriteOverallVerdict.IsProblem}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource StatusBadFg}" />
+                                    <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource StatusBadFg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding RewriteOverallVerdict.Verdict}" Value="CleanWithinScope">
-                                    <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource StatusWarnFg}" />
+                                    <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource StatusWarnFg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding RewriteOverallVerdict.ClaimsClean}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource StatusGoodFg}" />
+                                    <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource StatusGoodFg}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -162,7 +162,7 @@
                 KeyboardNavigation.ControlTabNavigation="Cycle"
                 KeyboardNavigation.DirectionalNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
-                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1">
+                BorderBrush="{DynamicResource StatusBadFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -181,7 +181,7 @@
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="History24" FontSize="16" VerticalAlignment="Center"
-                                           Margin="0,0,8,0" Foreground="{StaticResource StatusBadFg}" />
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusBadFg}" />
                             <TextBlock Text="Rewrite history" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
@@ -359,12 +359,27 @@
                                              SelectedItem="{Binding RewriteScopePickedCommit}"
                                              Height="180" Background="Transparent"
                                              AutomationProperties.Name="Commits available to add to the scope">
+                                        <!-- Without an automation name the row is announced as its
+                                             type's name: an item container falls back to the item's
+                                             ToString. -->
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="AutomationProperties.Name">
+                                                    <Setter.Value>
+                                                        <MultiBinding StringFormat="{}{0}, commit {1}">
+                                                            <Binding Path="Message" />
+                                                            <Binding Path="ShortHash" />
+                                                        </MultiBinding>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
                                         <ListBox.ItemTemplate>
                                             <DataTemplate DataType="{x:Type models:GitCommit}">
                                                 <DockPanel>
                                                     <TextBlock DockPanel.Dock="Left" Width="64" Text="{Binding ShortHash}"
                                                                FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                                               Foreground="{StaticResource StatusInfoFg}" />
+                                                               Foreground="{DynamicResource StatusInfoFg}" />
                                                     <TextBlock Text="{Binding Message}" FontSize="12"
                                                                TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}"
                                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -455,7 +470,7 @@
 
                         <!-- ── STEP 4: TYPED CONFIRMATION ── -->
                         <StackPanel Visibility="{Binding RewriteStepIsConfirm, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                                     BorderThickness="1" CornerRadius="8" Padding="14,12">
                                 <TextBlock Text="{Binding RewriteConfirmMessage}" FontSize="13" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -472,7 +487,8 @@
                                     Margin="0,24,0,0" HorizontalAlignment="Left">
                             <StackPanel Orientation="Horizontal">
                                 <ui:ProgressRing IsIndeterminate="True" Width="24" Height="24" VerticalAlignment="Center" />
-                                <TextBlock Text="{Binding RewriteStatusText}" FontSize="14" Margin="12,0,0,0"
+                                <TextBlock Text="{Binding RewriteStatusText}"
+                                           AutomationProperties.LiveSetting="Polite" FontSize="14" Margin="12,0,0,0"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             </StackPanel>
@@ -482,32 +498,34 @@
                                        Text="Cancelling is safe until that transaction begins — up to then nothing in this repository has been touched. Once it begins it runs to completion, because a half-applied swap is the one outcome that cannot be recovered from."
                                        Visibility="{Binding RewriteCanCancel, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             <Border CornerRadius="6" Padding="12,8" Margin="0,6,0,0" HorizontalAlignment="Left"
-                                    Background="{StaticResource StatusWarnBg}" BorderThickness="1"
-                                    BorderBrush="{StaticResource StatusWarnFg}"
+                                    Background="{DynamicResource StatusWarnBg}" BorderThickness="1"
+                                    BorderBrush="{DynamicResource StatusWarnFg}"
                                     Visibility="{Binding RewriteCancelClosedVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Text="Applying — the rewrite can no longer be cancelled. The ref transaction is all-or-nothing and is finishing now."
                                            FontSize="12" TextWrapping="Wrap" MaxWidth="640"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                           AutomationProperties.AutomationId="RewriteCancelClosedNotice" />
+                                           AutomationProperties.AutomationId="RewriteCancelClosedNotice"
+                                           AutomationProperties.LiveSetting="Polite" />
                             </Border>
                         </StackPanel>
 
                         <!-- ── RESULT ── -->
                         <StackPanel Visibility="{Binding RewriteStepIsResult, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Border CornerRadius="8" Padding="14,10" Margin="0,0,0,8"
-                                    Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                                    Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                                     BorderThickness="1">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding RewriteResultSucceeded}" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
-                                                <Setter Property="BorderBrush" Value="{StaticResource StatusInfoFg}" />
+                                                <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource StatusInfoFg}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <TextBlock Text="{Binding RewriteStatusText}" FontSize="14" TextWrapping="Wrap"
+                                <TextBlock Text="{Binding RewriteStatusText}"
+                                           AutomationProperties.LiveSetting="Polite" FontSize="14" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             </Border>
 
@@ -556,7 +574,7 @@
 
                 <!-- ═══ FOOTER ═══ -->
                 <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                             BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -570,13 +588,14 @@
                         </Border.Style>
                         <TextBlock Text="{Binding RewriteErrorText}" FontSize="12" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                   AutomationProperties.Name="Rewrite problem" />
+                                   AutomationProperties.Name="{Binding RewriteErrorText, StringFormat='Rewrite problem: {0}'}"
+                                   AutomationProperties.LiveSetting="Assertive" />
                     </Border>
 
                     <!-- Why Next is refused, live, so an unusable size says so before it is clicked. -->
                     <TextBlock Text="{Binding RewriteNextBlockedReason}" FontSize="12" TextWrapping="Wrap"
                                Margin="0,0,0,8"
-                               Foreground="{StaticResource StatusWarnFg}"
+                               Foreground="{DynamicResource StatusWarnFg}"
                                AutomationProperties.AutomationId="RewriteNextBlockedReason">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -621,7 +640,8 @@
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <ui:ProgressRing IsIndeterminate="True" Width="16" Height="16" Margin="0,0,10,0"
                                              Visibility="{Binding RewriteRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                            <TextBlock Text="{Binding RewriteStatusText}" FontSize="12" TextWrapping="Wrap"
+                            <TextBlock Text="{Binding RewriteStatusText}"
+                                       AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
                                        VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                         </StackPanel>

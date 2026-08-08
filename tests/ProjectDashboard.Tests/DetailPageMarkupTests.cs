@@ -1,5 +1,7 @@
 using System.Runtime.ExceptionServices;
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using ProjectDashboard.Helpers;
@@ -35,7 +37,96 @@ public class DetailPageMarkupTests
             // Laid out here for the same reason: the pane's own template and list style, on the
             // one thread this Application's brushes belong to.
             SideBySidePane_SplitsEvenlyAndScrollsToTheEndOfALongLine(page);
+            ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(page);
+            StatusLines_CarryTheirValueAndAreAnnouncedAsTheyChange(page);
         });
+
+    /// <summary>
+    /// An item container with no <see cref="AutomationProperties.Name"/> is announced as the
+    /// item's ToString, which for every model bound here is the type's own name.
+    /// </summary>
+    private static void ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(ProjectDetailPage page)
+    {
+        AssertRowNames(
+            new ListBox
+            {
+                // An explicit style keeps the themed implicit one, whose template needs a
+                // render pass this window never takes, off the list.
+                Style = new Style(typeof(ListBox)),
+                ItemTemplate = (DataTemplate)page.Resources["WorkingFileTemplate"],
+                ItemContainerStyle = (Style)page.Resources["WorkingFileRow"],
+                ItemsSource = new[]
+                {
+                    new WorkingFile { Path = "src/a.txt", WorktreeStatus = 'M' },
+                    new WorkingFile { Path = "src/b.txt", IsUntracked = true }
+                }
+            },
+            "M src/a.txt", "U src/b.txt");
+
+        AssertRowNames(
+            new ListBox
+            {
+                Style = (Style)page.Resources["DiffListStyle"],
+                ItemsSource = new[]
+                {
+                    new DiffLine { Kind = DiffLineKind.Removed, Text = "gone", OldNumber = "2" },
+                    new DiffLine { Kind = DiffLineKind.Added, Text = "fresh", NewNumber = "2" }
+                }
+            },
+            "Removed line 2: gone", "Added line 2: fresh");
+    }
+
+    /// <summary>
+    /// A name on a TextBlock REPLACES its text for a reader, so a status line that carries one
+    /// has to carry its value inside it; and an outcome a reader is never told about is an
+    /// outcome the app did not report.
+    /// </summary>
+    private static void StatusLines_CarryTheirValueAndAreAnnouncedAsTheyChange(ProjectDetailPage page)
+    {
+        var model = (ProjectDetailViewModel)page.DataContext;
+        model.SurgeryStatusText = "Reordered 3 commits.";
+
+        var window = new Window { Content = page, Width = 1400, Height = 900, ShowActivated = false };
+        try
+        {
+            window.Show();
+            window.UpdateLayout();
+
+            // A TabControl realizes only the selected tab, and the history-edit status line
+            // lives on the History tab.
+            var tabs = (TabControl)page.FindName("WorkTabs")!;
+            tabs.SelectedIndex = (int)DetailTab.History;
+            window.UpdateLayout();
+
+            var line = Descendants<TextBlock>(window)
+                .Single(t => t.Text == "Reordered 3 commits.");
+            Assert.Contains("Reordered 3 commits.", AutomationProperties.GetName(line));
+
+            var live = Descendants<TextBlock>(window)
+                .Count(t => new FrameworkElementAutomationPeer(t).GetLiveSetting() != AutomationLiveSetting.Off);
+            Assert.True(live >= 3, $"only {live} status lines are announced as they change");
+        }
+        finally { window.Close(); }
+    }
+
+    private static void AssertRowNames(ListBox list, params string[] expected)
+    {
+        var window = new Window { Content = list, Width = 600, Height = 400, ShowActivated = false };
+        try
+        {
+            // A virtualizing panel realizes rows against a viewport this window never paints,
+            // so nothing would be generated to read a name off.
+            VirtualizingPanel.SetIsVirtualizing(list, false);
+            window.Show();
+            window.UpdateLayout();
+
+            var names = Descendants<ListBoxItem>(list)
+                .Select(AutomationProperties.GetName)
+                .ToArray();
+            Assert.Equal(expected, names);
+        }
+        finally { window.Close(); }
+    }
 
     /// <summary>
     /// The two-column pane at real widths, with its shipped template and list style. A long line
@@ -117,6 +208,10 @@ public class DetailPageMarkupTests
             {
                 var app = Application.Current as ProjectDashboard.App ?? new ProjectDashboard.App();
                 app.InitializeComponent();
+                // The shipped mode shuts the Application down when the first window closes, and
+                // a window opened after that never lays out — so later assertions would read an
+                // empty visual tree rather than fail on what they are checking.
+                app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 action();
             }
             catch (Exception ex) { error = ex; }

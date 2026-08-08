@@ -1,0 +1,34 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- The dark palette's foregrounds are tuned against a near-black surface and fall to
+         around 2:1 on a near-white one. These are the same hues darkened until each clears
+         4.5:1 against #FDFDFD and against its own tint. -->
+    <SolidColorBrush x:Key="StatusGoodFg" Color="#1A7F37" />
+    <SolidColorBrush x:Key="StatusWarnFg" Color="#8A5300" />
+    <SolidColorBrush x:Key="StatusBadFg" Color="#B32020" />
+    <SolidColorBrush x:Key="StatusPrivateFg" Color="#6534C8" />
+    <SolidColorBrush x:Key="StatusInfoFg" Color="#1F5FA8" />
+    <SolidColorBrush x:Key="StatusNeutralFg" Color="#5A6066" />
+
+    <SolidColorBrush x:Key="StatusGoodBg" Color="#1F1A7F37" />
+    <SolidColorBrush x:Key="StatusWarnBg" Color="#1F8A5300" />
+    <SolidColorBrush x:Key="StatusBadBg" Color="#1FB32020" />
+    <SolidColorBrush x:Key="StatusPrivateBg" Color="#1F6534C8" />
+    <SolidColorBrush x:Key="StatusInfoBg" Color="#1F1F5FA8" />
+    <!-- A white tint is invisible on a white surface; the neutral chip is a grey wash here. -->
+    <SolidColorBrush x:Key="StatusNeutralBg" Color="#14000000" />
+
+    <SolidColorBrush x:Key="FocusRingBrush" Color="#0F5FBF" />
+    <SolidColorBrush x:Key="DiffRemovedCellBg" Color="#1FB32020" />
+    <SolidColorBrush x:Key="DiffAddedCellBg" Color="#1F1A7F37" />
+    <SolidColorBrush x:Key="DiffRemovedWordBg" Color="#4CB32020" />
+    <SolidColorBrush x:Key="DiffAddedWordBg" Color="#4C1A7F37" />
+    <SolidColorBrush x:Key="DiffAbsentCellBg" Color="#14000000" />
+
+    <!-- The shipped light theme's secondary and tertiary text sit at 3.2:1 and 2.0:1 against
+         the page. Every form label, hint, and timestamp uses one of them. -->
+    <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#5C5C5C" />
+    <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#616161" />
+</ResourceDictionary>

@@ -28,19 +28,19 @@
             <Border CornerRadius="3" Padding="5,0" Margin="0,0,4,0" VerticalAlignment="Center">
                 <Border.Style>
                     <Style TargetType="Border">
-                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                        <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding Kind}" Value="LocalBranch">
-                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding Kind}" Value="RemoteBranch">
-                                <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding Kind}" Value="Tag">
-                                <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding Kind}" Value="Head">
-                                <Setter Property="Background" Value="{StaticResource StatusPrivateBg}" />
+                                <Setter Property="Background" Value="{DynamicResource StatusPrivateBg}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -60,7 +60,7 @@
                 KeyboardNavigation.ControlTabNavigation="Cycle"
                 KeyboardNavigation.DirectionalNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
-                BorderBrush="{StaticResource StatusInfoFg}" BorderThickness="1">
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -77,7 +77,7 @@
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="BranchFork24" FontSize="16" VerticalAlignment="Center"
-                                           Margin="0,0,8,0" Foreground="{StaticResource StatusInfoFg}" />
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusInfoFg}" />
                             <TextBlock Text="Commit graph" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
@@ -121,6 +121,17 @@
                                 <Setter Property="BorderThickness" Value="0" />
                                 <Setter Property="MinHeight" Value="24" />
                                 <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                                <!-- The lane cell is drawn, not written, and an item container with
+                                     no automation name falls back to the item's ToString. -->
+                                <Setter Property="AutomationProperties.Name">
+                                    <Setter.Value>
+                                        <MultiBinding StringFormat="{}{0}, commit {1}, lane {2}">
+                                            <Binding Path="Subject" />
+                                            <Binding Path="ShortSha" />
+                                            <Binding Path="Lane" />
+                                        </MultiBinding>
+                                    </Setter.Value>
+                                </Setter>
                             </Style>
                         </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
@@ -146,7 +157,7 @@
                                     <TextBlock Grid.Column="1" Text="{Binding ShortSha}" Margin="8,0,8,0"
                                                VerticalAlignment="Center"
                                                FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                               Foreground="{StaticResource StatusInfoFg}" />
+                                               Foreground="{DynamicResource StatusInfoFg}" />
 
                                     <ItemsControl Grid.Column="2" ItemsSource="{Binding Refs}"
                                                   VerticalAlignment="Center" Margin="0,0,6,0"
@@ -181,7 +192,7 @@
 
                 <!-- ═══ FOOTER ═══ -->
                 <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                             BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -207,7 +218,8 @@
                         <TextBlock Text="{Binding GraphStatusText}" FontSize="12" TextWrapping="Wrap"
                                    VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   AutomationProperties.AutomationId="GraphStatusText" />
+                                   AutomationProperties.AutomationId="GraphStatusText"
+                                   AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
                 </StackPanel>
             </Grid>

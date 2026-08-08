@@ -30,7 +30,7 @@
                 KeyboardNavigation.ControlTabNavigation="Cycle"
                 KeyboardNavigation.DirectionalNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
-                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1">
+                BorderBrush="{DynamicResource StatusBadFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -47,7 +47,7 @@
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="CloudArrowUp24" FontSize="16" VerticalAlignment="Center"
-                                           Margin="0,0,8,0" Foreground="{StaticResource StatusBadFg}" />
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusBadFg}" />
                             <TextBlock Text="Push rewritten history" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
@@ -87,8 +87,8 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:ForcePushRow}">
                                     <Border CornerRadius="6" Padding="12,10" Margin="0,0,0,8"
-                                            Background="{StaticResource StatusBadBg}" BorderThickness="1"
-                                            BorderBrush="{StaticResource StatusBadFg}">
+                                            Background="{DynamicResource StatusBadBg}" BorderThickness="1"
+                                            BorderBrush="{DynamicResource StatusBadFg}">
                                         <DockPanel>
                                             <!-- Per-branch opt-out: the typed name confirms the rows
                                                  that are checked, not the plan as a whole. -->
@@ -135,7 +135,7 @@
 
                         <!-- ── The gate ── -->
                         <StackPanel Visibility="{Binding ForcePushHasRows, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                                     BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,14,0,0">
                                 <StackPanel>
                                     <TextBlock FontSize="13" TextWrapping="Wrap"
@@ -167,7 +167,7 @@
 
                 <!-- ═══ FOOTER ═══ -->
                 <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                             BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -204,7 +204,8 @@
                             <TextBlock Text="{Binding ForcePushStatusText}" FontSize="12" TextWrapping="Wrap"
                                        VerticalAlignment="Center" MaxWidth="520"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       AutomationProperties.AutomationId="ForcePushStatusText" />
+                                       AutomationProperties.AutomationId="ForcePushStatusText"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                     </DockPanel>
                 </StackPanel>

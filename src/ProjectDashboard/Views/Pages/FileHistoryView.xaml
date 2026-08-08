@@ -31,7 +31,7 @@
                 KeyboardNavigation.ControlTabNavigation="Cycle"
                 KeyboardNavigation.DirectionalNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
-                BorderBrush="{StaticResource StatusInfoFg}" BorderThickness="1">
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -48,7 +48,7 @@
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="DocumentSearch24" FontSize="16" VerticalAlignment="Center"
-                                           Margin="0,0,8,0" Foreground="{StaticResource StatusInfoFg}" />
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusInfoFg}" />
                             <TextBlock Text="File history and blame" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="{Binding FileHistoryPath}" FontSize="13" Margin="10,0,0,0"
@@ -107,12 +107,27 @@
                                  Background="Transparent" HorizontalContentAlignment="Stretch"
                                  VirtualizingPanel.VirtualizationMode="Recycling"
                                  AutomationProperties.Name="Commits that touched this file">
+                            <!-- Without an automation name the row is announced as its type's
+                                 name: an item container falls back to the item's ToString. -->
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name">
+                                        <Setter.Value>
+                                            <MultiBinding StringFormat="{}{0}, commit {1} by {2}">
+                                                <Binding Path="Message" />
+                                                <Binding Path="ShortHash" />
+                                                <Binding Path="Author" />
+                                            </MultiBinding>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:GitCommit}">
                                     <DockPanel Margin="0,3">
                                         <TextBlock DockPanel.Dock="Left" Width="72" Text="{Binding ShortHash}"
                                                    FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                         <TextBlock DockPanel.Dock="Right" MinWidth="66"
                                                    Text="{Binding Date, Converter={StaticResource FileHistoryRelativeTime}}"
                                                    FontSize="11" HorizontalAlignment="Right"
@@ -176,6 +191,16 @@
                                 <Style TargetType="ListBoxItem">
                                     <Setter Property="Padding" Value="4,0" />
                                     <Setter Property="MinHeight" Value="18" />
+                                    <Setter Property="AutomationProperties.Name">
+                                        <Setter.Value>
+                                            <MultiBinding StringFormat="{}Line {0}, {1} by {2}: {3}">
+                                                <Binding Path="LineNumber" />
+                                                <Binding Path="ShortSha" />
+                                                <Binding Path="Author" />
+                                                <Binding Path="Text" />
+                                            </MultiBinding>
+                                        </Setter.Value>
+                                    </Setter>
                                 </Style>
                             </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
@@ -183,7 +208,7 @@
                                     <DockPanel>
                                         <TextBlock DockPanel.Dock="Left" Width="72" Text="{Binding ShortSha}"
                                                    FontFamily="Cascadia Code,Consolas" FontSize="11"
-                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                         <TextBlock DockPanel.Dock="Left" Width="104" Text="{Binding Author}"
                                                    FontSize="11" TextTrimming="CharacterEllipsis"
                                                    ToolTip="{Binding Author}"
@@ -208,7 +233,7 @@
 
                 <!-- ═══ FOOTER ═══ -->
                 <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                             BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -227,7 +252,8 @@
 
                     <TextBlock Text="{Binding FileHistoryStatusText}" FontSize="12" TextWrapping="Wrap"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               AutomationProperties.AutomationId="FileHistoryStatusText" />
+                               AutomationProperties.AutomationId="FileHistoryStatusText"
+                               AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
             </Grid>
         </Border>

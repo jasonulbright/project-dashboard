@@ -55,6 +55,21 @@
                          Background="Transparent" BorderThickness="0"
                          HorizontalContentAlignment="Stretch"
                          AutomationProperties.Name="Planned commits, oldest first">
+                    <!-- Without an automation name the row is announced as its type's name: an
+                         item container falls back to the item's ToString. -->
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="AutomationProperties.Name">
+                                <Setter.Value>
+                                    <MultiBinding StringFormat="{}{0} {1}: {2}">
+                                        <Binding Path="MarkLabel" />
+                                        <Binding Path="ShortSha" />
+                                        <Binding Path="EffectiveSubject" />
+                                    </MultiBinding>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="{x:Type pages:PlannedCommit}">
                             <DockPanel Margin="0,2">
@@ -112,7 +127,8 @@
         <TextBlock Grid.Row="4" Margin="16,10,16,0" FontSize="12" TextWrapping="Wrap"
                    Text="{Binding StatusText}"
                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   AutomationProperties.Name="Plan status" />
+                   AutomationProperties.Name="{Binding StatusText, StringFormat='Plan status: {0}'}"
+                   AutomationProperties.LiveSetting="Polite" />
 
         <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,10,16,16">
             <ui:Button Content="Move _up" Padding="12,5" Margin="0,0,8,0"

@@ -163,6 +163,12 @@ public partial class MainWindow : INavigationWindow
             if (SettingsDelta.ThemeChanged(change)) ApplySavedTheme(change.Current.Theme);
         };
 
+        // Both the Settings page and the startup apply above route through the theme manager,
+        // so following its event is what keeps the palette from drifting out of step with a
+        // theme applied from either.
+        ApplyPalette(Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme());
+        Wpf.Ui.Appearance.ApplicationThemeManager.Changed += (theme, _) => ApplyPalette(theme);
+
         Closing += (_, _) =>
         {
             var s = settingsService.Load();
@@ -196,6 +202,32 @@ public partial class MainWindow : INavigationWindow
     {
         if (ThemeToApply(saved, Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme()) is { } theme)
             Wpf.Ui.Appearance.ApplicationThemeManager.Apply(theme);
+    }
+
+    private const string PaletteSourcePrefix = "pack://application:,,,/ProjectDashboard;component/Views/Themes/StatusPalette.";
+
+    /// <summary>The status-palette dictionary a theme is rendered with.</summary>
+    public static Uri PaletteSourceFor(Wpf.Ui.Appearance.ApplicationTheme theme) =>
+        new(PaletteSourcePrefix +
+            (theme == Wpf.Ui.Appearance.ApplicationTheme.Light ? "Light" : "Dark") + ".xaml");
+
+    /// <summary>
+    /// Swaps the status palette to match the applied theme. The entry is removed and re-appended
+    /// rather than edited in place: applying a theme rebuilds the merged dictionaries, and a
+    /// palette that is not last is outranked by the theme dictionary's own keys.
+    /// </summary>
+    private static void ApplyPalette(Wpf.Ui.Appearance.ApplicationTheme theme)
+    {
+        var merged = Application.Current?.Resources.MergedDictionaries;
+        if (merged is null) return;
+
+        for (var i = merged.Count - 1; i >= 0; i--)
+        {
+            if (merged[i].Source?.OriginalString.StartsWith(
+                    PaletteSourcePrefix, StringComparison.OrdinalIgnoreCase) == true)
+                merged.RemoveAt(i);
+        }
+        merged.Add(new ResourceDictionary { Source = PaletteSourceFor(theme) });
     }
 
     // ── Saved-position restore ───────────────────────────────────────────────

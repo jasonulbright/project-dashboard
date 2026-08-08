@@ -13,6 +13,8 @@
 
     <Page.Resources>
         <helpers:RelativeTimeConverter x:Key="RelativeTimeConverter" />
+        <helpers:DiffLineNarrator x:Key="DiffLineNarrator" />
+        <helpers:SideBySideRowNarrator x:Key="SideBySideRowNarrator" />
 
         <!-- Diff row: two number gutters + monospace text, background by kind -->
         <DataTemplate x:Key="DiffLineTemplate" DataType="{x:Type models:DiffLine}">
@@ -42,6 +44,10 @@
                     <Style TargetType="ListBoxItem">
                         <Setter Property="Padding" Value="4,0" />
                         <Setter Property="MinHeight" Value="18" />
+                        <!-- Without this the row is announced as its type's name: an item container
+                             takes the item's ToString when it carries no automation name. -->
+                        <Setter Property="AutomationProperties.Name"
+                                Value="{Binding Converter={StaticResource DiffLineNarrator}}" />
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
@@ -51,20 +57,20 @@
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <DataTrigger Binding="{Binding Kind}" Value="Added">
-                                            <Setter TargetName="Row" Property="Background" Value="#1E3FB950" />
+                                            <Setter TargetName="Row" Property="Background" Value="{DynamicResource DiffAddedCellBg}" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding Kind}" Value="Removed">
-                                            <Setter TargetName="Row" Property="Background" Value="#1EE05252" />
+                                            <Setter TargetName="Row" Property="Background" Value="{DynamicResource DiffRemovedCellBg}" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding Kind}" Value="HunkHeader">
-                                            <Setter TargetName="Row" Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                            <Setter TargetName="Row" Property="Background" Value="{DynamicResource StatusInfoBg}" />
                                         </DataTrigger>
                                         <!-- Last, so it wins over the per-kind backgrounds: the hunk
                                              actions run on the selected row's hunk, and a selection
                                              that is invisible makes them look like they fire at random. -->
                                         <Trigger Property="IsSelected" Value="True">
-                                            <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource StatusInfoFg}" />
-                                            <Setter TargetName="Row" Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                            <Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource StatusInfoFg}" />
+                                            <Setter TargetName="Row" Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                                         </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>
@@ -76,12 +82,8 @@
         </Style>
 
         <!-- Side-by-side row: old cell | new cell, or a header spanning both. Cell colour is
-             per side here rather than per row, because one row carries both sides. -->
-        <SolidColorBrush x:Key="DiffRemovedCellBg" Color="#1EE05252" />
-        <SolidColorBrush x:Key="DiffAddedCellBg" Color="#1E3FB950" />
-        <SolidColorBrush x:Key="DiffRemovedWordBg" Color="#4CE05252" />
-        <SolidColorBrush x:Key="DiffAddedWordBg" Color="#4C3FB950" />
-        <SolidColorBrush x:Key="DiffAbsentCellBg" Color="#0D808080" />
+             per side rather than per row, because one row carries both sides; the tints
+             themselves live in the swapped theme palette. -->
 
         <!-- A header row spans both sides, so neither gutter names a line on it. -->
         <Style x:Key="DiffGutterNumber" TargetType="TextBlock">
@@ -100,7 +102,7 @@
                      about the file, not a line of either side of it. -->
                 <TextBlock helpers:DiffRowPanel.Cell="Span" Text="{Binding HeaderText}"
                            FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
-                           Background="{StaticResource StatusInfoBg}"
+                           Background="{DynamicResource StatusInfoBg}"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            Visibility="{Binding IsHeader, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
@@ -116,10 +118,10 @@
                         <Style TargetType="Border">
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding LeftRemoved}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource DiffRemovedCellBg}" />
+                                    <Setter Property="Background" Value="{DynamicResource DiffRemovedCellBg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding LeftAbsent}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource DiffAbsentCellBg}" />
+                                    <Setter Property="Background" Value="{DynamicResource DiffAbsentCellBg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsHeader}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -129,7 +131,7 @@
                     </Border.Style>
                     <TextBlock FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                               helpers:InlineSegments.HighlightBrush="{StaticResource DiffRemovedWordBg}"
+                               helpers:InlineSegments.HighlightBrush="{DynamicResource DiffRemovedWordBg}"
                                helpers:InlineSegments.Segments="{Binding LeftSegments}" />
                 </Border>
 
@@ -145,10 +147,10 @@
                         <Style TargetType="Border">
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding RightAdded}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource DiffAddedCellBg}" />
+                                    <Setter Property="Background" Value="{DynamicResource DiffAddedCellBg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding RightAbsent}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource DiffAbsentCellBg}" />
+                                    <Setter Property="Background" Value="{DynamicResource DiffAbsentCellBg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsHeader}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -159,7 +161,7 @@
                     <TextBlock FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
                                Margin="4,0,0,0"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                               helpers:InlineSegments.HighlightBrush="{StaticResource DiffAddedWordBg}"
+                               helpers:InlineSegments.HighlightBrush="{DynamicResource DiffAddedWordBg}"
                                helpers:InlineSegments.Segments="{Binding RightSegments}" />
                 </Border>
             </helpers:DiffRowPanel>
@@ -179,6 +181,8 @@
                         <Setter Property="Padding" Value="4,0" />
                         <Setter Property="MinHeight" Value="18" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="AutomationProperties.Name"
+                                Value="{Binding Converter={StaticResource SideBySideRowNarrator}}" />
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
@@ -188,7 +192,7 @@
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsSelected" Value="True">
-                                            <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource StatusInfoFg}" />
+                                            <Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource StatusInfoFg}" />
                                         </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>
@@ -204,7 +208,7 @@
             <DockPanel>
                 <TextBlock DockPanel.Dock="Left" Width="18" Text="{Binding UnstagedLabel}"
                            FontFamily="Cascadia Code,Consolas" FontSize="12"
-                           Foreground="{StaticResource StatusWarnFg}" />
+                           Foreground="{DynamicResource StatusWarnFg}" />
                 <TextBlock Text="{Binding Path}" FontSize="12" TextTrimming="CharacterEllipsis"
                            ToolTip="{Binding Path}"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -214,12 +218,36 @@
             <DockPanel>
                 <TextBlock DockPanel.Dock="Left" Width="18" Text="{Binding StagedLabel}"
                            FontFamily="Cascadia Code,Consolas" FontSize="12"
-                           Foreground="{StaticResource StatusGoodFg}" />
+                           Foreground="{DynamicResource StatusGoodFg}" />
                 <TextBlock Text="{Binding Path}" FontSize="12" TextTrimming="CharacterEllipsis"
                            ToolTip="{Binding Path}"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
             </DockPanel>
         </DataTemplate>
+
+        <!-- An item container with no automation name is announced as its item's ToString, which
+             for every model here is the type's own name. Each list below sets one that says what
+             the row says on screen. -->
+        <Style x:Key="WorkingFileRow" TargetType="ListBoxItem">
+            <Setter Property="AutomationProperties.Name">
+                <Setter.Value>
+                    <MultiBinding StringFormat="{}{0} {1}">
+                        <Binding Path="UnstagedLabel" />
+                        <Binding Path="Path" />
+                    </MultiBinding>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="StagedFileRow" TargetType="ListBoxItem">
+            <Setter Property="AutomationProperties.Name">
+                <Setter.Value>
+                    <MultiBinding StringFormat="{}{0} {1}">
+                        <Binding Path="StagedLabel" />
+                        <Binding Path="Path" />
+                    </MultiBinding>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style x:Key="PaneHeader" TargetType="TextBlock">
             <Setter Property="FontWeight" Value="SemiBold" />
@@ -254,15 +282,15 @@
                     <ui:SymbolIcon.Style>
                         <Style TargetType="ui:SymbolIcon">
                             <Setter Property="Symbol" Value="CheckmarkCircle24" />
-                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                            <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding Project.GitStatus.IsDirty}" Value="True">
                                     <Setter Property="Symbol" Value="Edit24" />
-                                    <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding Project.GitStatus.RemoteUrl}" Value="">
                                     <Setter Property="Symbol" Value="CloudOff24" />
-                                    <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -282,12 +310,12 @@
             <Border x:Name="RecoveryBanner"
                     IsEnabled="{Binding SafetyOverlayHidden}"
                     Visibility="{Binding RecoveryBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
-                    Background="{StaticResource StatusBadBg}"
-                    BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
+                    Background="{DynamicResource StatusBadBg}"
+                    BorderBrush="{DynamicResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
                     Padding="12,10" Margin="0,10,0,0">
                 <StackPanel>
                     <DockPanel>
-                        <ui:SymbolIcon DockPanel.Dock="Left" Symbol="Warning24" Foreground="{StaticResource StatusBadFg}"
+                        <ui:SymbolIcon DockPanel.Dock="Left" Symbol="Warning24" Foreground="{DynamicResource StatusBadFg}"
                                        FontSize="16" Margin="0,0,10,0" VerticalAlignment="Top" />
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top"
                                     Margin="12,0,0,0">
@@ -306,7 +334,8 @@
                         </StackPanel>
                         <TextBlock Text="{Binding RecoveryBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
-                                   AutomationProperties.AutomationId="RecoveryBannerText" />
+                                   AutomationProperties.AutomationId="RecoveryBannerText"
+                                   AutomationProperties.LiveSetting="Assertive" />
                     </DockPanel>
 
                     <!-- Discarding abandons the only record that this repository may be
@@ -340,11 +369,11 @@
         <Border Grid.Row="1" x:Name="StateBanner"
                 IsEnabled="{Binding SafetyOverlayHidden}"
                 Visibility="{Binding StateBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
-                Background="{StaticResource StatusWarnBg}"
-                BorderBrush="{StaticResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
+                Background="{DynamicResource StatusWarnBg}"
+                BorderBrush="{DynamicResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
                 Padding="12,8" Margin="0,8,0,0">
             <DockPanel>
-                <ui:SymbolIcon DockPanel.Dock="Left" Symbol="Warning24" Foreground="{StaticResource StatusWarnFg}"
+                <ui:SymbolIcon DockPanel.Dock="Left" Symbol="Warning24" Foreground="{DynamicResource StatusWarnFg}"
                                FontSize="16" Margin="0,0,10,0" VerticalAlignment="Center" />
                 <ui:Button DockPanel.Dock="Right" Content="Open in Terminal" FontSize="12" Padding="10,4"
                            Command="{Binding OpenRepoInTerminalCommand}" />
@@ -364,18 +393,19 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
                     <ui:SymbolIcon Symbol="BranchFork24" FontSize="15" Margin="0,0,6,0" VerticalAlignment="Center"
-                                   Foreground="{StaticResource StatusInfoFg}" />
+                                   Foreground="{DynamicResource StatusInfoFg}" />
                     <TextBlock Text="{Binding BranchLabel}" FontFamily="Cascadia Code,Consolas" FontSize="13"
                                VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                    <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4" Padding="6,2" Margin="10,0,0,0"
+                    <Border Background="{DynamicResource StatusInfoBg}" CornerRadius="4" Padding="6,2" Margin="10,0,0,0"
                             VerticalAlignment="Center">
                         <TextBlock Text="{Binding AheadBehindLabel}" FontSize="11"
-                                   Foreground="{StaticResource StatusInfoFg}" />
+                                   Foreground="{DynamicResource StatusInfoFg}" />
                     </Border>
                     <ui:ProgressRing IsIndeterminate="True" Width="16" Height="16" Margin="12,0,0,0"
                                      VerticalAlignment="Center"
                                      Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                    <TextBlock Text="{Binding SyncStatusText}" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center"
+                    <TextBlock Text="{Binding SyncStatusText}"
+                               AutomationProperties.LiveSetting="Polite" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     <ui:Button Content="Remove stale lock and retry" FontSize="12" Padding="10,4" Margin="10,0,0,0"
                                VerticalAlignment="Center"
@@ -407,6 +437,7 @@
         <!-- ═══ WORK AREA TABS ═══ -->
         <TabControl Grid.Row="3" x:Name="WorkTabs" Background="Transparent" BorderThickness="0"
                     IsEnabled="{Binding SafetyOverlayHidden}"
+                    AutomationProperties.Name="Work area"
                     SelectionChanged="WorkTabs_SelectionChanged">
 
             <!-- ── OVERVIEW ── -->
@@ -495,7 +526,8 @@
                                         <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
                                                    Padding="6,2" FontSize="12"
                                                    Icon="{ui:SymbolIcon Edit24}"
-                                                   Command="{Binding ToggleEditNotesCommand}">
+                                                   Command="{Binding ToggleEditNotesCommand}"
+                                                   AutomationProperties.Name="Edit the project notes">
                                             <ui:Button.Content>
                                                 <TextBlock>
                                                     <TextBlock.Style>
@@ -537,6 +569,7 @@
                                     </ItemsControl>
                                     <TextBox Grid.Row="1"
                                              Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
+                                             AutomationProperties.Name="Project notes"
                                              AcceptsReturn="True"
                                              TextWrapping="Wrap"
                                              MinHeight="140"
@@ -627,7 +660,7 @@
                         </Grid.RowDefinitions>
 
                         <!-- Conflicted (only when present) -->
-                        <Border Grid.Row="0" Background="{StaticResource StatusBadBg}" CornerRadius="8"
+                        <Border Grid.Row="0" Background="{DynamicResource StatusBadBg}" CornerRadius="8"
                                 Padding="10,8" Margin="0,0,0,8">
                             <Border.Style>
                                 <Style TargetType="Border">
@@ -640,12 +673,12 @@
                             </Border.Style>
                             <StackPanel>
                                 <TextBlock Text="Conflicted" Style="{StaticResource PaneHeader}"
-                                           Foreground="{StaticResource StatusBadFg}" />
+                                           Foreground="{DynamicResource StatusBadFg}" />
                                 <ItemsControl ItemsSource="{Binding ConflictedFiles}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:WorkingFile}">
                                             <TextBlock Text="{Binding Path}" FontSize="12"
-                                                       Foreground="{StaticResource StatusBadFg}" />
+                                                       Foreground="{DynamicResource StatusBadFg}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -676,6 +709,7 @@
                                          SelectionChanged="OnUnstagedSelectionChanged"
                                          GotKeyboardFocus="OnWorkListGotKeyboardFocus"
                                          ItemTemplate="{StaticResource WorkingFileTemplate}"
+                                         ItemContainerStyle="{StaticResource WorkingFileRow}"
                                          Background="Transparent" BorderThickness="0"
                                          PreviewMouseRightButtonDown="OnListRightButtonDown"
                                          AutomationProperties.Name="Unstaged files">
@@ -729,6 +763,7 @@
                                          SelectionChanged="OnStagedSelectionChanged"
                                          GotKeyboardFocus="OnWorkListGotKeyboardFocus"
                                          ItemTemplate="{StaticResource StagedFileTemplate}"
+                                         ItemContainerStyle="{StaticResource StagedFileRow}"
                                          Background="Transparent" BorderThickness="0"
                                          PreviewMouseRightButtonDown="OnListRightButtonDown"
                                          AutomationProperties.Name="Staged files">
@@ -787,17 +822,17 @@
                                     </ComboBox>
                                     <TextBlock Text="{Binding CommitGuide.CounterText}" FontSize="11"
                                                VerticalAlignment="Center"
-                                               AutomationProperties.Name="Commit message length">
+                                               AutomationProperties.Name="{Binding CommitGuide.CounterText, StringFormat='Commit message length: {0}'}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground"
                                                         Value="{DynamicResource TextFillColorTertiaryBrush}" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding CommitGuide.SubjectOverLimit}" Value="True">
-                                                        <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding CommitGuide.BodyOverLimit}" Value="True">
-                                                        <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -806,8 +841,9 @@
                                 </DockPanel>
 
                                 <TextBlock Text="{Binding CommitGuide.Warning}" FontSize="11" Margin="0,4,0,0"
-                                           TextWrapping="Wrap" Foreground="{StaticResource StatusWarnFg}"
-                                           AutomationProperties.Name="Commit message warning">
+                                           TextWrapping="Wrap" Foreground="{DynamicResource StatusWarnFg}"
+                                           AutomationProperties.Name="{Binding CommitGuide.Warning, StringFormat='Commit message warning: {0}'}"
+                                           AutomationProperties.LiveSetting="Polite">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Style.Triggers>
@@ -999,7 +1035,8 @@
                         <TextBlock Text="{Binding DeepCleanStatusText}" FontSize="12" TextWrapping="Wrap"
                                    Margin="0,8,0,0"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   AutomationProperties.AutomationId="DeepCleanStatusText">
+                                   AutomationProperties.AutomationId="DeepCleanStatusText"
+                                   AutomationProperties.LiveSetting="Polite">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Visible" />
@@ -1035,6 +1072,18 @@
                                      GotKeyboardFocus="OnWorkListGotKeyboardFocus"
                                      PreviewMouseRightButtonDown="OnListRightButtonDown"
                                      AutomationProperties.Name="Commit history">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="AutomationProperties.Name">
+                                            <Setter.Value>
+                                                <MultiBinding StringFormat="{}{0}, commit {1}">
+                                                    <Binding Path="Message" />
+                                                    <Binding Path="ShortHash" />
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
                                 <ListBox.ContextMenu>
                                     <ContextMenu ToolTipService.ShowOnDisabled="True"
                                                  AutomationProperties.Name="Commit actions">
@@ -1092,7 +1141,7 @@
                                             <TextBlock DockPanel.Dock="Left" Width="64"
                                                        Text="{Binding ShortHash}"
                                                        FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                                       Foreground="{DynamicResource StatusInfoFg}" />
                                             <TextBlock DockPanel.Dock="Right" MinWidth="56"
                                                        Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
                                                        FontSize="11" HorizontalAlignment="Right"
@@ -1118,7 +1167,8 @@
                                     <TextBlock Text="{Binding HistoryPagingStatusText}" FontSize="11" TextWrapping="Wrap"
                                                VerticalAlignment="Center"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                               AutomationProperties.AutomationId="HistoryPagingStatusText" />
+                                               AutomationProperties.AutomationId="HistoryPagingStatusText"
+                                               AutomationProperties.LiveSetting="Polite" />
                                 </DockPanel>
                                 <ui:Button Content="Plan a reorder from the selected commit…" FontSize="11" Padding="8,3"
                                            HorizontalAlignment="Left" Margin="0,0,0,6"
@@ -1127,10 +1177,12 @@
                                            AutomationProperties.Name="Plan a reorder, drop, or squash over this range" />
                                 <TextBlock Text="{Binding SurgeryStatusText}" FontSize="11" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                           AutomationProperties.Name="History edit status" />
+                                           AutomationProperties.Name="{Binding SurgeryStatusText, StringFormat='History edit status: {0}'}"
+                                           AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock Text="{Binding SurgeryFailureText}" FontSize="11" TextWrapping="Wrap"
-                                           Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
-                                           AutomationProperties.Name="History edit failure detail">
+                                           Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
+                                           AutomationProperties.Name="{Binding SurgeryFailureText, StringFormat='History edit failure: {0}'}"
+                                           AutomationProperties.LiveSetting="Assertive">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Visible" />
@@ -1190,6 +1242,18 @@
                                      Background="Transparent" BorderThickness="0"
                                      PreviewMouseRightButtonDown="OnListRightButtonDown"
                                      AutomationProperties.Name="Files changed in commit">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="AutomationProperties.Name">
+                                            <Setter.Value>
+                                                <MultiBinding StringFormat="{}{0} {1}">
+                                                    <Binding Path="StatusLabel" />
+                                                    <Binding Path="Path" />
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
                                 <ListBox.ContextMenu>
                                     <ContextMenu ToolTipService.ShowOnDisabled="True"
                                                  AutomationProperties.Name="Changed file actions">
@@ -1204,7 +1268,7 @@
                                         <DockPanel>
                                             <TextBlock DockPanel.Dock="Left" Width="18" Text="{Binding Status}"
                                                        FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                                       Foreground="{StaticResource StatusWarnFg}" />
+                                                       Foreground="{DynamicResource StatusWarnFg}" />
                                             <TextBlock Text="{Binding Path}" FontSize="12"
                                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"
                                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -1261,8 +1325,8 @@
 
                     <!-- A branch behind its upstream cannot be published by an ordinary push, which
                          is what a rewrite leaves behind on every branch it touched. -->
-                    <Border Grid.Row="0" Background="{StaticResource StatusWarnBg}"
-                            BorderBrush="{StaticResource StatusWarnFg}" BorderThickness="1"
+                    <Border Grid.Row="0" Background="{DynamicResource StatusWarnBg}"
+                            BorderBrush="{DynamicResource StatusWarnFg}" BorderThickness="1"
                             CornerRadius="8" Padding="14,10" Margin="0,0,0,10"
                             AutomationProperties.AutomationId="BranchesDivergedNotice"
                             Visibility="{Binding BranchesDivergedFromRemote, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -1312,6 +1376,18 @@
                                  SelectedItem="{Binding SelectedBranch}"
                                  Background="Transparent" BorderThickness="0"
                                  AutomationProperties.Name="Local branches">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name">
+                                        <Setter.Value>
+                                            <MultiBinding StringFormat="{}{0} {1}">
+                                                <Binding Path="Name" />
+                                                <Binding Path="TrackLabel" />
+                                            </MultiBinding>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:BranchInfo}">
                                     <DockPanel Margin="0,2">
@@ -1323,7 +1399,7 @@
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsCurrent}" Value="True">
                                                             <Setter Property="Symbol" Value="CheckmarkCircle24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -1363,10 +1439,10 @@
                                         <TextBlock Text="{Binding Name}" FontSize="13" FontFamily="Cascadia Code,Consolas"
                                                    VerticalAlignment="Center"
                                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                        <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4" Padding="6,1"
+                                        <Border Background="{DynamicResource StatusInfoBg}" CornerRadius="4" Padding="6,1"
                                                 Margin="10,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left">
                                             <TextBlock Text="{Binding TrackLabel}" FontSize="10"
-                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                                       Foreground="{DynamicResource StatusInfoFg}" />
                                         </Border>
                                     </DockPanel>
                                 </DataTemplate>
@@ -1450,9 +1526,10 @@
                             <TextBlock Text="{Binding BranchExtrasStatusText}" FontSize="11" TextWrapping="Wrap"
                                        Margin="0,4,0,0"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       AutomationProperties.AutomationId="BranchExtrasStatusText" />
+                                       AutomationProperties.AutomationId="BranchExtrasStatusText"
+                                       AutomationProperties.LiveSetting="Polite" />
                             <TextBlock Text="{Binding BranchExtrasErrorText}" FontSize="11" TextWrapping="Wrap"
-                                       Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                       Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
                                        AutomationProperties.AutomationId="BranchExtrasErrorText" />
                         </StackPanel>
                     </Border>
@@ -1487,6 +1564,18 @@
                                      Background="Transparent" BorderThickness="0"
                                      HorizontalContentAlignment="Stretch"
                                      AutomationProperties.Name="Configured remotes">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="AutomationProperties.Name">
+                                            <Setter.Value>
+                                                <MultiBinding StringFormat="{}{0}, {1}">
+                                                    <Binding Path="Name" />
+                                                    <Binding Path="FetchUrl" />
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:RemoteEntry}">
                                         <StackPanel Margin="0,3">
@@ -1585,9 +1674,10 @@
                                 <TextBlock Text="{Binding RemotesStatusText}" FontSize="11" TextWrapping="Wrap"
                                            Margin="0,6,0,0"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                           AutomationProperties.AutomationId="RemotesStatusText" />
+                                           AutomationProperties.AutomationId="RemotesStatusText"
+                                           AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock Text="{Binding RemotesErrorText}" FontSize="11" TextWrapping="Wrap"
-                                           Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                           Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
                                            AutomationProperties.AutomationId="RemotesErrorText" />
                             </StackPanel>
                         </Grid>
@@ -1615,7 +1705,8 @@
                                    AutomationProperties.Name="New issue" />
                         <TextBlock FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="{Binding GitHubStatusText}" />
+                                   Text="{Binding GitHubStatusText}"
+                                   AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
                     <Grid Grid.Row="1">
@@ -1648,6 +1739,14 @@
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Padding" Value="4,4" />
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}Issue {0}: {1}">
+                                                        <Binding Path="Number" />
+                                                        <Binding Path="Title" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
                                             <EventSetter Event="MouseDoubleClick" Handler="IssueRow_Open" />
                                             <EventSetter Event="KeyDown" Handler="IssueRow_KeyDown" />
                                         </Style>
@@ -1657,7 +1756,7 @@
                                             <DockPanel>
                                                 <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
                                                            FontFamily="Cascadia Code,Consolas"
-                                                           Foreground="{StaticResource StatusInfoFg}">
+                                                           Foreground="{DynamicResource StatusInfoFg}">
                                                     <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
                                                 </TextBlock>
                                                 <TextBlock DockPanel.Dock="Right" MinWidth="52" FontSize="11" HorizontalAlignment="Right"
@@ -1737,10 +1836,10 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4"
+                                                    <Border Background="{DynamicResource StatusInfoBg}" CornerRadius="4"
                                                             Padding="6,1" Margin="0,0,4,4">
                                                         <TextBlock Text="{Binding}" FontSize="10"
-                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                                     </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -1782,7 +1881,7 @@
                                         <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left"
                                                          Visibility="{Binding IssueDetailLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <TextBlock Text="{Binding IssueDetailError}" FontSize="12" TextWrapping="Wrap"
-                                                   Foreground="{StaticResource StatusBadFg}">
+                                                   Foreground="{DynamicResource StatusBadFg}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Visible" />
@@ -1799,10 +1898,10 @@
                                                     VerticalAlignment="Center">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
-                                                        <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding IssueDetail.State}" Value="closed">
-                                                                <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                                <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -1810,10 +1909,10 @@
                                                 <TextBlock Text="{Binding IssueDetail.State}" FontSize="11">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding IssueDetail.State}" Value="closed">
-                                                                    <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
@@ -1936,7 +2035,8 @@
                                    AutomationProperties.Name="New pull request from current branch" />
                         <TextBlock FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="{Binding GitHubStatusText}" />
+                                   Text="{Binding GitHubStatusText}"
+                                   AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
                     <Grid Grid.Row="1">
@@ -1969,6 +2069,15 @@
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Padding" Value="4,4" />
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}Pull request {0}, {1}: {2}">
+                                                        <Binding Path="Number" />
+                                                        <Binding Path="StateLabel" />
+                                                        <Binding Path="Title" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
                                             <EventSetter Event="MouseDoubleClick" Handler="PrRow_Open" />
                                             <EventSetter Event="KeyDown" Handler="PrRow_KeyDown" />
                                         </Style>
@@ -1978,7 +2087,7 @@
                                             <DockPanel>
                                                 <TextBlock DockPanel.Dock="Left" Width="52" FontSize="12"
                                                            FontFamily="Cascadia Code,Consolas"
-                                                           Foreground="{StaticResource StatusInfoFg}">
+                                                           Foreground="{DynamicResource StatusInfoFg}">
                                                     <Run Text="#" /><Run Text="{Binding Number, Mode=OneWay}" />
                                                 </TextBlock>
                                                 <!-- checks chip -->
@@ -1986,19 +2095,19 @@
                                                         VerticalAlignment="Center">
                                                     <Border.Style>
                                                         <Style TargetType="Border">
-                                                            <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                            <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding ChecksState}" Value="">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
                                                                 <DataTrigger Binding="{Binding ChecksState}" Value="passing">
-                                                                    <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                                    <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                                                                 </DataTrigger>
                                                                 <DataTrigger Binding="{Binding ChecksState}" Value="failing">
-                                                                    <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                                    <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
                                                                 </DataTrigger>
                                                                 <DataTrigger Binding="{Binding ChecksState}" Value="pending">
-                                                                    <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                    <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
@@ -2006,16 +2115,16 @@
                                                     <TextBlock Text="{Binding ChecksState}" FontSize="10">
                                                         <TextBlock.Style>
                                                             <Style TargetType="TextBlock">
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding ChecksState}" Value="passing">
-                                                                        <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                        <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding ChecksState}" Value="failing">
-                                                                        <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                        <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding ChecksState}" Value="pending">
-                                                                        <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                        <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -2023,11 +2132,11 @@
                                                     </TextBlock>
                                                 </Border>
                                                 <!-- draft chip -->
-                                                <Border DockPanel.Dock="Right" Background="{StaticResource StatusNeutralBg}"
+                                                <Border DockPanel.Dock="Right" Background="{DynamicResource StatusNeutralBg}"
                                                         CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
                                                         Visibility="{Binding IsDraft, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <TextBlock Text="draft" FontSize="10"
-                                                               Foreground="{StaticResource StatusNeutralFg}" />
+                                                               Foreground="{DynamicResource StatusNeutralFg}" />
                                                 </Border>
                                                 <TextBlock Text="{Binding Title}" FontSize="13"
                                                            TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
@@ -2129,7 +2238,7 @@
                                         <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left"
                                                          Visibility="{Binding PullRequestDetailLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <TextBlock Text="{Binding PullRequestDetailError}" FontSize="12" TextWrapping="Wrap"
-                                                   Foreground="{StaticResource StatusBadFg}">
+                                                   Foreground="{DynamicResource StatusBadFg}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Visible" />
@@ -2289,13 +2398,25 @@
                                      SelectedItem="{Binding SelectedStash}"
                                      Background="Transparent" BorderThickness="0"
                                      AutomationProperties.Name="Stashes">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="AutomationProperties.Name">
+                                            <Setter.Value>
+                                                <MultiBinding StringFormat="{}{0}: {1}">
+                                                    <Binding Path="Ref" />
+                                                    <Binding Path="Subject" />
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:StashEntry}">
                                         <DockPanel Margin="0,2">
                                             <TextBlock DockPanel.Dock="Left" Width="92" Text="{Binding Ref}"
                                                        FontFamily="Cascadia Code,Consolas" FontSize="12"
                                                        VerticalAlignment="Center"
-                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                                       Foreground="{DynamicResource StatusInfoFg}" />
                                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                                                 <TextBlock Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
                                                            FontSize="11" Margin="0,0,12,0" VerticalAlignment="Center"
@@ -2337,7 +2458,8 @@
                                    AutomationProperties.Name="Refresh workflow runs" />
                         <TextBlock FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="{Binding GitHubStatusText}" />
+                                   Text="{Binding GitHubStatusText}"
+                                   AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
                     <Grid Grid.Row="1">
@@ -2352,7 +2474,7 @@
                             <Grid>
                                 <TextBlock Text="{Binding WorkflowRunsError}" FontSize="12" TextWrapping="Wrap"
                                            VerticalAlignment="Top"
-                                           Foreground="{StaticResource StatusBadFg}">
+                                           Foreground="{DynamicResource StatusBadFg}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Visible" />
@@ -2388,6 +2510,15 @@
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Padding" Value="4,4" />
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}{0}, {1}, on {2}">
+                                                        <Binding Path="DisplayTitle" />
+                                                        <Binding Path="OutcomeLabel" />
+                                                        <Binding Path="Branch" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
                                             <EventSetter Event="MouseDoubleClick" Handler="RunRow_Open" />
                                             <EventSetter Event="KeyDown" Handler="RunRow_KeyDown" />
                                         </Style>
@@ -2400,19 +2531,19 @@
                                                             MinWidth="72" VerticalAlignment="Center">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                                <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding OutcomeLabel}" Value="success">
-                                                                        <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                                        <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding OutcomeLabel}" Value="failure">
-                                                                        <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                                        <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding OutcomeLabel}" Value="in progress">
-                                                                        <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                        <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding OutcomeLabel}" Value="queued">
-                                                                        <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                                                        <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -2421,19 +2552,19 @@
                                                                    HorizontalAlignment="Center">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
-                                                                    <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                                     <Style.Triggers>
                                                                         <DataTrigger Binding="{Binding OutcomeLabel}" Value="success">
-                                                                            <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                            <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                                         </DataTrigger>
                                                                         <DataTrigger Binding="{Binding OutcomeLabel}" Value="failure">
-                                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                                         </DataTrigger>
                                                                         <DataTrigger Binding="{Binding OutcomeLabel}" Value="in progress">
-                                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                                         </DataTrigger>
                                                                         <DataTrigger Binding="{Binding OutcomeLabel}" Value="queued">
-                                                                            <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                                            <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
                                                                 </Style>
@@ -2512,7 +2643,7 @@
                                                          Margin="0,4,0,0"
                                                          Visibility="{Binding WorkflowJobsLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <TextBlock Text="{Binding WorkflowJobsError}" FontSize="12" TextWrapping="Wrap"
-                                                   Foreground="{StaticResource StatusBadFg}">
+                                                   Foreground="{DynamicResource StatusBadFg}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Visible" />
@@ -2578,10 +2709,10 @@
                                                                                         <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
                                                                                         <Style.Triggers>
                                                                                             <DataTrigger Binding="{Binding OutcomeLabel}" Value="success">
-                                                                                                <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                                                                <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                                                             </DataTrigger>
                                                                                             <DataTrigger Binding="{Binding OutcomeLabel}" Value="failure">
-                                                                                                <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                                                <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                                                             </DataTrigger>
                                                                                         </Style.Triggers>
                                                                                     </Style>
@@ -2644,7 +2775,8 @@
                                    AutomationProperties.Name="New release from an existing tag" />
                         <TextBlock FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="{Binding GitHubStatusText}" />
+                                   Text="{Binding GitHubStatusText}"
+                                   AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
                     <Grid Grid.Row="1">
@@ -2658,7 +2790,7 @@
                                 CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
                             <Grid>
                                 <TextBlock Text="{Binding ReleasesError}" FontSize="12" TextWrapping="Wrap"
-                                           VerticalAlignment="Top" Foreground="{StaticResource StatusBadFg}">
+                                           VerticalAlignment="Top" Foreground="{DynamicResource StatusBadFg}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Visible" />
@@ -2694,6 +2826,14 @@
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Padding" Value="4,4" />
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}{0} {1}">
+                                                        <Binding Path="DisplayTitle" />
+                                                        <Binding Path="StateLabel" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
                                             <EventSetter Event="MouseDoubleClick" Handler="ReleaseRow_Open" />
                                             <EventSetter Event="KeyDown" Handler="ReleaseRow_KeyDown" />
                                         </Style>
@@ -2706,13 +2846,13 @@
                                                             VerticalAlignment="Center">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                                <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding StateLabel}" Value="">
                                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding StateLabel}" Value="prerelease">
-                                                                        <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                        <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -2720,10 +2860,10 @@
                                                         <TextBlock Text="{Binding StateLabel}" FontSize="10">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
-                                                                    <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                                     <Style.Triggers>
                                                                         <DataTrigger Binding="{Binding StateLabel}" Value="prerelease">
-                                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
                                                                 </Style>
@@ -2797,7 +2937,7 @@
                                         </TextBlock>
                                         <TextBlock Text="This repository has no tags — create one on the Branches tab first."
                                                    FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
-                                                   Foreground="{StaticResource StatusWarnFg}">
+                                                   Foreground="{DynamicResource StatusWarnFg}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -2956,7 +3096,8 @@
                                          Visibility="{Binding RepoSettingsLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         <TextBlock FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="{Binding GitHubStatusText}" />
+                                   Text="{Binding GitHubStatusText}"
+                                   AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
@@ -2964,7 +3105,7 @@
                         <StackPanel MaxWidth="860" HorizontalAlignment="Left">
 
                             <TextBlock Text="{Binding RepoSettingsError}" FontSize="12" TextWrapping="Wrap"
-                                       Margin="0,0,0,8" Foreground="{StaticResource StatusBadFg}">
+                                       Margin="0,0,0,8" Foreground="{DynamicResource StatusBadFg}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Visibility" Value="Visible" />
@@ -3077,7 +3218,7 @@
                                                    Margin="0" VerticalAlignment="Center" />
                                     </DockPanel>
                                     <TextBlock Text="{Binding NotificationsError}" FontSize="12" TextWrapping="Wrap"
-                                               Foreground="{StaticResource StatusBadFg}">
+                                               Foreground="{DynamicResource StatusBadFg}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Visible" />
@@ -3113,6 +3254,14 @@
                                         <ListBox.ItemContainerStyle>
                                             <Style TargetType="ListBoxItem">
                                                 <Setter Property="Padding" Value="4,4" />
+                                                <Setter Property="AutomationProperties.Name">
+                                                    <Setter.Value>
+                                                        <MultiBinding StringFormat="{}{0}: {1}">
+                                                            <Binding Path="ReasonLabel" />
+                                                            <Binding Path="Title" />
+                                                        </MultiBinding>
+                                                    </Setter.Value>
+                                                </Setter>
                                                 <EventSetter Event="MouseDoubleClick" Handler="NotificationRow_Open" />
                                                 <EventSetter Event="KeyDown" Handler="NotificationRow_KeyDown" />
                                             </Style>
@@ -3120,12 +3269,12 @@
                                         <ListBox.ItemTemplate>
                                             <DataTemplate DataType="{x:Type models:GitHubNotification}">
                                                 <DockPanel>
-                                                    <Border DockPanel.Dock="Left" Background="{StaticResource StatusInfoBg}"
+                                                    <Border DockPanel.Dock="Left" Background="{DynamicResource StatusInfoBg}"
                                                             CornerRadius="4" Padding="6,1" Margin="0,0,8,0" MinWidth="88"
                                                             VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding ReasonLabel}" FontSize="10"
                                                                    HorizontalAlignment="Center"
-                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                                     </Border>
                                                     <ui:Button DockPanel.Dock="Right" Content="Mark read" FontSize="11" Padding="8,2"
                                                                Margin="8,0,0,0"
@@ -3151,13 +3300,13 @@
                             </Border>
 
                             <!-- Danger zone (G-09) -->
-                            <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                                     BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,16"
                                     Visibility="{Binding DangerZoneEnabled, Converter={StaticResource BooleanToVisibilityConverter}}"
                                     AutomationProperties.Name="Danger zone">
                                 <StackPanel>
                                     <TextBlock Text="Danger zone" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6"
-                                               Foreground="{StaticResource StatusBadFg}" />
+                                               Foreground="{DynamicResource StatusBadFg}" />
                                     <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                                Text="Deleting the repository removes its issues, pull requests, releases and Actions history on GitHub for good. The local files on this machine are not touched. You will be asked to type the full owner/name to confirm." />
@@ -3165,7 +3314,8 @@
                                                HorizontalAlignment="Left"
                                                Command="{Binding DeleteRepoCommand}"
                                                AutomationProperties.Name="Delete this repository on GitHub" />
-                                    <TextBlock Text="{Binding RepoDeleteNotice}" FontSize="12" TextWrapping="Wrap"
+                                    <TextBlock Text="{Binding RepoDeleteNotice}"
+                                               AutomationProperties.LiveSetting="Assertive" FontSize="12" TextWrapping="Wrap"
                                                Margin="0,10,0,0"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}">
                                         <TextBlock.Style>
@@ -3237,15 +3387,28 @@
                                          Background="Transparent" BorderThickness="0"
                                          HorizontalContentAlignment="Stretch"
                                          AutomationProperties.Name="Worktrees of this repository">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}{0}, {1} {2}">
+                                                        <Binding Path="Path" />
+                                                        <Binding Path="BranchLabel" />
+                                                        <Binding Path="StateLabel" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel Margin="0,3">
                                                 <DockPanel>
-                                                    <Border DockPanel.Dock="Right" Background="{StaticResource StatusInfoBg}"
+                                                    <Border DockPanel.Dock="Right" Background="{DynamicResource StatusInfoBg}"
                                                             CornerRadius="4" Padding="6,1" Margin="10,0,0,0"
                                                             VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding BranchLabel}" FontSize="10"
-                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                                     </Border>
                                                     <TextBlock Text="{Binding Path}" FontSize="12"
                                                                FontFamily="Cascadia Code,Consolas"
@@ -3307,9 +3470,10 @@
                                     <TextBlock Text="{Binding WorktreesStatusText}" FontSize="11" TextWrapping="Wrap"
                                                Margin="0,6,0,0"
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                               AutomationProperties.AutomationId="WorktreesStatusText" />
+                                               AutomationProperties.AutomationId="WorktreesStatusText"
+                                               AutomationProperties.LiveSetting="Polite" />
                                     <TextBlock Text="{Binding WorktreesErrorText}" FontSize="11" TextWrapping="Wrap"
-                                               Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                               Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
                                                AutomationProperties.AutomationId="WorktreesErrorText" />
                                 </StackPanel>
                             </Grid>
@@ -3342,6 +3506,18 @@
                                          Background="Transparent" BorderThickness="0"
                                          HorizontalContentAlignment="Stretch"
                                          AutomationProperties.Name="Submodules of this repository">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}{0}, {1}">
+                                                        <Binding Path="Path" />
+                                                        <Binding Path="Url" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:SubmoduleEntry}">
                                             <StackPanel Margin="0,3">
@@ -3353,10 +3529,10 @@
                                                     <Border CornerRadius="4" Padding="6,1" Margin="0,0,6,0">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                                <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding IsInitialized}" Value="True">
-                                                                        <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                                        <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -3375,29 +3551,29 @@
                                                             </TextBlock.Style>
                                                         </TextBlock>
                                                     </Border>
-                                                    <Border Background="{StaticResource StatusBadBg}" CornerRadius="4"
+                                                    <Border Background="{DynamicResource StatusBadBg}" CornerRadius="4"
                                                             Padding="6,1" Margin="0,0,6,0"
                                                             Visibility="{Binding IsConflicted, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                         <TextBlock Text="conflicted" FontSize="10"
-                                                                   Foreground="{StaticResource StatusBadFg}" />
+                                                                   Foreground="{DynamicResource StatusBadFg}" />
                                                     </Border>
-                                                    <Border Background="{StaticResource StatusWarnBg}" CornerRadius="4"
+                                                    <Border Background="{DynamicResource StatusWarnBg}" CornerRadius="4"
                                                             Padding="6,1" Margin="0,0,6,0"
                                                             Visibility="{Binding IsDirty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                         <TextBlock Text="dirty" FontSize="10"
-                                                                   Foreground="{StaticResource StatusWarnFg}" />
+                                                                   Foreground="{DynamicResource StatusWarnFg}" />
                                                     </Border>
-                                                    <Border Background="{StaticResource StatusWarnBg}" CornerRadius="4"
+                                                    <Border Background="{DynamicResource StatusWarnBg}" CornerRadius="4"
                                                             Padding="6,1" Margin="0,0,6,0"
                                                             Visibility="{Binding CommitDiffersFromRecorded, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                         <TextBlock Text="off the recorded commit" FontSize="10"
-                                                                   Foreground="{StaticResource StatusWarnFg}" />
+                                                                   Foreground="{DynamicResource StatusWarnFg}" />
                                                     </Border>
-                                                    <Border Background="{StaticResource StatusInfoBg}" CornerRadius="4"
+                                                    <Border Background="{DynamicResource StatusInfoBg}" CornerRadius="4"
                                                             Padding="6,1" Margin="0,0,6,0"
                                                             Visibility="{Binding HasNestedSubmodules, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                         <TextBlock Text="has submodules of its own" FontSize="10"
-                                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                                     </Border>
                                                 </StackPanel>
                                             </StackPanel>
@@ -3439,9 +3615,10 @@
                                     <TextBlock Text="{Binding SubmodulesStatusText}" FontSize="11" TextWrapping="Wrap"
                                                Margin="0,6,0,0"
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                               AutomationProperties.AutomationId="SubmodulesStatusText" />
+                                               AutomationProperties.AutomationId="SubmodulesStatusText"
+                                               AutomationProperties.LiveSetting="Polite" />
                                     <TextBlock Text="{Binding SubmodulesErrorText}" FontSize="11" TextWrapping="Wrap"
-                                               Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                               Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
                                                AutomationProperties.AutomationId="SubmodulesErrorText" />
                                 </StackPanel>
                             </Grid>
@@ -3499,7 +3676,7 @@
                                                Command="{Binding RevertGitignoreCommand}"
                                                AutomationProperties.Name="Discard the edits and reload the ignore rules" />
                                     <TextBlock Text="unsaved" FontSize="11" VerticalAlignment="Center" Margin="10,0,0,0"
-                                               Foreground="{StaticResource StatusWarnFg}"
+                                               Foreground="{DynamicResource StatusWarnFg}"
                                                Visibility="{Binding GitignoreDirty, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                 </StackPanel>
 
@@ -3524,9 +3701,10 @@
                                 <TextBlock Text="{Binding GitignoreStatusText}" FontSize="11" TextWrapping="Wrap"
                                            Margin="0,6,0,0"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                           AutomationProperties.AutomationId="GitignoreStatusText" />
+                                           AutomationProperties.AutomationId="GitignoreStatusText"
+                                           AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock Text="{Binding GitignoreErrorText}" FontSize="11" TextWrapping="Wrap"
-                                           Margin="0,4,0,0" Foreground="{StaticResource StatusBadFg}"
+                                           Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
                                            AutomationProperties.AutomationId="GitignoreErrorText" />
                             </StackPanel>
                         </Grid>

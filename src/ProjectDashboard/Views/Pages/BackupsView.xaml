@@ -30,7 +30,7 @@
                 KeyboardNavigation.ControlTabNavigation="Cycle"
                 KeyboardNavigation.DirectionalNavigation="Cycle"
                 Background="{DynamicResource ApplicationBackgroundBrush}"
-                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1">
+                BorderBrush="{DynamicResource StatusBadFg}" BorderThickness="1">
             <Grid Margin="24,18,24,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -47,7 +47,7 @@
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="ArrowUndo24" FontSize="16" VerticalAlignment="Center"
-                                           Margin="0,0,8,0" Foreground="{StaticResource StatusBadFg}" />
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusBadFg}" />
                             <TextBlock Text="Backups" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
@@ -67,8 +67,8 @@
                                    Text="Every history rewrite and every commit-surgery operation writes a verified backup here before it touches anything. The crash record that flags an interrupted operation can itself be lost, so an empty crash record is not proof nothing was interrupted — this list is the record that survives." />
 
                         <Border CornerRadius="6" Padding="12,8" Margin="0,0,0,10"
-                                Background="{StaticResource StatusWarnBg}" BorderThickness="1"
-                                BorderBrush="{StaticResource StatusWarnFg}"
+                                Background="{DynamicResource StatusWarnBg}" BorderThickness="1"
+                                BorderBrush="{DynamicResource StatusWarnFg}"
                                 AutomationProperties.AutomationId="BackupsJournalNote">
                             <Border.Style>
                                 <Style TargetType="Border">
@@ -104,13 +104,28 @@
                                  HorizontalContentAlignment="Stretch"
                                  Visibility="{Binding BackupsHasEntries, Converter={StaticResource BooleanToVisibilityConverter}}"
                                  AutomationProperties.Name="Backups for this repository">
+                            <!-- Without an automation name the row is announced as its type's
+                                 name: an item container falls back to the item's ToString. -->
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name">
+                                        <Setter.Value>
+                                            <MultiBinding StringFormat="{}{0}, {1}, {2}">
+                                                <Binding Path="Taken" />
+                                                <Binding Path="Operation" />
+                                                <Binding Path="Detail" />
+                                            </MultiBinding>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:BackupEntry}">
                                     <StackPanel Margin="0,4,0,4">
                                         <DockPanel>
                                             <TextBlock DockPanel.Dock="Right" Text="{Binding Operation}" FontSize="12"
                                                        Margin="12,0,0,0"
-                                                       Foreground="{StaticResource StatusInfoFg}" />
+                                                       Foreground="{DynamicResource StatusInfoFg}" />
                                             <TextBlock Text="{Binding Taken}" FontSize="13" FontWeight="SemiBold"
                                                        FontFamily="Cascadia Code,Consolas"
                                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -124,7 +139,7 @@
 
                         <!-- ── The gate ── -->
                         <StackPanel Visibility="{Binding BackupsHasEntries, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                            <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                                     BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,14,0,0">
                                 <StackPanel>
                                     <TextBlock FontSize="13" TextWrapping="Wrap"
@@ -146,7 +161,7 @@
 
                 <!-- ═══ FOOTER ═══ -->
                 <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <Border Background="{StaticResource StatusBadBg}" BorderBrush="{StaticResource StatusBadFg}"
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
                             BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -181,7 +196,8 @@
                             <TextBlock Text="{Binding BackupsStatusText}" FontSize="12" TextWrapping="Wrap"
                                        VerticalAlignment="Center" MaxWidth="520"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       AutomationProperties.AutomationId="BackupsStatusText" />
+                                       AutomationProperties.AutomationId="BackupsStatusText"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                     </DockPanel>
                 </StackPanel>

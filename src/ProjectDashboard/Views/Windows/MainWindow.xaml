@@ -75,9 +75,14 @@
         </local:AppNavigationView>
 
         <!-- ═══ Ctrl+K COMMAND PALETTE ═══ -->
+        <!-- Every navigation mode cycles inside the overlay: the scrim stops the mouse but no
+             keystroke, and the page behind it stays fully operable otherwise. -->
         <Grid x:Name="PaletteOverlay" Grid.Row="0" Grid.RowSpan="2"
               Background="#99000000" Visibility="Collapsed"
-              KeyboardNavigation.TabNavigation="Cycle">
+              AutomationProperties.Name="Command palette"
+              KeyboardNavigation.TabNavigation="Cycle"
+              KeyboardNavigation.ControlTabNavigation="Cycle"
+              KeyboardNavigation.DirectionalNavigation="Cycle">
             <Grid.InputBindings>
                 <MouseBinding MouseAction="LeftClick" Command="{x:Null}" />
             </Grid.InputBindings>
@@ -123,6 +128,16 @@
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="ListBoxItem">
                                 <Setter Property="Padding" Value="6,4" />
+                                <!-- Without an automation name the row is announced as its type's
+                                     name: an item container falls back to the item's ToString. -->
+                                <Setter Property="AutomationProperties.Name">
+                                    <Setter.Value>
+                                        <MultiBinding StringFormat="{}{0} — {1}">
+                                            <Binding Path="Title" />
+                                            <Binding Path="Subtitle" />
+                                        </MultiBinding>
+                                    </Setter.Value>
+                                </Setter>
                                 <EventSetter Event="MouseDoubleClick" Handler="PaletteItem_Invoke" />
                             </Style>
                         </ListBox.ItemContainerStyle>
@@ -148,7 +163,10 @@
         <!-- ═══ ? SHORTCUT CHEAT SHEET ═══ -->
         <Grid x:Name="ShortcutOverlay" Grid.Row="0" Grid.RowSpan="2"
               Background="#99000000" Visibility="Collapsed"
-              KeyboardNavigation.TabNavigation="Cycle">
+              AutomationProperties.Name="Keyboard shortcuts"
+              KeyboardNavigation.TabNavigation="Cycle"
+              KeyboardNavigation.ControlTabNavigation="Cycle"
+              KeyboardNavigation.DirectionalNavigation="Cycle">
             <Border Width="720" MaxHeight="560" VerticalAlignment="Center"
                     Background="{DynamicResource ApplicationBackgroundBrush}"
                     BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1"
@@ -177,7 +195,7 @@
                                     <StackPanel Margin="0,0,0,14">
                                         <TextBlock Text="{Binding Key}" FontSize="12" FontWeight="SemiBold"
                                                    Margin="0,0,0,4"
-                                                   Foreground="{StaticResource StatusInfoFg}" />
+                                                   Foreground="{DynamicResource StatusInfoFg}" />
                                         <ItemsControl ItemsSource="{Binding}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type models:ShortcutEntry}">

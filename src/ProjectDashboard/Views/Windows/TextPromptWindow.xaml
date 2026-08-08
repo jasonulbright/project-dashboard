@@ -31,9 +31,12 @@
         <TextBlock Grid.Row="1" x:Name="PromptText" Margin="16,8,16,10" FontSize="13" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
+        <!-- The prompt names what has to be typed, so it labels the box: a static name would
+             leave a reader with the field and not the value it is asking for. -->
         <ui:TextBox Grid.Row="2" x:Name="ValueInput" Margin="16,0,16,10"
                     FontFamily="Cascadia Code,Consolas" FontSize="13"
-                    AutomationProperties.Name="Confirmation text" />
+                    AutomationProperties.LabeledBy="{Binding ElementName=PromptText}"
+                    AutomationProperties.HelpText="{Binding Text, ElementName=PromptText}" />
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,0,16,16">
             <TextBlock Text="Enter confirms, Esc cancels." FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"

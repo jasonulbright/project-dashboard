@@ -17,10 +17,10 @@
         <Border DockPanel.Dock="Top"
                 Visibility="{Binding DiscoveryErrorVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Background="{DynamicResource ControlFillColorDefaultBrush}"
-                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
+                BorderBrush="{DynamicResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
                 Padding="12,8" Margin="0,0,0,12">
             <StackPanel Orientation="Horizontal">
-                <ui:SymbolIcon Symbol="ErrorCircle24" Foreground="{StaticResource StatusBadFg}" FontSize="16"
+                <ui:SymbolIcon Symbol="ErrorCircle24" Foreground="{DynamicResource StatusBadFg}" FontSize="16"
                                Margin="0,0,10,0" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding DiscoveryErrorText}" VerticalAlignment="Center" TextWrapping="Wrap"
                            MaxWidth="760"
@@ -37,11 +37,11 @@
              never opens that page finds out. No action here — every gate lives on that page. -->
         <Border DockPanel.Dock="Top"
                 Visibility="{Binding RecoveryBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
-                Background="{StaticResource StatusBadBg}"
-                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
+                Background="{DynamicResource StatusBadBg}"
+                BorderBrush="{DynamicResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
                 Padding="12,8" Margin="0,0,0,12">
             <StackPanel Orientation="Horizontal">
-                <ui:SymbolIcon Symbol="Warning24" Foreground="{StaticResource StatusBadFg}" FontSize="16"
+                <ui:SymbolIcon Symbol="Warning24" Foreground="{DynamicResource StatusBadFg}" FontSize="16"
                                Margin="0,0,10,0" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding RecoveryBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
@@ -53,10 +53,10 @@
         <Border DockPanel.Dock="Top"
                 Visibility="{Binding GhBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Background="{DynamicResource ControlFillColorDefaultBrush}"
-                BorderBrush="#E8A317" BorderThickness="1" CornerRadius="8"
+                BorderBrush="{DynamicResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
                 Padding="12,8" Margin="0,0,0,12">
             <StackPanel Orientation="Horizontal">
-                <ui:SymbolIcon Symbol="Warning24" Foreground="#E8A317" FontSize="16"
+                <ui:SymbolIcon Symbol="Warning24" Foreground="{DynamicResource StatusWarnFg}" FontSize="16"
                                Margin="0,0,10,0" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding GhBannerText}" VerticalAlignment="Center"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13" />
@@ -110,7 +110,7 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <TextBlock Text="Dirty: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding DirtyCount}" FontWeight="SemiBold" FontSize="12"
-                               Foreground="#E8A317" />
+                               Foreground="{DynamicResource StatusWarnFg}" />
                 </StackPanel>
             </Border>
 
@@ -125,7 +125,7 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <TextBlock Text="Tasks: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding TodoCount}" FontWeight="SemiBold" FontSize="12"
-                               Foreground="{StaticResource StatusInfoFg}" />
+                               Foreground="{DynamicResource StatusInfoFg}" />
                 </StackPanel>
             </Border>
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
@@ -153,9 +153,9 @@
                 </Border.InputBindings>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <ui:SymbolIcon Symbol="Cloud24" FontSize="14" Margin="0,0,6,0"
-                                   Foreground="{StaticResource StatusInfoFg}" VerticalAlignment="Center" />
+                                   Foreground="{DynamicResource StatusInfoFg}" VerticalAlignment="Center" />
                     <TextBlock Text="Cloud: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding CloudCount}" FontWeight="SemiBold" FontSize="12" Foreground="{StaticResource StatusInfoFg}" />
+                    <TextBlock Text="{Binding CloudCount}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource StatusInfoFg}" />
                 </StackPanel>
             </Border>
 
@@ -170,9 +170,9 @@
                 </Border.InputBindings>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <ui:SymbolIcon Symbol="PlugDisconnected24" FontSize="14" Margin="0,0,6,0"
-                                   Foreground="#E8A317" VerticalAlignment="Center" />
+                                   Foreground="{DynamicResource StatusWarnFg}" VerticalAlignment="Center" />
                     <TextBlock Text="Remote: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding MismatchCount}" FontWeight="SemiBold" FontSize="12" Foreground="#E8A317" />
+                    <TextBlock Text="{Binding MismatchCount}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource StatusWarnFg}" />
                 </StackPanel>
             </Border>
             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
@@ -185,9 +185,9 @@
                 </Border.InputBindings>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <ui:SymbolIcon Symbol="DocumentError24" FontSize="14" Margin="0,0,6,0"
-                                   Foreground="#E8A317" VerticalAlignment="Center" />
+                                   Foreground="{DynamicResource StatusWarnFg}" VerticalAlignment="Center" />
                     <TextBlock Text="Needs meta: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding IncompleteCount}" FontWeight="SemiBold" FontSize="12" Foreground="#E8A317" />
+                    <TextBlock Text="{Binding IncompleteCount}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource StatusWarnFg}" />
                 </StackPanel>
             </Border>
 
@@ -228,9 +228,11 @@
                        ToolTip="Save the project inventory as CSV, JSON or an HTML page"
                        AutomationProperties.Name="Export project inventory"
                        Width="92" Margin="0,0,8,0" />
-            <TextBlock Text="{Binding OpStatusText}" FontSize="12" VerticalAlignment="Center"
+            <TextBlock Text="{Binding OpStatusText}"
+                       AutomationProperties.LiveSetting="Polite" FontSize="12" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-            <TextBlock Text="{Binding RescanStatus}" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"
+            <TextBlock Text="{Binding RescanStatus}"
+                       AutomationProperties.LiveSetting="Polite" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
         </StackPanel>
 
@@ -250,6 +252,7 @@
 
             <ui:TextBox PlaceholderText="Search projects..."
                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                        AutomationProperties.Name="Search projects"
                         Width="272" Margin="0,0,12,0" />
 
             <ui:Button Content="{Binding DensityToggleLabel}" FontSize="12" Padding="8,6"
@@ -283,7 +286,7 @@
         <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="480"
                     Visibility="{Binding ShowScanFailed, Converter={StaticResource BooleanToVisibilityConverter}}">
             <ui:SymbolIcon Symbol="ErrorCircle24" FontSize="30" HorizontalAlignment="Center"
-                           Foreground="{StaticResource StatusBadFg}" />
+                           Foreground="{DynamicResource StatusBadFg}" />
             <TextBlock Text="That scan didn't finish" FontSize="16" FontWeight="SemiBold"
                        Margin="0,10,0,0" HorizontalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -302,7 +305,7 @@
         <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520"
                     Visibility="{Binding ShowRootMissing, Converter={StaticResource BooleanToVisibilityConverter}}">
             <ui:SymbolIcon Symbol="FolderProhibited24" FontSize="34" HorizontalAlignment="Center"
-                           Foreground="{StaticResource StatusBadFg}" />
+                           Foreground="{DynamicResource StatusBadFg}" />
             <TextBlock Text="That projects folder isn't there" FontSize="17" FontWeight="SemiBold"
                        Margin="0,12,0,0" HorizontalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -373,7 +376,25 @@
                  anything below a large grid out of reach. -->
             <ItemsControl ItemsSource="{Binding FilteredProjects}"
                           KeyboardNavigation.TabNavigation="Once"
-                          KeyboardNavigation.DirectionalNavigation="Cycle">
+                          KeyboardNavigation.DirectionalNavigation="Cycle"
+                          AutomationProperties.Name="Project cards">
+                <!-- The card Border below is focusable but carries no automation peer, so its own
+                     name never reaches a reader; the generated container is what gets announced,
+                     and with no name it falls back to the item's ToString. -->
+                <ItemsControl.ItemContainerStyle>
+                    <Style TargetType="ContentPresenter">
+                        <Setter Property="AutomationProperties.Name">
+                            <Setter.Value>
+                                <MultiBinding StringFormat="{}{0}, branch {1}, {2} uncommitted {3}">
+                                    <Binding Path="DisplayName" />
+                                    <Binding Path="GitStatus.Branch" />
+                                    <Binding Path="GitStatus.TotalChanges" />
+                                    <Binding Path="GitStatus.AheadBehindLabel" />
+                                </MultiBinding>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ItemsControl.ItemContainerStyle>
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <WrapPanel />
@@ -639,7 +660,7 @@
                                     <ui:SymbolIcon DockPanel.Dock="Right" Symbol="Pin24" FontSize="14"
                                                    VerticalAlignment="Center" Margin="6,0,0,0"
                                                    ToolTip="Pinned to the top of the grid"
-                                                   Foreground="{StaticResource StatusInfoFg}"
+                                                   Foreground="{DynamicResource StatusInfoFg}"
                                                    Visibility="{Binding IsPinned, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <TextBlock Text="{Binding DisplayName}"
                                                FontWeight="Bold" FontSize="14"
@@ -666,16 +687,16 @@
                                     <Border CornerRadius="4" Padding="6,2">
                                         <Border.Style>
                                             <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
-                                                        <Setter Property="Background" Value="{StaticResource StatusWarnBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
-                                                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
-                                                        <Setter Property="Background" Value="{StaticResource StatusPrivateBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusPrivateBg}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -683,16 +704,16 @@
                                         <TextBlock Text="{Binding Manifest.Status}" FontSize="10">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusPrivateFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusPrivateFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -708,29 +729,29 @@
                                             <ui:SymbolIcon.Style>
                                                 <Style TargetType="ui:SymbolIcon">
                                                     <Setter Property="Symbol" Value="CheckmarkCircle24" />
-                                                    <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                     <!-- Later triggers win: uncommitted work is the actionable
                                                          state and must not be masked by a missing remote. -->
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding GitStatus.RemoteUrl}" Value="">
                                                             <Setter Property="Symbol" Value="CloudOff24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.IsDirty}" Value="True">
                                                             <Setter Property="Symbol" Value="Edit24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.NeedsAttention}" Value="True">
                                                             <Setter Property="Symbol" Value="Warning24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
                                                             <Setter Property="Symbol" Value="QuestionCircle24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding IsRemoteOnly}" Value="True">
                                                             <Setter Property="Symbol" Value="CloudArrowDown24" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -768,7 +789,7 @@
                                                         </MultiDataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.NeedsAttention}" Value="True">
                                                             <Setter Property="Text" Value="{Binding GitStatus.AttentionLabel}" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                             <Setter Property="FontWeight" Value="SemiBold" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.HasError}" Value="True">
@@ -776,7 +797,7 @@
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding IsRemoteOnly}" Value="True">
                                                             <Setter Property="Text" Value="Not cloned — click to clone" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -801,7 +822,7 @@
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding GitStatus.IsDetached}" Value="True">
                                                             <Setter Property="Text" Value="detached" />
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusWarnFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -810,7 +831,7 @@
                                         <TextBlock FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"
                                                    Text="{Binding GitStatus.AheadBehindLabel}"
                                                    Cursor="Hand" ToolTip="Open the Branches tab"
-                                                   Foreground="{StaticResource StatusInfoFg}">
+                                                   Foreground="{DynamicResource StatusInfoFg}">
                                             <TextBlock.InputBindings>
                                                 <MouseBinding MouseAction="LeftClick"
                                                               Command="{Binding Tag.OpenBranchesTabCommand, RelativeSource={RelativeSource AncestorType=Border}}"
@@ -833,8 +854,8 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
-                                            <ui:SymbolIcon Symbol="CheckboxUnchecked24" FontSize="14" Foreground="{StaticResource StatusInfoFg}" />
-                                            <TextBlock Text="{Binding TaskCount}" FontSize="11" Foreground="{StaticResource StatusInfoFg}"
+                                            <ui:SymbolIcon Symbol="CheckboxUnchecked24" FontSize="14" Foreground="{DynamicResource StatusInfoFg}" />
+                                            <TextBlock Text="{Binding TaskCount}" FontSize="11" Foreground="{DynamicResource StatusInfoFg}"
                                                        Margin="2,0,0,0" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <!-- BUG icon + count -->
@@ -849,8 +870,8 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
-                                            <ui:SymbolIcon Symbol="Bug24" FontSize="14" Foreground="{StaticResource StatusBadFg}" />
-                                            <TextBlock Text="{Binding BugCount}" FontSize="11" Foreground="{StaticResource StatusBadFg}"
+                                            <ui:SymbolIcon Symbol="Bug24" FontSize="14" Foreground="{DynamicResource StatusBadFg}" />
+                                            <TextBlock Text="{Binding BugCount}" FontSize="11" Foreground="{DynamicResource StatusBadFg}"
                                                        Margin="2,0,0,0" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <!-- WAIT icon + count -->
@@ -865,8 +886,8 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
-                                            <ui:SymbolIcon Symbol="Clock24" FontSize="14" Foreground="#E8A317" />
-                                            <TextBlock Text="{Binding WaitCount}" FontSize="11" Foreground="#E8A317"
+                                            <ui:SymbolIcon Symbol="Clock24" FontSize="14" Foreground="{DynamicResource StatusWarnFg}" />
+                                            <TextBlock Text="{Binding WaitCount}" FontSize="11" Foreground="{DynamicResource StatusWarnFg}"
                                                        Margin="2,0,0,0" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </StackPanel>
@@ -888,13 +909,13 @@
                                         <Border.Style>
                                             <Style TargetType="Border">
                                                 <Setter Property="Visibility" Value="Visible" />
-                                                <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                                <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="none">
                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
-                                                        <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -902,10 +923,10 @@
                                         <TextBlock Text="{Binding Manifest.ValidationSchedule}" FontSize="10">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
-                                                            <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -916,19 +937,19 @@
                                     <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
                                         <Border.Style>
                                             <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{StaticResource StatusGoodBg}" />
+                                                <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
-                                                        <Setter Property="Background" Value="{StaticResource StatusPrivateBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusPrivateBg}" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
-                                                        <Setter Property="Background" Value="{StaticResource StatusBadBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="remote">
-                                                        <Setter Property="Background" Value="{StaticResource StatusInfoBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
-                                                        <Setter Property="Background" Value="{StaticResource StatusNeutralBg}" />
+                                                        <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -938,23 +959,23 @@
                                                 <ui:SymbolIcon.Style>
                                                     <Style TargetType="ui:SymbolIcon">
                                                         <Setter Property="Symbol" Value="Globe24" />
-                                                        <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
                                                                 <Setter Property="Symbol" Value="LockClosed24" />
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusPrivateFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusPrivateFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
                                                                 <Setter Property="Symbol" Value="Desktop24" />
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="remote">
                                                                 <Setter Property="Symbol" Value="Cloud24" />
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
                                                                 <Setter Property="Symbol" Value="QuestionCircle24" />
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -963,19 +984,19 @@
                                             <TextBlock Text="{Binding GitStatus.Visibility}" FontSize="10" VerticalAlignment="Center">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
-                                                        <Setter Property="Foreground" Value="{StaticResource StatusGoodFg}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="private">
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusPrivateFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusPrivateFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="local">
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusBadFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="remote">
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusInfoFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding GitStatus.Visibility}" Value="unknown">
-                                                                <Setter Property="Foreground" Value="{StaticResource StatusNeutralFg}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -1010,7 +1031,7 @@
 
                                     <TextBlock DockPanel.Dock="Right" FontSize="11"
                                                HorizontalAlignment="Right"
-                                               Foreground="#E8A317"
+                                               Foreground="{DynamicResource StatusWarnFg}"
                                                Cursor="Hand"
                                                ToolTip="Open the Issues tab">
                                         <TextBlock.Style>
@@ -1041,7 +1062,7 @@
                                     <TextBlock DockPanel.Dock="Right" FontSize="11"
                                                HorizontalAlignment="Right"
                                                Margin="0,0,10,0"
-                                               Foreground="{StaticResource StatusInfoFg}"
+                                               Foreground="{DynamicResource StatusInfoFg}"
                                                Cursor="Hand"
                                                ToolTip="Open the Pull Requests tab">
                                         <TextBlock.Style>
