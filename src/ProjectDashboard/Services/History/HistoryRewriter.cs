@@ -568,6 +568,14 @@ public sealed class HistoryRewriter
         public IReadOnlyList<string> PathSpecs { get; }
         public Func<string, bool> PathInScope { get; }
 
+        /// <summary>
+        /// False when a glob in the path scope has no exact git pathspec — see
+        /// <see cref="PathGlob.ToGitPathspec"/>. A grep narrowed by an inexact pathspec would
+        /// search a different set of paths than the scope selected, so no grep runs at all and
+        /// the check says so rather than reporting a clean bill it did not earn.
+        /// </summary>
+        public bool PathSpecsExpressible { get; }
+
         public ScrubScope(
             RewriteOptions rewrite, HashSet<string>? inScopeCommitOids,
             Dictionary<string, string> commitMap, IReadOnlyList<string> changedTreeOids,
@@ -585,12 +593,26 @@ public sealed class HistoryRewriter
                     .Where(oid => !prunedSourceOids.Contains(oid) && commitMap.ContainsKey(oid))
                     .Select(oid => commitMap[oid]).Distinct().ToList();
             PathInScope = rewrite.FileScope.Matches;
-            PathSpecs = rewrite.FileScope switch
+            switch (rewrite.FileScope)
             {
-                ExplicitPathsScope paths => paths.Paths.Select(PathGlob.Normalize).ToList(),
-                GlobScope globs => globs.Patterns.Select(p => $":(glob){p}").ToList(),
-                _ => []
-            };
+                case ExplicitPathsScope paths:
+                    // :(literal) so a path holding a wildcard character selects itself and nothing
+                    // else, which is what ExplicitPathsScope means; a bare pathspec would read the
+                    // character as a wildcard. Literal magic keeps the directory-prefix match, so a
+                    // listed folder still selects its subtree.
+                    PathSpecs = paths.Paths.Select(p => $":(literal){PathGlob.Normalize(p)}").ToList();
+                    PathSpecsExpressible = true;
+                    break;
+                case GlobScope globs:
+                    var translated = globs.Patterns.Select(PathGlob.ToGitPathspec).ToList();
+                    PathSpecsExpressible = translated.All(p => p is not null);
+                    PathSpecs = PathSpecsExpressible ? translated.Select(p => p!).ToList() : [];
+                    break;
+                default:
+                    PathSpecs = [];
+                    PathSpecsExpressible = true;
+                    break;
+            }
         }
     }
 
@@ -662,6 +684,11 @@ public sealed class HistoryRewriter
                                 literalExtras, commitSampling: false));
                             break;
                         }
+                        if (!scope.PathSpecsExpressible)
+                        {
+                            checks.Add(Make("literal", needle, InexpressiblePathScope, literalExtras));
+                            break;
+                        }
                         checks.Add(Make("literal", needle,
                             await GrepAsync(request, ["grep", "-I", "--fixed-strings", "-e", needle], commits, scope.PathSpecs, ct),
                             literalExtras));
@@ -672,6 +699,11 @@ public sealed class HistoryRewriter
                         if (!IsEreExpressible(regex, out var flags, out var why))
                         {
                             checks.Add(Make("regex", regex.Pattern, new GrepOutcome(false, [], why), regexExtras));
+                            break;
+                        }
+                        if (!scope.PathSpecsExpressible)
+                        {
+                            checks.Add(Make("regex", regex.Pattern, InexpressiblePathScope, regexExtras));
                             break;
                         }
                         List<string> grepArgs = ["grep", "-I", "-E", .. flags, "-e", regex.Pattern];
@@ -1039,6 +1071,9 @@ public sealed class HistoryRewriter
 
     /// <summary>Result of one scrub grep. <see cref="Performed"/> is false when git grep could not run the pattern (rejected or timed out).</summary>
     private readonly record struct GrepOutcome(bool Performed, List<string> Hits, string? Note);
+
+    private static GrepOutcome InexpressiblePathScope => new(false, [],
+        "the path scope uses a glob git pathspecs cannot express, so no grep could be narrowed to exactly those paths; scrub grep skipped");
 
     private async Task<GrepOutcome> GrepAsync(
         HistoryRewriteRequest request, IReadOnlyList<string> grepArgs,

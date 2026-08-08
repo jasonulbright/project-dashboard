@@ -45,6 +45,26 @@ public class PathGlobTests
     public void MatchesSubset(string pattern, string path, bool expected) =>
         Assert.Equal(expected, new PathGlob(pattern).IsMatch(path));
 
+    [Theory]
+    [InlineData("a.txt", ":(glob)a.txt")]
+    [InlineData("src/**/*.cs", ":(glob)src/**/*.cs")]
+    [InlineData("docs/", ":(glob)docs/**")]
+    [InlineData("/a.txt", ":(glob)a.txt")]
+    [InlineData("src\\x.cs", ":(glob)src/x.cs")]
+    // Brackets are literal to PathGlob, so the pathspec must spell them as the
+    // single-character classes wildmatch reads back as those characters.
+    [InlineData("a[b].txt", ":(glob)a[[]b[]].txt")]
+    [InlineData("**/a[1].txt", ":(glob)**/a[[]1[]].txt")]
+    public void TranslatesToAnEquivalentGitPathspec(string pattern, string expected) =>
+        Assert.Equal(expected, PathGlob.ToGitPathspec(pattern));
+
+    [Theory]
+    [InlineData("a**b")]
+    [InlineData("**b")]
+    [InlineData("src/**b/c")]
+    public void DoubleStarThatIsNotAWholeSegmentHasNoPathspec(string pattern) =>
+        Assert.Null(PathGlob.ToGitPathspec(pattern));
+
     [Fact]
     public void AnchoredAtBothEnds()
     {
@@ -231,6 +251,65 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         Assert.Empty(scrub.Hits); // in-scope src/** is clean
         Assert.Contains("within scope", scrub.Note);
         output.WriteLine($"glob scope: src/app.cs scrubbed, docs/readme.md survivor retained; scrub WithinScopeOnly={scrub.WithinScopeOnly}, Complete={scrub.Complete}");
+    }
+
+    [Fact]
+    public async Task BracketedGlobScopesTheSameSetInThePreviewAndTheScrub()
+    {
+        using var f = Fixture();
+        f.Write("a[b].txt", $"bracketed {Needle}\n");
+        f.Write("ab.txt", $"unbracketed {Needle}\n");
+        f.CommitAll("bracket pair");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+
+        // The glob names the bracketed path literally. Read as a git character class it would
+        // select ab.txt instead, so the scrub would grep a path the rewrite never touched and
+        // report its needle as a survivor.
+        var report = await RewriteAsync(f, Literal(Needle, Redacted, files: new GlobScope { Patterns = ["a[b].txt"] }));
+        var newHead = report.CommitMap[head];
+
+        Assert.Contains(Redacted, Show(f, $"{newHead}:a[b].txt"));
+        Assert.Contains(Needle, Show(f, $"{newHead}:ab.txt"));
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed, scrub.Note);
+        Assert.True(scrub.Complete, scrub.Note);
+        Assert.Empty(scrub.Hits);
+    }
+
+    [Fact]
+    public async Task ExplicitPathWithABracketScopesItselfAndNothingElse()
+    {
+        using var f = Fixture();
+        f.Write("a[b].txt", $"bracketed {Needle}\n");
+        f.Write("ab.txt", $"unbracketed {Needle}\n");
+        f.CommitAll("bracket pair");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, Literal(Needle, Redacted, files: new ExplicitPathsScope { Paths = ["a[b].txt"] }));
+        var newHead = report.CommitMap[head];
+
+        Assert.Contains(Redacted, Show(f, $"{newHead}:a[b].txt"));
+        Assert.Contains(Needle, Show(f, $"{newHead}:ab.txt"));
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.True(scrub.Performed, scrub.Note);
+        Assert.Empty(scrub.Hits);
+    }
+
+    [Fact]
+    public async Task GlobWithNoPathspecTranslationSkipsTheGrepInsteadOfNarrowingItWrongly()
+    {
+        using var f = Fixture();
+        f.Write("axxb.txt", $"in scope {Needle}\n");
+        f.CommitAll("one");
+
+        var report = await RewriteAsync(f, Literal(Needle, Redacted, files: new GlobScope { Patterns = ["a**b.txt"] }));
+
+        var scrub = Assert.Single(report.ScrubChecks);
+        Assert.False(scrub.Performed);
+        Assert.False(scrub.Complete);
+        Assert.Contains("cannot express", scrub.Note);
     }
 
     [Fact]
