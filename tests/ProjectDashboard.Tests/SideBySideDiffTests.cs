@@ -101,6 +101,76 @@ public class SideBySideDiffTests
         Assert.Equal(1, body[1].HunkIndex);
     }
 
+    /// <summary>
+    /// Git reports a missing final newline with a marker line inside the hunk, once per side.
+    /// The marker is not a line of either file, so it pairs with nothing: read as context it
+    /// ends the run of changed lines, which leaves the edited last line one-sided and prints the
+    /// marker's text into both columns as though the file held it.
+    /// </summary>
+    private const string LastLineWithoutNewline = """
+        diff --git a/file.txt b/file.txt
+        --- a/file.txt
+        +++ b/file.txt
+        @@ -1,2 +1,2 @@
+         first
+        -second
+        \ No newline at end of file
+        +SECOND
+        \ No newline at end of file
+        """;
+
+    [Fact]
+    public void AnEditedLastLineWithNoTrailingNewline_StillPairs()
+    {
+        var rows = SideBySideDiff.Build(Parse(LastLineWithoutNewline));
+
+        var changed = rows.Single(r => r.LeftRemoved);
+        Assert.Equal("second", changed.Left!.Text);
+        Assert.Equal("SECOND", changed.Right!.Text);
+        Assert.False(changed.LeftAbsent);
+        Assert.False(changed.RightAbsent);
+    }
+
+    /// <summary>
+    /// The marker states something about the file, like a hunk header, so it renders once across
+    /// both columns — never as text one side of the file contains.
+    /// </summary>
+    [Fact]
+    public void TheNoNewlineMarker_RendersAsAHeaderRow()
+    {
+        var rows = SideBySideDiff.Build(Parse(LastLineWithoutNewline));
+
+        var markers = rows.Where(r => r.HeaderText.StartsWith('\\')).ToList();
+        Assert.NotEmpty(markers);
+        Assert.All(markers, r =>
+        {
+            Assert.True(r.IsHeader);
+            Assert.Null(r.Left);
+            Assert.Null(r.Right);
+        });
+        Assert.DoesNotContain(rows, r =>
+            r.LeftSegments.Concat(r.RightSegments).Any(s => s.Text.StartsWith('\\')));
+    }
+
+    /// <summary>The marker follows the lines it is about, not the run it interrupted.</summary>
+    [Fact]
+    public void TheNoNewlineMarker_FollowsThePairItAnnotates()
+    {
+        var rows = SideBySideDiff.Build(Parse(LastLineWithoutNewline));
+
+        Assert.True(rows.FindIndex(r => r.LeftRemoved) < rows.FindIndex(r => r.HeaderText.StartsWith('\\')));
+    }
+
+    [Fact]
+    public void NoLineOfANoNewlineDiff_IsDroppedOrDuplicated()
+    {
+        var lines = Parse(LastLineWithoutNewline);
+        var rows = SideBySideDiff.Build(lines);
+
+        foreach (var line in lines)
+            Assert.Single(rows, r => r.Covers(line));
+    }
+
     [Fact]
     public void EveryRow_CarriesTheHunkIndexOfTheLineItWasBuiltFrom()
     {

@@ -67,9 +67,16 @@ public static class SideBySideDiff
         var rows = new List<SideBySideRow>();
         var removed = new List<DiffLine>();
         var added = new List<DiffLine>();
+        var notes = new List<DiffLine>();
 
         foreach (var line in lines)
         {
+            if (IsFileNote(line))
+            {
+                notes.Add(line);
+                continue;
+            }
+
             switch (line.Kind)
             {
                 case DiffLineKind.Removed:
@@ -82,7 +89,7 @@ public static class SideBySideDiff
 
             // A context row or a header ends the run of changed lines that precedes it, and
             // a header also ends the hunk — so a pair is never made across two hunks.
-            Flush(rows, removed, added);
+            Flush(rows, removed, added, notes);
             if (line.Kind == DiffLineKind.HunkHeader)
                 rows.Add(new SideBySideRow { Header = line });
             else
@@ -95,16 +102,27 @@ public static class SideBySideDiff
                 });
         }
 
-        Flush(rows, removed, added);
+        Flush(rows, removed, added, notes);
         return rows;
     }
+
+    /// <summary>
+    /// A line git writes about the file rather than from it — "\ No newline at end of file",
+    /// which the unified parser carries as context because it sits inside the hunk. It belongs
+    /// to no side, so it neither pairs nor ends the run of changed lines it interrupts.
+    /// </summary>
+    private static bool IsFileNote(DiffLine line) =>
+        line.Kind == DiffLineKind.Context && line.Text.StartsWith('\\');
 
     /// <summary>
     /// Pairs a run of removed lines with the run of added lines that follows it, in order.
     /// Position is the only alignment a unified diff carries; a run of unequal lengths leaves
     /// the surplus rows one-sided rather than paired with a line git never matched them to.
+    /// Notes gathered inside the run follow it, spanning both columns like a header: they
+    /// describe the lines above them and are text neither file contains.
     /// </summary>
-    private static void Flush(List<SideBySideRow> rows, List<DiffLine> removed, List<DiffLine> added)
+    private static void Flush(List<SideBySideRow> rows, List<DiffLine> removed, List<DiffLine> added,
+        List<DiffLine> notes)
     {
         for (var i = 0; i < Math.Max(removed.Count, added.Count); i++)
         {
@@ -124,6 +142,9 @@ public static class SideBySideDiff
         }
         removed.Clear();
         added.Clear();
+
+        foreach (var note in notes) rows.Add(new SideBySideRow { Header = note });
+        notes.Clear();
     }
 
     private static IReadOnlyList<DiffSegment> Plain(DiffLine? line) =>

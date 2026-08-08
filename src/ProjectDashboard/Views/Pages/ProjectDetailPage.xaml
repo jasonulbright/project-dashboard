@@ -93,28 +93,25 @@
         </Style>
 
         <DataTemplate x:Key="SideBySideRowTemplate" DataType="{x:Type models:SideBySideRow}">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="42" />
-                    <ColumnDefinition Width="Auto" SharedSizeGroup="DiffOldText" />
-                    <ColumnDefinition Width="42" />
-                    <ColumnDefinition Width="Auto" SharedSizeGroup="DiffNewText" />
-                </Grid.ColumnDefinitions>
-
+            <!-- The two text cells are equal halves of one arranged width, so the boundary
+                 between them sits at the same place on every row of the pane. -->
+            <helpers:DiffRowPanel GutterWidth="42">
                 <!-- A hunk header, a mode line, or the untracked-preview note: one statement
                      about the file, not a line of either side of it. -->
-                <TextBlock Grid.Column="0" Grid.ColumnSpan="4" Text="{Binding HeaderText}"
+                <TextBlock helpers:DiffRowPanel.Cell="Span" Text="{Binding HeaderText}"
                            FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
                            Background="{StaticResource StatusInfoBg}"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            Visibility="{Binding IsHeader, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                <TextBlock Grid.Column="0" Text="{Binding LeftNumber}"
+                <TextBlock helpers:DiffRowPanel.Cell="OldNumber" Text="{Binding LeftNumber}"
                            FontFamily="Cascadia Code,Consolas" FontSize="11"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            HorizontalAlignment="Right" Margin="0,0,8,0"
                            Style="{StaticResource DiffGutterNumber}" />
-                <Border Grid.Column="1" MinWidth="120">
+                <!-- Clipped: a line longer than the half it sits in scrolls into view with the
+                     pane rather than painting over the other side of the file. -->
+                <Border helpers:DiffRowPanel.Cell="OldText" MinWidth="120" ClipToBounds="True">
                     <Border.Style>
                         <Style TargetType="Border">
                             <Style.Triggers>
@@ -136,12 +133,13 @@
                                helpers:InlineSegments.Segments="{Binding LeftSegments}" />
                 </Border>
 
-                <TextBlock Grid.Column="2" Text="{Binding RightNumber}"
+                <TextBlock helpers:DiffRowPanel.Cell="NewNumber" Text="{Binding RightNumber}"
                            FontFamily="Cascadia Code,Consolas" FontSize="11"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            HorizontalAlignment="Right" Margin="10,0,8,0"
                            Style="{StaticResource DiffGutterNumber}" />
-                <Border Grid.Column="3" MinWidth="120" BorderThickness="1,0,0,0"
+                <Border helpers:DiffRowPanel.Cell="NewText" MinWidth="120" ClipToBounds="True"
+                        BorderThickness="1,0,0,0"
                         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
                     <Border.Style>
                         <Style TargetType="Border">
@@ -164,7 +162,7 @@
                                helpers:InlineSegments.HighlightBrush="{StaticResource DiffAddedWordBg}"
                                helpers:InlineSegments.Segments="{Binding RightSegments}" />
                 </Border>
-            </Grid>
+            </helpers:DiffRowPanel>
         </DataTemplate>
 
         <!-- Long lines scroll rather than wrap, as in the unified pane: a wrapped cell would
@@ -172,7 +170,6 @@
         <Style x:Key="SideBySideListStyle" TargetType="ListBox">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Grid.IsSharedSizeScope" Value="True" />
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
             <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
             <Setter Property="ItemTemplate" Value="{StaticResource SideBySideRowTemplate}" />

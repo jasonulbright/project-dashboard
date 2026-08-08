@@ -104,6 +104,39 @@ public class ChangesTabMarkupTests
         }
     }
 
+    /// <summary>
+    /// The two-column rows split one arranged width, and nothing about the split is left to a
+    /// shared size scope: recycling virtualization reuses a row's containers for other rows, so a
+    /// scope measured from whatever is realized moves the boundary as the reader scrolls.
+    /// </summary>
+    [Fact]
+    public void TheSideBySideRows_SplitTheirOwnWidthRatherThanASharedScope()
+    {
+        var template = Regex.Match(Markup,
+            @"<DataTemplate x:Key=""SideBySideRowTemplate"".*?</DataTemplate>", RegexOptions.Singleline);
+
+        Assert.True(template.Success, "the side-by-side row template was not found");
+        Assert.Contains("<helpers:DiffRowPanel", template.Value);
+        Assert.DoesNotContain("SharedSizeGroup", Markup);
+        Assert.DoesNotContain(@"Grid.IsSharedSizeScope", Markup);
+        foreach (var cell in new[] { "Span", "OldNumber", "OldText", "NewNumber", "NewText" })
+            Assert.Contains($@"helpers:DiffRowPanel.Cell=""{cell}""", template.Value);
+    }
+
+    /// <summary>A line longer than the pane is reached by scrolling, in either layout.</summary>
+    [Theory]
+    [InlineData("DiffListStyle")]
+    [InlineData("SideBySideListStyle")]
+    public void BothDiffPanes_ScrollHorizontallyRatherThanWrap(string style)
+    {
+        var declared = Regex.Match(Markup,
+            @"<Style x:Key=""" + style + @""".*?</Style>", RegexOptions.Singleline);
+
+        Assert.True(declared.Success, $"the {style} style was not found");
+        Assert.Contains(@"<Setter Property=""ScrollViewer.HorizontalScrollBarVisibility"" Value=""Auto"" />",
+            declared.Value);
+    }
+
     [Fact]
     public void TheCommitBox_ShowsItsCountersWarningAndSubjectPicker()
     {
