@@ -70,6 +70,70 @@ public class ForcePushTests
             return await OriginMainAsync();
         }
 
+        /// <summary>
+        /// A clone that has fetched commits it never merged: the remote is ahead of it and it is
+        /// ahead of the remote by nothing. A plain pull publishes nothing and loses nothing, which
+        /// is the whole difference between this and divergence.
+        /// </summary>
+        public static async Task<Diverged> BehindOnlyAsync(string prefix)
+        {
+            var seed = await TempRepo.CreateWithCommitAsync(prefix + "-seed");
+            var bare = await TempRepo.CreateBareFromAsync(seed, prefix + "-origin");
+            var local = await TempRepo.CloneFromAsync(bare, prefix + "-local");
+
+            using (var other = await TempRepo.CloneFromAsync(bare, prefix + "-other"))
+            {
+                other.WriteFile("theirs.txt", "their work\n");
+                await other.CommitAllAsync("their commit");
+                await other.GitAsync("push");
+            }
+            await local.GitAsync("fetch");
+
+            return new Diverged { Seed = seed, Bare = bare, Local = local };
+        }
+
+        /// <summary>Two rewritten branches, so a plan has more than one row to choose between.</summary>
+        public static async Task<Diverged> TwoDivergedAsync(string prefix)
+        {
+            var fixture = await CreateAsync(prefix);
+            await fixture.Local.GitAsync("switch", "-c", "topic");
+            fixture.Local.WriteFile("topic.txt", "topic work\n");
+            await fixture.Local.CommitAllAsync("topic commit");
+            await fixture.Local.GitAsync("push", "-u", "origin", "topic");
+            fixture.Local.WriteFile("topic.txt", "topic work, redacted\n");
+            await fixture.Local.GitAsync("commit", "-a", "--amend", "-m", "topic commit (rewritten)");
+            await fixture.Local.GitAsync("switch", "main");
+            return fixture;
+        }
+
+        /// <summary>
+        /// A branch published under a different name, which branch.&lt;name&gt;.merge allows: the
+        /// local name and the remote ref's name are then not the same string.
+        /// </summary>
+        public static async Task<Diverged> RenamedUpstreamAsync(string prefix)
+        {
+            var seed = await TempRepo.CreateWithCommitAsync(prefix + "-seed");
+            var bare = await TempRepo.CreateBareFromAsync(seed, prefix + "-origin");
+            var local = await TempRepo.CloneFromAsync(bare, prefix + "-local");
+
+            await local.GitAsync("switch", "-c", "work");
+            local.WriteFile("secret.txt", "a password\n");
+            await local.CommitAllAsync("add the file");
+            await local.GitAsync("push", "origin", "work:published");
+            await local.GitAsync("config", "branch.work.remote", "origin");
+            await local.GitAsync("config", "branch.work.merge", "refs/heads/published");
+            await local.GitAsync("fetch", "origin");
+
+            local.WriteFile("secret.txt", "redacted\n");
+            await local.GitAsync("commit", "-a", "--amend", "-m", "add the file (rewritten)");
+
+            return new Diverged { Seed = seed, Bare = bare, Local = local };
+        }
+
+        public Task<string> BareRefAsync(string reference) => RevParseAsync(Bare, reference);
+
+        public Task<string> LocalRefAsync(string reference) => RevParseAsync(Local, reference);
+
         public void Dispose()
         {
             Local.Dispose();
@@ -173,6 +237,42 @@ public class ForcePushTests
         Assert.Contains("No remote-tracking ref to take a lease on", ProjectDetailViewModel.DescribeExclusions(plan));
     }
 
+    /// <summary>
+    /// A clone that has merely not pulled is not diverged. Nothing here would be replaced by a
+    /// force — the remote's commits would be DROPPED — so the branch is excluded by name, the pane
+    /// offers nothing to confirm, and the Branches tab does not raise the force affordance.
+    /// </summary>
+    [Fact]
+    public async Task ABranchThatIsOnlyBehind_IsExcludedByNameAndNeverReachesThePush()
+    {
+        using var fixture = await Diverged.BehindOnlyAsync("fp-behind");
+        var originBefore = await fixture.OriginMainAsync();
+
+        var plan = await NewService().PlanAsync(fixture.Local.Path);
+
+        Assert.Empty(plan.Diverged);
+        Assert.Empty(plan.AheadOnly);
+        Assert.Equal("main", Assert.Single(plan.BehindOnly));
+        Assert.Contains("Behind only — pull instead, no force needed",
+            ProjectDetailViewModel.DescribeExclusions(plan));
+
+        var vm = NewVm(NewService());
+        await vm.SetProjectAsync(ProjectFor(fixture.Local));
+        await vm.OpenForcePushCommand.ExecuteAsync(null);
+
+        Assert.True(vm.ForcePushEmpty);
+        Assert.False(vm.ForcePushHasRows);
+        // Even typed exactly, the confirmation reaches nothing.
+        vm.ForcePushConfirmInput = vm.ForcePushConfirmPhrase;
+        Assert.False(vm.PushRewrittenHistoryCommand.CanExecute(null));
+        await vm.PushRewrittenHistoryCommand.ExecuteAsync(null);
+        Assert.Equal(originBefore, await fixture.OriginMainAsync());
+
+        await vm.LoadBranchesCommand.ExecuteAsync(null);
+        Assert.False(vm.BranchesDivergedFromRemote);
+        _output.WriteLine(ProjectDetailViewModel.DescribeExclusions(plan));
+    }
+
     [Fact]
     public async Task ARepositoryWithNoUpstreamAtAll_PlansNothingAndRefusesNothing()
     {
@@ -208,7 +308,8 @@ public class ForcePushTests
 
     /// <summary>
     /// The command is force-WITH-LEASE, the expected value is stated rather than left implicit,
-    /// and no plain force is ever issued — including as a fallback after a rejection.
+    /// the source is the object id the plan captured rather than a ref that can move, and no plain
+    /// force is ever issued — including as a fallback after a rejection.
     /// </summary>
     [Fact]
     public async Task ThePushCommand_StatesItsLeaseAndNeverUsesAPlainForce()
@@ -225,10 +326,100 @@ public class ForcePushTests
 
         var push = Assert.Single(git.Calls, c => c.Contains("push"));
         Assert.Contains(push, a => a == $"--force-with-lease=refs/heads/main:{lease}");
-        Assert.Contains(push, a => a == "refs/heads/main:refs/heads/main");
+        Assert.Contains(push, a => a == $"{local}:refs/heads/main");
+        Assert.DoesNotContain(push, a => a == "refs/heads/main:refs/heads/main");
         Assert.DoesNotContain(push, a => a is "--force" or "-f" or "--force-if-includes");
         _output.WriteLine("push argv: " + string.Join(" ", push));
         Assert.Equal(local, await fixture.OriginMainAsync());
+    }
+
+    /// <summary>
+    /// The push publishes the object id the plan captured, not whatever the local ref points at by
+    /// the time the reader confirms. A commit made while the pane was open must not ride along
+    /// under a report that names the planned id.
+    /// </summary>
+    [Fact]
+    public async Task ACommitMadeAfterThePlan_DoesNotRideAlongWithThePush()
+    {
+        using var fixture = await Diverged.CreateAsync("fp-planned-oid");
+        var service = NewService();
+        var plan = await service.PlanAsync(fixture.Local.Path);
+        var planned = plan.Diverged.Single().LocalOid;
+
+        fixture.Local.WriteFile("later.txt", "committed while the pane was open\n");
+        await fixture.Local.CommitAllAsync("a commit the reader never saw on the plan");
+        var newTip = await fixture.LocalMainAsync();
+        Assert.NotEqual(planned, newTip);
+
+        var outcome = await service.PushAsync(fixture.Local.Path, plan.Diverged);
+
+        Assert.True(outcome.Success, outcome.Refs.FirstOrDefault()?.Detail);
+        Assert.Equal(planned, await fixture.OriginMainAsync());
+        Assert.NotEqual(newTip, await fixture.OriginMainAsync());
+        // The report is about what landed, so it must not name an id the remote never took.
+        var landed = Assert.Single(outcome.Refs);
+        Assert.Contains(ForcePushService.Short(planned), landed.Detail);
+        Assert.DoesNotContain(ForcePushService.Short(newTip), landed.Detail);
+        _output.WriteLine($"planned {planned[..8]}, local moved to {newTip[..8]}, remote took {(await fixture.OriginMainAsync())[..8]}");
+    }
+
+    /// <summary>
+    /// The remote ref can carry a different name than the branch. Every string the reader is shown
+    /// — and every line the outcome reports — has to name the ref that is actually replaced.
+    /// </summary>
+    [Fact]
+    public async Task AnUpstreamWithADifferentName_IsNamedByItsRemoteRefEverywhere()
+    {
+        using var fixture = await Diverged.RenamedUpstreamAsync("fp-renamed");
+        var service = NewService();
+        var plan = await service.PlanAsync(fixture.Local.Path);
+
+        var branch = Assert.Single(plan.Diverged);
+        Assert.Equal("work", branch.BranchName);
+        Assert.Equal("refs/heads/published", branch.RemoteRef);
+
+        var row = ProjectDetailViewModel.Describe(branch);
+        Assert.Equal("work → origin/published", row.Headline);
+        Assert.Contains("origin/published", row.Impact);
+        Assert.Contains("origin/published", row.Lease);
+        Assert.DoesNotContain("origin/work", row.Headline + row.Impact + row.Lease);
+
+        var outcome = await service.PushAsync(fixture.Local.Path, plan.Diverged);
+
+        var landed = Assert.Single(outcome.Refs);
+        Assert.True(landed.Success, landed.Detail);
+        Assert.Contains("origin/published", landed.Detail);
+        Assert.DoesNotContain("origin/work", landed.Detail);
+        Assert.Equal(await fixture.LocalRefAsync("refs/heads/work"),
+            await fixture.BareRefAsync("refs/heads/published"));
+        _output.WriteLine($"{row.Headline} | {landed.Detail}");
+    }
+
+    /// <summary>The refusal names the ref it could not replace, which on a renamed upstream is not the branch's own name.</summary>
+    [Fact]
+    public async Task AStaleLeaseOnARenamedUpstream_NamesTheRemoteRefItLeftAlone()
+    {
+        using var fixture = await Diverged.RenamedUpstreamAsync("fp-renamed-stale");
+        var service = NewService();
+        var plan = await service.PlanAsync(fixture.Local.Path);
+
+        using (var other = await TempRepo.CloneFromAsync(fixture.Bare, "fp-renamed-other"))
+        {
+            await other.GitAsync("switch", "published");
+            other.WriteFile("theirs.txt", "landed after the plan was built\n");
+            await other.CommitAllAsync("their commit");
+            await other.GitAsync("push", "origin", "HEAD:refs/heads/published");
+        }
+        var movedTo = await fixture.BareRefAsync("refs/heads/published");
+
+        var outcome = await service.PushAsync(fixture.Local.Path, plan.Diverged);
+
+        var refused = Assert.Single(outcome.Refs);
+        Assert.True(refused.LeaseRejected);
+        Assert.Contains("origin/published", refused.Detail);
+        Assert.DoesNotContain("origin/work", refused.Detail);
+        Assert.Equal(movedTo, await fixture.BareRefAsync("refs/heads/published"));
+        _output.WriteLine(refused.Detail);
     }
 
     /// <summary>
@@ -360,6 +551,81 @@ public class ForcePushTests
         _output.WriteLine($"typed-confirm push: {vm.ForcePushStatusText}");
     }
 
+    /// <summary>
+    /// The typed name confirms the rows that are checked, not the plan as a whole. An unchecked
+    /// branch is left exactly where it was on the remote, and unchecking every row leaves the
+    /// command with nothing to run.
+    /// </summary>
+    [Fact]
+    public async Task AnUncheckedRow_IsLeftOnTheRemoteWhileTheCheckedOneIsPublished()
+    {
+        using var fixture = await Diverged.TwoDivergedAsync("fp-optout");
+        var vm = NewVm(NewService());
+        await vm.SetProjectAsync(ProjectFor(fixture.Local));
+        await vm.OpenForcePushCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, vm.ForcePushRows.Count);
+        Assert.All(vm.ForcePushRows, r => Assert.True(r.Include));
+        var topicBefore = await fixture.BareRefAsync("refs/heads/topic");
+
+        // Nothing checked is nothing to confirm, however exactly the name is typed.
+        foreach (var row in vm.ForcePushRows) row.Include = false;
+        vm.ForcePushConfirmInput = vm.ForcePushConfirmPhrase;
+        Assert.False(vm.PushRewrittenHistoryCommand.CanExecute(null));
+        await vm.PushRewrittenHistoryCommand.ExecuteAsync(null);
+        Assert.Equal(topicBefore, await fixture.BareRefAsync("refs/heads/topic"));
+
+        vm.ForcePushRows.Single(r => r.Branch.BranchName == "main").Include = true;
+        Assert.True(vm.PushRewrittenHistoryCommand.CanExecute(null));
+        await vm.PushRewrittenHistoryCommand.ExecuteAsync(null);
+
+        Assert.Equal(await fixture.LocalMainAsync(), await fixture.OriginMainAsync());
+        Assert.Equal(topicBefore, await fixture.BareRefAsync("refs/heads/topic"));
+        Assert.DoesNotContain(vm.ForcePushResults, line => line.Contains("topic", StringComparison.Ordinal));
+        _output.WriteLine(string.Join("\n", vm.ForcePushResults));
+    }
+
+    /// <summary>
+    /// The plan's own field separator cannot be a character a ref name may contain: this surface
+    /// promises that an absent branch is explained, and a branch dropped by the parse is explained
+    /// nowhere.
+    /// </summary>
+    [Fact]
+    public async Task ABranchNameContainingTheOldSeparator_IsStillPlanned()
+    {
+        using var fixture = await Diverged.CreateAsync("fp-pipe");
+        const string name = "topic|with-a-pipe";
+        var local = await fixture.LocalMainAsync();
+        var tracking = await fixture.TrackingAsync();
+        // Windows cannot hold this ref as a file, so it goes in where git keeps refs that are not files.
+        PackRefs(fixture.Local.Path,
+            (local, $"refs/heads/{name}"),
+            (tracking, $"refs/remotes/origin/{name}"));
+        await fixture.Local.GitAsync("config", $"branch.{name}.remote", "origin");
+        await fixture.Local.GitAsync("config", $"branch.{name}.merge", $"refs/heads/{name}");
+
+        var plan = await NewService().PlanAsync(fixture.Local.Path);
+
+        var branch = Assert.Single(plan.Diverged, b => b.BranchName == name);
+        Assert.Equal($"refs/heads/{name}", branch.RemoteRef);
+        Assert.Equal(tracking, branch.LeaseOid);
+        Assert.Equal(local, branch.LocalOid);
+        _output.WriteLine($"planned {branch.BranchName} → {branch.Remote}/{name}");
+    }
+
+    /// <summary>Appends refs to packed-refs, which is how git stores a ref whose name is not a legal file name.</summary>
+    private static void PackRefs(string repoPath, params (string Oid, string Ref)[] refs)
+    {
+        var file = Path.Combine(repoPath, ".git", "packed-refs");
+        var lines = (File.Exists(file) ? File.ReadAllLines(file) : [])
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .Concat(refs.Select(r => $"{r.Oid} {r.Ref}"))
+            .OrderBy(l => l[(l.IndexOf(' ') + 1)..], StringComparer.Ordinal);
+        // git's parser takes the whole line as the ref name, so a CR would land inside it.
+        File.WriteAllText(file,
+            string.Join('\n', new[] { "# pack-refs with: peeled fully-peeled sorted " }.Concat(lines)) + "\n");
+    }
+
     /// <summary>Opening the pane reads refs and shows a plan; it must not push anything by doing so.</summary>
     [Fact]
     public async Task OpeningThePane_ShowsThePlanAndPushesNothing()
@@ -475,6 +741,22 @@ public class ForcePushTests
         vm.ReflogVisible = true;
         Assert.False(vm.SafetyOverlayHidden);
         Assert.False(vm.MaintenanceOverlayHidden);
+    }
+
+    /// <summary>
+    /// A rejected lease is told apart from every other rejection by the words git prints, and git
+    /// translates those words. The message locale is pinned for every call this app makes, so the
+    /// same sniff holds on a machine whose git speaks something else.
+    /// </summary>
+    [Fact]
+    public void TheGitEnvironment_PinsTheMessageLocaleTheOutputSniffsDependOn()
+    {
+        Assert.Equal("C", GitService.GitEnvironment["LC_ALL"]);
+        Assert.Equal("C", GitService.GitEnvironment["LANGUAGE"]);
+        Assert.True(ForcePushService.IsLeaseRejection(
+            new ProcessResult(1, "", "! [rejected] main -> main (stale info)", false)));
+        Assert.False(ForcePushService.IsLeaseRejection(
+            new ProcessResult(1, "", "remote: Permission to org/repo.git denied", false)));
     }
 
     [Theory]

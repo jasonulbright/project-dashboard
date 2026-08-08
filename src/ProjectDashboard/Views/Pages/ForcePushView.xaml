@@ -89,20 +89,27 @@
                                     <Border CornerRadius="6" Padding="12,10" Margin="0,0,0,8"
                                             Background="{StaticResource StatusBadBg}" BorderThickness="1"
                                             BorderBrush="{StaticResource StatusBadFg}">
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding Headline}" FontSize="13" FontWeight="SemiBold"
-                                                       FontFamily="Cascadia Code,Consolas"
-                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                            <TextBlock Text="{Binding Change}" FontSize="12" TextWrapping="Wrap"
-                                                       Margin="0,5,0,0" FontFamily="Cascadia Code,Consolas"
-                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                            <TextBlock Text="{Binding Impact}" FontSize="12" TextWrapping="Wrap"
-                                                       Margin="0,5,0,0"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock Text="{Binding Lease}" FontSize="12" TextWrapping="Wrap"
-                                                       Margin="0,5,0,0"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                        </StackPanel>
+                                        <DockPanel>
+                                            <!-- Per-branch opt-out: the typed name confirms the rows
+                                                 that are checked, not the plan as a whole. -->
+                                            <CheckBox DockPanel.Dock="Left" Margin="0,0,10,0" VerticalAlignment="Top"
+                                                      IsChecked="{Binding Include, Mode=TwoWay}"
+                                                      AutomationProperties.Name="{Binding Headline, StringFormat='Include {0} in the push'}" />
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Headline}" FontSize="13" FontWeight="SemiBold"
+                                                           FontFamily="Cascadia Code,Consolas"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="{Binding Change}" FontSize="12" TextWrapping="Wrap"
+                                                           Margin="0,5,0,0" FontFamily="Cascadia Code,Consolas"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="{Binding Impact}" FontSize="12" TextWrapping="Wrap"
+                                                           Margin="0,5,0,0"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="{Binding Lease}" FontSize="12" TextWrapping="Wrap"
+                                                           Margin="0,5,0,0"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                        </DockPanel>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -136,7 +143,7 @@
                                                Text="This replaces commits on a remote that other people pull from. Nothing in this app backs up a remote, and nothing here can put those commits back — anyone who already pulled them has to reconcile by hand." />
                                     <TextBlock FontSize="13" TextWrapping="Wrap" Margin="0,10,0,0"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                               Text="Type this repository's name below to confirm." />
+                                               Text="Only the branches checked above are pushed. Type this repository's name below to confirm." />
                                 </StackPanel>
                             </Border>
                             <ui:TextBox Margin="0,12,0,0" MaxWidth="420" HorizontalAlignment="Left"

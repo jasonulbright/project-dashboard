@@ -3,10 +3,14 @@ using ProjectDashboard.Services.Safety;
 namespace ProjectDashboard.Services.Rewrite;
 
 /// <summary>
-/// One local branch whose remote counterpart holds commits the branch does not, so publishing it
-/// can only replace what the remote has. <see cref="LeaseOid"/> is the remote-tracking ref's
-/// current value — the newest position this repository has observed for
-/// <see cref="RemoteRef"/> — and is the whole of the lease's basis.
+/// One local branch that holds commits its remote counterpart does not AND whose remote
+/// counterpart holds commits it does not, so publishing it can only replace what the remote has.
+/// <see cref="LeaseOid"/> is the remote-tracking ref's current value — the newest position this
+/// repository has observed for <see cref="RemoteRef"/> — and is the whole of the lease's basis.
+///
+/// <see cref="BranchName"/> and <see cref="RemoteRef"/> can name different branches:
+/// branch.&lt;name&gt;.merge sets what a branch tracks, and it need not carry the branch's own name.
+/// <see cref="RemoteDisplayName"/> is therefore the only form that names the ref a push replaces.
 /// </summary>
 public sealed record DivergedBranch(
     string BranchName,
@@ -17,22 +21,27 @@ public sealed record DivergedBranch(
     string TrackingRef,
     string LeaseOid,
     int Ahead,
-    int Behind);
+    int Behind)
+{
+    public string RemoteDisplayName => $"{Remote}/{ForcePushService.ShortBranchName(RemoteRef)}";
+}
 
 /// <summary>
-/// What a force-push would cover. <see cref="Diverged"/> is the whole of it; the other two lists
+/// What a force-push would cover. <see cref="Diverged"/> is the whole of it; the other three lists
 /// exist so the surface can say why a branch is absent instead of leaving its absence to be
 /// inferred. <see cref="AheadOnly"/> branches need no force and this flow does not push them;
-/// <see cref="UpstreamGone"/> branches have no remote-tracking ref left, so there is no lease to
-/// take and nothing to overwrite.
+/// <see cref="BehindOnly"/> branches hold nothing the remote lacks, so forcing one would drop the
+/// remote's commits and publish nothing; <see cref="UpstreamGone"/> branches have no
+/// remote-tracking ref left, so there is no lease to take and nothing to overwrite.
 /// </summary>
 public sealed record ForcePushPlan(
     IReadOnlyList<DivergedBranch> Diverged,
     IReadOnlyList<string> AheadOnly,
+    IReadOnlyList<string> BehindOnly,
     IReadOnlyList<string> UpstreamGone,
     string? Refusal)
 {
-    public static ForcePushPlan Refused(string reason) => new([], [], [], reason);
+    public static ForcePushPlan Refused(string reason) => new([], [], [], [], reason);
 }
 
 /// <summary>One ref's push outcome. <see cref="LeaseRejected"/> means the remote had moved, so nothing on it was replaced.</summary>
@@ -77,8 +86,10 @@ public class ForcePushService
 
     /// <summary>
     /// What publishing this repository's local branches would replace on their remotes. A branch
-    /// is included only when its remote-tracking ref holds commits the branch does not — the exact
-    /// condition under which a plain push is rejected and only a force can land.
+    /// is included only when it holds commits its remote-tracking ref does not AND that ref holds
+    /// commits the branch does not — the exact condition under which a plain push is rejected and
+    /// only a force can land. A branch that is merely behind is excluded: forcing one would drop
+    /// the remote's commits and publish nothing of its own.
     ///
     /// Divergence is read from the refs on disk, so nothing here contacts a remote: the answer
     /// describes the remote as of this repository's last fetch, which is also what the lease is
@@ -90,20 +101,22 @@ public class ForcePushService
         if (repoPath.Length == 0 || !GitService.IsGitRepo(repoPath))
             return ForcePushPlan.Refused($"'{repoPath}' is not a git repository.");
 
+        var format = string.Join(GitService.FieldSeparator,
+            "%(refname)", "%(objectname)", "%(upstream)", "%(upstream:remotename)",
+            "%(upstream:remoteref)", "%(upstream:track)");
         var result = await _git.RunAsync(repoPath,
-            ["for-each-ref", "refs/heads",
-             "--format=%(refname)|%(objectname)|%(upstream)|%(upstream:remotename)|%(upstream:remoteref)|%(upstream:track)"],
-            ct, RefTimeout);
+            ["for-each-ref", "refs/heads", "--format=" + format], ct, RefTimeout);
         if (!result.Success)
             return ForcePushPlan.Refused($"Could not read this repository's branches: {result.FirstError}");
 
         var diverged = new List<DivergedBranch>();
         var aheadOnly = new List<string>();
+        var behindOnly = new List<string>();
         var gone = new List<string>();
 
         foreach (var raw in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var parts = raw.TrimEnd('\r').Split('|');
+            var parts = raw.TrimEnd('\r').Split(GitService.FieldSeparator);
             if (parts.Length < 6) continue;
 
             var localRef = parts[0];
@@ -131,6 +144,13 @@ public class ForcePushService
                 if (ahead > 0) aheadOnly.Add(name);
                 continue;
             }
+            if (ahead == 0)
+            {
+                // Behind and nothing else. A force here publishes no commit this branch holds and
+                // removes every commit it is behind by.
+                behindOnly.Add(name);
+                continue;
+            }
 
             var lease = await _git.RunAsync(repoPath, ["rev-parse", "--verify", "-q", trackingRef], ct, RefTimeout);
             var leaseOid = lease.StdOut.Trim();
@@ -148,8 +168,9 @@ public class ForcePushService
 
         diverged.Sort((a, b) => string.CompareOrdinal(a.BranchName, b.BranchName));
         aheadOnly.Sort(StringComparer.Ordinal);
+        behindOnly.Sort(StringComparer.Ordinal);
         gone.Sort(StringComparer.Ordinal);
-        return new ForcePushPlan(diverged, aheadOnly, gone, null);
+        return new ForcePushPlan(diverged, aheadOnly, behindOnly, gone, null);
     }
 
     /// <summary>
@@ -157,6 +178,10 @@ public class ForcePushService
     /// the caller's — the ones the reader was shown and agreed to — so a fetch between the plan
     /// and this call makes the push fail rather than silently overwrite whatever that fetch
     /// brought in.
+    ///
+    /// The source of each refspec is the object id the plan captured, not the local ref: a commit
+    /// or a reset landing between the plan and this call would otherwise publish history the
+    /// report does not describe.
     ///
     /// Holds the repository lease for the whole run: a rewrite or a restore landing between two
     /// of these pushes would publish half of one history and half of another.
@@ -178,13 +203,13 @@ public class ForcePushService
                 [
                     "push", branch.Remote,
                     $"--force-with-lease={branch.RemoteRef}:{branch.LeaseOid}",
-                    $"{branch.LocalRef}:{branch.RemoteRef}"
+                    $"{branch.LocalOid}:{branch.RemoteRef}"
                 ], ct, NetworkTimeout);
 
                 if (push.Success)
                 {
                     outcomes.Add(new ForcePushRefOutcome(branch.BranchName, true, false,
-                        $"{branch.Remote}/{branch.BranchName} now holds {Short(branch.LocalOid)}; " +
+                        $"{branch.RemoteDisplayName} now holds {Short(branch.LocalOid)}; " +
                         $"{branch.Behind} commit(s) it had are no longer on it."));
                     continue;
                 }
@@ -192,7 +217,7 @@ public class ForcePushService
                 var stale = IsLeaseRejection(push);
                 outcomes.Add(new ForcePushRefOutcome(branch.BranchName, false, stale,
                     stale
-                        ? $"Refused: {branch.Remote}/{branch.BranchName} is no longer at {Short(branch.LeaseOid)}, " +
+                        ? $"Refused: {branch.RemoteDisplayName} is no longer at {Short(branch.LeaseOid)}, " +
                           "so someone moved it after this repository last fetched. Nothing on the remote was replaced. " +
                           "Fetch and look at what landed before deciding again."
                         : $"Failed: {push.FirstError}"));

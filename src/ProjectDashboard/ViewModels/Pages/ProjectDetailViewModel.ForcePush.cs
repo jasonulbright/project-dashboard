@@ -10,7 +10,7 @@ namespace ProjectDashboard.ViewModels.Pages;
 /// much would change, an object id says which state the remote must be in for the push to happen
 /// at all.
 /// </summary>
-public sealed class ForcePushRow
+public sealed partial class ForcePushRow : ObservableObject
 {
     public required DivergedBranch Branch { get; init; }
 
@@ -21,6 +21,9 @@ public sealed class ForcePushRow
     public required string Impact { get; init; }
 
     public required string Lease { get; init; }
+
+    /// <summary>Only included rows are pushed; an excluded one leaves its remote ref exactly as it stands.</summary>
+    [ObservableProperty] private bool _include = true;
 }
 
 /// <summary>
@@ -59,9 +62,21 @@ public partial class ProjectDetailViewModel
     /// <summary>Read from the list itself, so the confirmation field and the push control are absent — not merely disabled — before the first plan lands.</summary>
     public bool ForcePushHasRows => ForcePushRows.Count > 0;
 
+    /// <summary>How many rows the push would actually cover. Zero leaves the command with nothing to run.</summary>
+    public int ForcePushIncludedCount => ForcePushRows.Count(r => r.Include);
+
     partial void OnForcePushRowsChanged(ObservableCollection<ForcePushRow> value)
     {
+        foreach (var row in value) row.PropertyChanged += OnForcePushRowChanged;
         OnPropertyChanged(nameof(ForcePushHasRows));
+        OnPropertyChanged(nameof(ForcePushIncludedCount));
+        PushRewrittenHistoryCommand.NotifyCanExecuteChanged();
+    }
+
+    private void OnForcePushRowChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ForcePushRow.Include)) return;
+        OnPropertyChanged(nameof(ForcePushIncludedCount));
         PushRewrittenHistoryCommand.NotifyCanExecuteChanged();
     }
 
@@ -89,11 +104,12 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// Whether any loaded branch would need a force to publish. Drives the Branches tab's
-    /// affordance, and is read from the branch list the tab already loads — a branch is behind its
-    /// upstream exactly when the remote holds commits it does not.
+    /// affordance, and is read from the branch list the tab already loads. Both counts are
+    /// required: a branch that is only behind has not been pulled, and publishing it would drop
+    /// the remote's commits rather than replace a rewritten history.
     /// </summary>
     public bool BranchesDivergedFromRemote =>
-        Branches.Any(b => b.Upstream.Length > 0 && !b.UpstreamGone && b.Behind > 0);
+        Branches.Any(b => b.Upstream.Length > 0 && !b.UpstreamGone && b.Ahead > 0 && b.Behind > 0);
 
     partial void OnBranchesChanged(ObservableCollection<BranchInfo> value) =>
         OnPropertyChanged(nameof(BranchesDivergedFromRemote));
@@ -204,13 +220,13 @@ public partial class ProjectDetailViewModel
     internal static ForcePushRow Describe(DivergedBranch branch) => new()
     {
         Branch = branch,
-        Headline = $"{branch.BranchName} → {branch.Remote}/{branch.BranchName}",
+        Headline = $"{branch.BranchName} → {branch.RemoteDisplayName}",
         Change = $"{branch.RemoteRef} on {branch.Remote} moves from {ForcePushService.Short(branch.LeaseOid)} " +
                  $"to {ForcePushService.Short(branch.LocalOid)}.",
-        Impact = $"{branch.Behind} commit(s) currently on {branch.Remote}/{branch.BranchName} are not in this branch " +
+        Impact = $"{branch.Behind} commit(s) currently on {branch.RemoteDisplayName} are not in this branch " +
                  $"and stop being reachable from it; {branch.Ahead} commit(s) from this branch take their place. " +
                  "Anyone who already pulled the old commits keeps them.",
-        Lease = $"Lease: the push is refused unless {branch.Remote}/{branch.BranchName} is still exactly at " +
+        Lease = $"Lease: the push is refused unless {branch.RemoteDisplayName} is still exactly at " +
                 $"{ForcePushService.Short(branch.LeaseOid)} — the position this repository last recorded for it. " +
                 "It is not refused for the commits already recorded there.",
     };
@@ -226,6 +242,10 @@ public partial class ProjectDetailViewModel
         if (plan.AheadOnly.Count > 0)
             parts.Add($"Ahead of the remote and needing no force, so not pushed here: {string.Join(", ", plan.AheadOnly)}. " +
                       "Use Push on the toolbar for those.");
+        if (plan.BehindOnly.Count > 0)
+            parts.Add($"Behind only — pull instead, no force needed: {string.Join(", ", plan.BehindOnly)}. " +
+                      "These hold nothing the remote lacks, so forcing them would delete the remote's commits and " +
+                      "publish nothing.");
         if (plan.UpstreamGone.Count > 0)
             parts.Add($"No remote-tracking ref to take a lease on, so not pushed here: {string.Join(", ", plan.UpstreamGone)}.");
         parts.Add("Tags are never published by this flow, even when a rewrite changed them.");
@@ -233,7 +253,7 @@ public partial class ProjectDetailViewModel
     }
 
     private bool CanPushRewrittenHistory() =>
-        ForcePushHasRows && ForcePushConfirmSatisfied && !ForcePushBusy;
+        ForcePushIncludedCount > 0 && ForcePushConfirmSatisfied && !ForcePushBusy;
 
     [RelayCommand(CanExecute = nameof(CanPushRewrittenHistory))]
     private async Task PushRewrittenHistory()
@@ -254,8 +274,9 @@ public partial class ProjectDetailViewModel
         }
 
         // The branches the reader agreed to, with the lease values the pane showed. Re-reading the
-        // tracking refs here would push against a position nothing on screen ever named.
-        var branches = ForcePushRows.Select(r => r.Branch).ToList();
+        // tracking refs here would push against a position nothing on screen ever named, and an
+        // excluded row is a branch the reader declined rather than one the plan omitted.
+        var branches = ForcePushRows.Where(r => r.Include).Select(r => r.Branch).ToList();
 
         var holder = new object();
         IsBusy = true;
