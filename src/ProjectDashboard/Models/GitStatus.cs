@@ -28,6 +28,11 @@ public sealed class GitStatus
         (0, var b) => $"↓{b}",
         var (a, b) => $"↑{a} ↓{b}"
     };
+    /// <summary>
+    /// <see cref="AheadBehindLabel"/> carrying its own leading separator. A composed name that
+    /// supplies the separator itself trails one when the label has nothing to say.
+    /// </summary>
+    public string AheadBehindSuffix => AheadBehindLabel.Length == 0 ? "" : $" {AheadBehindLabel}";
     public string LatestTag { get; set; } = "";
     public DateTimeOffset? LastCommitDate { get; set; }
     public string LastCommitMessage { get; set; } = "";

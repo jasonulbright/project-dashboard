@@ -227,12 +227,12 @@
 
         <!-- An item container with no automation name is announced as its item's ToString, which
              for every model here is the type's own name. Each list below sets one that says what
-             the row says on screen. -->
+             the row says on screen, with the status column spelled out. -->
         <Style x:Key="WorkingFileRow" TargetType="ListBoxItem">
             <Setter Property="AutomationProperties.Name">
                 <Setter.Value>
                     <MultiBinding StringFormat="{}{0} {1}">
-                        <Binding Path="UnstagedLabel" />
+                        <Binding Path="UnstagedStatusName" />
                         <Binding Path="Path" />
                     </MultiBinding>
                 </Setter.Value>
@@ -242,7 +242,7 @@
             <Setter Property="AutomationProperties.Name">
                 <Setter.Value>
                     <MultiBinding StringFormat="{}{0} {1}">
-                        <Binding Path="StagedLabel" />
+                        <Binding Path="StagedStatusName" />
                         <Binding Path="Path" />
                     </MultiBinding>
                 </Setter.Value>

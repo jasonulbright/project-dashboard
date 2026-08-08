@@ -30,6 +30,26 @@ public sealed class WorkingFile
     /// <summary>Single letter for list display: staged column or worktree column.</summary>
     public string StagedLabel => IsConflicted ? "!" : IndexStatus.ToString();
     public string UnstagedLabel => IsConflicted ? "!" : IsUntracked ? "U" : WorktreeStatus.ToString();
+
+    /// <summary>
+    /// The status letters spelled out, for the row names a reader is announced: a single letter
+    /// is read as the letter, which carries none of what the column means.
+    /// </summary>
+    public string StagedStatusName => IsConflicted ? "conflicted" : StatusName(IndexStatus);
+    public string UnstagedStatusName =>
+        IsConflicted ? "conflicted" : IsUntracked ? "untracked" : StatusName(WorktreeStatus);
+
+    private static string StatusName(char status) => status switch
+    {
+        '.' => "unchanged",
+        'M' => "modified",
+        'A' => "added",
+        'D' => "deleted",
+        'R' => "renamed",
+        'C' => "copied",
+        'T' => "type changed",
+        _ => status.ToString()
+    };
 }
 
 /// <summary>

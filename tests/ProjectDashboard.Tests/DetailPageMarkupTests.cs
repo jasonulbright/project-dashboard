@@ -60,7 +60,9 @@ public class DetailPageMarkupTests
 
     /// <summary>
     /// An item container with no <see cref="AutomationProperties.Name"/> is announced as the
-    /// item's ToString, which for every model bound here is the type's own name.
+    /// item's ToString, which for every model bound here is the type's own name. A working-file
+    /// row carries a second split: its status column is drawn as one letter, which is read out as
+    /// that letter and carries none of the state, so the row's name spells the state out.
     /// </summary>
     private static void ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(ProjectDetailPage page)
     {
@@ -78,7 +80,23 @@ public class DetailPageMarkupTests
                     new WorkingFile { Path = "src/b.txt", IsUntracked = true }
                 }
             },
-            "M src/a.txt", "U src/b.txt");
+            ["modified src/a.txt", "untracked src/b.txt"],
+            ["M", "U"]);
+
+        AssertRowNames(
+            new ListBox
+            {
+                Style = new Style(typeof(ListBox)),
+                ItemTemplate = (DataTemplate)page.Resources["StagedFileTemplate"],
+                ItemContainerStyle = (Style)page.Resources["StagedFileRow"],
+                ItemsSource = new[]
+                {
+                    new WorkingFile { Path = "src/a.txt", IndexStatus = 'A' },
+                    new WorkingFile { Path = "src/b.txt", IndexStatus = 'M' }
+                }
+            },
+            ["added src/a.txt", "modified src/b.txt"],
+            ["A", "M"]);
 
         AssertRowNames(
             new ListBox
@@ -90,7 +108,7 @@ public class DetailPageMarkupTests
                     new DiffLine { Kind = DiffLineKind.Added, Text = "fresh", NewNumber = "2" }
                 }
             },
-            "Removed line 2: gone", "Added line 2: fresh");
+            ["Removed line 2: gone", "Added line 2: fresh"]);
     }
 
     /// <summary>
@@ -126,7 +144,11 @@ public class DetailPageMarkupTests
         finally { window.Close(); }
     }
 
-    private static void AssertRowNames(ListBox list, params string[] expected)
+    /// <param name="statusColumn">
+    /// The leading column each row draws, when the row has one. Asserted alongside the names so a
+    /// name that spells its status out cannot have been bought by respelling the column on screen.
+    /// </param>
+    private static void AssertRowNames(ListBox list, string[] expected, string[]? statusColumn = null)
     {
         var window = new Window { Content = list, Width = 600, Height = 400, ShowActivated = false };
         try
@@ -137,10 +159,12 @@ public class DetailPageMarkupTests
             window.Show();
             window.UpdateLayout();
 
-            var names = Descendants<ListBoxItem>(list)
-                .Select(AutomationProperties.GetName)
-                .ToArray();
-            Assert.Equal(expected, names);
+            var rows = Descendants<ListBoxItem>(list).ToList();
+            Assert.Equal(expected, rows.Select(AutomationProperties.GetName).ToArray());
+
+            if (statusColumn is not null)
+                Assert.Equal(statusColumn,
+                    rows.Select(row => Descendants<TextBlock>(row).First().Text).ToArray());
         }
         finally { window.Close(); }
     }

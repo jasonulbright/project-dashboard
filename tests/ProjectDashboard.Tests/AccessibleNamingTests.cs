@@ -1,3 +1,4 @@
+using System.Xml;
 using ProjectDashboard.Models;
 
 namespace ProjectDashboard.Tests;
@@ -91,5 +92,106 @@ public class AccessibleNamingTests
         // The marker spans both columns, which is how a hunk header is carried too.
         Assert.Contains("No newline at end of file", narrated);
         Assert.DoesNotContain(narrated, n => n.StartsWith("Hunk header \\"));
+    }
+
+    /// <summary>
+    /// A working-file row draws its status as one letter, and a letter is what a reader is read.
+    /// The column the row names has to spell the state out, while the drawn letter stays a letter.
+    /// </summary>
+    [Theory]
+    [InlineData('M', '.', false, false, "M", "modified", ".", "unchanged")]
+    [InlineData('.', 'M', false, false, ".", "unchanged", "M", "modified")]
+    [InlineData('A', '.', false, false, "A", "added", ".", "unchanged")]
+    [InlineData('.', 'D', false, false, ".", "unchanged", "D", "deleted")]
+    [InlineData('R', '.', false, false, "R", "renamed", ".", "unchanged")]
+    [InlineData('C', '.', false, false, "C", "copied", ".", "unchanged")]
+    [InlineData('.', 'T', false, false, ".", "unchanged", "T", "type changed")]
+    [InlineData('.', '.', true, false, ".", "unchanged", "U", "untracked")]
+    [InlineData('U', 'U', false, true, "!", "conflicted", "!", "conflicted")]
+    public void AWorkingFileStatus_IsDrawnAsALetterAndNamedAsAWord(
+        char index, char worktree, bool untracked, bool conflicted,
+        string stagedLetter, string stagedWord, string unstagedLetter, string unstagedWord)
+    {
+        var file = new WorkingFile
+        {
+            Path = "src/a.txt",
+            IndexStatus = index,
+            WorktreeStatus = worktree,
+            IsUntracked = untracked,
+            IsConflicted = conflicted
+        };
+
+        Assert.Equal(stagedLetter, file.StagedLabel);
+        Assert.Equal(unstagedLetter, file.UnstagedLabel);
+        Assert.Equal(stagedWord, file.StagedStatusName);
+        Assert.Equal(unstagedWord, file.UnstagedStatusName);
+    }
+
+    /// <summary>
+    /// The dashboard card's name is composed in markup out of four bound values, so what a reader
+    /// hears is the format string and the properties together. A repository level with its upstream
+    /// has nothing to add, and a name that pastes that emptiness in ends on its own separator.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0, "trackr, branch main, 3 uncommitted")]
+    [InlineData(2, 0, "trackr, branch main, 3 uncommitted ↑2")]
+    [InlineData(0, 4, "trackr, branch main, 3 uncommitted ↓4")]
+    [InlineData(2, 4, "trackr, branch main, 3 uncommitted ↑2 ↓4")]
+    public void ADashboardCard_IsNamedWithoutADanglingSeparator(int ahead, int behind, string expected)
+    {
+        var project = new ProjectInfo
+        {
+            DisplayName = "trackr",
+            GitStatus = new GitStatus
+            {
+                Branch = "main",
+                ModifiedCount = 2,
+                UntrackedCount = 1,
+                AheadBy = ahead,
+                BehindBy = behind
+            }
+        };
+
+        Assert.Equal(expected, CardNameFromMarkup(project));
+    }
+
+    private const string DashboardXaml = "src/ProjectDashboard/Views/Pages/DashboardPage.xaml";
+
+    /// <summary>
+    /// Composes the card name the way WPF does, out of the shipped markup: the format string and
+    /// the binding paths the page declares, resolved against a real project.
+    /// </summary>
+    private static string CardNameFromMarkup(ProjectInfo project)
+    {
+        var markup = new XmlDocument();
+        markup.LoadXml(RepoSource.Read(DashboardXaml));
+        var binding = markup.SelectSingleNode(
+            "//*[local-name()='ListBox.ItemContainerStyle']/*[local-name()='Style']" +
+            "/*[local-name()='Setter'][@Property='AutomationProperties.Name']" +
+            "/*[local-name()='Setter.Value']/*[local-name()='MultiBinding']") as XmlElement;
+        Assert.True(binding is not null, $"no card-name MultiBinding in {DashboardXaml}");
+
+        // "{}" opens a XAML string that would otherwise be read as a markup extension.
+        var format = binding!.GetAttribute("StringFormat");
+        if (format.StartsWith("{}", StringComparison.Ordinal)) format = format[2..];
+
+        var values = binding.ChildNodes.OfType<XmlElement>()
+            .Where(b => b.LocalName == "Binding")
+            .Select(b => Resolve(project, b.GetAttribute("Path")))
+            .ToArray();
+
+        return string.Format(System.Globalization.CultureInfo.InvariantCulture, format, values);
+    }
+
+    private static object? Resolve(object? root, string path)
+    {
+        foreach (var step in path.Split('.'))
+        {
+            if (root is null) return null;
+            var property = root.GetType().GetProperty(step);
+            Assert.True(property is not null, $"{root.GetType().Name} has no {step}; the card name binds to it");
+            root = property!.GetValue(root);
+        }
+        return root;
     }
 }

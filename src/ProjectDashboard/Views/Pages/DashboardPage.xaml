@@ -415,11 +415,11 @@
                         </Setter>
                         <Setter Property="AutomationProperties.Name">
                             <Setter.Value>
-                                <MultiBinding StringFormat="{}{0}, branch {1}, {2} uncommitted {3}">
+                                <MultiBinding StringFormat="{}{0}, branch {1}, {2} uncommitted{3}">
                                     <Binding Path="DisplayName" />
                                     <Binding Path="GitStatus.Branch" />
                                     <Binding Path="GitStatus.TotalChanges" />
-                                    <Binding Path="GitStatus.AheadBehindLabel" />
+                                    <Binding Path="GitStatus.AheadBehindSuffix" />
                                 </MultiBinding>
                             </Setter.Value>
                         </Setter>
