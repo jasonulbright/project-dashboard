@@ -470,6 +470,79 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         output.WriteLine($"scoped over-limit literal survivor reported: {string.Join(" | ", literalCheck.Hits)}");
     }
 
+    // ---- The scrub grep's path filter must survive git's own path rendering --------------
+
+    /// <summary>
+    /// A survivor riding a non-ASCII path. Unless the grep runs with core.quotepath off, git
+    /// renders the path C-quoted and octal-escaped; that rendering matches no path scope, the
+    /// hit is dropped, and the check reports a performed, complete, hit-free scrub over a
+    /// target that still carries the needle.
+    /// The op is one .NET's regex engine cannot match and git grep's ERE can — `^` anchors to
+    /// the whole input without Multiline, and to each line in grep — so the needle survives
+    /// with no skip of its own to make the check incomplete.
+    /// </summary>
+    [Fact]
+    public async Task ASurvivorAtANonAsciiInScopePathIsReported()
+    {
+        using var f = Fixture();
+        f.Write("src/café.txt", $"alpha\n{Needle} here\n");
+        f.CommitAll("unicode path");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new RegexReplace { Pattern = $"^{Needle}", Replacement = Redacted }],
+            FileScope = new GlobScope { Patterns = ["src/**"] }
+        });
+
+        // The needle is genuinely still in the target: RunGit throws on the exit 1 that means
+        // no match, so reaching the assertion is itself the proof.
+        var survivors = FixtureRepo.RunGit(
+            f.TargetPath,
+            ["-c", "core.quotepath=false", "grep", "-I", "--fixed-strings", "-e", Needle, report.CommitMap[head]],
+            null, null);
+        Assert.Contains("src/café.txt", survivors, StringComparison.Ordinal);
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.True(check.Performed);
+        Assert.Contains(check.Hits, h => h.Contains("src/café.txt", StringComparison.Ordinal));
+        output.WriteLine($"non-ASCII path survivor: Performed={check.Performed}, Complete={check.Complete}, hits={string.Join(" | ", check.Hits)}");
+    }
+
+    /// <summary>
+    /// core.quotepath off still leaves git quoting a path that holds a double quote, so the
+    /// path filter must keep a hit whose path it cannot parse rather than drop it — dropping
+    /// turns an unparseable rendering into a clean bill.
+    /// </summary>
+    [Fact]
+    public async Task ASurvivorAtAQuoteBearingInScopePathIsReported()
+    {
+        using var f = Fixture();
+        var sha = f.GitWithStdin(Encoding.ASCII.GetBytes($"alpha\n{Needle} here\n"), "hash-object", "-w", "--stdin").Trim();
+        // A literal double quote is invalid in a Windows file name, so the path enters the
+        // index directly; the import writes trees only, so the target never materializes it.
+        f.Git("-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", $"100644,{sha},src/q\"uo te.txt");
+        f.Git("commit", "-q", "-m", "quote-char path");
+        var head = f.Git("rev-parse", "HEAD").Trim();
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new RegexReplace { Pattern = $"^{Needle}", Replacement = Redacted }],
+            FileScope = new GlobScope { Patterns = ["src/**"] }
+        });
+
+        var survivors = FixtureRepo.RunGit(
+            f.TargetPath,
+            ["-c", "core.quotepath=false", "grep", "-I", "--fixed-strings", "-e", Needle, report.CommitMap[head]],
+            null, null);
+        Assert.Contains("uo te.txt", survivors, StringComparison.Ordinal);
+
+        var check = Assert.Single(report.ScrubChecks);
+        Assert.True(check.Performed);
+        Assert.Contains(check.Hits, h => h.Contains("uo te.txt", StringComparison.Ordinal));
+        output.WriteLine($"quote-bearing path survivor: Performed={check.Performed}, Complete={check.Complete}, hits={string.Join(" | ", check.Hits)}");
+    }
+
     [Fact]
     public async Task CommitScopedNoteReportsInheritedOutOfScopeChanges()
     {

@@ -1092,7 +1092,12 @@ public sealed class HistoryRewriter
         var overflow = 0;
         foreach (var chunk in Chunk(commits))
         {
-            var args = new List<string>(grepArgs.Count + chunk.Count + pathSpecs.Count + 1);
+            var args = new List<string>(grepArgs.Count + chunk.Count + pathSpecs.Count + 3);
+            // core.quotepath=false: a non-ASCII path arrives raw UTF-8. C-quoted and
+            // octal-escaped, it matches no path scope, and the in-scope test below then drops
+            // a real survivor's hit into a clean bill.
+            args.Add("-c");
+            args.Add("core.quotepath=false");
             args.AddRange(grepArgs);
             args.AddRange(chunk);
             // A pathspec after `--` narrows the grep to in-scope paths only.
@@ -1133,12 +1138,15 @@ public sealed class HistoryRewriter
     /// never scoped; reporting those would show survivors for a run that touched nothing.
     /// A path may itself contain ':', so every colon-delimited candidate is tested and the hit
     /// is kept when any is in scope — the ambiguity is resolved toward reporting, never toward
-    /// a clean bill the grep did not earn.
+    /// a clean bill the grep did not earn. A line the filter cannot read as a path at all is
+    /// kept for the same reason: with core.quotepath off git still C-quotes a path holding a
+    /// double quote, a backslash, or a control byte, and that rendering matches no scope.
     /// </summary>
     private static bool HitPathCouldBeInScope(string hitLine, Func<string, bool> pathInScope)
     {
         var revEnd = hitLine.IndexOf(':');
         if (revEnd < 0) return true;
+        if (revEnd + 1 < hitLine.Length && hitLine[revEnd + 1] == '"') return true;
 
         for (var i = revEnd + 1; i <= hitLine.Length; i++)
         {
