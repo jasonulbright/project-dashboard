@@ -18,6 +18,7 @@ public partial class DashboardViewModel : ObservableObject
     private readonly GitService _gitService;
     private readonly ProjectWatcherService _watcher;
     private readonly RepoBusyRegistry _busyRegistry;
+    private readonly ProjectTemplateService _templateService;
     private readonly Action<Action> _uiPost;
 
     /// <summary>Null when the host supplied none; the dashboard then reports no interrupted operations rather than inventing one.</summary>
@@ -114,7 +115,7 @@ public partial class DashboardViewModel : ObservableObject
     /// dispatcher to marshal through, and a default that silently drops the callback there
     /// would drop the re-scan that a released repository lease is supposed to start.
     /// </summary>
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
@@ -123,6 +124,7 @@ public partial class DashboardViewModel : ObservableObject
         _gitService = gitService;
         _watcher = watcher;
         _busyRegistry = busyRegistry;
+        _templateService = templateService ?? new ProjectTemplateService();
         _uiPost = uiPost ?? PostToApplicationDispatcher;
         _searchService = new RepoSearchService(gitService, busyRegistry);
         _recovery = recovery;
@@ -637,11 +639,85 @@ public partial class DashboardViewModel : ObservableObject
     [RelayCommand]
     private Task FilterHidden() => ShowHiddenProjectsAsync();
 
+    /// <summary>
+    /// Folder-safe project name: lowercased, spaces hyphenated, everything outside
+    /// <c>[a-z0-9-]</c> dropped. Empty when nothing usable is left, which is not a name.
+    /// </summary>
+    internal static string SanitizeProjectName(string typed) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            typed.Trim().ToLowerInvariant().Replace(' ', '-'), @"[^a-z0-9\-]", "");
+
     [RelayCommand]
     private async Task NewProject()
     {
         // Read, not claimed: the gate is claimed by the scaffold below, after the dialog.
         if (_bulkOpRunning) { OpStatusText = BulkOpBusyNotice; return; }
+
+        OpStatusText = "New project: checking which templates this machine can create…";
+        List<ProjectTemplate> offered;
+        try { offered = await _templateService.AvailableAsync(ProjectTemplates.All); }
+        catch (Exception ex)
+        {
+            OpStatusText = $"New project: couldn't check the available templates — {ex.Message}";
+            Log.Warn("template availability probe failed", ex);
+            return;
+        }
+        OpStatusText = "";
+        if (offered.Count == 0)
+        {
+            // Every layout this app writes itself is unconditional, so an empty list means
+            // the probe itself is broken rather than the machine being bare.
+            OpStatusText = "New project: no template is available on this machine.";
+            return;
+        }
+
+        var nameBox = new Wpf.Ui.Controls.TextBox
+        {
+            PlaceholderText = "my-new-project",
+            MinWidth = 380
+        };
+        var templateList = new System.Windows.Controls.ListBox
+        {
+            MaxHeight = 168,
+            Margin = new System.Windows.Thickness(0, 12, 0, 0),
+            ItemsSource = offered,
+            DisplayMemberPath = nameof(ProjectTemplate.Name),
+            SelectedIndex = 0
+        };
+        var summaryText = new System.Windows.Controls.TextBlock
+        {
+            TextWrapping = System.Windows.TextWrapping.Wrap,
+            Margin = new System.Windows.Thickness(0, 10, 0, 0)
+        };
+        var createsText = new System.Windows.Controls.TextBlock
+        {
+            TextWrapping = System.Windows.TextWrapping.Wrap,
+            Margin = new System.Windows.Thickness(0, 6, 0, 0),
+            FontFamily = new System.Windows.Media.FontFamily("Cascadia Code,Consolas")
+        };
+        System.Windows.Automation.AutomationProperties.SetName(nameBox, "Project name");
+        System.Windows.Automation.AutomationProperties.SetName(templateList, "Starting layout");
+        System.Windows.Automation.AutomationProperties.SetName(createsText, "Files this template creates");
+
+        // The preview names the paths for the name actually typed, so what the reader is
+        // shown before agreeing is what lands on disk.
+        void DescribeSelection()
+        {
+            if (templateList.SelectedItem is not ProjectTemplate selected)
+            {
+                summaryText.Text = "";
+                createsText.Text = "";
+                return;
+            }
+            var preview = SanitizeProjectName(nameBox.Text);
+            summaryText.Text = selected.Summary;
+            createsText.Text = selected.CreatesLine(preview.Length == 0 ? "<name>" : preview);
+        }
+
+        templateList.SelectionChanged += (_, _) => DescribeSelection();
+        nameBox.TextChanged += (_, _) => DescribeSelection();
+        DescribeSelection();
+
         var dialog = new Wpf.Ui.Controls.MessageBox
         {
             Title = "New Project",
@@ -654,12 +730,15 @@ public partial class DashboardViewModel : ObservableObject
                         Text = "Project name (folder name, lowercase, no spaces):",
                         Margin = new System.Windows.Thickness(0, 0, 0, 8)
                     },
-                    new Wpf.Ui.Controls.TextBox
+                    nameBox,
+                    new System.Windows.Controls.TextBlock
                     {
-                        Name = "ProjectNameBox",
-                        PlaceholderText = "my-new-project",
-                        MinWidth = 300
-                    }
+                        Text = "Starting layout:",
+                        Margin = new System.Windows.Thickness(0, 12, 0, 0)
+                    },
+                    templateList,
+                    summaryText,
+                    createsText,
                 }
             },
             PrimaryButtonText = "Create",
@@ -669,16 +748,9 @@ public partial class DashboardViewModel : ObservableObject
         var result = await dialog.ShowDialogAsync();
         if (result != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
 
-        var stack = dialog.Content as System.Windows.Controls.StackPanel;
-        var textBox = stack?.Children[1] as Wpf.Ui.Controls.TextBox;
-        var projectName = textBox?.Text?.Trim() ?? "";
-
-        if (string.IsNullOrWhiteSpace(projectName)) return;
-
-        projectName = System.Text.RegularExpressions.Regex.Replace(
-            projectName.ToLowerInvariant().Replace(' ', '-'), @"[^a-z0-9\-]", "");
-
-        if (string.IsNullOrWhiteSpace(projectName)) return;
+        var template = templateList.SelectedItem as ProjectTemplate ?? offered[0];
+        var projectName = SanitizeProjectName(nameBox.Text);
+        if (projectName.Length == 0) return;
 
         var settings = _settingsService.Load();
         var projectPath = Path.Combine(settings.ProjectsRootPath, projectName);
@@ -694,47 +766,67 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        var gitError = await ScaffoldProjectAsync(projectPath, projectName);
-        if (gitError is not null)
+        var outcome = await ScaffoldProjectAsync(projectPath, projectName, template);
+        if (!outcome.Created && outcome.Error is not null)
+        {
+            await new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "Nothing was created",
+                Content = $"{outcome.Error}\n\nNo folder was left behind at {projectPath}.",
+                CloseButtonText = "OK"
+            }.ShowDialogAsync();
+        }
+        else if (outcome.Error is not null)
         {
             await new Wpf.Ui.Controls.MessageBox
             {
                 Title = "Project created, git setup incomplete",
-                Content = $"The folder and files were created, but git reported:\n\n{gitError}",
+                Content = $"The folder and files were created, but git reported:\n\n{outcome.Error}",
                 CloseButtonText = "OK"
             }.ShowDialogAsync();
         }
     }
 
     /// <summary>
-    /// Seeds the new project's folder and brings it onto the grid, holding the bulk-op gate
-    /// across both. Returns git's error text when the repository was left without its first
-    /// commit, so the report reaches the user outside the gate rather than stalling every
-    /// queued re-scan behind a modal. Nothing is created at all when another bulk op
-    /// claimed the gate while the name dialog was open: that refusal is a status line, not
-    /// a git error, because there is no half-made project to report on.
+    /// Seeds the new project's folder from a template and brings it onto the grid, holding
+    /// the bulk-op gate across both. The report reaches the user outside the gate rather
+    /// than stalling every queued re-scan behind a modal.
+    ///
+    /// A template's availability is re-probed here and not trusted from the picker: the SDK
+    /// it needs can go away between the two, and a folder holding half a layout is worse
+    /// than a refusal. Every failure before the first commit removes what it wrote, so the
+    /// grid never gains a project that is only partly there.
     /// </summary>
-    internal async Task<string?> ScaffoldProjectAsync(string projectPath, string projectName)
+    internal async Task<ScaffoldOutcome> ScaffoldProjectAsync(
+        string projectPath, string projectName, ProjectTemplate? template = null)
     {
+        template ??= ProjectTemplates.Default;
+
         if (TryClaimBulkOp() is not { } claim)
         {
             OpStatusText = BulkOpBusyNotice;
-            return null;
+            return ScaffoldOutcome.GateRefused;
         }
         try
         {
-            Directory.CreateDirectory(projectPath);
+            if (await _templateService.UnavailableReasonAsync(template) is { } unavailable)
+            {
+                OpStatusText = $"New project: {unavailable}";
+                return ScaffoldOutcome.NotCreated(unavailable);
+            }
 
-            File.WriteAllText(Path.Combine(projectPath, "README.md"),
-                $"# {projectName}\n\n");
-
-            File.WriteAllText(Path.Combine(projectPath, "CHANGELOG.md"),
-                $"# Changelog\n\n## [0.1.0] - {DateTime.Now:yyyy-MM-dd}\n\n### Added\n- Initial project scaffold\n");
+            var seedError = await _templateService.SeedAsync(template, projectPath, projectName);
+            if (seedError is not null)
+            {
+                RemoveScaffold(projectPath);
+                OpStatusText = $"New project: {seedError}";
+                return ScaffoldOutcome.NotCreated(seedError);
+            }
 
             // Project metadata -> stored out-of-source under AppPaths.RoamingDir, not in the repo.
             var manifest = new ProjectManifest
             {
-                ProjectType = "unknown",
+                ProjectType = template.ProjectType,
                 Status = "experimental",
                 Category = "Uncategorized",
                 ValidationSchedule = "none",
@@ -744,9 +836,35 @@ public partial class DashboardViewModel : ObservableObject
 
             var gitError = await _gitService.InitWithFirstCommitAsync(projectPath, "Initial project scaffold");
             await ForceRefreshAsync();
-            return gitError;
+            OpStatusText = gitError is null
+                ? $"Created {projectName} from the {template.Name} template."
+                : $"Created {projectName}, but git reported: {gitError}";
+            return ScaffoldOutcome.Seeded(gitError);
+        }
+        catch (Exception ex)
+        {
+            RemoveScaffold(projectPath);
+            OpStatusText = $"New project: {ex.Message}";
+            Log.Warn($"scaffold of {projectPath} failed", ex);
+            return ScaffoldOutcome.NotCreated(ex.Message);
         }
         finally { ReleaseBulkOp(claim); }
+    }
+
+    /// <summary>
+    /// Removes a folder this scaffold created. Safe only because New Project refuses a path
+    /// that already exists, so nothing here predates the call.
+    /// </summary>
+    private static void RemoveScaffold(string projectPath)
+    {
+        try
+        {
+            if (Directory.Exists(projectPath)) Directory.Delete(projectPath, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not remove the incomplete scaffold at {projectPath}", ex);
+        }
     }
 
     /// <summary>
@@ -1588,6 +1706,22 @@ public partial class DashboardViewModel : ObservableObject
         SetDisplayedProjects(DashboardOrdering.Apply(filtered, SelectedSort, _pinnedKeys));
         NotifyContentState();
     }
+}
+
+/// <summary>
+/// What a scaffold left on disk. <see cref="Created"/> is false when the projects root gained
+/// nothing at all — a refused gate, a template this machine cannot create, or a seeding step
+/// whose folder was removed again — so the caller reports a refusal rather than a project that
+/// is only partly there. <see cref="Error"/> is what to tell the user, and is null both for a
+/// clean scaffold and for the gate refusal, which is a status line rather than a fault.
+/// </summary>
+public sealed record ScaffoldOutcome(bool Created, string? Error)
+{
+    public static ScaffoldOutcome GateRefused { get; } = new(false, null);
+
+    public static ScaffoldOutcome NotCreated(string error) => new(false, error);
+
+    public static ScaffoldOutcome Seeded(string? gitError) => new(true, gitError);
 }
 
 /// <summary>Which body the dashboard shows instead of, or as, the card grid.</summary>

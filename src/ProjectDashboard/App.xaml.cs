@@ -69,6 +69,7 @@ public partial class App : Application
                 services.AddSingleton<GitHubService>();
                 services.AddSingleton<ProjectDiscoveryService>();
                 services.AddSingleton<ProjectWatcherService>();
+                services.AddSingleton<ProjectTemplateService>();
                 services.AddSingleton<SubmoduleService>();
 
                 // Safety rails: shared singletons for the destructive stages.

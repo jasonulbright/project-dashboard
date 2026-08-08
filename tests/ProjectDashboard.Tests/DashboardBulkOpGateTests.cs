@@ -54,18 +54,24 @@ public class DashboardBulkOpGateTests
 
         // A second scaffold is refused whole — half a folder with no repository in it is
         // worse than a refusal.
-        Assert.Null(await dashboard.ScaffoldProjectAsync(Path.Combine(root, "gamma"), "gamma"));
+        var refused = await dashboard.ScaffoldProjectAsync(Path.Combine(root, "gamma"), "gamma");
+        Assert.False(refused.Created);
+        Assert.Null(refused.Error);
         Assert.Equal(BusyNotice, dashboard.OpStatusText);
         Assert.False(Directory.Exists(Path.Combine(root, "gamma")));
 
         // None of the refusals cleared a gate they never took: the first op is still
         // holding it and still owns its own release.
         discovery.Release();
-        Assert.Null(await scaffold);
+        var first = await scaffold;
+        Assert.True(first.Created);
+        Assert.Null(first.Error);
         Assert.True(Directory.Exists(Path.Combine(root, "alpha")));
 
         // Released by its own claim, so the next bulk op gets through.
-        Assert.Null(await dashboard.ScaffoldProjectAsync(Path.Combine(root, "delta"), "delta"));
+        var next = await dashboard.ScaffoldProjectAsync(Path.Combine(root, "delta"), "delta");
+        Assert.True(next.Created);
+        Assert.Null(next.Error);
         Assert.True(Directory.Exists(Path.Combine(root, "delta")));
     }
 
