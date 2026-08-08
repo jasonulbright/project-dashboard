@@ -377,15 +377,16 @@ public class RewriteCoordinatorTests
     }
 
     /// <summary>
-    /// Executing a session resumes on the thread the step was started from. Deleting the spent
+    /// Executing a session resumes on the thread the step was started from. Deleting a spent
     /// preview's scratch tree enumerates every file, rewrites the attributes of each, deletes
     /// recursively, and sleeps between retries while a just-exited git still holds handles —
     /// on the thread the surface is drawn on that is a frozen window right as the rewrite
     /// finishes. The deletion therefore leaves the resuming thread, and the session hands back
-    /// the task that carries it.
+    /// one task carrying EVERY release it has issued, so a re-run's superseded tree is joined
+    /// too rather than dropped by the release that follows it.
     /// </summary>
     [Fact]
-    public async Task ExecutingASession_DeletesTheSpentPreviewOffTheThreadTheStepResumedOn()
+    public async Task ExecutingASession_DeletesEverySpentPreviewOffTheThreadTheStepResumedOn()
     {
         using var f = NewFixture();
         SeedSecretHistory(f);
@@ -404,11 +405,19 @@ public class RewriteCoordinatorTests
         {
             using var pump = new SingleThreadContext();
             var resumedOn = 0;
+            var trees = new List<string>();
             pump.Run(async () =>
             {
                 var preview = await session.PreviewAsync(Request(f));
                 Assert.Null(preview.FailureReason);
-                Assert.Single(Directory.GetDirectories(workRoot));
+                trees.AddRange(Directory.GetDirectories(workRoot));
+                Assert.Single(trees);
+
+                // A second dry run supersedes the first: two releases are now outstanding by
+                // the time the execute releases its own, and the disposal task must cover both.
+                var rerun = await session.PreviewAsync(Request(f));
+                Assert.Null(rerun.FailureReason);
+                trees.AddRange(Directory.GetDirectories(workRoot).Except(trees));
 
                 var result = await session.ExecuteAsync();
                 resumedOn = Environment.CurrentManagedThreadId;
@@ -416,10 +425,12 @@ public class RewriteCoordinatorTests
             });
 
             Assert.Equal(pump.ThreadId, resumedOn);
+            Assert.Equal(2, trees.Distinct().Count());
             Assert.NotSame(Task.CompletedTask, session.ScratchDisposal);
             await session.ScratchDisposal;
             Assert.Empty(Directory.GetDirectories(workRoot));
-            _output.WriteLine($"spent preview released off the resuming thread {resumedOn}; work root {workRoot} is empty");
+            _output.WriteLine($"two spent previews released off the resuming thread {resumedOn} " +
+                              $"({string.Join(", ", trees.Select(Path.GetFileName))}); work root {workRoot} is empty");
         }
         finally
         {

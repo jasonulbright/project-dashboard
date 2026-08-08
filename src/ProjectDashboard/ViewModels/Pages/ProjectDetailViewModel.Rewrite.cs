@@ -75,10 +75,12 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
     private UndoHandle? _undo;
 
     /// <summary>
-    /// The off-thread deletion of the handles this session has released; held so a caller can
-    /// await it. Both release sites run on the thread that started the wizard step — for
-    /// <see cref="PreviewAsync"/> before its first await, for <see cref="ExecuteAsync"/> on the
-    /// resumed continuation — which in the app is the dispatcher.
+    /// The off-thread deletion of EVERY handle this session has released, joined. Both release
+    /// sites run on the thread that started the wizard step — for <see cref="PreviewAsync"/>
+    /// before its first await, for <see cref="ExecuteAsync"/> on the resumed continuation —
+    /// which in the app is the dispatcher. A dry run, an edit, and a second dry run leave two
+    /// releases pending at once; replacing the task instead of joining it would let
+    /// <see cref="Dispose"/> return with the first release's scratch tree still on disk.
     /// </summary>
     internal Task ScratchDisposal { get; private set; } = Task.CompletedTask;
 
@@ -131,7 +133,8 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
     {
         var spent = _preview;
         _preview = null;
-        if (spent is not null) ScratchDisposal = Task.Run(spent.Dispose);
+        if (spent is null) return;
+        ScratchDisposal = Task.WhenAll(ScratchDisposal, Task.Run(spent.Dispose));
     }
 
     /// <summary>
