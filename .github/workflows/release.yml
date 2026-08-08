@@ -22,21 +22,41 @@ jobs:
           dotnet-version: 10.0.x
 
       # A published release is never rewritten, so every disagreement between the tag,
-      # the assembly version, and the packaged version fails before anything is built.
-      # build-portable.ps1 covers the project-file/installer half of that chain.
+      # the assembly version, the packaged version, and the changelog has to fail before
+      # the first build step. Each check reads a file already in the checkout.
       - name: Resolve version
         run: |
+          $projectFile = 'src/ProjectDashboard/ProjectDashboard.csproj'
+          $nsiFile     = 'installer/project-dashboard.nsi'
+
           $version = '${{ github.ref_name }}'.TrimStart('v')
           if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
             throw "Tag '${{ github.ref_name }}' is not a version tag."
           }
-          $projectFile = 'src/ProjectDashboard/ProjectDashboard.csproj'
+
           $projectVersion = ([xml](Get-Content -LiteralPath $projectFile -Raw)).
             SelectSingleNode('/Project/PropertyGroup/Version').InnerText.Trim()
           if ($projectVersion -ne $version) {
             throw "Tag says $version, $projectFile says $projectVersion."
           }
+
+          $nsiText = Get-Content -LiteralPath $nsiFile -Raw
+          if ($nsiText -notmatch '(?m)^\s*!define\s+VERSION\s+"([^"]+)"') {
+            throw "No !define VERSION found in $nsiFile."
+          }
+          $nsiVersion = $Matches[1]
+          if ($nsiVersion -ne $version) {
+            throw "Version is $version, $nsiFile says $nsiVersion."
+          }
+
+          # The notes live in the runner temp directory: .gitignore covers every path the
+          # build writes inside the checkout, and an extra file there is not.
+          $notes = "$env:RUNNER_TEMP/release-notes.md"
+          pwsh -File installer/extract-changelog.ps1 -Version $version -OutputPath $notes
+          if ($LASTEXITCODE -ne 0) { throw "extract-changelog.ps1 failed with exit code $LASTEXITCODE." }
+
           "VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_NOTES=$notes" >> $env:GITHUB_ENV
 
       - name: Restore
         run: dotnet restore
@@ -89,11 +109,6 @@ jobs:
           & $env:MAKENSIS project-dashboard.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
 
-      # Written outside the checkout: every path the build writes to inside it is
-      # already covered by .gitignore, and a stray tracked-tree file is not.
-      - name: Extract release notes
-        run: pwsh -File installer/extract-changelog.ps1 -Version $env:VERSION -OutputPath "$env:RUNNER_TEMP/release-notes.md"
-
       # Assets are named explicitly: a wildcard would attach any stale artifact left in
       # the tree by an earlier step.
       - name: Publish release
@@ -108,6 +123,6 @@ jobs:
           gh release create '${{ github.ref_name }}' `
             --verify-tag `
             --title "Project Dashboard $env:VERSION" `
-            --notes-file "$env:RUNNER_TEMP/release-notes.md" `
+            --notes-file $env:RELEASE_NOTES `
             $installer $portable
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
