@@ -172,15 +172,23 @@ public static class RewriteScrubVerdict
     }
 
     /// <summary>
-    /// The skips a given check is answerable for. Mark is null exactly for a message payload,
-    /// so a tree check never names a message skip as its own gap, and vice versa.
+    /// The skips a given check is answerable for, partitioned by the reason that recorded them.
+    /// The mark cannot carry this: a message skip and an identity skip both have a null mark, so
+    /// partitioning on it makes each of those checks name the other's gap as its own. A blob skip
+    /// is whatever neither reason claims, so a new payload-level reason lands with the content
+    /// checks rather than silently with none.
     /// </summary>
     internal static List<BinarySkip> SkipsFor(string kind, IReadOnlyList<BinarySkip> skips) => kind switch
     {
-        "literal" or "regex" => skips.Where(s => s.Mark is not null).ToList(),
-        "message-literal" or "message-regex" => skips.Where(s => s.Mark is null).ToList(),
+        "literal" or "regex" => skips.Where(IsContentSkip).ToList(),
+        "message-literal" or "message-regex" =>
+            skips.Where(s => s.Reason == ScopedRewriteOutcome.MessageNotUtf8).ToList(),
+        "identity" => skips.Where(s => s.Reason == ScopedRewriteOutcome.IdentityNotUtf8).ToList(),
         _ => skips.ToList(),
     };
+
+    private static bool IsContentSkip(BinarySkip skip) =>
+        skip.Reason != ScopedRewriteOutcome.MessageNotUtf8 && skip.Reason != ScopedRewriteOutcome.IdentityNotUtf8;
 
     internal static string KindLabel(string kind) => kind switch
     {
@@ -203,11 +211,20 @@ public static class RewriteScrubVerdict
         return string.Join(" ", parts);
     }
 
-    private static string SkipText(BinarySkip skip)
-    {
-        var where = skip.Path ?? (skip.Mark is null ? "(a commit or tag message)" : $"(unnamed blob, mark {skip.Mark})");
-        return $"{where} — {skip.Reason}";
-    }
+    private static string SkipText(BinarySkip skip) => $"{SkipLocation(skip)} — {skip.Reason}";
+
+    /// <summary>
+    /// Where a skipped payload sits, in the reader's terms. A message and an identity header
+    /// both carry a null mark, so only the reason separates them.
+    /// </summary>
+    internal static string SkipLocation(BinarySkip skip) =>
+        skip.Path
+        ?? skip.Reason switch
+        {
+            ScopedRewriteOutcome.MessageNotUtf8 => "(a commit or tag message)",
+            ScopedRewriteOutcome.IdentityNotUtf8 => "(an author, committer, or tagger identity)",
+            _ => $"(unnamed blob, mark {skip.Mark})",
+        };
 
     private static string HitList(IReadOnlyList<string> hits) => "Still found at: " + Listed(hits) + ".";
 
@@ -250,6 +267,6 @@ public static class RewriteReportFacts
     /// <summary>Each skipped payload as one readable line, so an incomplete scrub names its gaps.</summary>
     public static IReadOnlyList<string> SkipLines(RewriteReport report) =>
         report.BinarySkips
-            .Select(s => $"{s.Path ?? (s.Mark is null ? "(a commit or tag message)" : $"(unnamed blob, mark {s.Mark})")} — {s.Reason} ({s.Size:N0} bytes)")
+            .Select(s => $"{RewriteScrubVerdict.SkipLocation(s)} — {s.Reason} ({s.Size:N0} bytes)")
             .ToList();
 }

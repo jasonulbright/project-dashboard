@@ -1011,11 +1011,6 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// One commit whose author name is <c>Jos\xE9</c> — Latin-1 bytes with no encoding header,
-    /// which fast-import accepts and fsck --strict passes, so nothing below the scrub can react
-    /// to it. Latin-1 encodes the whole feed because every other byte in it is ASCII.
-    /// </summary>
-    /// <summary>
     /// An ident carrying the byte the identity read-back splits fields on. Dropping the record
     /// it mangles would leave that identity out of the corpus entirely, so a mapping would find
     /// no survivor in a history the check never read while still reporting itself complete. The
@@ -1045,6 +1040,71 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         Assert.Equal(ScrubVerdict.NotVerified, RewriteScrubVerdict.For(check));
     }
 
+    /// <summary>
+    /// Content, message, and identity ops in one run over a commit whose blob, message, and
+    /// ident are all unreadable. Each check may name only the gaps its own op left: a message
+    /// and an ident skip both carry a null mark, so a check that partitions on the mark reports
+    /// the other family's gap as its own and a content check sweeps up all three.
+    /// </summary>
+    [Fact]
+    public async Task EachCheckNamesOnlyTheUnreadablePayloadsItsOwnOpLeftBehind()
+    {
+        using var f = Fixture(bareSource: true);
+        f.GitWithStdin(CombinedNonUtf8Feed(), "fast-import", "--quiet");
+
+        var report = await RewriteAsync(f, new RewriteOptions
+        {
+            ContentOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(Needle), Replace = Encoding.UTF8.GetBytes(Redacted) }],
+            MessageOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes("ticket-9182"), Replace = Encoding.UTF8.GetBytes("redacted") }],
+            IdentityMappings = [new IdentityMapping { OldName = "José", NewName = "Anon" }]
+        });
+
+        output.WriteLine("skips: " + string.Join(" | ",
+            report.BinarySkips.Select(s => $"mark={s.Mark?.ToString() ?? "-"} path={s.Path ?? "-"} reason={s.Reason}")));
+        Assert.Equal(3, report.BinarySkips.Count);
+
+        var content = Assert.Single(RewriteScrubVerdict.SkipsFor("literal", report.BinarySkips));
+        var message = Assert.Single(RewriteScrubVerdict.SkipsFor("message-literal", report.BinarySkips));
+        var identity = Assert.Single(RewriteScrubVerdict.SkipsFor("identity", report.BinarySkips));
+
+        Assert.Equal("bin.dat", content.Path);
+        Assert.Equal(ScopedRewriteOutcome.MessageNotUtf8, message.Reason);
+        Assert.Equal(ScopedRewriteOutcome.IdentityNotUtf8, identity.Reason);
+
+        // The rendered rows carry the same partition: no check names another family's payload.
+        foreach (var check in report.ScrubChecks)
+        {
+            var detail = RewriteScrubVerdict.Describe(check, report.BinarySkips).Detail;
+            var expected = RewriteScrubVerdict.SkipsFor(check.Kind, report.BinarySkips);
+            foreach (var skip in report.BinarySkips)
+            {
+                var location = RewriteScrubVerdict.SkipLocation(skip);
+                if (expected.Contains(skip))
+                    Assert.Contains(location, detail);
+                else
+                    Assert.DoesNotContain(location, detail);
+            }
+        }
+    }
+
+    /// <summary>
+    /// One commit whose blob, message, and ident are each Latin-1 bytes with no encoding header,
+    /// so all three ops meet a payload they cannot decode in a single run. Latin-1 encodes the
+    /// whole feed because every other byte in it is ASCII.
+    /// </summary>
+    private static byte[] CombinedNonUtf8Feed()
+    {
+        const string blob = "binary payload é\n";
+        const string message = "classified é\n";
+        return Encoding.Latin1.GetBytes(
+            $"blob\nmark :1\ndata {blob.Length}\n{blob}\n" +
+            "commit refs/heads/main\nmark :2\n" +
+            "author José <old@example.com> 1700000000 +0000\n" +
+            "committer Fixture <fixture@example.com> 1700000000 +0000\n" +
+            $"data {message.Length}\n{message}" +
+            "M 100644 :1 bin.dat\n\n");
+    }
+
     /// <summary>One commit whose author name carries a 0x1f byte — the separator the identity read-back splits on.</summary>
     private static byte[] SeparatorInIdentFeed() => Encoding.ASCII.GetBytes(
         "blob\nmark :1\ndata 5\nbody\n\n" +
@@ -1053,6 +1113,11 @@ public class HistoryScopedRewriterTests(ITestOutputHelper output)
         "committer Fixture <fixture@example.com> 1700000000 +0000\n" +
         "data 3\nc1\nM 100644 :1 a.txt\n\n");
 
+    /// <summary>
+    /// One commit whose author name is <c>Jos\xE9</c> — Latin-1 bytes with no encoding header,
+    /// which fast-import accepts and fsck --strict passes, so nothing below the scrub can react
+    /// to it. Latin-1 encodes the whole feed because every other byte in it is ASCII.
+    /// </summary>
     private static byte[] NonUtf8AuthorFeed() => Encoding.Latin1.GetBytes(
         "blob\nmark :1\ndata 5\nbody\n\n" +
         "commit refs/heads/main\nmark :2\n" +
