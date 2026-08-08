@@ -23,6 +23,13 @@ public sealed class RewriteCoordinator
     private readonly string _gitExe;
     private readonly string _workRoot;
 
+    /// <summary>
+    /// How long a scratch tree must have sat untouched before the sweep treats it as a leak.
+    /// No rewrite state on the repository names its scratch tree, so the write time is the only
+    /// liveness signal: a tree another process is still rewriting into is younger than this.
+    /// </summary>
+    private static readonly TimeSpan ScratchGrace = TimeSpan.FromDays(1);
+
     public RewriteCoordinator(
         BackupService backup,
         RepoBusyRegistry busy,
@@ -39,6 +46,31 @@ public sealed class RewriteCoordinator
         _journal = journal ?? new RewriteJournal();
         _gitExe = gitExecutable ?? HistoryPipeline.ResolveGitExecutable();
         _workRoot = workRoot ?? Path.Combine(AppPaths.LocalDir, "rewrite-work");
+        SweepStaleScratch();
+    }
+
+    /// <summary>
+    /// Reclaims scratch trees no disposal ever reached — a crash, a kill, or a process exit
+    /// while a release was still queued on the pool. Construction precedes every session this
+    /// instance owns, so no tree it could sweep is one of its own; a tree a concurrently running
+    /// process is still writing into is held by <see cref="ScratchGrace"/>.
+    /// </summary>
+    private void SweepStaleScratch()
+    {
+        try
+        {
+            if (!Directory.Exists(_workRoot)) return;
+            var cutoff = DateTime.UtcNow - ScratchGrace;
+            foreach (var dir in Directory.GetDirectories(_workRoot))
+            {
+                if (Directory.GetLastWriteTimeUtc(dir) > cutoff) continue;
+                RewriteScratch.TryDeleteTree(dir);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not sweep the rewrite scratch root {_workRoot}", ex);
+        }
     }
 
     /// <summary>

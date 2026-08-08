@@ -440,6 +440,44 @@ public class RewriteCoordinatorTests
     }
 
     /// <summary>
+    /// The scratch release is best effort and dies with the process, so a kill mid-rewrite
+    /// leaves a bare repo per abandoned run under the work root forever. A coordinator reclaims
+    /// them when it is built, and holds back anything young enough to belong to a rewrite
+    /// another process is still running.
+    /// </summary>
+    [Fact]
+    public void ConstructingACoordinator_ReclaimsAbandonedScratchTreesButNotYoungOnes()
+    {
+        var workRoot = Path.Combine(Path.GetTempPath(), "pd-fixtures", "rewrite-sweep-" + Guid.NewGuid().ToString("N")[..8]);
+        var abandoned = Path.Combine(workRoot, "abandoned-" + Guid.NewGuid().ToString("N")[..12]);
+        var live = Path.Combine(workRoot, "live-" + Guid.NewGuid().ToString("N")[..12]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(abandoned, "target.git", "objects"));
+            File.WriteAllText(Path.Combine(abandoned, "target.git", "objects", "leaked"), "x");
+            Directory.CreateDirectory(Path.Combine(live, "target.git"));
+            Directory.SetLastWriteTimeUtc(abandoned, DateTime.UtcNow - TimeSpan.FromDays(3));
+
+            var git = new GitService();
+            _ = new RewriteCoordinator(
+                new BackupService(git, new SettingsService()),
+                new RepoBusyRegistry(),
+                git,
+                new SwapService(git, GitGuard.GitExe),
+                gitExecutable: GitGuard.GitExe,
+                workRoot: workRoot);
+
+            Assert.False(Directory.Exists(abandoned));
+            Assert.True(Directory.Exists(live));
+            _output.WriteLine($"sweep removed {Path.GetFileName(abandoned)} and kept {Path.GetFileName(live)}");
+        }
+        finally
+        {
+            RewriteScratch.TryDeleteTree(workRoot);
+        }
+    }
+
+    /// <summary>
     /// A single-threaded synchronization context on a dedicated thread, which is what an
     /// awaited step sees when the app runs it: every continuation is posted back to the one
     /// thread the surface is drawn on. A pool thread can never serve as this thread, so work
