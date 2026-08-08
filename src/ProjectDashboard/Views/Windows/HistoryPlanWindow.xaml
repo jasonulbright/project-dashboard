@@ -18,6 +18,7 @@
         <KeyBinding Key="Down" Modifiers="Alt" Command="{Binding MoveDownCommand}" />
         <KeyBinding Key="D" Modifiers="Ctrl" Command="{Binding ToggleDropCommand}" />
         <KeyBinding Key="S" Modifiers="Ctrl" Command="{Binding ToggleSquashCommand}" />
+        <KeyBinding Key="R" Modifiers="Ctrl" Command="{Binding RewordCommand}" />
     </ui:FluentWindow.InputBindings>
 
     <Grid>
@@ -34,11 +35,11 @@
 
         <TextBlock Grid.Row="1" Margin="16,8,16,0" FontSize="12" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Text="Oldest first — the order git replays them. Alt+Up and Alt+Down move the selected commit, Ctrl+D marks it dropped, Ctrl+S folds it into the commit above it." />
+                   Text="Oldest first — the order git replays them. Alt+Up and Alt+Down move the selected commit, Ctrl+D marks it dropped, Ctrl+S folds it into the commit above it, Ctrl+R replaces its message." />
 
         <TextBlock Grid.Row="2" Margin="16,6,16,8" FontSize="12" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                   Text="One kind of change per apply: a reorder, or drops, or a squash. Each rewrites the range, so the next kind is planned on the history this one produces." />
+                   Text="Moves, drops, squashes and rewords apply together as one replay. The preview is the history that replay produces; a plan it cannot produce is refused below instead." />
 
         <Grid Grid.Row="3" Margin="16,0,16,0">
             <Grid.ColumnDefinitions>
@@ -68,8 +69,8 @@
                                 <CheckBox DockPanel.Dock="Right" Content="drop" FontSize="11" Margin="8,0,0,0"
                                           IsChecked="{Binding Drop}"
                                           AutomationProperties.Name="Drop this commit" />
-                                <TextBlock Text="{Binding Subject}" FontSize="12"
-                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
+                                <TextBlock Text="{Binding EffectiveSubject}" FontSize="12"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding EffectiveSubject}"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             </DockPanel>
                         </DataTemplate>
@@ -116,9 +117,12 @@
             <ui:Button Content="Toggle dro_p" Padding="12,5" Margin="0,0,8,0"
                        Command="{Binding ToggleDropCommand}"
                        AutomationProperties.Name="Toggle dropping the selected commit" />
-            <ui:Button Content="Toggle _squash" Padding="12,5" Margin="0,0,20,0"
+            <ui:Button Content="Toggle _squash" Padding="12,5" Margin="0,0,8,0"
                        Command="{Binding ToggleSquashCommand}"
                        AutomationProperties.Name="Toggle folding the selected commit into the one above it" />
+            <ui:Button Content="Re_word…" Padding="12,5" Margin="0,0,20,0"
+                       Command="{Binding RewordCommand}"
+                       AutomationProperties.Name="Replace the selected commit's message" />
             <ui:Button Content="Reset _marks" Padding="12,5" Margin="0,0,8,0"
                        Command="{Binding ResetPlanCommand}"
                        AutomationProperties.Name="Discard every move and mark" />

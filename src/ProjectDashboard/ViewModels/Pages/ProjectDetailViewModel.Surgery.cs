@@ -6,11 +6,17 @@ using ProjectDashboard.Services.Surgery;
 
 namespace ProjectDashboard.ViewModels.Pages;
 
-/// <summary>One commit inside a planned history edit. The list is oldest first — the order a rebase todo uses.</summary>
+/// <summary>
+/// One commit inside a planned history edit. The list is oldest first — the order a rebase todo
+/// uses. The three marks are mutually exclusive: a dropped commit's message is never written,
+/// and a folded one's is discarded by the fold, so carrying a reword alongside either would
+/// describe a commit the replay does not produce.
+/// </summary>
 public sealed partial class PlannedCommit : ObservableObject
 {
     [ObservableProperty] private bool _drop;
     [ObservableProperty] private bool _squashIntoPrevious;
+    [ObservableProperty] private string? _newMessage;
 
     public required string Sha { get; init; }
 
@@ -18,49 +24,85 @@ public sealed partial class PlannedCommit : ObservableObject
 
     public string ShortSha => Sha.Length > 8 ? Sha[..8] : Sha;
 
-    public string MarkLabel => Drop ? "drop" : SquashIntoPrevious ? "squash" : "pick";
+    /// <summary>The subject this commit carries after the plan is applied.</summary>
+    public string EffectiveSubject => SurgeryText.FirstLine(NewMessage) ?? Subject;
+
+    public string MarkLabel =>
+        Drop ? "drop" : SquashIntoPrevious ? "squash" : NewMessage is not null ? "reword" : "pick";
 
     partial void OnDropChanged(bool value)
     {
-        if (value) SquashIntoPrevious = false;
+        if (value)
+        {
+            SquashIntoPrevious = false;
+            NewMessage = null;
+        }
         OnPropertyChanged(nameof(MarkLabel));
     }
 
     partial void OnSquashIntoPreviousChanged(bool value)
     {
-        if (value) Drop = false;
+        if (value)
+        {
+            Drop = false;
+            NewMessage = null;
+        }
         OnPropertyChanged(nameof(MarkLabel));
+    }
+
+    partial void OnNewMessageChanged(string? value)
+    {
+        if (value is not null)
+        {
+            Drop = false;
+            SquashIntoPrevious = false;
+        }
+        OnPropertyChanged(nameof(MarkLabel));
+        OnPropertyChanged(nameof(EffectiveSubject));
     }
 }
 
-/// <summary>Which single gated operation a plan maps onto.</summary>
-public enum HistoryPlanKind
+/// <summary>How much of the range one plan changes, in the terms a confirmation states.</summary>
+public sealed record HistoryPlanScope(int Dropped, int Squashed, int Reworded, bool Reordered)
 {
-    None,
-    Reorder,
-    Drop,
-    Squash
+    public bool HasChange => Dropped > 0 || Squashed > 0 || Reworded > 0 || Reordered;
+
+    /// <summary>Every kind of change the plan carries, or "no change" — never a partial account of it.</summary>
+    public string Summary
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (Dropped > 0) parts.Add($"{Dropped} commit(s) dropped");
+            if (Squashed > 0) parts.Add($"{Squashed} commit(s) squashed");
+            if (Reworded > 0) parts.Add($"{Reworded} commit(s) reworded");
+            if (Reordered) parts.Add("order changed");
+            return parts.Count == 0 ? "no change" : string.Join(", ", parts);
+        }
+    }
 }
 
 /// <summary>
-/// What a plan resolves to. <see cref="Shas"/> is exactly the list the matching
-/// <see cref="SurgeryCoordinator"/> entry point takes: the full new order for a reorder, the
-/// commits to remove for a drop, the fold set for a squash.
+/// What a plan resolves to: the combined todo one gated apply runs, the history that apply
+/// produces, and how much of the range it changes. <see cref="Preview"/> is compiled from the
+/// same walk that built <see cref="Todo"/>, so it cannot describe a history the apply would not.
 /// </summary>
-public sealed record HistoryPlanResolution(HistoryPlanKind Kind, IReadOnlyList<string> Shas, string? Refusal)
+public sealed record HistoryPlanResolution(
+    RebaseTodo? Todo, IReadOnlyList<string> Preview, HistoryPlanScope Scope, string? Refusal)
 {
-    public bool IsValid => Refusal is null && Kind != HistoryPlanKind.None;
+    public bool IsValid => Refusal is null && Todo is not null;
 
-    public static HistoryPlanResolution Refused(string reason) => new(HistoryPlanKind.None, [], reason);
+    public static HistoryPlanResolution Refused(string reason) =>
+        new(null, [], new HistoryPlanScope(0, 0, 0, false), reason);
 }
 
 /// <summary>
-/// The pure part of reorder planning: moves and marks in, the ordered sha list a driver
-/// receives out.
+/// The pure part of history planning: moves and marks in, one combined rebase todo out.
 ///
-/// A plan carries at most one kind of change because the gated service layer has no combined
-/// entry point, and the kinds cannot be applied in sequence: every one of them rewrites the
-/// range, so the shas a second step named no longer exist.
+/// A single apply carries every kind of change at once — reordered rows, drops, folds and
+/// rewords — because they are positions and actions in one todo rather than separate
+/// operations. Whatever a replay cannot express is refused by the compiler before an apply
+/// exists, and the preview is that compiler's own account of the result.
 /// </summary>
 public static class HistoryPlan
 {
@@ -80,30 +122,34 @@ public static class HistoryPlan
         return true;
     }
 
-    /// <summary>
-    /// The history the plan describes, oldest first, as display lines. Folded commits are shown
-    /// on the line of the commit they land in, so the reader sees the resulting commit count.
-    /// </summary>
-    public static IReadOnlyList<string> Preview(IReadOnlyList<PlannedCommit> planned)
-    {
-        var lines = new List<string>();
-        foreach (var commit in planned)
+    /// <summary>The combined todo the plan describes: every row in its planned position, with its mark.</summary>
+    public static RebaseTodo BuildTodo(IReadOnlyList<PlannedCommit> planned) =>
+        new()
         {
-            if (commit.Drop) continue;
-            if (commit.SquashIntoPrevious && lines.Count > 0)
-            {
-                lines[^1] += $" + {commit.Subject}";
-                continue;
-            }
-            lines.Add($"{commit.ShortSha}  {commit.Subject}");
-        }
-        return lines;
-    }
+            Steps = planned.Select(p => new RebaseStep(
+                p.Sha,
+                p.Drop ? RebaseStepAction.Drop
+                    : p.SquashIntoPrevious ? RebaseStepAction.Fixup
+                    : RebaseStepAction.Pick,
+                p.Drop || p.SquashIntoPrevious ? null : p.NewMessage)).ToList()
+        };
+
+    /// <summary>
+    /// The history the plan produces, oldest first, as display lines — the compiler's own
+    /// account of the replay, not a second reading of the marks. Empty for a plan no replay can
+    /// express, because there is then no history to show.
+    /// </summary>
+    public static IReadOnlyList<string> Preview(IReadOnlyList<PlannedCommit> planned) =>
+        Compile(planned).Result.Select(c => c.Line).ToList();
 
     /// <summary>
     /// Resolves marks and moves against the range they were planned on. <paramref name="originalOrder"/>
     /// is the scope's own order, so a plan that lost or gained a commit is refused rather than
     /// handed to a driver that would reject a partial permutation with a less specific message.
+    ///
+    /// The two refusals stated here are the ones this surface can advise on — the range it was
+    /// built from, and the reset that replaces an emptied branch. Everything else is the
+    /// compiler's own refusal, so the dialog and the service name a contradiction identically.
     /// </summary>
     public static HistoryPlanResolution Resolve(IReadOnlyList<PlannedCommit> planned, IReadOnlyList<string> originalOrder)
     {
@@ -113,65 +159,41 @@ public static class HistoryPlan
             return HistoryPlanResolution.Refused(
                 "The plan no longer matches the commits it was built from — reload the history and plan again.");
 
-        if (planned.Count > 0 && planned[0].SquashIntoPrevious)
-            return HistoryPlanResolution.Refused(
-                "The oldest commit in the range has nothing before it to squash into.");
+        if (planned.Count == 0)
+            return HistoryPlanResolution.Refused(NothingToApply);
 
-        var dropped = planned.Where(p => p.Drop).Select(p => p.Sha).ToList();
-        if (dropped.Count > 0 && dropped.Count == planned.Count)
+        if (planned[0].SquashIntoPrevious)
+            return HistoryPlanResolution.Refused(
+                "The first commit in the plan has nothing before it to squash into.");
+
+        var dropped = planned.Count(p => p.Drop);
+        if (dropped > 0 && dropped == planned.Count)
             return HistoryPlanResolution.Refused(
                 "Dropping every commit in the range would empty the branch — use a reset to the commit " +
                 "before the range instead.");
 
-        var (folded, foldRuns) = FoldSet(planned);
-        var reordered = !planned.Select(p => p.Sha).SequenceEqual(originalOrder, StringComparer.OrdinalIgnoreCase);
+        var compiled = Compile(planned);
+        if (!compiled.IsValid) return HistoryPlanResolution.Refused(compiled.Refusal!);
 
-        var kinds = new List<string>();
-        if (reordered) kinds.Add("a reorder");
-        if (dropped.Count > 0) kinds.Add("a drop");
-        if (folded.Count > 0) kinds.Add("a squash");
+        var scope = new HistoryPlanScope(
+            dropped,
+            planned.Count(p => p.SquashIntoPrevious),
+            planned.Count(p => !p.Drop && !p.SquashIntoPrevious && p.NewMessage is not null),
+            !planned.Select(p => p.Sha).SequenceEqual(originalOrder, StringComparer.OrdinalIgnoreCase));
 
-        if (kinds.Count == 0)
-            return HistoryPlanResolution.Refused("Nothing to apply — move, drop, or squash a commit first.");
-        if (kinds.Count > 1)
-            return HistoryPlanResolution.Refused(
-                $"This plan mixes {string.Join(" and ", kinds)}. Each one rewrites the range, so they cannot be " +
-                "applied together — apply one, then plan the next on the new history. Drops first, then a reorder, then a squash.");
+        var preview = compiled.Result.Select(c => c.Line).ToList();
+        if (!scope.HasChange)
+            return new HistoryPlanResolution(null, preview, scope, NothingToApply);
 
-        if (foldRuns > 1)
-            return HistoryPlanResolution.Refused(
-                $"This plan folds {foldRuns} separate groups of commits. One apply folds a single group — " +
-                "fold one, then plan the next on the new history.");
-
-        if (dropped.Count > 0) return new HistoryPlanResolution(HistoryPlanKind.Drop, dropped, null);
-        if (folded.Count > 0) return new HistoryPlanResolution(HistoryPlanKind.Squash, folded, null);
-        return new HistoryPlanResolution(HistoryPlanKind.Reorder, planned.Select(p => p.Sha).ToList(), null);
+        return new HistoryPlanResolution(BuildTodo(planned), preview, scope, null);
     }
 
-    /// <summary>
-    /// Every commit a squash touches — each marked commit plus the unmarked one its run folds
-    /// into — and how many maximal runs the marks form.
-    ///
-    /// The run count is what keeps the preview and the outcome the same history. A driver reads
-    /// the whole list as ONE fold set and picks a single anchor, so two runs that happen to be
-    /// adjacent form a contiguous set it accepts and collapses into one commit, while the
-    /// preview still shows two. More than one run is refused in <see cref="Resolve"/>.
-    /// </summary>
-    private static (List<string> Shas, int Runs) FoldSet(IReadOnlyList<PlannedCommit> planned)
-    {
-        var included = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var runs = 0;
-        for (var i = 0; i < planned.Count; i++)
-        {
-            if (!planned[i].SquashIntoPrevious) continue;
-            if (i == 0 || !planned[i - 1].SquashIntoPrevious) runs++;
-            included.Add(planned[i].Sha);
-            var anchor = i - 1;
-            while (anchor >= 0 && planned[anchor].SquashIntoPrevious) anchor--;
-            if (anchor >= 0) included.Add(planned[anchor].Sha);
-        }
-        return (planned.Where(p => included.Contains(p.Sha)).Select(p => p.Sha).ToList(), runs);
-    }
+    private const string NothingToApply = "Nothing to apply — move, drop, squash, or reword a commit first.";
+
+    private static RebaseTodoCompilation Compile(IReadOnlyList<PlannedCommit> planned) =>
+        RebaseTodoCompiler.Compile(
+            BuildTodo(planned),
+            planned.Select(p => new RebaseCommit(p.Sha, p.Subject)).ToList());
 }
 
 /// <summary>What one surgery asks the user to confirm.</summary>
@@ -179,7 +201,7 @@ public sealed record SurgeryConfirmation(string Title, string Message, string Co
 
 /// <summary>
 /// Commit surgery on the History tab: per-commit reword, squash, drop, reset, revert,
-/// cherry-pick and staged-change injection, plus multi-commit reorder planning.
+/// cherry-pick and staged-change injection, plus combined multi-commit planning.
 ///
 /// Everything destructive goes through <see cref="SurgeryCoordinator"/>, which owns the busy
 /// lease, the tree gate, the backup and the journal. Preconditions this layer can see are
@@ -230,7 +252,7 @@ public partial class ProjectDetailViewModel
     internal Func<string, string, string, Task<string?>> PromptForCommitMessageAsync { get; set; } =
         Views.Windows.CommitMessagePromptWindow.ShowAsync;
 
-    /// <summary>Reorder-planning seam: the range to plan on → the accepted plan, or null when cancelled.</summary>
+    /// <summary>History-planning seam: the range to plan on → the accepted plan, or null when cancelled.</summary>
     internal Func<IReadOnlyList<PlannedCommit>, Task<IReadOnlyList<PlannedCommit>?>> ShowHistoryPlanAsync { get; set; } =
         Views.Windows.HistoryPlanWindow.ShowAsync;
 
@@ -614,29 +636,20 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var preview = string.Join("\n", HistoryPlan.Preview(accepted));
+        var summary = resolution.Scope.Summary;
+        var preview = string.Join("\n", resolution.Preview);
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
                 "Apply this plan?",
-                $"Rewrite the last {depth} commit(s) of {BranchDescription} to this, oldest first:\n\n{preview}\n\n" +
+                $"Rewrite the last {depth} commit(s) of {BranchDescription} — {summary} — to this, oldest first:\n\n{preview}\n\n" +
                 "This is what git is asked to replay, not a promise: a conflict can still stop the rebase, " +
                 "and it is aborted by default.",
                 "Apply")))
             return;
 
-        var shas = resolution.Shas;
-        var label = resolution.Kind switch
-        {
-            HistoryPlanKind.Drop => $"Drop {shas.Count} commit(s)",
-            HistoryPlanKind.Squash => $"Squash {shas.Count} commit(s)",
-            _ => $"Reorder {shas.Count} commit(s)"
-        };
-
-        await RunSurgeryAsync(label, repo, gen, policy => resolution.Kind switch
-        {
-            HistoryPlanKind.Drop => surgery.DropAsync(repo, depth, shas, policy),
-            HistoryPlanKind.Squash => surgery.SquashAsync(repo, depth, shas, null, policy),
-            _ => surgery.ReorderAsync(repo, depth, shas, policy)
-        }, RebaseConflictPolicy.AbortAndReport, retryable: true);
+        var todo = resolution.Todo!;
+        await RunSurgeryAsync($"Apply plan ({summary})", repo, gen,
+            policy => surgery.RunPlanAsync(repo, depth, todo, policy),
+            RebaseConflictPolicy.AbortAndReport, retryable: true);
     }
 
     // ── Conflict handling, undo, and the stash offer ────────────────────────

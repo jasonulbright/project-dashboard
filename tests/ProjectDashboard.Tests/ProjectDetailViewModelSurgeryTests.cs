@@ -302,35 +302,6 @@ public class ProjectDetailViewModelSurgeryTests
         Assert.Contains("narrow the range", vm.SurgeryFailureText);
     }
 
-    [Theory]
-    // Two runs separated by a gap, and two runs that sit next to each other. The adjacent pair
-    // is the dangerous one: its shas form a contiguous list a driver folds into ONE commit,
-    // while the preview the confirm showed named two.
-    [InlineData(1, 4)]
-    [InlineData(2, 4)]
-    public async Task APlanFoldingTwoGroups_IsRefusedBeforeTheConfirm(int first, int second)
-    {
-        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
-        var vm = await VmForAsync(repo);
-        var seen = CaptureConfirmations(vm, answer: true);
-        vm.ShowHistoryPlanAsync = planned =>
-        {
-            var list = planned.ToList();
-            list[first].SquashIntoPrevious = true;
-            list[second].SquashIntoPrevious = true;
-            return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
-        };
-        vm.SelectedCommit = vm.Commits[^1];
-
-        await vm.PlanHistoryEditCommand.ExecuteAsync(null);
-
-        Assert.Equal("Nothing applied.", vm.SurgeryStatusText);
-        Assert.Contains("folds 2 separate groups", vm.SurgeryFailureText);
-        Assert.Empty(seen);
-        Assert.False(vm.SurgeryUndoVisible);
-        Assert.Equal(["d", "c", "b", "a", "seed"], await repo.SubjectsAsync());
-    }
-
     [Fact]
     public async Task APlanDroppingEveryCommit_IsRefusedBeforeABackupIsTaken()
     {
@@ -356,19 +327,27 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     /// <summary>
-    /// The plan cases whose preview must survive a real rebase unchanged: one fold run, one
-    /// longer fold run, drops, a pure reorder, and the two that put the root commit itself in
-    /// play — a fixup whose anchor is the root, and a reorder that moves the root off the front.
-    /// The range reaches the root here, so every case replays with `--root` rather than onto a
-    /// base commit, and those last two are the ones with no parent behind the first todo line.
+    /// The plan cases whose preview must survive a real rebase unchanged: each kind on its own,
+    /// then the mixtures one apply now carries — reorder with drops, drops with a fold, all
+    /// three together, a reword beside a reorder, a reworded fold anchor, and two fold runs that
+    /// sit next to each other. The range reaches the root here, so every case replays with
+    /// `--root` rather than onto a base commit, which is the shape with no parent behind the
+    /// first todo line.
     /// </summary>
     [Theory]
     [InlineData("one-fold")]
     [InlineData("long-fold")]
     [InlineData("drops")]
     [InlineData("reorder")]
+    [InlineData("reword")]
     [InlineData("root-fold")]
     [InlineData("root-reorder")]
+    [InlineData("reorder+drop")]
+    [InlineData("drop+squash")]
+    [InlineData("all-three")]
+    [InlineData("reword+reorder")]
+    [InlineData("reworded-fold-anchor")]
+    [InlineData("adjacent-folds")]
     public async Task AnAppliedPlan_ProducesExactlyTheCommitsItsPreviewShowed(string plan)
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
@@ -391,8 +370,34 @@ public class ProjectDetailViewModelSurgeryTests
                     list[1].Drop = true;
                     list[3].Drop = true;
                     break;
+                case "reword": list[2].NewMessage = "b, said differently\n\nand a body"; break;
                 case "root-fold": list[1].SquashIntoPrevious = true; break;
                 case "root-reorder": HistoryPlan.MoveDown(list, 0); break;
+                case "reorder+drop":
+                    list[1].Drop = true;
+                    HistoryPlan.MoveUp(list, 4);
+                    break;
+                case "drop+squash":
+                    list[1].Drop = true;
+                    list[4].SquashIntoPrevious = true;
+                    break;
+                case "all-three":
+                    list[1].Drop = true;
+                    list[3].SquashIntoPrevious = true;
+                    HistoryPlan.MoveDown(list, 0);
+                    break;
+                case "reword+reorder":
+                    list[2].NewMessage = "b, reworded";
+                    HistoryPlan.MoveUp(list, 2);
+                    break;
+                case "reworded-fold-anchor":
+                    list[1].SquashIntoPrevious = true;
+                    list[0].NewMessage = "the folded root\n\nwith a body the amend keeps";
+                    break;
+                case "adjacent-folds":
+                    list[1].SquashIntoPrevious = true;
+                    list[3].SquashIntoPrevious = true;
+                    break;
                 default: HistoryPlan.MoveUp(list, 4); break;
             }
             preview = HistoryPlan.Preview(list).ToList();
@@ -409,6 +414,42 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     /// <summary>
+    /// The same guarantee for a range that stops short of the root, which replays onto a base
+    /// commit instead: the commits behind the range must be exactly where they were.
+    /// </summary>
+    [Fact]
+    public async Task AMixedPlanOnARangeAboveTheRoot_ReplaysOntoTheBaseAndMatchesItsPreview()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
+        var behindTheRange = (await repo.ShasAsync()).TakeLast(2).ToList(); // "a" and "seed"
+        var vm = await VmForAsync(repo);
+        CaptureConfirmations(vm, answer: true);
+
+        List<string> preview = [];
+        vm.ShowHistoryPlanAsync = planned =>
+        {
+            var list = planned.ToList();
+            Assert.Equal(["b", "c", "d"], list.Select(p => p.Subject));
+            list[0].NewMessage = "b, reworded";
+            list[2].SquashIntoPrevious = true;
+            HistoryPlan.MoveUp(list, 1);
+            preview = HistoryPlan.Preview(list).ToList();
+            return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
+        };
+        vm.SelectedCommit = vm.Commits[2]; // "b", so the range is b, c, d
+
+        await vm.PlanHistoryEditCommand.ExecuteAsync(null);
+
+        Assert.Equal("", vm.SurgeryFailureText);
+        var produced = await repo.SubjectsAsync();
+        produced.Reverse();
+        var expected = new List<string> { "seed", "a" };
+        expected.AddRange(preview.Select(PreviewedSubject));
+        Assert.Equal(expected, produced);
+        Assert.Equal(behindTheRange, (await repo.ShasAsync()).TakeLast(2).ToList());
+    }
+
+    /// <summary>
     /// The subject the commit on a preview line ends up carrying: the line is "sha  subject",
     /// and a fold keeps the anchor's message, so everything from " + " on is absorbed.
     /// </summary>
@@ -420,7 +461,7 @@ public class ProjectDetailViewModelSurgeryTests
     }
 
     [Fact]
-    public async Task MixedPlan_IsRefusedBeforeAnythingRuns()
+    public async Task APlanFoldingIntoACommitItAlsoDrops_IsRefusedBeforeTheConfirm()
     {
         using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b");
         var vm = await VmForAsync(repo);
@@ -428,8 +469,8 @@ public class ProjectDetailViewModelSurgeryTests
         vm.ShowHistoryPlanAsync = planned =>
         {
             var list = planned.ToList();
-            list[2].Drop = true;
-            HistoryPlan.MoveUp(list, 1);
+            list[1].Drop = true;
+            list[2].SquashIntoPrevious = true;
             return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
         };
         vm.SelectedCommit = vm.Commits[^1];
@@ -437,9 +478,42 @@ public class ProjectDetailViewModelSurgeryTests
         await vm.PlanHistoryEditCommand.ExecuteAsync(null);
 
         Assert.Equal("Nothing applied.", vm.SurgeryStatusText);
-        Assert.Contains("mixes a reorder and a drop", vm.SurgeryFailureText);
+        Assert.Contains("a dropped commit cannot be a squash anchor", vm.SurgeryFailureText);
         Assert.Empty(seen);
+        Assert.False(vm.SurgeryUndoVisible);
         Assert.Equal(["b", "a", "seed"], await repo.SubjectsAsync());
+    }
+
+    [Fact]
+    public async Task TheConfirmForAMixedPlan_StatesEveryKindOfChangeItCarries()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "a", "b", "c", "d");
+        var vm = await VmForAsync(repo);
+        var seen = CaptureConfirmations(vm, answer: false);
+        vm.ShowHistoryPlanAsync = planned =>
+        {
+            var list = planned.ToList();
+            list[1].Drop = true;
+            list[3].SquashIntoPrevious = true;
+            list[4].NewMessage = "d, reworded";
+            HistoryPlan.MoveDown(list, 0);
+            return Task.FromResult<IReadOnlyList<PlannedCommit>?>(list);
+        };
+        vm.SelectedCommit = vm.Commits[^1];
+
+        await vm.PlanHistoryEditCommand.ExecuteAsync(null);
+
+        var confirmation = Assert.Single(seen);
+        Assert.Equal("Apply this plan?", confirmation.Title);
+        Assert.Equal("Apply", confirmation.ConfirmLabel);
+        Assert.Contains(
+            "1 commit(s) dropped, 1 commit(s) squashed, 1 commit(s) reworded, order changed",
+            confirmation.Message);
+        // The preview in the confirmation is the resulting history, folds and reword included.
+        Assert.Contains("b + c", confirmation.Message);
+        Assert.Contains("d, reworded", confirmation.Message);
+        // Answered no: nothing ran.
+        Assert.Equal(["d", "c", "b", "a", "seed"], await repo.SubjectsAsync());
     }
 
     [Fact]
