@@ -47,6 +47,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         _gitHubService = gitHubService;
         _rewriteSessions = rewriteSessions;
         _busyRegistry = busyRegistry ?? new Services.Safety.RepoBusyRegistry();
+        ConfirmPrompt = ConfirmAsync;
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);

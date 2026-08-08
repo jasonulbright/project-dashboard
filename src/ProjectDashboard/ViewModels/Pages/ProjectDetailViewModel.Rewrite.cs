@@ -171,19 +171,18 @@ public partial class ProjectDetailViewModel
     private Task _rewriteStepInFlight = Task.CompletedTask;
 
     /// <summary>
-    /// The session whose step raised the page's busy gate, or null while no step holds it. Only
-    /// that session's step may lower the gate: a step whose session has left both the live
-    /// wizard and the parked lanes still owns the gate it took, and a step that never took the
-    /// gate must not reopen it under whichever run holds it now.
+    /// The page's busy gate as one rewrite step holds it. <see cref="RewriteStepGate.WritesRepo"/>
+    /// travels with the holder because it describes that one step: a dry run writes nothing and
+    /// holds no backup, so leaving the page ends it, while a rewrite or an undo is parked
+    /// instead, because ending it would drop the only restore for what it replaced. Read from a
+    /// page-wide field instead, a dry run on another repository answers for a swap on this one.
     /// </summary>
-    private IRewriteSession? _rewriteStepGateOwner;
+    private sealed class RewriteStepGate(IRewriteSession session, bool writesRepo)
+    {
+        public IRewriteSession Session { get; } = session;
 
-    /// <summary>
-    /// True while the step in flight is one that writes the repository. A dry run writes
-    /// nothing and holds no backup, so leaving the page ends it; a rewrite or an undo is
-    /// parked instead, because ending it would drop the only restore for what it replaced.
-    /// </summary>
-    private bool _rewriteStepWritesRepo;
+        public bool WritesRepo { get; } = writesRepo;
+    }
 
     /// <summary>
     /// Rewrites whose repository is not the one on screen, keyed by <see cref="RepoKey"/>. A
@@ -203,6 +202,10 @@ public partial class ProjectDetailViewModel
     private sealed class ParkedRewrite
     {
         public required IRewriteSession Session { get; init; }
+
+        /// <summary>The gate the parked step took, or null when no step of its own is in flight.</summary>
+        public required RewriteStepGate? Gate { get; init; }
+
         public required Task StepInFlight { get; set; }
         public bool Running { get; set; }
         public RewriteReport? Report { get; set; }
@@ -224,7 +227,7 @@ public partial class ProjectDetailViewModel
     /// Confirmation seam. The app shows the Fluent dialog; a headless test replaces it to
     /// drive the confirmed path of an irreversible action.
     /// </summary>
-    internal Func<string, string, string, Task<bool>> ConfirmPrompt { get; set; } = ConfirmAsync;
+    internal Func<string, string, string, Task<bool>> ConfirmPrompt { get; set; }
 
     // ── Wizard shell ────────────────────────────────────────────────────────────
 
@@ -548,12 +551,15 @@ public partial class ProjectDetailViewModel
         var repo = RepoPath;
         var session = _rewriteSession;
         if (repo.Length == 0 || session is null) return;
-        if (!session.CanUndo && !(RewriteRunning && _rewriteStepWritesRepo)) return;
+        var gate = _busyGateHolder as RewriteStepGate;
+        if (gate is not null && !ReferenceEquals(gate.Session, session)) gate = null;
+        if (!session.CanUndo && !(RewriteRunning && gate is { WritesRepo: true })) return;
 
         _rewriteSession = null;
         _parkedRewrites[RepoKey.For(repo)] = new ParkedRewrite
         {
             Session = session,
+            Gate = gate,
             StepInFlight = _rewriteStepInFlight,
             Running = RewriteRunning,
             Report = _rewriteReport,
@@ -586,9 +592,9 @@ public partial class ProjectDetailViewModel
         RewriteErrorText = parked.ErrorText;
         RewriteRunning = parked.Running;
         IsBusy = parked.Running;
-        // The gate comes back with the step, so the step that raised it is the one entitled to
-        // lower it; a step run for another repository while this one was parked took ownership.
-        if (parked.Running) _rewriteStepGateOwner = parked.Session;
+        // The same gate object comes back, so the step that raised the page's gate is again the
+        // one entitled to lower it, and it answers for its own step's writes.
+        if (parked.Running && parked.Gate is { } gate) _busyGateHolder = gate;
         RewriteStep = parked.Running ? RewriteWizardStep.Running : RewriteWizardStep.Result;
         RewriteWizardVisible = true;
     }
@@ -1204,10 +1210,10 @@ public partial class ProjectDetailViewModel
     {
         if (RefuseRewriteStepWhileBusy()) return;
         var repo = RepoPath;
+        var gate = new RewriteStepGate(session, writesRepo);
         IsBusy = true;
         RewriteRunning = true;
-        _rewriteStepGateOwner = session;
-        _rewriteStepWritesRepo = writesRepo;
+        _busyGateHolder = gate;
         RewriteStatusText = $"{label}…";
         RewriteErrorText = "";
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1237,12 +1243,11 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
-            if (ReferenceEquals(_rewriteStepGateOwner, session))
+            if (ReferenceEquals(_busyGateHolder, gate))
             {
-                _rewriteStepGateOwner = null;
+                _busyGateHolder = null;
                 IsBusy = false;
                 RewriteRunning = false;
-                _rewriteStepWritesRepo = false;
             }
             if (!OwnsLiveWizard(session) && ParkedLaneFor(session) is { } lane)
                 lane.Running = false;

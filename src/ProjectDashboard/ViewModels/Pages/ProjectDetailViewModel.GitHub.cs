@@ -680,7 +680,9 @@ public partial class ProjectDetailViewModel
     {
         if (IsBusy) return false;
         var gen = _generation;
+        var holder = new object();
         IsBusy = true;
+        _busyGateHolder = holder;
         GitHubStatusText = $"{label}…";
         try
         {
@@ -697,7 +699,11 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
-            if (IsCurrent(gen)) IsBusy = false;
+            if (ReferenceEquals(_busyGateHolder, holder))
+            {
+                _busyGateHolder = null;
+                if (IsCurrent(gen)) IsBusy = false;
+            }
         }
     }
 }

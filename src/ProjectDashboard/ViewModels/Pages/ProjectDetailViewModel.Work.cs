@@ -27,6 +27,14 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _syncStatusText = "";
 
+    /// <summary>
+    /// Whatever raised <see cref="IsBusy"/>, or null while the gate is down. Only the holder
+    /// that raised the gate releases it. A rewrite step outlives the page it started on, so a
+    /// step whose session has left the live wizard still owns the gate it took — and must not
+    /// lower the one an operation started on the page it left has since raised.
+    /// </summary>
+    private object? _busyGateHolder;
+
     // Stale index.lock recovery: shows a one-click "remove lock and retry" for the
     // op that failed on an orphaned lock (killed git never deletes its own lock).
     // The stashed op is repo-bound: it runs against the path passed in, and the
@@ -552,7 +560,10 @@ public partial class ProjectDetailViewModel
     /// different generation is a no-op. An unconditional release would reopen the gate
     /// while the new project's op is mid-flight, letting two mutating git ops overlap
     /// on one repository (index.lock / FETCH_HEAD.lock collisions). A stale op also
-    /// returns false and writes no status, so caller continuations are skipped.
+    /// returns false and writes no status, so caller continuations are skipped. The op
+    /// records itself as the gate's holder for the other direction: a rewrite step that
+    /// started on an earlier page returns under no generation of its own, and the holder
+    /// is what tells it the gate it finds is not the gate it took.
     ///
     /// The repository lease is the gate that holds across pages: a rewrite's swap runs under
     /// one, and an op that consulted only this page's flag would run `git pull` into the middle
@@ -569,7 +580,9 @@ public partial class ProjectDetailViewModel
             SyncStatusText = $"{label} refused: another operation is running on this repository.";
             return false;
         }
+        var holder = new object();
         IsBusy = true;
+        _busyGateHolder = holder;
         SyncStatusText = $"{label}…";
         StaleLockRetryVisible = false;
         _staleLockRetryOp = null;
@@ -609,7 +622,11 @@ public partial class ProjectDetailViewModel
         finally
         {
             lease.Dispose();
-            if (IsCurrent(gen)) IsBusy = false;
+            if (ReferenceEquals(_busyGateHolder, holder))
+            {
+                _busyGateHolder = null;
+                if (IsCurrent(gen)) IsBusy = false;
+            }
         }
     }
 

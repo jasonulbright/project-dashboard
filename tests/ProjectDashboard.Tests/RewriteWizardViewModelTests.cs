@@ -1296,4 +1296,104 @@ public class RewriteWizardViewModelTests
         Assert.False(vm.IsBusy);
         Assert.False(vm.RewriteRunning);
     }
+
+    // ── Parking a rewrite that has already been parked once ──────────────────
+
+    /// <summary>
+    /// The second departure has to park the rewrite exactly as the first one did. A dry run on
+    /// another repository runs between the two, and whether the parked step writes the
+    /// repository describes THAT step — read from anywhere else, the second departure decides
+    /// the swap is a dry run, disposes the session mid-execute, and the outcome plus the only
+    /// one-click undo for the replaced history are written nowhere while the journal already
+    /// reads completed.
+    /// </summary>
+    [Fact]
+    public async Task LeavingAgainAfterAnotherReposDryRun_StillParksTheRunningRewriteAndItsUndo()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-repark-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-repark-b");
+        using var __ = repoB;
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessionA = new StubSession { ExecuteGate = gate.Task };
+        var sessionB = new StubSession();
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!, new SequenceFactory(sessionA, sessionB));
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, sessionA);
+
+        // 1. away from the executing rewrite, 2. a dry run on the other repository.
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        await AdvanceToPreviewAsync(vm);
+        Assert.Equal(1, sessionB.PreviewCount);
+
+        // 3. back to the rewrite, which is still in the engine.
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        Assert.True(vm.RewriteStepIsRunning);
+        Assert.True(vm.IsBusy);
+
+        // 4. away again — the departure that used to decide this run needs no park.
+        await vm.SetProjectAsync(ProjectFor(repoB));
+
+        // 5. the swap returns with its session detached from the live wizard.
+        gate.SetResult();
+        await running;
+        await vm.RewriteSessionDisposal;
+        Assert.False(sessionA.Disposed);
+
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        Assert.True(vm.RewriteWizardVisible);
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.True(vm.RewriteResultSucceeded);
+        Assert.True(vm.RewriteUndoAvailable);
+
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        await vm.UndoRewriteCommand.ExecuteAsync(null);
+        Assert.Equal(1, sessionA.UndoCount);
+        Assert.Contains("History restored", vm.RewriteStatusText);
+    }
+
+    // ── The busy gate under an operation on another page ─────────────────────
+
+    /// <summary>
+    /// A parked step's release names the gate it took, not the gate it finds. The page it left
+    /// belongs to another repository by then, and an operation started there raised the busy
+    /// gate for itself; releasing that one hands the surface back while a git process is still
+    /// running against it.
+    /// </summary>
+    [Fact]
+    public async Task AParkedRewriteFinishing_LeavesTheGateAnotherPagesOpRaised()
+    {
+        var repoA = await TempRepo.CreateWithCommitAsync("rw-gate-hand-a");
+        using var _ = repoA;
+        var repoB = await TempRepo.CreateWithCommitAsync("rw-gate-hand-b");
+        using var __ = repoB;
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { ExecuteGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repoA));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        await vm.SetProjectAsync(ProjectFor(repoB));
+        Assert.False(vm.IsBusy);
+
+        var pulling = vm.PullCommand.ExecuteAsync(null);
+        Assert.True(vm.IsBusy);
+
+        gate.SetResult();
+        await running;
+
+        Assert.False(pulling.IsCompleted);
+        Assert.True(vm.IsBusy);
+
+        await pulling;
+        Assert.False(vm.IsBusy);
+    }
 }
