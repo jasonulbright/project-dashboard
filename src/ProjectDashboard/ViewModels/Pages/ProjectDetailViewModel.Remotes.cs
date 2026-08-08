@@ -42,8 +42,17 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private string _remotesStatusText = "";
     [ObservableProperty] private string _remotesErrorText = "";
 
+    /// <summary>
+    /// Set only by a read that succeeded. An empty list is also what a failed read leaves behind,
+    /// so the "no remotes" claim is made from this rather than from the count.
+    /// </summary>
+    [ObservableProperty] private bool _remotesEmpty;
+
     /// <summary>Remote-tracking refs, which are what an upstream can be set to and what can be deleted on a remote.</summary>
     [ObservableProperty] private ObservableCollection<string> _remoteBranches = [];
+
+    /// <inheritdoc cref="RemotesEmpty"/>
+    [ObservableProperty] private bool _remoteBranchesEmpty;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DeleteRemoteBranchCommand))]
@@ -67,10 +76,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task LoadBranchesTab()
     {
+        var gen = _generation;
         RemotesRefresh = LoadRemotes();
         await LoadBranches();
         await RemotesRefresh;
-        BranchesTabLoaded = true;
+        if (IsCurrent(gen)) BranchesTabLoaded = true;
     }
 
     [RelayCommand]
@@ -92,14 +102,21 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn($"could not read the remotes of {repo}", ex);
-            if (IsCurrent(gen)) RemotesErrorText = $"Could not read this repository's remotes: {ex.Message}";
+            if (IsCurrent(gen))
+            {
+                RemotesErrorText = $"Could not read this repository's remotes: {ex.Message}";
+                RemotesEmpty = false;
+                RemoteBranchesEmpty = false;
+            }
             return;
         }
         if (!IsCurrent(gen)) return;
 
         RemotesErrorText = "";
         Remotes = new ObservableCollection<RemoteEntry>(remotes);
+        RemotesEmpty = Remotes.Count == 0;
         RemoteBranches = new ObservableCollection<string>(remoteBranches);
+        RemoteBranchesEmpty = RemoteBranches.Count == 0;
         SelectedRemote = Remotes.FirstOrDefault(r => r.Name == keepRemote) ?? Remotes.FirstOrDefault();
         SelectedRemoteBranch = keepBranch is not null && RemoteBranches.Contains(keepBranch) ? keepBranch : null;
         RefreshBranchExtraChoices();
@@ -495,8 +512,9 @@ public partial class ProjectDetailViewModel
     }
 
     /// <summary>
-    /// The comparison in words. A pair git could not measure — an unknown ref, or two histories
-    /// with no common commit — is said to be unmeasured rather than shown as zero and zero.
+    /// The comparison in words. A pair git could not measure — an unknown ref — is said to be
+    /// unmeasured rather than shown as zero and zero. Two histories with no common commit are
+    /// measured: each side's whole history is what the other lacks, and that is what is reported.
     /// </summary>
     internal static string DescribeComparison(string reference, string baseRef, RefComparison? comparison) =>
         comparison is null

@@ -1114,17 +1114,8 @@
 
                             <Border Grid.Row="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
                                     Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                    AutomationProperties.AutomationId="RemotesEmptyState">
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Remotes.Count}" Value="0">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Border.Style>
+                                    AutomationProperties.AutomationId="RemotesEmptyState"
+                                    Visibility="{Binding RemotesEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock FontSize="12" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            Text="This repository has no remotes configured. Fetch, pull, and push have nowhere to go until one is added." />
@@ -1203,17 +1194,8 @@
                             <Grid Grid.Row="4">
                                 <Border CornerRadius="6" Padding="10,8" VerticalAlignment="Top"
                                         Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                        AutomationProperties.AutomationId="RemoteBranchesEmptyState">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding RemoteBranches.Count}" Value="0">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
+                                        AutomationProperties.AutomationId="RemoteBranchesEmptyState"
+                                        Visibility="{Binding RemoteBranchesEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <TextBlock FontSize="12" TextWrapping="Wrap"
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                Text="No remote-tracking branches are recorded here. A clone that has never fetched reads the same way as a remote with no branches." />
@@ -2932,7 +2914,7 @@
                                     <DockPanel Margin="0,0,0,6">
                                         <ui:TextBox DockPanel.Dock="Left" Width="150"
                                                     Text="{Binding NewWorktreeBranch, UpdateSourceTrigger=PropertyChanged}"
-                                                    PlaceholderText="new branch (optional)" FontSize="12" Margin="0,0,8,0"
+                                                    PlaceholderText="new branch (required)" FontSize="12" Margin="0,0,8,0"
                                                     FontFamily="Cascadia Code,Consolas"
                                                     AutomationProperties.Name="Branch to create in the new worktree" />
                                         <ui:Button DockPanel.Dock="Right" Content="Add" FontSize="11" Padding="12,3"
@@ -2987,17 +2969,8 @@
 
                                 <Border Grid.Row="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
                                         Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                        AutomationProperties.AutomationId="SubmodulesEmptyState">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Submodules.Count}" Value="0">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
+                                        AutomationProperties.AutomationId="SubmodulesEmptyState"
+                                        Visibility="{Binding SubmodulesEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <TextBlock FontSize="12" TextWrapping="Wrap"
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                Text="This repository declares no submodules and records no gitlinks." />
@@ -3135,9 +3108,13 @@
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="The .gitignore at this repository's root. Saving writes the file and nothing else — it is an ordinary edit to commit, and a file git already tracks stays tracked whatever the rules say." />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding GitignoreExists}" Value="False">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding GitignoreLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding GitignoreExists}" Value="False" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Text" Value="This repository has no .gitignore at its root. Saving creates one — an ordinary new file to commit. A file git already tracks stays tracked whatever the rules say." />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>

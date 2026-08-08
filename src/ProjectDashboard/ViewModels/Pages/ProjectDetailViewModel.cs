@@ -195,8 +195,10 @@ public partial class ProjectDetailViewModel : ObservableObject
         NewBranchName = "";
         BranchesTabLoaded = false;
         Remotes = [];
+        RemotesEmpty = false;
         SelectedRemote = null;
         RemoteBranches = [];
+        RemoteBranchesEmpty = false;
         SelectedRemoteBranch = null;
         NewRemoteName = "";
         NewRemoteUrl = "";

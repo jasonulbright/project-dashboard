@@ -745,8 +745,9 @@ public class GitService
     /// <summary>
     /// How far <paramref name="reference"/> stands from <paramref name="baseRef"/>: commits it has
     /// that the base does not (Ahead) and commits the base has that it does not (Behind). Null when
-    /// either ref is unknown or the two have no common history — a count that was never measured
-    /// must not be reported as zero.
+    /// a ref is unknown or the counts do not parse — a count that was never measured must not be
+    /// reported as zero. Two histories with no common commit do measure: the symmetric difference
+    /// is then each side's whole history, and rev-list returns those counts.
     /// </summary>
     public async Task<RefComparison?> CompareRefsAsync(string repoPath, string reference, string baseRef,
         CancellationToken ct = default)
@@ -1347,11 +1348,28 @@ public class GitService
         await File.WriteAllTextAsync(p, sb.ToString(), ct);
     }
 
-    /// <summary>True when the path is ignored (`check-ignore` exits 0 when ignored, 1 when not).</summary>
-    public async Task<bool> CheckIgnoreAsync(string repoPath, string path, CancellationToken ct = default)
+    /// <summary>
+    /// What git says about one path and the ignore rules. `check-ignore` exits 0 when the path is
+    /// ignored and 1 when it is not, and anything else — 128 for a path outside the repository, a
+    /// kill on timeout — is an error rather than a "no". Exit 1 is also what a tracked path gets
+    /// even when a rule matches it, because check-ignore consults the index, so trackedness is
+    /// read separately and carried alongside the answer.
+    /// </summary>
+    public async Task<IgnoreAnswer> CheckIgnoreAsync(string repoPath, string path, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["check-ignore", "-q", "--", path], ct);
-        return result.ExitCode == 0 && !result.TimedOut;
+        if (result.TimedOut) return new IgnoreAnswer(IgnoreState.Unknown, false, "the check timed out");
+        if (result.ExitCode == 0) return new IgnoreAnswer(IgnoreState.Ignored, false, "");
+        if (result.ExitCode != 1) return new IgnoreAnswer(IgnoreState.Unknown, false, result.FirstError);
+
+        return new IgnoreAnswer(IgnoreState.NotIgnored, await IsTrackedAsync(repoPath, path, ct), "");
+    }
+
+    /// <summary>Whether the index holds the path. `ls-files` prints it when it does and exits 0 either way.</summary>
+    public async Task<bool> IsTrackedAsync(string repoPath, string path, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["ls-files", "--", path], ct);
+        return result.Success && result.StdOut.Trim().Length > 0;
     }
 
     // ── Clone ───────────────────────────────────────────────────────────────

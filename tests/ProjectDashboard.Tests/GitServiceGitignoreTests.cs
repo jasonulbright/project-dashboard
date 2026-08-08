@@ -1,3 +1,4 @@
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
@@ -51,7 +52,43 @@ public class GitServiceGitignoreTests
         using var repo = await TempRepo.CreateWithCommitAsync("ignore-check");
         await _git.SaveGitignoreAsync(repo.Path, "*.log\n");
 
-        Assert.True(await _git.CheckIgnoreAsync(repo.Path, "debug.log"));
-        Assert.False(await _git.CheckIgnoreAsync(repo.Path, "notes.txt"));
+        Assert.Equal(new IgnoreAnswer(IgnoreState.Ignored, false, ""),
+            await _git.CheckIgnoreAsync(repo.Path, "debug.log"));
+        Assert.Equal(new IgnoreAnswer(IgnoreState.NotIgnored, false, ""),
+            await _git.CheckIgnoreAsync(repo.Path, "notes.txt"));
+    }
+
+    /// <summary>
+    /// check-ignore consults the index, so a tracked path exits 1 — "not ignored" — even while a
+    /// rule matches it. Trackedness is what separates that from a path no rule matches.
+    /// </summary>
+    [Fact]
+    public async Task CheckIgnore_ATrackedPathIsReportedNotIgnoredAndTracked()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-check-tracked");
+        repo.WriteFile("kept.log", "x\n");
+        await repo.GitAsync("add", "--force", "--", "kept.log");
+        await repo.CommitAllAsync("track a log");
+        await _git.SaveGitignoreAsync(repo.Path, "*.log\n");
+
+        var answer = await _git.CheckIgnoreAsync(repo.Path, "kept.log");
+
+        Assert.Equal(IgnoreState.NotIgnored, answer.State);
+        Assert.True(answer.Tracked);
+        Assert.True(await _git.IsTrackedAsync(repo.Path, "kept.log"));
+        Assert.False(await _git.IsTrackedAsync(repo.Path, "never-added.log"));
+    }
+
+    /// <summary>Exit 128 is git refusing the question; answering "not ignored" would invent an answer.</summary>
+    [Fact]
+    public async Task CheckIgnore_APathGitRefuses_IsUnknownRatherThanNotIgnored()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-check-outside");
+        await _git.SaveGitignoreAsync(repo.Path, "*.log\n");
+
+        var answer = await _git.CheckIgnoreAsync(repo.Path, "../outside.log");
+
+        Assert.Equal(IgnoreState.Unknown, answer.State);
+        Assert.NotEqual("", answer.Error);
     }
 }

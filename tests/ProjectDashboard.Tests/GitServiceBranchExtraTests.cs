@@ -153,6 +153,25 @@ public class GitServiceBranchExtraTests
         Assert.Null(await _git.CompareRefsAsync(repo.Path, "main", ""));
     }
 
+    /// <summary>
+    /// Two histories with no common commit are measurable: the symmetric difference is each
+    /// side's whole history, and rev-list returns those counts rather than failing.
+    /// </summary>
+    [Fact]
+    public async Task CompareRefs_HistoriesWithNoCommonCommit_AreCountedInFull()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("compare-unrelated");
+        repo.WriteFile("m2.txt", "main two\n");
+        await repo.CommitAllAsync("main two");
+
+        await repo.GitAsync("checkout", "--orphan", "separate");
+        await repo.GitAsync("rm", "-rf", "--cached", ".");
+        repo.WriteFile("o1.txt", "orphan\n");
+        await repo.CommitAllAsync("orphan one");
+
+        Assert.Equal(new RefComparison(1, 2), await _git.CompareRefsAsync(repo.Path, "separate", "main"));
+    }
+
     [Fact]
     public async Task IsValidRemoteName_RefusesWhatWouldCollideOrBeReadAsAnOption()
     {

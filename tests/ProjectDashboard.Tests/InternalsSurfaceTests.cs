@@ -22,8 +22,8 @@ public class InternalsSurfaceTests
 
     /// <summary>Answers the confirmation and the folder picker without a window.</summary>
     private sealed class InternalsViewModel(bool confirm = true, SubmoduleService? submodules = null,
-        RepoBusyRegistry? busy = null)
-        : ProjectDetailViewModel(null!, new GitService(), null!, null, busy ?? new RepoBusyRegistry(),
+        RepoBusyRegistry? busy = null, GitService? git = null)
+        : ProjectDetailViewModel(null!, git ?? new GitService(), null!, null, busy ?? new RepoBusyRegistry(),
             submodules: submodules)
     {
         public int Confirmations { get; private set; }
@@ -186,6 +186,44 @@ public class InternalsSurfaceTests
         Assert.Equal(Path.Combine(@"C:\worktrees", "feature-one"), vm.NewWorktreePath);
     }
 
+    /// <summary>
+    /// With no branch name there is no leaf to append, and the bare parent directory already
+    /// exists — a path git rejects. The pick is refused rather than spent on it.
+    /// </summary>
+    [Fact]
+    public async Task ThePathPicker_WithNoBranchName_RefusesRatherThanOfferingTheBareParent()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("wt-pick-nobranch");
+        var vm = await OpenedOn(repo.Path);
+        vm.PickedDirectory = @"C:\worktrees";
+
+        vm.ChooseWorktreePathCommand.Execute(null);
+
+        Assert.Equal("", vm.NewWorktreePath);
+        Assert.Equal(ProjectDetailViewModel.BranchNameRequired, vm.WorktreesErrorText);
+    }
+
+    /// <summary>
+    /// A worktree added here always creates its branch. Git's own default names that branch after
+    /// the leaf directory, which creates a branch nobody asked for and skips the collision check —
+    /// so the name is required rather than inferred.
+    /// </summary>
+    [Fact]
+    public async Task AddingAWorktree_WithNoBranchName_IsRefusedRatherThanNamingOneAfterTheDirectory()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("wt-add-nobranch");
+        var target = Path.Combine(TestEnv.NewDir("wt-add-nobranch-parent"), "linked");
+        var vm = await OpenedOn(repo.Path);
+
+        vm.NewWorktreePath = target;
+        await vm.AddWorktreeCommand.ExecuteAsync(null);
+
+        Assert.Equal(ProjectDetailViewModel.BranchNameRequired, vm.WorktreesErrorText);
+        Assert.False(Directory.Exists(target));
+        Assert.Single(vm.Worktrees);
+        Assert.DoesNotContain(vm.Branches, b => b.Name == "linked");
+    }
+
     [Fact]
     public async Task PruningWorktrees_IsRefusedWithoutTheConfirmation()
     {
@@ -259,8 +297,12 @@ public class InternalsSurfaceTests
         var vm = await OpenedOn(repo.Path);
 
         Assert.Empty(vm.Submodules);
-        var markup = await File.ReadAllTextAsync(PageSource());
-        Assert.Contains("declares no submodules and records no gitlinks", markup);
+        Assert.True(vm.SubmodulesEmpty);
+        var empty = EmptyStateMarkup(await File.ReadAllTextAsync(PageSource()), "SubmodulesEmptyState");
+        Assert.Contains("declares no submodules and records no gitlinks", empty);
+        // The claim is made from a read that answered, never from a count an error also produces.
+        Assert.Contains("Binding SubmodulesEmpty,", empty);
+        Assert.DoesNotContain("Submodules.Count", empty);
     }
 
     [Fact]
@@ -275,6 +317,8 @@ public class InternalsSurfaceTests
         await vm.LoadInternalsCommand.ExecuteAsync(null);
 
         Assert.Empty(vm.Submodules);
+        // The refusal must not read as "this repository declares no submodules" — it declares one.
+        Assert.False(vm.SubmodulesEmpty);
         Assert.Equal(ProjectDetailViewModel.SubmodulesUnavailableNotice, vm.SubmodulesErrorText);
         Assert.False(vm.InitSubmoduleCommand.CanExecute(null));
     }
@@ -403,8 +447,10 @@ public class InternalsSurfaceTests
         using var repo = await TempRepo.CreateWithCommitAsync("ignore-save");
         var vm = await OpenedOn(repo.Path);
 
+        Assert.True(vm.GitignoreLoaded);
         vm.GitignoreText = "bin/\nobj/\n";
         Assert.True(vm.GitignoreDirty);
+        Assert.True(vm.SaveGitignoreCommand.CanExecute(null));
 
         await vm.SaveGitignoreCommand.ExecuteAsync(null);
 
@@ -438,6 +484,36 @@ public class InternalsSurfaceTests
         Assert.Contains("another operation is running", vm.GitignoreErrorText);
     }
 
+    /// <summary>
+    /// A read that failed leaves the editor empty, which is indistinguishable from a repository
+    /// whose rules are empty. Saving that emptiness would replace a file nobody managed to read,
+    /// so the write is refused until a read succeeds.
+    /// </summary>
+    [Fact]
+    public async Task SavingTheIgnoreRules_IsRefusedWhenTheReadNeverSucceeded()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-unread");
+        repo.WriteFile(".gitignore", "bin/\nobj/\n");
+
+        InternalsViewModel vm;
+        // An exclusive handle is what a transient read failure looks like from here. It is
+        // released before the save, so nothing but the refusal stands between the editor and
+        // the file on disk.
+        using (File.Open(Path.Combine(repo.Path, ".gitignore"), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            vm = await OpenedOn(repo.Path);
+            Assert.False(vm.GitignoreLoaded);
+            Assert.Contains("Could not read .gitignore", vm.GitignoreErrorText);
+        }
+
+        vm.GitignoreText = "everything";
+        Assert.False(vm.SaveGitignoreCommand.CanExecute(null));
+        await vm.SaveGitignoreCommand.ExecuteAsync(null);
+
+        Assert.Equal(ProjectDetailViewModel.GitignoreNotLoadedRefusal, vm.GitignoreErrorText);
+        Assert.Equal("bin/\nobj/\n", repo.ReadFile(".gitignore"));
+    }
+
     [Fact]
     public async Task ReloadingTheIgnoreRules_DropsTheEdits()
     {
@@ -468,6 +544,45 @@ public class InternalsSurfaceTests
         vm.IgnoreProbePath = "keep.log";
         await vm.ProbeIgnorePathCommand.ExecuteAsync(null);
         Assert.Contains("is not ignored", vm.IgnoreProbeResult);
+    }
+
+    /// <summary>
+    /// check-ignore consults the index, so a tracked path exits 1 — the same exit as a path no
+    /// rule matches — even while a rule does match it. The two cannot be reported as one answer.
+    /// </summary>
+    [Fact]
+    public async Task TheIgnoreProbe_SaysWhenTheIndexIsWhatOutranksTheRules()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-tracked");
+        repo.WriteFile("kept.log", "x\n");
+        await repo.GitAsync("add", "--force", "--", "kept.log");
+        await repo.CommitAllAsync("track a log");
+        repo.WriteFile(".gitignore", "*.log\n");
+        var vm = await OpenedOn(repo.Path);
+
+        vm.IgnoreProbePath = "kept.log";
+        await vm.ProbeIgnorePathCommand.ExecuteAsync(null);
+
+        Assert.Contains("git already tracks it", vm.IgnoreProbeResult);
+        Assert.Contains("once the path is untracked", vm.IgnoreProbeResult);
+    }
+
+    /// <summary>
+    /// A path outside the repository makes check-ignore exit 128. Reporting that as "not ignored"
+    /// would answer a question git refused to answer.
+    /// </summary>
+    [Fact]
+    public async Task TheIgnoreProbe_SaysWhenGitCouldNotAnswerRatherThanAnsweringNo()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-unanswerable");
+        repo.WriteFile(".gitignore", "*.log\n");
+        var vm = await OpenedOn(repo.Path);
+
+        vm.IgnoreProbePath = "../outside.log";
+        await vm.ProbeIgnorePathCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Could not tell whether", vm.IgnoreProbeResult);
+        Assert.DoesNotContain("is not ignored", vm.IgnoreProbeResult);
     }
 
     [Fact]
@@ -510,6 +625,35 @@ public class InternalsSurfaceTests
         Assert.Empty(vm.Submodules);
         Assert.Equal("", vm.GitignoreText);
         Assert.False(vm.GitignoreExists);
+    }
+
+    /// <summary>
+    /// A read still in flight when the reader moves on carries the previous repository's answer.
+    /// Marking the tab loaded from that continuation asserts the NEW repository's empty lists as
+    /// fact — nothing has been read about it yet.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingProjectsMidRead_LeavesTheIncomingProjectsTabUnloaded()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("internals-race-a");
+        using var other = await TempRepo.CreateWithCommitAsync("internals-race-b");
+        var git = new SwitchMidReadGitService();
+        var vm = new InternalsViewModel(submodules: new SubmoduleService(new GitService()), git: git);
+        await vm.SetProjectAsync(ProjectFor(repo.Path));
+
+        git.OnNextCall = () => vm.SetProjectAsync(ProjectFor(other.Path));
+        await vm.LoadInternalsCommand.ExecuteAsync(null);
+
+        Assert.False(vm.InternalsLoaded);
+        Assert.Empty(vm.Worktrees);
+    }
+
+    /// <summary>The markup from an element's automation id onward, for asserting what gates it.</summary>
+    private static string EmptyStateMarkup(string markup, string automationId)
+    {
+        var at = markup.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{automationId} is not in the markup");
+        return markup[at..(at + Math.Min(600, markup.Length - at))];
     }
 
     private static string PageSource([System.Runtime.CompilerServices.CallerFilePath] string testFile = "")

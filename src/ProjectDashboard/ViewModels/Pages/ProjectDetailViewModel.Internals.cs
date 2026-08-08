@@ -54,9 +54,10 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private async Task LoadInternals()
     {
+        var gen = _generation;
         InternalsRefresh = Task.WhenAll(LoadWorktrees(), LoadSubmodules(), LoadGitignore());
         await InternalsRefresh;
-        InternalsLoaded = true;
+        if (IsCurrent(gen)) InternalsLoaded = true;
     }
 
     private void ResetInternalsState()
@@ -69,12 +70,14 @@ public partial class ProjectDetailViewModel
         WorktreesStatusText = "";
         WorktreesErrorText = "";
         Submodules = [];
+        SubmodulesEmpty = false;
         SelectedSubmodule = null;
         SubmodulesStatusText = "";
         SubmodulesErrorText = "";
         SubmoduleForce = false;
         SubmoduleConfirmDiscard = false;
         GitignoreText = "";
+        GitignoreLoaded = false;
         GitignoreExists = false;
         GitignoreDirty = false;
         GitignoreStatusText = "";
@@ -160,13 +163,18 @@ public partial class ProjectDetailViewModel
             WorktreesErrorText = "Choose a directory for the new worktree. Git creates it and refuses a path that already exists.";
             return;
         }
-        if (branch.Length > 0 && !await _gitService.IsValidBranchNameAsync(repo, branch))
+        if (branch.Length == 0)
+        {
+            WorktreesErrorText = BranchNameRequired;
+            return;
+        }
+        if (!await _gitService.IsValidBranchNameAsync(repo, branch))
         {
             if (IsCurrent(gen)) WorktreesErrorText = InvalidBranchNameMessage(branch);
             return;
         }
         if (!IsCurrent(gen)) return;
-        if (branch.Length > 0 && Branches.Any(b => string.Equals(b.Name, branch, StringComparison.Ordinal)))
+        if (Branches.Any(b => string.Equals(b.Name, branch, StringComparison.Ordinal)))
         {
             WorktreesErrorText = $"A branch called “{branch}” already exists here, and a worktree creates its branch. " +
                                  "Choose another name.";
@@ -174,8 +182,7 @@ public partial class ProjectDetailViewModel
         }
 
         WorktreesErrorText = "";
-        var ok = await RunOp(r => _gitService.AddWorktreeAsync(r, path, branch.Length > 0 ? branch : null),
-            "Add worktree", repo, gen);
+        var ok = await RunOp(r => _gitService.AddWorktreeAsync(r, path, branch), "Add worktree", repo, gen);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -183,14 +190,21 @@ public partial class ProjectDetailViewModel
             WorktreesErrorText = SyncStatusText;
             return;
         }
-        WorktreesStatusText = branch.Length > 0
-            ? $"Added a worktree at {path} on a new branch {branch}."
-            : $"Added a worktree at {path}.";
+        WorktreesStatusText = $"Added a worktree at {path} on a new branch {branch}.";
         NewWorktreePath = "";
         NewWorktreeBranch = "";
         await LoadWorktrees();
         await LoadBranches();
     }
+
+    /// <summary>
+    /// A worktree added here always creates its branch. Left unnamed, git names that branch after
+    /// the leaf directory — a branch created past the collision check against the existing ones.
+    /// The name is also the leaf the path picker appends to the directory it is given.
+    /// </summary>
+    internal const string BranchNameRequired =
+        "Name the branch this worktree will check out. A worktree created here always creates its branch, " +
+        "and the name is also the directory the picker appends.";
 
     /// <summary>Directory chosen by the reader, or null when the picker was cancelled.</summary>
     internal virtual string? PromptForDirectory(string title)
@@ -201,16 +215,21 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// Picks the PARENT directory and appends the branch name, because git refuses a worktree
-    /// path that already exists and a folder picker can only return one that does.
+    /// path that already exists and a folder picker can only return one that does. With no branch
+    /// name there is no leaf to append, and the bare parent is a path git would refuse.
     /// </summary>
     [RelayCommand]
     private void ChooseWorktreePath()
     {
-        if (PromptForDirectory("Where should the new worktree be created?") is not { } parent) return;
         var leaf = NewWorktreeBranch.Trim();
-        NewWorktreePath = leaf.Length > 0
-            ? System.IO.Path.Combine(parent, leaf.Replace('/', '-'))
-            : parent;
+        if (leaf.Length == 0)
+        {
+            WorktreesErrorText = BranchNameRequired;
+            return;
+        }
+        if (PromptForDirectory("Where should the new worktree be created?") is not { } parent) return;
+        WorktreesErrorText = "";
+        NewWorktreePath = System.IO.Path.Combine(parent, leaf.Replace('/', '-'));
     }
 
     private bool CanRemoveWorktree() => SelectedWorktree is not null && !IsBusy && RepoPath.Length > 0;
@@ -312,6 +331,12 @@ public partial class ProjectDetailViewModel
     [NotifyCanExecuteChangedFor(nameof(DeinitSubmoduleCommand))]
     private SubmoduleEntry? _selectedSubmodule;
 
+    /// <summary>
+    /// Set only by a read that succeeded. An empty list is also what a refusal leaves behind, so
+    /// the "no submodules" claim is made from this rather than from the count.
+    /// </summary>
+    [ObservableProperty] private bool _submodulesEmpty;
+
     [ObservableProperty] private string _submodulesStatusText = "";
     [ObservableProperty] private string _submodulesErrorText = "";
 
@@ -349,13 +374,18 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn($"could not read the submodules of {repo}", ex);
-            if (IsCurrent(gen)) SubmodulesErrorText = $"Could not read this repository's submodules: {ex.Message}";
+            if (IsCurrent(gen))
+            {
+                SubmodulesErrorText = $"Could not read this repository's submodules: {ex.Message}";
+                SubmodulesEmpty = false;
+            }
             return;
         }
         if (!IsCurrent(gen)) return;
 
         SubmodulesErrorText = "";
         Submodules = new ObservableCollection<SubmoduleEntry>(entries);
+        SubmodulesEmpty = Submodules.Count == 0;
         SelectedSubmodule = Submodules.FirstOrDefault(s => s.Path == keep) ?? Submodules.FirstOrDefault();
     }
 
@@ -508,6 +538,15 @@ public partial class ProjectDetailViewModel
 
     [ObservableProperty] private string _gitignoreText = "";
 
+    /// <summary>
+    /// Whether the editor's text came from a read of this repository that succeeded. The editor is
+    /// empty both before a read and after one that failed, and saving that emptiness over a file
+    /// nobody managed to read replaces rules with nothing — so the write is gated on this.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveGitignoreCommand))]
+    private bool _gitignoreLoaded;
+
     /// <summary>Whether the repository has a root .gitignore at all; an absent file is not an empty one.</summary>
     [ObservableProperty] private bool _gitignoreExists;
 
@@ -552,9 +591,17 @@ public partial class ProjectDetailViewModel
         GitignoreText = content ?? "";
         _loadingGitignore = false;
         GitignoreExists = content is not null;
+        GitignoreLoaded = true;
         GitignoreDirty = false;
         GitignoreStatusText = "";
     }
+
+    /// <summary>Refused rather than written: the editor holds nothing that came from this repository.</summary>
+    internal const string GitignoreNotLoadedRefusal =
+        "These rules were never read from this repository, so saving would replace whatever is on disk with an " +
+        "empty editor. Reload from disk first.";
+
+    private bool CanSaveGitignore() => GitignoreLoaded && !IsBusy && RepoPath.Length > 0;
 
     /// <summary>
     /// Writes the editor's text to the repository's root .gitignore. No git command runs, but the
@@ -563,13 +610,18 @@ public partial class ProjectDetailViewModel
     /// The file itself is left unstaged, so the change shows up on the Changes tab like any
     /// other edit.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanSaveGitignore))]
     private async Task SaveGitignore()
     {
         var repo = RepoPath;
         var gen = _generation;
         var content = GitignoreText;
         if (repo.Length == 0 || IsBusy) return;
+        if (!GitignoreLoaded)
+        {
+            GitignoreErrorText = GitignoreNotLoadedRefusal;
+            return;
+        }
 
         GitignoreErrorText = "";
         var ok = await RunOp(async r =>
@@ -620,10 +672,10 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        bool ignored;
+        IgnoreAnswer answer;
         try
         {
-            ignored = await _gitService.CheckIgnoreAsync(repo, path);
+            answer = await _gitService.CheckIgnoreAsync(repo, path);
         }
         catch (Exception ex)
         {
@@ -633,8 +685,22 @@ public partial class ProjectDetailViewModel
         }
         if (!IsCurrent(gen)) return;
 
-        IgnoreProbeResult = ignored
-            ? $"{path} is ignored."
-            : $"{path} is not ignored — no rule matches it, or a later rule un-ignores it.";
+        IgnoreProbeResult = DescribeIgnoreAnswer(path, answer);
     }
+
+    /// <summary>
+    /// The three answers apart. A tracked path is the one that reads backwards: check-ignore
+    /// consults the index, so it reports a tracked file as not ignored even when a rule matches
+    /// it — the rules take effect on that path only once it is untracked.
+    /// </summary>
+    internal static string DescribeIgnoreAnswer(string path, IgnoreAnswer answer) => answer.State switch
+    {
+        IgnoreState.Ignored => $"{path} is ignored.",
+        IgnoreState.NotIgnored when answer.Tracked =>
+            $"{path} is not ignored — git already tracks it, and the index outranks the rules. A rule may well " +
+            "match it; it would take effect only once the path is untracked.",
+        IgnoreState.NotIgnored =>
+            $"{path} is not ignored — no rule matches it, or a later rule un-ignores it.",
+        _ => $"Could not tell whether {path} is ignored: {answer.Error}",
+    };
 }

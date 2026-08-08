@@ -20,8 +20,8 @@ public class RemotesSurfaceTests
     }
 
     /// <summary>Answers the yes/no and typed confirmations without a window.</summary>
-    private sealed class RemotesViewModel(bool confirm = true)
-        : ProjectDetailViewModel(null!, new GitService(), null!, null, new RepoBusyRegistry())
+    private sealed class RemotesViewModel(bool confirm = true, GitService? git = null)
+        : ProjectDetailViewModel(null!, git ?? new GitService(), null!, null, new RepoBusyRegistry())
     {
         /// <summary>Null stands for a cancelled typed prompt.</summary>
         public string? Typed { get; set; }
@@ -79,9 +79,80 @@ public class RemotesSurfaceTests
 
         Assert.Empty(vm.Remotes);
         Assert.True(vm.BranchesTabLoaded);
+        Assert.True(vm.RemotesEmpty);
+        Assert.True(vm.RemoteBranchesEmpty);
+
         var markup = await File.ReadAllTextAsync(PageSource());
-        Assert.Contains("This repository has no remotes configured", markup);
-        Assert.Contains("has never fetched reads the same way", markup);
+        var remotes = EmptyStateMarkup(markup, "RemotesEmptyState");
+        Assert.Contains("This repository has no remotes configured", remotes);
+        // The claim is made from a read that answered, never from a count an error also produces.
+        Assert.Contains("Binding RemotesEmpty,", remotes);
+        Assert.DoesNotContain("Remotes.Count", remotes);
+
+        var branches = EmptyStateMarkup(markup, "RemoteBranchesEmptyState");
+        Assert.Contains("has never fetched reads the same way", branches);
+        Assert.Contains("Binding RemoteBranchesEmpty,", branches);
+        Assert.DoesNotContain("RemoteBranches.Count", branches);
+    }
+
+    /// <summary>
+    /// The lists are empty after a read that failed too, and the error beside them says so — a
+    /// confident "no remotes configured" alongside it would contradict it.
+    /// </summary>
+    [Fact]
+    public async Task AFailedRemotesRead_DoesNotAlsoClaimTheRepositoryHasNone()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("remotes-read-fails");
+        await repo.GitAsync("remote", "add", "origin", "https://example.test/a.git");
+
+        var vm = new RemotesViewModel(git: new RemoteReadFailingGit());
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.LoadBranchesTabCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Remotes);
+        Assert.False(vm.RemotesEmpty);
+        Assert.False(vm.RemoteBranchesEmpty);
+        Assert.Contains("Could not read this repository's remotes", vm.RemotesErrorText);
+    }
+
+    /// <summary>Throws on the remote listing alone, leaving every other read to run for real.</summary>
+    private sealed class RemoteReadFailingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list is ["remote", "-v"]
+                ? throw new IOException("the remote listing could not be read")
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
+    /// <summary>
+    /// A read still in flight when the reader moves on carries the previous repository's answer.
+    /// Marking the tab loaded from that continuation asserts the NEW repository's empty lists as
+    /// fact — nothing has been read about it yet.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingProjectsMidRead_LeavesTheIncomingProjectsTabUnloaded()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("remotes-race-a");
+        using var other = await TempRepo.CreateWithCommitAsync("remotes-race-b");
+        await repo.GitAsync("remote", "add", "origin", "https://example.test/a.git");
+
+        var git = new SwitchMidReadGitService();
+        var vm = new RemotesViewModel(git: git);
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(repo));
+
+        git.OnNextCall = () => vm.SetProjectAsync(ProjectFor(other));
+        await vm.LoadBranchesTabCommand.ExecuteAsync(null);
+
+        Assert.False(vm.BranchesTabLoaded);
+        Assert.Empty(vm.Remotes);
+        Assert.False(vm.RemotesEmpty);
     }
 
     [Fact]
@@ -434,6 +505,14 @@ public class RemotesSurfaceTests
         Assert.Empty(vm.Remotes);
         Assert.False(vm.BranchesTabLoaded);
         Assert.Equal("", vm.RemoteRenameTo);
+    }
+
+    /// <summary>The markup from an element's automation id onward, for asserting what gates it.</summary>
+    private static string EmptyStateMarkup(string markup, string automationId)
+    {
+        var at = markup.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{automationId} is not in the markup");
+        return markup[at..(at + Math.Min(600, markup.Length - at))];
     }
 
     private static string PageSource([System.Runtime.CompilerServices.CallerFilePath] string testFile = "")
