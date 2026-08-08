@@ -134,7 +134,7 @@ public sealed class SubmoduleService
         if (RejectBlankPath(path) is { } refusal) return Task.FromResult(refusal);
 
         var args = new List<string> { "submodule", "init" };
-        if (path is not null) { args.Add("--"); args.Add(path); }
+        if (path is not null) { args.Add("--"); args.Add(GitService.LiteralPathspec(path)); }
         return _git.RunAsync(repoPath, args, ct, WriteTimeout);
     }
 
@@ -158,7 +158,7 @@ public sealed class SubmoduleService
         if (request.Recursive) args.Add("--recursive");
         if (request.Depth is { } d) { args.Add("--depth"); args.Add(d.ToString()); }
         if (request.Force) args.Add("--force");
-        if (request.Path is not null) { args.Add("--"); args.Add(request.Path); }
+        if (request.Path is not null) { args.Add("--"); args.Add(GitService.LiteralPathspec(request.Path)); }
         return _git.RunAsync(repoPath, args, ct, NetworkTimeout);
     }
 
@@ -170,7 +170,7 @@ public sealed class SubmoduleService
 
         var args = new List<string> { "submodule", "sync" };
         if (recursive) args.Add("--recursive");
-        if (path is not null) { args.Add("--"); args.Add(path); }
+        if (path is not null) { args.Add("--"); args.Add(GitService.LiteralPathspec(path)); }
         return _git.RunAsync(repoPath, args, ct, WriteTimeout);
     }
 
@@ -190,7 +190,7 @@ public sealed class SubmoduleService
         var args = new List<string> { "submodule", "deinit" };
         if (request.Force) args.Add("--force");
         if (request.Path is null) args.Add("--all");
-        else { args.Add("--"); args.Add(request.Path); }
+        else { args.Add("--"); args.Add(GitService.LiteralPathspec(request.Path)); }
         return _git.RunAsync(repoPath, args, ct, WriteTimeout);
     }
 

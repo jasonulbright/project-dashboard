@@ -34,6 +34,24 @@ public class GitService
     internal const string FieldSeparator = "\u001f";
 
     /// <summary>
+    /// A concrete path as a pathspec that selects only itself. Every path this service passes to
+    /// git names one file — it comes from git's own output or from the working tree, never from
+    /// somebody writing a pattern — and as a bare pathspec a name holding '*', '?', or a bracket
+    /// range also selects the other paths it globs, so a read describes, and a write reverts, a
+    /// file the caller never named.
+    /// <para>
+    /// Per-pathspec magic, not GIT_LITERAL_PATHSPECS: that variable makes git stop parsing
+    /// pathspec magic at all, which narrows the rewrite scrub's own :(glob) and :(literal)
+    /// pathspecs down to nothing and makes `git check-ignore` exit 128 on every path.
+    /// </para>
+    /// <para>
+    /// Commands that take a pathNAME rather than a pathspec — `blame`, `check-ignore` — reject
+    /// this magic and already resolve a name to itself, so those pass their path bare.
+    /// </para>
+    /// </summary>
+    internal static string LiteralPathspec(string path) => ":(literal)" + path;
+
+    /// <summary>
     /// True when the directory is a git checkout. A primary checkout has a .git
     /// DIRECTORY; a linked worktree or submodule has a .git FILE — accept both.
     /// </summary>
@@ -268,8 +286,8 @@ public class GitService
         var args = new List<string> { "diff", "--no-color" };
         if (staged) args.Add("--cached");
         args.Add("--");
-        args.Add(file.Path);
-        if (file.OrigPath is not null) args.Add(file.OrigPath);
+        args.Add(LiteralPathspec(file.Path));
+        if (file.OrigPath is not null) args.Add(LiteralPathspec(file.OrigPath));
 
         var result = await RunAsync(repoPath, args, ct);
         if (!result.Success)
@@ -311,10 +329,10 @@ public class GitService
     }
 
     public Task<ProcessResult> StageAsync(string repoPath, string path, CancellationToken ct = default)
-        => RunAsync(repoPath, ["add", "--", path], ct);
+        => RunAsync(repoPath, ["add", "--", LiteralPathspec(path)], ct);
 
     public Task<ProcessResult> UnstageAsync(string repoPath, string path, CancellationToken ct = default)
-        => RunAsync(repoPath, ["restore", "--staged", "--", path], ct);
+        => RunAsync(repoPath, ["restore", "--staged", "--", LiteralPathspec(path)], ct);
 
     public Task<ProcessResult> StageAllAsync(string repoPath, CancellationToken ct = default)
         => RunAsync(repoPath, ["add", "-A"], ct);
@@ -325,8 +343,8 @@ public class GitService
     /// <summary>Discards a file's unstaged state: untracked files are deleted, tracked files restored.</summary>
     public Task<ProcessResult> DiscardAsync(string repoPath, WorkingFile file, CancellationToken ct = default)
         => file.IsUntracked
-            ? RunAsync(repoPath, ["clean", "-f", "--", file.Path], ct)
-            : RunAsync(repoPath, ["restore", "--", file.Path], ct);
+            ? RunAsync(repoPath, ["clean", "-f", "--", LiteralPathspec(file.Path)], ct)
+            : RunAsync(repoPath, ["restore", "--", LiteralPathspec(file.Path)], ct);
 
     public Task<ProcessResult> CommitAsync(string repoPath, string message, bool amend, CancellationToken ct = default)
     {
@@ -576,7 +594,8 @@ public class GitService
 
     public async Task<FileDiff?> GetCommitFileDiffAsync(string repoPath, string hash, string filePath, CancellationToken ct = default)
     {
-        var result = await RunAsync(repoPath, ["show", "--no-color", "--format=", hash, "--", filePath], ct);
+        var result = await RunAsync(repoPath,
+            ["show", "--no-color", "--format=", hash, "--", LiteralPathspec(filePath)], ct);
         if (!result.Success) return null;
         return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
     }
@@ -940,7 +959,7 @@ public class GitService
     {
         var commits = new List<GitCommit>();
         var result = await RunAsync(repoPath,
-            ["log", "--follow", CommitLogFormat, "-n", limit.ToString(), "--", filePath], ct);
+            ["log", "--follow", CommitLogFormat, "-n", limit.ToString(), "--", LiteralPathspec(filePath)], ct);
         if (!result.Success)
         {
             Log.Warn($"git log --follow failed for {filePath} in {repoPath}: {result.FirstError}");
@@ -953,6 +972,7 @@ public class GitService
 
     public async Task<List<BlameLine>> GetBlameAsync(string repoPath, string filePath, CancellationToken ct = default)
     {
+        // Pathname, not pathspec: `blame` rejects pathspec magic and resolves a name to itself.
         var result = await RunAsync(repoPath, ["blame", "--porcelain", "--", filePath], ct);
         if (!result.Success)
         {
@@ -1092,7 +1112,7 @@ public class GitService
             if (filter.Until is { } until) args.Add("--until=" + until.ToString("o"));
             path = string.IsNullOrEmpty(filter.Path) ? null : filter.Path;
         }
-        if (path is not null) { args.Add("--"); args.Add(path); }
+        if (path is not null) { args.Add("--"); args.Add(LiteralPathspec(path)); }
 
         var result = await RunAsync(repoPath, args, ct);
         if (!result.Success)
@@ -1151,7 +1171,7 @@ public class GitService
         var args = new List<string> { "diff", "--no-color" };
         if (staged) args.Add("--cached");
         args.Add("--");
-        args.Add(filePath);
+        args.Add(LiteralPathspec(filePath));
         var result = await RunAsync(repoPath, args, ct);
         if (!result.Success)
         {
