@@ -63,9 +63,11 @@ public class ProjectTemplateService(string dotnetExe = "dotnet")
     {
         if (template.NeedsDotnetSdk)
         {
-            // The SDK creates the folder as part of writing into it.
+            // The SDK creates the folder as part of writing into it. --no-restore keeps the
+            // result to the source files the picker named: an implicit restore drops an obj
+            // tree into a folder whose contents were promised in full before this ran.
             var result = await ProcessRunner.RunAsync(
-                dotnetExe, ["new", template.DotnetTemplate, "--output", projectPath, "--name", projectName],
+                dotnetExe, ["new", template.DotnetTemplate, "--output", projectPath, "--name", projectName, "--no-restore"],
                 workingDirectory: null, SeedTimeout, environment: null, ct);
             if (!result.Success)
                 return $"dotnet new {template.DotnetTemplate} failed: {result.FirstError}";

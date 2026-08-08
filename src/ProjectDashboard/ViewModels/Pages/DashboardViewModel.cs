@@ -689,6 +689,8 @@ public partial class DashboardViewModel : ObservableObject
             TextWrapping = System.Windows.TextWrapping.Wrap,
             Margin = new System.Windows.Thickness(0, 10, 0, 0)
         };
+        // No AutomationProperties.Name here: an explicit name replaces a text block's own
+        // text for a screen reader, and this block's text is the whole point of it.
         var createsText = new System.Windows.Controls.TextBlock
         {
             TextWrapping = System.Windows.TextWrapping.Wrap,
@@ -697,7 +699,15 @@ public partial class DashboardViewModel : ObservableObject
         };
         System.Windows.Automation.AutomationProperties.SetName(nameBox, "Project name");
         System.Windows.Automation.AutomationProperties.SetName(templateList, "Starting layout");
-        System.Windows.Automation.AutomationProperties.SetName(createsText, "Files this template creates");
+
+        // DisplayMemberPath governs the rendered text only; without this the automation name
+        // of each row falls back to the item's ToString and a screen reader reads the whole
+        // record rather than the template's name.
+        var rowStyle = new System.Windows.Style(typeof(System.Windows.Controls.ListBoxItem));
+        rowStyle.Setters.Add(new System.Windows.Setter(
+            System.Windows.Automation.AutomationProperties.NameProperty,
+            new System.Windows.Data.Binding(nameof(ProjectTemplate.Name))));
+        templateList.ItemContainerStyle = rowStyle;
 
         // The preview names the paths for the name actually typed, so what the reader is
         // shown before agreeing is what lands on disk.

@@ -263,13 +263,36 @@ public class ProjectScaffoldTemplateTests
         Assert.Equal("experimental", manifest.Status);
     }
 
-    /// <summary>Every path the template named is on disk, and no promised path is missing.</summary>
+    /// <summary>
+    /// The folder holds what the template promised and nothing else. Both halves matter: the
+    /// promise is what the reader agreed to before the scaffold ran, so an unlisted file is
+    /// as much a broken promise as a missing one. The repository git creates is exempt.
+    /// </summary>
     private static void AssertPromisedPathsExist(ProjectTemplate template, string projectPath, string projectName)
     {
-        foreach (var relative in template.CreatesFor(projectName))
+        var promised = template.CreatesFor(projectName)
+            .Select(p => p.Replace('/', Path.DirectorySeparatorChar))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var relative in promised)
+            Assert.True(File.Exists(Path.Combine(projectPath, relative)),
+                $"{template.Id} promised {relative} and did not write it");
+
+        var promisedDirs = promised
+            .Select(Path.GetDirectoryName)
+            .Where(d => !string.IsNullOrEmpty(d))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var full in Directory.EnumerateFileSystemEntries(projectPath))
         {
-            var full = Path.Combine(projectPath, relative.Replace('/', Path.DirectorySeparatorChar));
-            Assert.True(File.Exists(full), $"{template.Id} promised {relative} and did not write it");
+            var name = Path.GetFileName(full);
+            if (name == ".git") continue;
+            if (Directory.Exists(full))
+            {
+                Assert.True(promisedDirs.Contains(name), $"{template.Id} created an unlisted folder: {name}");
+                continue;
+            }
+            Assert.True(promised.Contains(name), $"{template.Id} created an unlisted file: {name}");
         }
     }
 
