@@ -156,6 +156,8 @@ public static class RewriteScrubVerdict
         bool Has(string needle) => reason.Contains(needle, StringComparison.OrdinalIgnoreCase);
         if (Has("busy with another operation") || Has("repository is busy"))
             return "Another operation is already running on this repository. Wait for it to finish, then start the rewrite again. Nothing was changed.";
+        if (Has("changed after the dry run"))
+            return "This repository changed after the dry run, so the report on screen no longer describes it and applying that history would discard what landed since. Run the dry run again. Nothing was changed.";
         if (Has("uncommitted change"))
             return "The working tree has uncommitted changes. Commit or stash the files listed below, then start the rewrite again. Nothing was changed.";
         if (Has("nested tag"))

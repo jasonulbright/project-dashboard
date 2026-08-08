@@ -28,16 +28,25 @@ public sealed class PreviewHandle : IDisposable
     private readonly string _scratchDir;
     private int _disposed;
 
-    internal PreviewHandle(RewriteRequest request, RewriteReport report, string workDir, string tempBareRepo, string scratchDir)
+    internal PreviewHandle(
+        RewriteRequest request, RewriteReport report, string workDir, string tempBareRepo, string scratchDir, string sourceState)
     {
         Request = request;
         Report = report;
         WorkDir = workDir;
         TempBareRepo = tempBareRepo;
         _scratchDir = scratchDir;
+        SourceState = sourceState;
     }
 
     public RewriteRequest Request { get; }
+
+    /// <summary>
+    /// The source's ref layout as it stood when the dry run exported it. The execute reuses this
+    /// handle's bare verbatim, so anything committed into the source afterwards is absent from
+    /// it and the swap would erase it; comparing this before the backup makes that a refusal.
+    /// </summary>
+    internal string SourceState { get; }
 
     /// <summary>What the rewrite proved about itself without touching the source: commits/blobs/bytes affected, binary skips, and the scrub Complete flag.</summary>
     public RewriteReport Report { get; }

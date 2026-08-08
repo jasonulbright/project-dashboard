@@ -381,6 +381,38 @@ public class RewriteWizardViewModelTests
     }
 
     /// <summary>
+    /// The staleness refusal reaches the reader as an ordinary refusal, with the verification
+    /// block gone: the report it stood on describes a history this repository no longer has.
+    /// </summary>
+    [Fact]
+    public async Task StaleDryRunRefusalFromExecute_NamesTheCauseAndDropsTheReport()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-stale-exec");
+        using var _ = repo;
+        session.ExecuteResult = new RewriteExecutionResult
+        {
+            Success = false,
+            FailureReason = @"'C:\repo' changed after the dry run — the report describes history this repository no " +
+                            "longer has, and applying it would discard whatever landed since. Run the dry run again.",
+            Report = NewReport(),
+        };
+
+        await AdvanceToPreviewAsync(vm);
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        vm.RewriteConfirmInput = vm.RewriteConfirmPhrase;
+        await vm.ExecuteRewriteCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RewriteStepIsResult);
+        Assert.False(vm.RewriteResultSucceeded);
+        Assert.False(vm.RewriteHasReport);
+        Assert.Contains("Run the dry run again", vm.RewriteErrorText);
+        Assert.Contains("changed after the dry run", vm.RewriteErrorText);
+        Assert.Contains("Nothing was changed", vm.RewriteErrorText);
+        // A further Execute needs a fresh dry run, so the spent one cannot be replayed.
+        Assert.False(vm.RewritePreviewAvailable);
+    }
+
+    /// <summary>
     /// A post-backup failure hands back the PREVIEW's report, which describes history that was
     /// never applied. Left on screen it sits under the failure banner reading as a description
     /// of the repository — while the content the rewrite was asked to remove is still there.

@@ -30,6 +30,8 @@ public sealed class RewriteCoordinator
     /// </summary>
     private static readonly TimeSpan ScratchGrace = TimeSpan.FromDays(1);
 
+    private static readonly TimeSpan RefTimeout = TimeSpan.FromSeconds(60);
+
     public RewriteCoordinator(
         BackupService backup,
         RepoBusyRegistry busy,
@@ -82,11 +84,15 @@ public sealed class RewriteCoordinator
     public async Task<PreviewHandle> PreviewAsync(RewriteRequest request, CancellationToken ct = default)
     {
         request.Options.Validate();
+        // Read before the export, so a commit landing during the export leaves the handle
+        // describing a source that no longer matches and the execute refuses it.
+        var sourceState = await ReadSourceStateAsync(request.RepoPath, ct)
+            ?? throw new InvalidOperationException($"repository '{request.RepoPath}' could not be read by git");
         var scratch = NewScratch(request.RepoPath);
         try
         {
             var report = await RunEngineAsync(request, scratch, ct);
-            return new PreviewHandle(request, report, scratch.WorkDir, scratch.TempBare, scratch.Dir);
+            return new PreviewHandle(request, report, scratch.WorkDir, scratch.TempBare, scratch.Dir, sourceState);
         }
         catch
         {
@@ -116,6 +122,21 @@ public sealed class RewriteCoordinator
         UndoHandle? undo = null;
         try
         {
+            // 1b. Staleness gate: a preview's bare was exported when the dry run ran and is
+            // installed verbatim, so a ref that moved since is absent from it and the swap
+            // would erase whatever landed. Read under the lease, before the backup, so the
+            // refusal leaves the repository and the journal untouched.
+            if (preview is not null)
+            {
+                var current = await ReadSourceStateAsync(repo, ct);
+                if (current is null)
+                    return RewriteExecutionResult.Failed($"repository '{repo}' could not be read by git");
+                if (!string.Equals(current, preview.SourceState, StringComparison.Ordinal))
+                    return RewriteExecutionResult.Failed(
+                        $"'{repo}' changed after the dry run — the report describes history this repository no longer " +
+                        "has, and applying it would discard whatever landed since. Run the dry run again.");
+            }
+
             // 2. Clean-tree gate: a dirty tree is refused so the swap's reset never
             // discards uncommitted work — the caller decides whether to stash.
             var state = await _git.GetWorkingStateAsync(repo, ct);
@@ -203,6 +224,33 @@ public sealed class RewriteCoordinator
             if (ownedScratch is not null)
                 RewriteScratch.TryDeleteTree(ownedScratch);
         }
+    }
+
+    /// <summary>
+    /// The source's ref layout as the swap sees it: every non-remote ref, sorted, plus the oid
+    /// HEAD resolves to so a detached-HEAD move that leaves no ref behind still registers.
+    /// Remote-tracking refs are excluded because the swap never reconciles them, so a fetch
+    /// between the dry run and the execute is not a reason to refuse. Null when git could not
+    /// read the repository.
+    /// </summary>
+    private async Task<string?> ReadSourceStateAsync(string repo, CancellationToken ct)
+    {
+        var refs = await _git.RunAsync(repo, ["for-each-ref", "--format=%(objectname) %(refname)"], ct, RefTimeout);
+        if (!refs.Success)
+            return null;
+        var lines = new List<string>();
+        foreach (var raw in refs.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.TrimEnd('\r');
+            var sp = line.IndexOf(' ');
+            if (sp <= 0 || line.AsSpan(sp + 1).StartsWith("refs/remotes/"))
+                continue;
+            lines.Add(line);
+        }
+        lines.Sort(StringComparer.Ordinal);
+        var head = await _git.RunAsync(repo, ["rev-parse", "--verify", "-q", "HEAD"], ct, RefTimeout);
+        lines.Add("HEAD " + head.StdOut.Trim());
+        return string.Join("\n", lines);
     }
 
     private Task<RewriteReport> RunEngineAsync(RewriteRequest request, ScratchPaths scratch, CancellationToken ct) =>

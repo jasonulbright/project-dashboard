@@ -377,6 +377,48 @@ public class RewriteCoordinatorTests
     }
 
     /// <summary>
+    /// The dry run exports the source once and the execute reuses that bare verbatim, so a
+    /// commit made in between is not in the rewritten history the swap installs. Installing it
+    /// anyway erases that commit while the report on screen describes the history from before
+    /// it existed. The execute re-reads the source and refuses instead, changing nothing.
+    /// </summary>
+    [Fact]
+    public async Task ExecutingAPreview_RefusesWhenTheSourceChangedAfterTheDryRun()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var coordinator = NewCoordinator();
+        using var preview = await coordinator.PreviewAsync(Request(f));
+
+        // An external commit lands between the dry run and the execute.
+        f.Write("late.txt", "written after the dry run\n");
+        f.CommitAll("late external commit");
+        var afterCommit = RefState(f.SourcePath);
+        var lateHead = f.Git("rev-parse", "HEAD").Trim();
+
+        var result = await coordinator.ExecuteAsync(preview);
+
+        Assert.False(result.Success);
+        Assert.Contains("changed after the dry run", result.FailureReason);
+        Assert.Null(result.Undo);
+
+        // Nothing was touched: the refs, the late commit, and the un-rewritten needle all stand.
+        Assert.Equal(afterCommit, RefState(f.SourcePath));
+        Assert.Equal(lateHead, f.Git("rev-parse", "HEAD").Trim());
+        Assert.True(GrepHits(f.SourcePath, AllCommits(f.SourcePath), Needle) >= 5);
+        Assert.Null(await new RewriteJournal().ReadPendingAsync());
+        Assert.Empty(await new BackupService(new GitService(), new SettingsService()).ListBackupsAsync(f.SourcePath));
+
+        // The refusal spent nothing: the preview is still disposable and a fresh one executes.
+        using var rerun = await coordinator.PreviewAsync(Request(f));
+        var second = await coordinator.ExecuteAsync(rerun);
+        Assert.True(second.Success, second.FailureReason);
+        Assert.Equal(0, GrepHits(f.SourcePath, AllCommits(f.SourcePath), Needle));
+        _output.WriteLine($"stale preview refused: {result.FailureReason}");
+    }
+
+    /// <summary>
     /// Executing a session resumes on the thread the step was started from. Deleting a spent
     /// preview's scratch tree enumerates every file, rewrites the attributes of each, deletes
     /// recursively, and sleeps between retries while a just-exited git still holds handles —
