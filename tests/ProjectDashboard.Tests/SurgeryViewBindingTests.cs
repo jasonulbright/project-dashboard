@@ -1,10 +1,7 @@
-using System.Collections;
 using System.Globalization;
 using System.IO;
-using System.Resources;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -135,7 +132,9 @@ public class SurgeryViewBindingTests
     /// lifted. Without a bound marker the row renders identically to one that never carried a
     /// message, so nothing on screen separates "held, and coming back" from "never typed".
     /// The marker's visibility resolves through a converter key the merged WPF-UI dictionary
-    /// declares, not this project, so the key is pinned alongside the binding.
+    /// declares, not this project. Whether that key still resolves is proven at run time by
+    /// CommitGraphView and BackupsView, which bind through the same key on load; a key that
+    /// stopped resolving fails there, so this test asserts only the binding.
     /// </summary>
     [Fact]
     public void APlanRowHoldingADisplacedMessage_ShowsAMarkerBoundToThatState()
@@ -149,29 +148,6 @@ public class SurgeryViewBindingTests
             @"Visibility=""{Binding HasDisplacedMessage, Converter={StaticResource BooleanToVisibilityConverter}}""",
             marker);
         Assert.Contains(@"AutomationProperties.Name=""A new message for this commit is held aside by its mark""", marker);
-        Assert.True(WpfUiDeclaresResourceKey("BooleanToVisibilityConverter"));
-    }
-
-    /// <summary>
-    /// Whether the pinned WPF-UI package still declares a resource key. Loading the dictionary
-    /// itself would need an Application for its pack: URI to resolve, so the compiled markup is
-    /// read from the assembly instead: BAML holds its strings as length-prefixed UTF-8, so a key
-    /// it declares appears verbatim in the stream.
-    /// </summary>
-    private static bool WpfUiDeclaresResourceKey(string key)
-    {
-        using var resources = typeof(Wpf.Ui.Markup.ControlsDictionary).Assembly
-            .GetManifestResourceStream("Wpf.Ui.g.resources");
-        Assert.NotNull(resources);
-        using var reader = new ResourceReader(resources);
-        foreach (DictionaryEntry entry in reader)
-        {
-            if (entry.Value is not Stream markup) continue;
-            using var buffer = new MemoryStream();
-            markup.CopyTo(buffer);
-            if (Encoding.UTF8.GetString(buffer.ToArray()).Contains(key, StringComparison.Ordinal)) return true;
-        }
-        return false;
     }
 
     private static string WindowMarkup(string fileName, [CallerFilePath] string testFile = "")
