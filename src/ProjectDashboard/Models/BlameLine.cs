@@ -16,3 +16,9 @@ public sealed class BlameLine
     /// <summary>True when the attributing commit is a blame boundary (root or walk limit).</summary>
     public bool IsBoundary { get; init; }
 }
+
+/// <summary>
+/// One file's blame, or why it has none. A blame git could not perform exits non-zero rather
+/// than throwing, so an empty list alone cannot be told apart from an empty file.
+/// </summary>
+public sealed record BlameResult(List<BlameLine> Lines, bool HasError = false, string ErrorText = "");

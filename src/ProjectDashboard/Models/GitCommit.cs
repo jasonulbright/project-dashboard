@@ -20,3 +20,11 @@ public sealed class GitCommit
     public DateTimeOffset Date { get; set; }
     public string Message { get; set; } = "";
 }
+
+/// <summary>
+/// One path's history, or why it has none. git reports a read it could not perform as a
+/// non-zero exit, which an empty list cannot be told apart from a path nothing ever touched;
+/// <see cref="HasError"/> separates them so the viewer never shows a confident empty state for
+/// a read that failed.
+/// </summary>
+public sealed record FileHistoryResult(List<GitCommit> Commits, bool HasError = false, string ErrorText = "");

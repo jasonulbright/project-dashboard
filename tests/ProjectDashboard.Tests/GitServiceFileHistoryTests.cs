@@ -23,7 +23,7 @@ public class GitServiceFileHistoryTests
         await repo.CommitAllAsync("edit renamed");
 
         var history = await _git.GetFileHistoryAsync(repo.Path, "renamed.txt", 20);
-        var subjects = history.Select(c => c.Message).ToList();
+        var subjects = history.Commits.Select(c => c.Message).ToList();
         Assert.Contains("edit renamed", subjects);
         Assert.Contains("rename original to renamed", subjects);
         // --follow reaches back to the commit that introduced the pre-rename path.
@@ -41,7 +41,7 @@ public class GitServiceFileHistoryTests
         // Every read path shares one format, so all three must produce the same identity.
         var recent = (await _git.GetRecentCommitsAsync(repo.Path)).First();
         var paged = (await _git.GetCommitsPagedAsync(repo.Path, 0, 5)).Commits.First();
-        var history = (await _git.GetFileHistoryAsync(repo.Path, "f.txt")).First();
+        var history = (await _git.GetFileHistoryAsync(repo.Path, "f.txt")).Commits.First();
 
         foreach (var commit in new[] { recent, paged, history })
         {
@@ -75,7 +75,7 @@ public class GitServiceFileHistoryTests
         }
 
         var history = await _git.GetFileHistoryAsync(repo.Path, "f.txt", 3);
-        Assert.Equal(3, history.Count);
+        Assert.Equal(3, history.Commits.Count);
     }
 
     [Fact]
@@ -92,7 +92,7 @@ public class GitServiceFileHistoryTests
         await repo.GitAsync("add", "-A");
         await CommitAsAsync(repo, "Bob <bob@example.test>", "bob edits middle");
 
-        var blame = await _git.GetBlameAsync(repo.Path, "code.txt");
+        var blame = (await _git.GetBlameAsync(repo.Path, "code.txt")).Lines;
         Assert.Equal(3, blame.Count);
 
         Assert.Equal(1, blame[0].LineNumber);

@@ -106,9 +106,19 @@ public partial class ProjectDetailViewModel
         FileHistoryLoading = true;
         try
         {
-            var commits = await _gitService.GetFileHistoryAsync(repo, path, FileHistoryLimit);
+            var history = await _gitService.GetFileHistoryAsync(repo, path, FileHistoryLimit);
             if (!IsCurrent(gen) || !string.Equals(FileHistoryPath, path, StringComparison.Ordinal)) return;
 
+            if (history.HasError)
+            {
+                // A read that could not run and a path nothing ever touched look the same to a
+                // reader; the service separates them, so the pane must too.
+                FileHistoryErrorText = $"Could not read the history of {path}: {history.ErrorText}";
+                FileHistoryEmpty = false;
+                return;
+            }
+
+            var commits = history.Commits;
             FileHistoryCommits = new ObservableCollection<GitCommit>(commits);
             FileHistoryEmpty = commits.Count == 0;
             if (commits.Count >= FileHistoryLimit)
@@ -134,11 +144,18 @@ public partial class ProjectDetailViewModel
         try
         {
             // Off the dispatcher: the porcelain parse is proportional to the file's line count.
-            var lines = await Task.Run(() => _gitService.GetBlameAsync(repo, path));
+            var blame = await Task.Run(() => _gitService.GetBlameAsync(repo, path));
             if (!IsCurrent(gen) || !string.Equals(FileHistoryPath, path, StringComparison.Ordinal)) return;
 
-            BlameLines = new ObservableCollection<BlameLine>(lines);
-            BlameEmpty = lines.Count == 0;
+            if (blame.HasError)
+            {
+                FileHistoryErrorText = $"Could not blame {path}: {blame.ErrorText}";
+                BlameEmpty = false;
+                return;
+            }
+
+            BlameLines = new ObservableCollection<BlameLine>(blame.Lines);
+            BlameEmpty = blame.Lines.Count == 0;
         }
         catch (Exception ex)
         {

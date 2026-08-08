@@ -954,33 +954,52 @@ public class GitService
 
     // ── File history & blame (L-04) ──────────────────────────────────────────────
 
+    /// <summary>
+    /// Budget for the two per-path reads. Both are proportional to the file rather than to the
+    /// repository — `log --follow` re-runs rename detection at every commit it walks, and
+    /// `blame --porcelain` emits a record per line — so a large file exceeds the default read
+    /// budget while git is still working correctly.
+    /// </summary>
+    private static readonly TimeSpan PathReadTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>Commit history for one file, following it across renames.</summary>
-    public async Task<List<GitCommit>> GetFileHistoryAsync(string repoPath, string filePath, int limit = 50, CancellationToken ct = default)
+    public async Task<FileHistoryResult> GetFileHistoryAsync(string repoPath, string filePath, int limit = 50, CancellationToken ct = default)
     {
-        var commits = new List<GitCommit>();
         var result = await RunAsync(repoPath,
-            ["log", "--follow", CommitLogFormat, "-n", limit.ToString(), "--", LiteralPathspec(filePath)], ct);
+            ["log", "--follow", CommitLogFormat, "-n", limit.ToString(), "--", LiteralPathspec(filePath)],
+            ct, PathReadTimeout);
         if (!result.Success)
         {
             Log.Warn($"git log --follow failed for {filePath} in {repoPath}: {result.FirstError}");
-            return commits;
+            return new FileHistoryResult([], true, ReadFailureText(result));
         }
+
+        var commits = new List<GitCommit>();
         foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             if (ParseCommitLine(line) is { } commit) commits.Add(commit);
-        return commits;
+        return new FileHistoryResult(commits);
     }
 
-    public async Task<List<BlameLine>> GetBlameAsync(string repoPath, string filePath, CancellationToken ct = default)
+    public async Task<BlameResult> GetBlameAsync(string repoPath, string filePath, CancellationToken ct = default)
     {
         // Pathname, not pathspec: `blame` rejects pathspec magic and resolves a name to itself.
-        var result = await RunAsync(repoPath, ["blame", "--porcelain", "--", filePath], ct);
+        var result = await RunAsync(repoPath, ["blame", "--porcelain", "--", filePath], ct, PathReadTimeout);
         if (!result.Success)
         {
             Log.Warn($"git blame failed for {filePath} in {repoPath}: {result.FirstError}");
-            return [];
+            return new BlameResult([], true, ReadFailureText(result));
         }
-        return ParseBlamePorcelain(result.StdOut);
+        return new BlameResult(ParseBlamePorcelain(result.StdOut));
     }
+
+    /// <summary>
+    /// What to tell a reader about a read that did not run. A timeout carries no stderr, so
+    /// <see cref="ProcessResult.FirstError"/> alone would report it as a bare exit code.
+    /// </summary>
+    private static string ReadFailureText(ProcessResult result) =>
+        result.TimedOut
+            ? $"the read timed out after {PathReadTimeout.TotalSeconds:0} seconds"
+            : result.FirstError;
 
     /// <summary>
     /// Parses `git blame --porcelain`. Each source line is a header

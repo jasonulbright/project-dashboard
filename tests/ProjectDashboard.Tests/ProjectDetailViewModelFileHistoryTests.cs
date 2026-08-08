@@ -153,8 +153,13 @@ public class ProjectDetailViewModelFileHistoryTests
         Assert.Contains(offBranch.ShortHash, vm.FileHistoryStatusText);
     }
 
+    /// <summary>
+    /// `log` walks a path nothing ever touched and reports no commits; `blame` cannot run on a
+    /// path that is not in HEAD and says so. An empty blame pane for the second would claim the
+    /// file has no attributed lines, which is a different statement.
+    /// </summary>
     [Fact]
-    public async Task OpenFileHistory_OnAPathWithNoHistoryShowsBothEmptyStates()
+    public async Task OpenFileHistory_OnAPathThatNeverExisted_ShowsNoHistoryAndSaysBlameCouldNotRun()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("fh-empty");
         var vm = await PageOnAsync(repo);
@@ -163,9 +168,88 @@ public class ProjectDetailViewModelFileHistoryTests
 
         Assert.True(vm.FileHistoryVisible);
         Assert.True(vm.FileHistoryEmpty);
+        Assert.Empty(vm.FileHistoryCommits);
+        Assert.False(vm.BlameEmpty);
+        Assert.Empty(vm.BlameLines);
+        Assert.Contains("never-existed.txt", vm.FileHistoryErrorText);
+    }
+
+    [Fact]
+    public async Task OpenFileHistory_OnATrackedEmptyFile_ShowsTheEmptyBlameState()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("fh-empty-blob");
+        repo.WriteFile("blank.txt", "");
+        await repo.CommitAllAsync("add a blank file");
+        var vm = await PageOnAsync(repo);
+
+        await vm.OpenFileHistoryCommand.ExecuteAsync("blank.txt");
+
         Assert.True(vm.BlameEmpty);
+        Assert.Empty(vm.BlameLines);
+        Assert.Equal("", vm.FileHistoryErrorText);
+        Assert.Single(vm.FileHistoryCommits);
+    }
+
+    /// <summary>
+    /// git reports a failed read as a non-zero exit, not as an exception, so a read that could
+    /// not run reaches the pane looking exactly like a path with no history. The two are told
+    /// apart, or the reader is shown a confident "no history" for a repository the app could not
+    /// read at all.
+    /// </summary>
+    private sealed class FailingPathReads : GitService
+    {
+        public FailingPathReads(bool timeOut = false) => _timeOut = timeOut;
+
+        private readonly bool _timeOut;
+
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var recorded = args.ToList();
+            if (recorded.Contains("blame") || recorded.Contains("--follow"))
+                return Task.FromResult(_timeOut
+                    ? new ProcessResult(-1, "", "", true)
+                    : new ProcessResult(128, "", "fatal: bad object HEAD", false));
+            return base.RunAsync(repoPath, recorded, environment, ct, timeout);
+        }
+    }
+
+    private static async Task<ProjectDetailViewModel> PageOnAsync(TempRepo repo, GitService git)
+    {
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        return vm;
+    }
+
+    [Fact]
+    public async Task AFailedRead_ShowsTheErrorInsteadOfAnEmptyHistory()
+    {
+        using var repo = await BlameRepoAsync("fh-read-failed");
+        var vm = await PageOnAsync(repo, new FailingPathReads());
+
+        await vm.OpenFileHistoryCommand.ExecuteAsync("code.txt");
+
+        Assert.NotEqual("", vm.FileHistoryErrorText);
+        Assert.Contains("code.txt", vm.FileHistoryErrorText);
+        Assert.False(vm.FileHistoryEmpty);
+        Assert.False(vm.BlameEmpty);
         Assert.Empty(vm.FileHistoryCommits);
         Assert.Empty(vm.BlameLines);
+    }
+
+    [Fact]
+    public async Task AReadThatTimesOut_SaysSoRatherThanReportingNoHistory()
+    {
+        using var repo = await BlameRepoAsync("fh-read-timeout");
+        var vm = await PageOnAsync(repo, new FailingPathReads(timeOut: true));
+
+        await vm.OpenFileHistoryCommand.ExecuteAsync("code.txt");
+
+        Assert.Contains("timed out", vm.FileHistoryErrorText);
+        Assert.False(vm.FileHistoryEmpty);
+        Assert.False(vm.BlameEmpty);
     }
 
     [Fact]

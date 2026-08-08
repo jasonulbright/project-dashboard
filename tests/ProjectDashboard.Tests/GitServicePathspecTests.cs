@@ -108,7 +108,7 @@ public class GitServicePathspecTests
 
         var history = await _git.GetFileHistoryAsync(repo.Path, BracketPath, 20);
 
-        Assert.Equal(["bracket only"], history.Select(c => c.Message));
+        Assert.Equal(["bracket only"], history.Commits.Select(c => c.Message));
     }
 
     /// <summary>
@@ -159,6 +159,6 @@ public class GitServicePathspecTests
         Assert.False(await _git.CheckIgnoreAsync(repo.Path, "spare[1].txt"));
 
         var blame = await _git.GetBlameAsync(repo.Path, BracketPath);
-        Assert.Equal(["bracket TWO"], blame.Select(l => l.Text));
+        Assert.Equal(["bracket TWO"], blame.Lines.Select(l => l.Text));
     }
 }
