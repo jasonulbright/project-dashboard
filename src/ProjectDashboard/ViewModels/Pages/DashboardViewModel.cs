@@ -93,8 +93,21 @@ public partial class DashboardViewModel : ObservableObject
         // raises only on the command itself.
         LoadProjectsCommand.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(IAsyncRelayCommand.IsRunning)) NotifyContentState();
+            if (e.PropertyName != nameof(IAsyncRelayCommand.IsRunning)) return;
+            NotifyContentState();
+            if (!LoadProjectsCommand.IsRunning) _ = DrainRescanAsync();
         };
+
+        // Every condition the re-scan gate refuses on needs a completion signal, or a scan
+        // queued behind it waits for the next settings write that never comes.
+        ForceRefreshCommand.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(IAsyncRelayCommand.IsRunning) && !ForceRefreshCommand.IsRunning)
+                _ = DrainRescanAsync();
+        };
+
+        _settingsService.Changed += OnSettingsChanged;
+        _busyRegistry.Changed += OnRepoBusyChanged;
 
         ReloadViewPreferences();
 
@@ -166,12 +179,9 @@ public partial class DashboardViewModel : ObservableObject
 
     private void StartRefreshTimer()
     {
-        var settings = _settingsService.Load();
-        var interval = Math.Max(30, settings.RefreshIntervalSeconds);
-
         _refreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(interval)
+            Interval = TimeSpan.FromSeconds(SettingsDelta.EffectiveRefreshSeconds(_settingsService.Load()))
         };
         _refreshTimer.Tick += async (_, _) =>
         {
@@ -209,8 +219,21 @@ public partial class DashboardViewModel : ObservableObject
     // Transient operation feedback (clone / bulk sync progress and outcomes).
     [ObservableProperty] private string _opStatusText = "";
 
-    /// <summary>Serializes the dashboard-level bulk ops (clone, sync all) so their refreshes can't race.</summary>
-    private bool _bulkOpRunning;
+    private bool _bulkOpActive;
+
+    /// <summary>
+    /// Serializes the dashboard-level bulk ops (clone, sync all) so their refreshes can't
+    /// race. Clearing it releases a re-scan queued behind the operation.
+    /// </summary>
+    private bool _bulkOpRunning
+    {
+        get => _bulkOpActive;
+        set
+        {
+            _bulkOpActive = value;
+            if (!value) _ = DrainRescanAsync();
+        }
+    }
 
     partial void OnSelectedCategoryChanged(string value) => ApplyFilters();
     partial void OnSearchTextChanged(string value) => ApplyFilters();
@@ -933,9 +956,11 @@ public partial class DashboardViewModel : ObservableObject
         var settings = _settingsService.Load();
         var excluded = new List<string>(settings.ExcludedDirectories) { project.DirectoryName };
         settings.ExcludedDirectories = excluded.Distinct().ToArray();
+        // The exclusion change is what schedules the re-scan; a second direct scan here
+        // would run concurrently with it over the same grid.
         _settingsService.Save(settings);
 
-        await ForceRefreshAsync();
+        await DrainRescanAsync();
     }
 
     [RelayCommand]
@@ -950,7 +975,7 @@ public partial class DashboardViewModel : ObservableObject
         _settingsService.Save(settings);
 
         // Refresh main list first, then re-render the hidden view without the unhidden repo.
-        await ForceRefreshAsync();
+        await DrainRescanAsync();
         await ShowHiddenProjectsAsync();
     }
 
@@ -1045,6 +1070,98 @@ public partial class DashboardViewModel : ObservableObject
         if (root.Length == 0) _watcher.Stop();
         else _watcher.Start(root);
     }
+
+    // ── Live-apply settings (X-09) ────────────────────────────────────────────
+
+    /// <summary>What a queued or running settings-driven re-scan is doing; empty when idle.</summary>
+    [ObservableProperty] private string _rescanStatus = "";
+
+    private bool _rescanQueued;
+    private Task _rescanDrain = Task.CompletedTask;
+
+    /// <summary>The period the reconcile timer is actually running at.</summary>
+    internal TimeSpan RefreshInterval => _refreshTimer?.Interval ?? TimeSpan.Zero;
+
+    /// <summary>The re-scan currently in flight, or a completed task when none is.</summary>
+    internal Task PendingRescan => _rescanDrain;
+
+    /// <summary>
+    /// Applies a settings write to the running app. Every branch is a re-derive from the
+    /// new state, never a mutation of what the writer already changed, so a write from any
+    /// source — this page, the Settings page, an external editor — lands the same way.
+    /// </summary>
+    private void OnSettingsChanged(SettingsChange change)
+    {
+        if (SettingsDelta.RefreshIntervalChanged(change) && _refreshTimer is not null)
+            _refreshTimer.Interval = TimeSpan.FromSeconds(SettingsDelta.EffectiveRefreshSeconds(change.Current));
+
+        if (SettingsDelta.WatcherTargetChanged(change))
+            SyncWatcherToSettings();
+
+        if (SettingsDelta.ViewPreferencesChanged(change))
+        {
+            ReloadViewPreferences();
+            ApplyPinnedFlags();
+            ApplyFilters();
+        }
+
+        if (SettingsDelta.RediscoveryRequired(change))
+            RequestRescan();
+    }
+
+    private void OnRepoBusyChanged(string repoPath)
+    {
+        if (!_rescanQueued) return;
+        // The registry raises from whichever thread released the lease; the drain touches
+        // bound state and the discovery pipeline, both of which belong to the UI thread.
+        _ = Application.Current?.Dispatcher.InvokeAsync(() => _ = DrainRescanAsync());
+    }
+
+    private void RequestRescan()
+    {
+        _rescanQueued = true;
+        _ = DrainRescanAsync();
+    }
+
+    /// <summary>
+    /// The one in-flight re-scan, shared by every caller. Two overlapping full scans would
+    /// each rebuild the card grid from a list the other is still writing.
+    /// </summary>
+    private Task DrainRescanAsync() =>
+        _rescanDrain.IsCompleted ? _rescanDrain = RunQueuedRescanAsync() : _rescanDrain;
+
+    /// <summary>
+    /// Runs the queued re-scan once nothing else owns the repositories. A repo under a
+    /// rewrite or surgery is mid-swap: reading it there is what the busy registry exists to
+    /// prevent, so the scan waits for the last lease rather than being dropped, and says so.
+    /// </summary>
+    private async Task RunQueuedRescanAsync()
+    {
+        try
+        {
+            while (_rescanQueued)
+            {
+                if (!RescanAllowed())
+                {
+                    RescanStatus = DashboardRescan.QueuedStatus;
+                    return;
+                }
+
+                _rescanQueued = false;
+                RescanStatus = DashboardRescan.RunningStatus;
+                await ForceRefreshAsync();
+            }
+            RescanStatus = "";
+        }
+        catch (Exception ex)
+        {
+            RescanStatus = "";
+            Log.Warn("settings-driven rescan failed", ex);
+        }
+    }
+
+    private bool RescanAllowed() => DashboardRescan.Allowed(
+        _bulkOpRunning, _busyRegistry.AnyBusy, LoadProjectsCommand.IsRunning, ForceRefreshCommand.IsRunning);
 
     private async Task LoadProjectsAsync()
     {
@@ -1324,6 +1441,20 @@ public static class DashboardCardActions
 
         return null;
     }
+}
+
+/// <summary>
+/// When a settings-driven re-scan may run. Pure so the refusal is assertable without a
+/// repository: a scan that reads a repo mid-rewrite sees a half-swapped ref set, and one
+/// that overlaps another full scan rebuilds the grid from a list still being written.
+/// </summary>
+public static class DashboardRescan
+{
+    public const string RunningStatus = "Rescanning projects…";
+    public const string QueuedStatus = "Rescan queued — a repository operation is still running.";
+
+    public static bool Allowed(bool bulkOpRunning, bool anyRepoBusy, bool loadRunning, bool forceRefreshRunning) =>
+        !bulkOpRunning && !anyRepoBusy && !loadRunning && !forceRefreshRunning;
 }
 
 /// <summary>Card-grid ordering: the active sort, with pinned projects lifted to the front.</summary>

@@ -169,6 +169,26 @@ public class BackupServiceTests
     }
 
     [Fact]
+    public async Task Retention_ChangedMidSession_AppliesToTheNextPrune()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var settings = new SettingsService();
+        settings.Save(new AppSettings { BackupRetentionCount = 10 });
+        var service = NewService();
+
+        for (var i = 0; i < 4; i++)
+            await service.CreateBackupAsync(repo.Path);
+        Assert.Equal(4, (await service.ListBackupsAsync(repo.Path)).Count);
+
+        // The service holds no cached count: the next prune reads the new value, with no
+        // relaunch between the settings write and the backup that enforces it.
+        settings.Save(new AppSettings { BackupRetentionCount = 2 });
+        await service.CreateBackupAsync(repo.Path);
+
+        Assert.Equal(2, (await service.ListBackupsAsync(repo.Path)).Count);
+    }
+
+    [Fact]
     public async Task ListBackups_NewestFirst_AndDeleteRemovesBoth()
     {
         using var repo = await RailsRepo.CreateAsync();

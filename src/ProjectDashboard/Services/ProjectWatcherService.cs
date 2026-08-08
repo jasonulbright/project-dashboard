@@ -27,6 +27,12 @@ public sealed class ProjectWatcherService : IDisposable
     /// <summary>Repo directory names that changed. Empty set = do a full refresh (overflow / repo add-remove).</summary>
     public event Action<IReadOnlyCollection<string>>? Changed;
 
+    /// <summary>The root currently being watched; empty while stopped.</summary>
+    public string WatchedRoot
+    {
+        get { lock (_gate) return _watcher is null ? "" : _root; }
+    }
+
     public void Start(string rootPath)
     {
         Stop();

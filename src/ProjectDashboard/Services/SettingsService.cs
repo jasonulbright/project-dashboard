@@ -21,6 +21,14 @@ public class SettingsService
     // Load takes it too because a corrupt-file read writes the recovered backup.
     private static readonly object FileLock = new();
 
+    /// <summary>
+    /// Raised after a write that reached disk, carrying the state before and after it.
+    /// The single live-apply path: consumers that would otherwise read a value once and
+    /// hold it until relaunch re-derive from this instead. Raised outside the file lock,
+    /// on the thread that called <see cref="Save"/>.
+    /// </summary>
+    public event Action<SettingsChange>? Changed;
+
     public AppSettings Load()
     {
         try
@@ -46,13 +54,16 @@ public class SettingsService
     /// </summary>
     public bool Save(AppSettings settings)
     {
+        AppSettings previous;
         lock (FileLock)
         {
             try
             {
+                // Read under the same lock as the write: a baseline taken outside it can
+                // miss a racing writer, and the delta would then report no change.
+                previous = Load();
                 Directory.CreateDirectory(SettingsDir);
                 DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
-                return true;
             }
             catch (Exception ex)
             {
@@ -60,5 +71,12 @@ public class SettingsService
                 return false;
             }
         }
+
+        // Fire outside the lock: a subscriber runs arbitrary work (a re-scan starts here)
+        // and must not hold every other writer off the settings file while it does.
+        try { Changed?.Invoke(new SettingsChange(previous, settings)); }
+        catch (Exception ex) { Log.Warn("settings-changed subscriber threw", ex); }
+
+        return true;
     }
 }

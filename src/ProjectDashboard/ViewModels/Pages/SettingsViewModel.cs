@@ -1,3 +1,4 @@
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using Wpf.Ui.Appearance;
 
@@ -92,7 +93,7 @@ public partial class SettingsViewModel : ObservableObject
         var settings = _settingsService.Load();
         settings.ProjectsRootPath = ProjectsRootPath;
         // Clamp to a sane floor so a stray tiny/zero/negative value can't spin the timer.
-        settings.RefreshIntervalSeconds = Math.Max(30, RefreshIntervalSeconds);
+        settings.RefreshIntervalSeconds = SettingsDelta.EffectiveRefreshSeconds(RefreshIntervalSeconds);
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         settings.Theme = CurrentTheme.ToString();
         settings.ExcludedDirectories = ExcludedDirectories
@@ -105,9 +106,20 @@ public partial class SettingsViewModel : ObservableObject
         // turns read-only mid-session fails here, and an unreported failure loses the
         // edit at the next Load with the page still showing it as applied.
         SaveStatus = _settingsService.Save(settings)
-            ? $"Saved at {DateTime.Now:HH:mm:ss}"
+            ? SavedMessage(DateTime.Now, _dashboardViewModel is { } dashboard ? dashboard.RescanStatus : "")
             : $"Save failed — could not write {AppPaths.SettingsFile}. See the log for details.";
     }
+
+    /// <summary>
+    /// The success notice, carrying what the save set in motion beyond the file write. The
+    /// dashboard reacts to the write synchronously, so its re-scan state is already settled
+    /// here; a re-scan queued behind a running operation would otherwise read as a save
+    /// that changed nothing on screen.
+    /// </summary>
+    internal static string SavedMessage(DateTime at, string rescanStatus) =>
+        rescanStatus.Length > 0
+            ? $"Saved at {at:HH:mm:ss} — {rescanStatus}"
+            : $"Saved at {at:HH:mm:ss}";
 
     [RelayCommand]
     private async Task ForceSync()

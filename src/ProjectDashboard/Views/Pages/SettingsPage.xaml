@@ -28,8 +28,11 @@
                          CommandParameter="Dark" />
 
             <!-- Projects Root Path -->
-            <TextBlock Text="Projects Root Path" FontSize="16" Margin="0,0,0,8"
+            <TextBlock Text="Projects Root Path" FontSize="16" Margin="0,0,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="Saving rescans the new root straight away. A rescan waits if a repository operation is running, and starts when it finishes."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <DockPanel Margin="0,0,0,24">
                 <ui:Button DockPanel.Dock="Right"
                            Content="Browse"
@@ -40,8 +43,11 @@
             </DockPanel>
 
             <!-- Refresh Interval -->
-            <TextBlock Text="Refresh Interval (seconds)" FontSize="16" Margin="0,0,0,8"
+            <TextBlock Text="Refresh Interval (seconds)" FontSize="16" Margin="0,0,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="How often the dashboard reconciles every repository. Minimum 30 seconds; saving retunes the running timer."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
                 <ui:TextBox Text="{Binding RefreshIntervalSeconds, UpdateSourceTrigger=PropertyChanged}"
                             PlaceholderText="300"
@@ -58,8 +64,8 @@
             <!-- Excluded Directories -->
             <TextBlock Text="Excluded Directories" FontSize="16" Margin="0,0,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-            <TextBlock Text="Comma-separated list of directory names to skip"
-                       FontSize="12" Margin="0,0,0,8"
+            <TextBlock Text="Comma-separated list of directory names to skip. Saving rescans so the grid matches the new list."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <ui:TextBox Text="{Binding ExcludedDirectories, UpdateSourceTrigger=PropertyChanged}"
                         PlaceholderText="Internal, games, Archive"
@@ -127,13 +133,13 @@
             <CheckBox Content="Show my GitHub repos that aren't cloned locally (Cloud cards)"
                       IsChecked="{Binding EnableGitHubDiscovery}"
                       Margin="0,0,0,4" />
-            <TextBlock Text="When on, signed-in GitHub repositories with no local clone appear as Cloud cards you can clone in one click. Requires gh signed in."
+            <TextBlock Text="When on, signed-in GitHub repositories with no local clone appear as Cloud cards you can clone in one click. Requires gh signed in. Saving rescans so the Cloud cards appear or clear immediately."
                        FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             <CheckBox Content="Auto-refresh a repo when its files change on disk"
                       IsChecked="{Binding EnableAutoRefresh}"
                       Margin="0,0,0,4" />
-            <TextBlock Text="Watches the projects root and updates a card within a couple of seconds of an edit, commit, or branch switch — no waiting for the refresh interval. Takes effect on the next refresh or restart."
+            <TextBlock Text="Watches the projects root and updates a card within a couple of seconds of an edit, commit, or branch switch — no waiting for the refresh interval. Saving starts or stops the watcher straight away."
                        FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
 

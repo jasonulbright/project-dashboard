@@ -154,6 +154,15 @@ public partial class MainWindow : INavigationWindow
         RestoreSavedPlacement(settings);
         RootNavigation.IsPaneOpen = settings.PaneOpen;
 
+        // The shell owns the theme: the Settings page is constructed on first navigation,
+        // so leaving the startup apply to it renders every launch in the XAML default
+        // until the user opens Settings.
+        ApplySavedTheme(settings.Theme);
+        settingsService.Changed += change =>
+        {
+            if (SettingsDelta.ThemeChanged(change)) ApplySavedTheme(change.Current.Theme);
+        };
+
         Closing += (_, _) =>
         {
             var s = settingsService.Load();
@@ -168,6 +177,25 @@ public partial class MainWindow : INavigationWindow
         };
 
         WireSidebarProjects();
+    }
+
+    // ── Theme ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The theme to apply for a saved value, or null when nothing should change: an
+    /// unparseable value leaves the running theme alone rather than snapping to a default,
+    /// and re-applying the theme already in force rebuilds every resource dictionary.
+    /// </summary>
+    public static Wpf.Ui.Appearance.ApplicationTheme? ThemeToApply(
+        string saved, Wpf.Ui.Appearance.ApplicationTheme applied) =>
+        Enum.TryParse<Wpf.Ui.Appearance.ApplicationTheme>(saved, out var parsed) && parsed != applied
+            ? parsed
+            : null;
+
+    private static void ApplySavedTheme(string saved)
+    {
+        if (ThemeToApply(saved, Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme()) is { } theme)
+            Wpf.Ui.Appearance.ApplicationThemeManager.Apply(theme);
     }
 
     // ── Saved-position restore ───────────────────────────────────────────────

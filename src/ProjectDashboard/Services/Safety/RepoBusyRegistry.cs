@@ -46,6 +46,12 @@ public sealed class RepoBusyRegistry
         return true;
     }
 
+    /// <summary>True while any repository holds a lease — the gate for whole-portfolio work.</summary>
+    public bool AnyBusy
+    {
+        get { lock (_gate) return _busy.Count > 0; }
+    }
+
     public bool IsBusy(string repoPath)
     {
         var key = Normalize(repoPath);

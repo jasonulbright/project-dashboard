@@ -207,6 +207,8 @@
                        Width="96" Margin="0,0,8,0" />
             <TextBlock Text="{Binding OpStatusText}" FontSize="12" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <TextBlock Text="{Binding RescanStatus}" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
         </StackPanel>
 
         <!-- Filter + Sort bar -->
