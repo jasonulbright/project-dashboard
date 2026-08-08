@@ -339,7 +339,8 @@ public class RewriteCoordinatorTests
     {
         public ThrowingSwap() : base(new GitService(), GitGuard.GitExe) { }
 
-        public override Task<SwapResult> ApplySwapAsync(string sourceRepo, string tempBareRepo, CancellationToken ct = default) =>
+        public override Task<SwapResult> ApplySwapAsync(
+            string sourceRepo, string tempBareRepo, IProgress<RewritePhase>? phase = null, CancellationToken ct = default) =>
             throw new InvalidOperationException("simulated crash mid-swap");
     }
 

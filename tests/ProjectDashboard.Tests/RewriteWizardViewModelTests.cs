@@ -45,6 +45,9 @@ public class RewriteWizardViewModelTests
             PreviewCount++;
             _entered.TrySetResult();
             if (PreviewGate is { } gate) await gate;
+            // The engine's own behaviour: a dry run is scratch work throughout, so a cancelled
+            // token surfaces as a throw wherever it is next observed.
+            ct.ThrowIfCancellationRequested();
             if (PreviewThrows is { } ex) throw ex;
             return PreviewResult;
         }
@@ -55,11 +58,37 @@ public class RewriteWizardViewModelTests
         private readonly TaskCompletionSource _executeEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task ExecuteEntered => _executeEntered.Task;
 
-        public async Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default)
+        /// <summary>
+        /// Whether this run gets as far as the swap's point of no return. Set, the stub reports
+        /// <see cref="RewritePhase.Applying"/> and then honours no cancellation, exactly as the
+        /// real swap does once its ref transaction can begin.
+        /// </summary>
+        public bool ReachesPointOfNoReturn { get; set; }
+
+        /// <summary>Held open, this stands in for the ref transaction still committing after cancellation stopped being honoured.</summary>
+        public Task? ApplyingGate { get; set; }
+
+        private readonly TaskCompletionSource _applyingEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes once the phase report has been delivered, so a test observes the surface mid-transaction rather than guessing at a delay.</summary>
+        public Task ApplyingEntered => _applyingEntered.Task;
+
+        public async Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default, IProgress<RewritePhase>? phase = null)
         {
             ExecuteCount++;
             _executeEntered.TrySetResult();
+            phase?.Report(RewritePhase.Preparing);
             if (ExecuteGate is { } gate) await gate;
+            if (ReachesPointOfNoReturn)
+            {
+                phase?.Report(RewritePhase.Applying);
+                _applyingEntered.TrySetResult();
+                if (ApplyingGate is { } applying) await applying;
+            }
+            else if (ct.IsCancellationRequested)
+            {
+                return RewriteExecutionResult.CancelledBeforeApply();
+            }
             CanUndo = true;
             return ExecuteResult;
         }
@@ -1395,5 +1424,291 @@ public class RewriteWizardViewModelTests
 
         await pulling;
         Assert.False(vm.IsBusy);
+    }
+
+    // ── Cancelling a step ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A dry run only reads the source and writes a scratch tree, so it is cancellable from end
+    /// to end. Cancelling it must also drop the report it was going to arm Execute with.
+    /// </summary>
+    [Fact]
+    public async Task CancellingTheDryRun_ReportsNothingChangedAndArmsNoExecute()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-cancel-dry");
+        using var _ = repo;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { PreviewGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        var previewing = vm.RewriteNextCommand.ExecuteAsync(null);
+        await session.PreviewEntered;
+
+        Assert.True(vm.RewriteCanCancel);
+        Assert.Equal("Cancel the dry run", vm.RewriteCancelLabel);
+
+        vm.CancelRewriteStepCommand.Execute(null);
+        Assert.False(vm.RewriteCanCancel);
+        gate.SetResult();
+        await previewing;
+
+        Assert.Equal("Dry run cancelled — nothing was changed.", vm.RewriteStatusText);
+        Assert.Equal("", vm.RewriteErrorText);
+        Assert.False(vm.RewritePreviewAvailable);
+        Assert.False(vm.RewriteShowExecute);
+        Assert.False(vm.RewriteRunning);
+        Assert.False(vm.IsBusy);
+    }
+
+    /// <summary>
+    /// Cancelling before the swap's point of no return changed nothing, so the dry run already
+    /// paid for still describes exactly what a re-run would do — the wizard keeps it and returns
+    /// to the confirm step rather than demanding another export.
+    /// </summary>
+    [Fact]
+    public async Task CancellingTheRewriteBeforeTheSwap_KeepsTheHeldDryRunAndClaimsNothingChanged()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-cancel-run");
+        using var _ = repo;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { ExecuteGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        Assert.True(vm.RewriteCanCancel);
+        Assert.Equal("Cancel the rewrite", vm.RewriteCancelLabel);
+
+        vm.CancelRewriteStepCommand.Execute(null);
+        gate.SetResult();
+        await running;
+
+        Assert.Equal(ProjectDetailViewModel.CancelledRewriteStatus, vm.RewriteStatusText);
+        Assert.Equal("", vm.RewriteErrorText);
+        Assert.False(vm.RewriteResultSucceeded);
+        Assert.False(vm.RewriteUndoAvailable);
+        Assert.True(vm.RewritePreviewAvailable);
+        Assert.True(vm.RewriteStepIsConfirm);
+        Assert.False(vm.RewriteCanCancel);
+        Assert.False(vm.IsBusy);
+    }
+
+    /// <summary>
+    /// The offer and the guarantee move together: the instant the swap stops honouring the token
+    /// the control goes, and the surface states why rather than leaving a dead button.
+    /// </summary>
+    [Fact]
+    public async Task OnceTheSwapReachesThePointOfNoReturn_TheCancelOfferIsWithdrawn()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-cancel-closed");
+        using var _ = repo;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var applying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession
+        {
+            ExecuteGate = gate.Task,
+            ReachesPointOfNoReturn = true,
+            ApplyingGate = applying.Task,
+        };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        Assert.True(vm.RewriteCanCancel);
+        Assert.False(vm.RewriteCancelClosedVisible);
+
+        // Releasing the gate lets the stub report Applying, exactly where the real swap does,
+        // and hold there — so this observes the surface mid-transaction, not after it.
+        gate.SetResult();
+        await session.ApplyingEntered;
+
+        Assert.True(vm.RewriteRunning);
+        Assert.False(vm.RewriteCanCancel);
+        Assert.True(vm.RewriteCancelClosedVisible);
+        Assert.Equal(ProjectDetailViewModel.RewriteApplyingNotice, vm.RewriteStatusText);
+
+        // A cancel issued now is refused by the step rather than promised and dropped.
+        vm.CancelRewriteStepCommand.Execute(null);
+        Assert.Equal(ProjectDetailViewModel.RewriteApplyingNotice, vm.RewriteStatusText);
+
+        applying.SetResult();
+        await running;
+
+        Assert.False(vm.RewriteCanCancel);
+        Assert.True(vm.RewriteResultSucceeded);
+        Assert.True(vm.RewriteStepIsResult);
+    }
+
+    /// <summary>
+    /// A cancel that arrives after the swap can no longer be stopped did not stop it. Reporting
+    /// the request rather than the outcome would tell the reader their history is intact when it
+    /// has just been replaced.
+    /// </summary>
+    [Fact]
+    public async Task CancelThatLosesTheRaceToTheSwap_ReportsTheRewriteAsApplied()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-cancel-race");
+        using var _ = repo;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { ExecuteGate = gate.Task, ReachesPointOfNoReturn = true };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        vm.CancelRewriteStepCommand.Execute(null);
+        gate.SetResult();
+        await running;
+
+        Assert.True(vm.RewriteResultSucceeded);
+        Assert.Contains("History rewritten", vm.RewriteStatusText);
+        Assert.Contains("after the swap could no longer be stopped", vm.RewriteStatusText);
+        Assert.DoesNotContain("nothing was changed", vm.RewriteStatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A restore's ref reconciliation is all-or-nothing in the same way the swap's is, so there
+    /// is no safe point at which stopping it would leave a known state. No offer is made.
+    /// </summary>
+    [Fact]
+    public async Task AnUndoOffersNoCancel()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-cancel-undo");
+        using var _ = repo;
+        var undoGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { UndoGate = undoGate.Task };
+        var vm = NewVm(session);
+        vm.ConfirmPrompt = (_, _, _) => Task.FromResult(true);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        await await StartRewriteAsync(vm, session);
+
+        var undoing = vm.UndoRewriteCommand.ExecuteAsync(null);
+        await session.UndoEntered;
+
+        Assert.True(vm.RewriteRunning);
+        Assert.False(vm.RewriteCanCancel);
+        Assert.True(vm.RewriteCancelClosedVisible);
+
+        undoGate.SetResult();
+        await undoing;
+    }
+
+    /// <summary>
+    /// Closing is not a way to ask for a stop: the result screen is the only report of what a
+    /// running step did, so the surface stays put and points at the cancel control instead.
+    /// </summary>
+    [Fact]
+    public async Task ClosingTheWizardMidStep_RefusesAndPointsAtTheCancelControl()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("rw-cancel-close");
+        using var _ = repo;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new StubSession { ExecuteGate = gate.Task };
+        var vm = NewVm(session);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        vm.OpenRewriteWizardCommand.Execute(null);
+        vm.RewriteFindText = "SECRET";
+        var running = await StartRewriteAsync(vm, session);
+
+        vm.CloseRewriteWizardCommand.Execute(null);
+
+        Assert.True(vm.RewriteWizardVisible);
+        Assert.Contains("cancel it", vm.RewriteStatusText);
+
+        gate.SetResult();
+        await running;
+    }
+
+    // ── Purge size in human units ────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("900", 900L)]
+    [InlineData("900 b", 900L)]
+    [InlineData("1kb", 1024L)]
+    [InlineData("1 KB", 1024L)]
+    [InlineData("1.5MB", 1572864L)]
+    [InlineData("2 gb", 2147483648L)]
+    [InlineData("4 GiB", 4294967296L)]
+    [InlineData("  10 mib  ", 10485760L)]
+    [InlineData("0.5 kb", 512L)]
+    public void AMinimumBlobSize_ParsesHumanUnitsIntoBytes(string typed, long expected)
+    {
+        Assert.True(ByteSizeText.TryParse(typed, out var bytes));
+        Assert.Equal(expected, bytes);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("0 kb")]
+    [InlineData("big")]
+    [InlineData("12 tb")]
+    [InlineData("kb")]
+    [InlineData("1,5 mb")]
+    public void AMinimumBlobSize_RejectsWhatIsNotASize(string typed)
+    {
+        Assert.False(ByteSizeText.TryParse(typed, out _));
+    }
+
+    /// <summary>A size landing between bytes rounds up, so the filter never catches a file smaller than the one named.</summary>
+    [Fact]
+    public void AFractionalByteCount_RoundsUpRatherThanDown()
+    {
+        Assert.True(ByteSizeText.TryParse("0.0001 kb", out var bytes));
+        Assert.Equal(1L, bytes);
+    }
+
+    [Fact]
+    public async Task TypingASizeWithAUnit_EchoesTheByteCountAndReachesTheEngineAsBytes()
+    {
+        var (repo, vm, _) = await OpenWizardAsync("rw-size");
+        using var handle = repo;
+
+        vm.RewriteOperationIsPurgePath = true;
+        vm.RewritePurgeMinSizeText = "1.5 MB";
+
+        Assert.Equal("= 1,572,864 bytes", vm.RewritePurgeMinSizeEcho);
+        Assert.Equal("", vm.RewriteNextBlockedReason);
+        Assert.True(vm.RewriteNextCommand.CanExecute(null));
+
+        var request = vm.BuildRewriteRequest();
+        Assert.Equal(1572864L, request.Options.Purge!.MinBlobSize);
+    }
+
+    /// <summary>An unparseable size disables Next and says why, rather than failing on the click.</summary>
+    [Fact]
+    public async Task TypingAnUnparseableSize_DisablesNextWithAReason()
+    {
+        var (repo, vm, session) = await OpenWizardAsync("rw-size-bad");
+        using var handle = repo;
+
+        vm.RewriteOperationIsPurgePath = true;
+        vm.RewritePurgePathsText = "secrets.txt";
+        vm.RewritePurgeMinSizeText = "quite big";
+
+        Assert.False(vm.RewriteNextCommand.CanExecute(null));
+        Assert.Contains("is not a size", vm.RewriteNextBlockedReason);
+        Assert.Contains("is not a size", vm.RewritePurgeMinSizeEcho);
+
+        // The guard holds on the command itself, not only on the button's enabled state.
+        await vm.RewriteNextCommand.ExecuteAsync(null);
+        Assert.True(vm.RewriteStepIsOperation);
+        Assert.Equal(0, session.PreviewCount);
+
+        vm.RewritePurgeMinSizeText = "500 KB";
+        Assert.True(vm.RewriteNextCommand.CanExecute(null));
+        Assert.Equal("", vm.RewriteNextBlockedReason);
     }
 }

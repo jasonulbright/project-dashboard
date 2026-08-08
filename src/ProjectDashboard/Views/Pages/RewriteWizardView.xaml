@@ -172,7 +172,9 @@
 
                 <!-- ═══ HEADER ═══ -->
                 <DockPanel Grid.Row="0" Margin="0,0,0,10">
-                    <ui:Button DockPanel.Dock="Right" Content="Cancel" FontSize="12" Padding="12,4"
+                    <!-- "Close", never "Cancel": the footer's Cancel stops the step in flight, and
+                         one word must not mean both. -->
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
                                Command="{Binding CloseRewriteWizardCommand}"
                                ToolTip="Close the wizard (Esc)"
                                AutomationProperties.Name="Close the rewrite wizard" />
@@ -236,10 +238,26 @@
                                             AutomationProperties.Name="Paths to remove from history" />
                                 <ui:TextBox Style="{StaticResource WizardField}"
                                             Text="{Binding RewritePurgeMinSizeText, UpdateSourceTrigger=PropertyChanged}"
-                                            PlaceholderText="Optional: also remove any file of at least this many bytes"
-                                            AutomationProperties.Name="Minimum blob size in bytes to remove" />
+                                            PlaceholderText="Optional: also remove any file this size or larger — 900, 500 KB, 1.5 MB, 2 GB"
+                                            AutomationProperties.Name="Minimum blob size to remove" />
+                                <!-- The byte count the engine compares against, echoed rather than implied. -->
+                                <TextBlock Text="{Binding RewritePurgeMinSizeEcho}" FontSize="12" TextWrapping="Wrap"
+                                           Margin="0,-4,0,8" FontFamily="Cascadia Code,Consolas"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           AutomationProperties.Name="Minimum blob size in bytes">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RewritePurgeMinSizeEcho}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <TextBlock Style="{StaticResource WizardHint}"
-                                           Text="An entry containing * or ? is read as a glob; otherwise it is a path and everything under it. Commits left with no files are pruned." />
+                                           Text="Sizes are binary: 1 KB is 1024 bytes. An entry containing * or ? is read as a glob; otherwise it is a path and everything under it. Commits left with no files are pruned." />
                             </StackPanel>
 
                             <RadioButton GroupName="RewriteOperation" Style="{StaticResource WizardChoice}"
@@ -460,6 +478,18 @@
                             </StackPanel>
                             <TextBlock Style="{StaticResource WizardHint}" Margin="0,10,0,0"
                                        Text="A verified backup is taken first, then the rewritten history is swapped in as one atomic ref transaction." />
+                            <TextBlock Style="{StaticResource WizardHint}" Margin="0,0,0,0"
+                                       Text="Cancelling is safe until that transaction begins — up to then nothing in this repository has been touched. Once it begins it runs to completion, because a half-applied swap is the one outcome that cannot be recovered from."
+                                       Visibility="{Binding RewriteCanCancel, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Border CornerRadius="6" Padding="12,8" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                    Background="{StaticResource StatusWarnBg}" BorderThickness="1"
+                                    BorderBrush="{StaticResource StatusWarnFg}"
+                                    Visibility="{Binding RewriteCancelClosedVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="Applying — the rewrite can no longer be cancelled. The ref transaction is all-or-nothing and is finishing now."
+                                           FontSize="12" TextWrapping="Wrap" MaxWidth="640"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                           AutomationProperties.Name="The rewrite can no longer be cancelled" />
+                            </Border>
                         </StackPanel>
 
                         <!-- ── RESULT ── -->
@@ -528,8 +558,33 @@
                                    AutomationProperties.Name="Rewrite problem" />
                     </Border>
 
+                    <!-- Why Next is refused, live, so an unusable size says so before it is clicked. -->
+                    <TextBlock Text="{Binding RewriteNextBlockedReason}" FontSize="12" TextWrapping="Wrap"
+                               Margin="0,0,0,8"
+                               Foreground="{StaticResource StatusWarnFg}"
+                               AutomationProperties.Name="Why the next step is unavailable">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RewriteNextBlockedReason}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <!-- Stops the step in flight. Absent once the swap owns the repository,
+                                 where the Running step states why instead. -->
+                            <ui:Button Content="{Binding RewriteCancelLabel}" FontSize="13" Padding="14,5" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon DismissCircle24}"
+                                       Command="{Binding CancelRewriteStepCommand}"
+                                       Visibility="{Binding RewriteCanCancel, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                       AutomationProperties.Name="Cancel the step that is running" />
+
                             <ui:Button Content="Back" FontSize="13" Padding="14,5" Margin="0,0,8,0"
                                        Command="{Binding RewriteBackCommand}"
                                        Visibility="{Binding RewriteShowBack, Converter={StaticResource BooleanToVisibilityConverter}}"

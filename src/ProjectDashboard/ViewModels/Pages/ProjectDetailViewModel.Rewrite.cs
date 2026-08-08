@@ -57,8 +57,11 @@ public interface IRewriteSession : IDisposable
     /// <summary>Runs the engine without touching the repository and keeps the result for <see cref="ExecuteAsync"/>.</summary>
     Task<RewritePreviewOutcome> PreviewAsync(RewriteRequest request, CancellationToken ct = default);
 
-    /// <summary>Applies the history proved by the last successful preview. Fails when no preview is held.</summary>
-    Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Applies the history proved by the last successful preview. Fails when no preview is held.
+    /// <paramref name="phase"/> is reported at the point where cancellation stops being honoured.
+    /// </summary>
+    Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default, IProgress<RewritePhase>? phase = null);
 
     Task<RestoreResult> UndoAsync(CancellationToken ct = default);
 }
@@ -106,16 +109,19 @@ internal sealed class CoordinatorRewriteSession(RewriteCoordinator coordinator) 
         }
     }
 
-    public async Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default)
+    public async Task<RewriteExecutionResult> ExecuteAsync(CancellationToken ct = default, IProgress<RewritePhase>? phase = null)
     {
         var preview = _preview;
         if (preview is null)
             return new RewriteExecutionResult { Success = false, FailureReason = "no preview has been run for this rewrite" };
-        var result = await coordinator.ExecuteAsync(preview, ct);
+        var result = await coordinator.ExecuteAsync(preview, ct, phase);
         _undo ??= result.Undo;
-        // The handle is spent either way — the wizard requires a fresh dry run before any
-        // further execute — so holding it only keeps its scratch tree alive.
-        ReleaseSpentPreview();
+        // A cancelled run never installed the bare, and the staleness gate re-reads the source
+        // on the next attempt, so the handle is still good and the reader keeps the dry run they
+        // already paid for. Any other outcome spends it — the wizard requires a fresh dry run
+        // before a further execute — so holding it only keeps its scratch tree alive.
+        if (!result.Cancelled)
+            ReleaseSpentPreview();
         return result;
     }
 
@@ -182,6 +188,20 @@ public partial class ProjectDetailViewModel
         public IRewriteSession Session { get; } = session;
 
         public bool WritesRepo { get; } = writesRepo;
+
+        /// <summary>
+        /// Cancels this step and no other. Held on the gate rather than on the page: a step
+        /// parked by a project switch keeps its own source, so a cancel issued after the reader
+        /// returns still reaches the step that raised the gate.
+        /// </summary>
+        public CancellationTokenSource Cancellation { get; } = new();
+
+        /// <summary>
+        /// True once the step has passed the point where cancellation stops being honoured, or
+        /// once it has returned. Either way a cancel request would be a promise the step cannot
+        /// keep, so the offer is withdrawn instead.
+        /// </summary>
+        public bool CancelClosed { get; set; }
     }
 
     /// <summary>
@@ -208,6 +228,8 @@ public partial class ProjectDetailViewModel
 
         public required Task StepInFlight { get; set; }
         public bool Running { get; set; }
+        public bool CanCancel { get; set; }
+        public string CancelLabel { get; set; } = "";
         public RewriteReport? Report { get; set; }
         public bool Succeeded { get; set; }
         public bool UndoAvailable { get; set; }
@@ -275,7 +297,29 @@ public partial class ProjectDetailViewModel
     /// </summary>
     public bool RewriteNotRunning => !RewriteRunning;
 
-    partial void OnRewriteRunningChanged(bool value) => OnPropertyChanged(nameof(RewriteNotRunning));
+    partial void OnRewriteRunningChanged(bool value)
+    {
+        OnPropertyChanged(nameof(RewriteNotRunning));
+        OnPropertyChanged(nameof(RewriteCancelClosedVisible));
+    }
+
+    /// <summary>
+    /// Whether the step in flight can still be stopped. Cleared the moment the rewrite passes
+    /// the swap's point of no return, so the control is never offered for a stop that cannot
+    /// happen. An undo never sets it: a restore is itself an all-or-nothing ref transaction.
+    /// </summary>
+    [ObservableProperty] private bool _rewriteCanCancel;
+
+    /// <summary>Names what the cancel control would stop, so "Cancel" never reads as "close the wizard".</summary>
+    [ObservableProperty] private string _rewriteCancelLabel = "";
+
+    partial void OnRewriteCanCancelChanged(bool value) => OnPropertyChanged(nameof(RewriteCancelClosedVisible));
+
+    /// <summary>True while a step that can no longer be stopped is still running — the surface says so rather than showing a dead control.</summary>
+    public bool RewriteCancelClosedVisible => RewriteRunning && !RewriteCanCancel;
+
+    /// <summary>The wording every surface uses once the swap owns the repository, so the claim is made in exactly one place.</summary>
+    internal const string RewriteApplyingNotice = "Applying — the rewrite can no longer be cancelled.";
 
     // ── Step 1: operation ───────────────────────────────────────────────────────
 
@@ -372,7 +416,10 @@ public partial class ProjectDetailViewModel
     {
         base.OnPropertyChanged(e);
         if (e.PropertyName is { } name && RewriteInputProperties.Contains(name))
+        {
             InvalidateRewritePreview();
+            RefreshRewriteInputValidity();
+        }
         HandleSurgeryPropertyChanged(e);
     }
 
@@ -419,6 +466,7 @@ public partial class ProjectDetailViewModel
             _ => "Result",
         };
         UpdateRewriteAffordances();
+        RefreshRewriteInputValidity();
     }
 
     partial void OnRewritePreviewAvailableChanged(bool value) => UpdateRewriteAffordances();
@@ -445,11 +493,14 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private void CloseRewriteWizard()
     {
-        // A rewrite in flight owns the busy gate and a half-applied swap has no cancel here;
-        // closing the surface would hide the only report of what happened.
+        // A step in flight owns the busy gate, and closing the surface would hide the only report
+        // of what it did. Stopping it is the cancel control's job, which says whether stopping is
+        // still possible; closing is never a way to ask for it.
         if (RewriteRunning)
         {
-            RewriteStatusText = "The rewrite is still running — wait for it to finish.";
+            RewriteStatusText = RewriteCanCancel
+                ? "This step is still running — cancel it, or wait for it to finish."
+                : "The rewrite is still running — wait for it to finish.";
             return;
         }
         RewriteWizardVisible = false;
@@ -469,6 +520,8 @@ public partial class ProjectDetailViewModel
         RewriteStatusText = "";
         RewriteErrorText = "";
         RewriteRunning = false;
+        RewriteCanCancel = false;
+        RewriteCancelLabel = "";
 
         RewriteOperationIsReplaceText = true;
         RewriteOperationIsPurgePath = false;
@@ -563,6 +616,8 @@ public partial class ProjectDetailViewModel
             Gate = gate,
             StepInFlight = _rewriteStepInFlight,
             Running = RewriteRunning,
+            CanCancel = RewriteCanCancel,
+            CancelLabel = RewriteCancelLabel,
             Report = _rewriteReport,
             Succeeded = RewriteResultSucceeded,
             UndoAvailable = RewriteUndoAvailable,
@@ -594,8 +649,11 @@ public partial class ProjectDetailViewModel
         RewriteRunning = parked.Running;
         IsBusy = parked.Running;
         // The same gate object comes back, so the step that raised the page's gate is again the
-        // one entitled to lower it, and it answers for its own step's writes.
+        // one entitled to lower it, and it answers for its own step's writes — including whether
+        // the cancel it was offering is still one the step can keep.
         if (parked.Running && parked.Gate is { } gate) _busyGateHolder = gate;
+        RewriteCanCancel = parked.Running && parked.CanCancel && parked.Gate is { CancelClosed: false };
+        RewriteCancelLabel = RewriteCanCancel ? parked.CancelLabel : "";
         RewriteStep = parked.Running ? RewriteWizardStep.Running : RewriteWizardStep.Result;
         RewriteWizardVisible = true;
     }
@@ -661,7 +719,28 @@ public partial class ProjectDetailViewModel
 
     // ── Navigation ──────────────────────────────────────────────────────────────
 
-    [RelayCommand]
+    /// <summary>
+    /// Why the surface will not move on from the operation step, or empty when it will. Live, so
+    /// a half-typed size says what is wrong with it before the reader reaches for Next.
+    /// </summary>
+    [ObservableProperty] private string _rewriteNextBlockedReason = "";
+
+    /// <summary>
+    /// The operation step's inputs are the only ones Next validates: the scope step's choices are
+    /// all runnable, and the preview step's Next is governed by the held dry run instead.
+    /// </summary>
+    private bool CanRewriteNext() =>
+        RewriteStep != RewriteWizardStep.Operation || DescribeOperationProblem() is null;
+
+    private void RefreshRewriteInputValidity()
+    {
+        RewriteNextBlockedReason = RewriteStep == RewriteWizardStep.Operation
+            ? DescribeOperationProblem() ?? ""
+            : "";
+        RewriteNextCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRewriteNext))]
     private async Task RewriteNext()
     {
         switch (RewriteStep)
@@ -762,9 +841,11 @@ public partial class ProjectDetailViewModel
         var session = factory.Create();
         _rewriteSession = session;
 
-        await RunRewriteStepAsync("Dry run", session, writesRepo: false, async () =>
+        // The dry run only reads the source and writes a scratch tree, so it is cancellable end
+        // to end with no safe point to respect.
+        await RunRewriteStepAsync("Dry run", session, writesRepo: false, "Cancel the dry run", async (ct, _) =>
         {
-            var outcome = await session.PreviewAsync(request);
+            var outcome = await session.PreviewAsync(request, ct);
             // A dry run is never parked — it holds no backup — so a session that has left the
             // live wizard has been disposed, and its report describes a scratch tree that is gone.
             if (!OwnsLiveWizard(session)) return;
@@ -839,9 +920,11 @@ public partial class ProjectDetailViewModel
         }
 
         RewriteStep = RewriteWizardStep.Running;
-        await RunRewriteStepAsync("Rewrite", session, writesRepo: true, async () =>
+        var cancelled = false;
+        await RunRewriteStepAsync("Rewrite", session, writesRepo: true, "Cancel the rewrite", async (ct, phase) =>
         {
-            var result = await session.ExecuteAsync();
+            var result = await session.ExecuteAsync(ct, phase);
+            cancelled = result.Cancelled;
             if (!OwnsLiveWizard(session))
             {
                 // The reader left mid-rewrite. The outcome — and the undo it carries — belongs
@@ -853,12 +936,26 @@ public partial class ProjectDetailViewModel
             RewriteResultSucceeded = result.Success;
             RewriteUndoAvailable = session.CanUndo;
 
+            if (result.Cancelled)
+            {
+                // The dry run and its report survive: nothing was applied, so what the report
+                // describes is still exactly what a re-run would do.
+                RewriteErrorText = "";
+                RewriteStatusText = CancelledRewriteStatus;
+                return;
+            }
+
             if (result.Success)
             {
                 if (result.Report is not null)
                     ShowReport(result.Report);
                 RewriteErrorText = "";
-                RewriteStatusText = "History rewritten. The remote still holds the old history.";
+                // A cancel that lost the race to the point of no return must not leave the reader
+                // believing it landed; the outcome is what happened, not what was asked for.
+                RewriteStatusText = ct.IsCancellationRequested
+                    ? "History rewritten — the cancel arrived after the swap could no longer be stopped. " +
+                      "The remote still holds the old history."
+                    : "History rewritten. The remote still holds the old history.";
                 await ReloadCommitsAsync();
                 await SafeRefreshWorkingStateAsync();
             }
@@ -875,10 +972,24 @@ public partial class ProjectDetailViewModel
 
         if (OwnsLiveWizard(session))
         {
+            if (cancelled)
+            {
+                // Back to the step the Execute was issued from, with the held dry run intact:
+                // the reader can run it again without paying for another export.
+                RewriteStep = RewriteWizardStep.Confirm;
+                return;
+            }
             RewritePreviewAvailable = false; // the held bare is spent; a further run needs a fresh dry run
             RewriteStep = RewriteWizardStep.Result;
         }
     }
+
+    /// <summary>
+    /// What a cancelled rewrite is allowed to claim. The swap refuses cancellation once its ref
+    /// transaction can begin, so a cancelled outcome means no ref, commit, or file moved.
+    /// </summary>
+    internal const string CancelledRewriteStatus =
+        "Cancelled — nothing was changed. No commit, ref, or file in this repository was touched.";
 
     /// <summary>
     /// The same outcome the live result screen would show, written onto a parked lane. A failed
@@ -889,7 +1000,12 @@ public partial class ProjectDetailViewModel
     {
         lane.Succeeded = result.Success;
         lane.UndoAvailable = session.CanUndo;
-        if (result.Success)
+        if (result.Cancelled)
+        {
+            lane.ErrorText = "";
+            lane.StatusText = CancelledRewriteStatus;
+        }
+        else if (result.Success)
         {
             lane.Report = result.Report ?? lane.Report;
             lane.ErrorText = "";
@@ -924,7 +1040,9 @@ public partial class ProjectDetailViewModel
             "Restore");
         if (!confirmed) return;
 
-        await RunRewriteStepAsync("Undo", session, writesRepo: true, async () =>
+        // No cancel label: the restore's own ref reconciliation is all-or-nothing, so there is no
+        // safe point between its start and its end at which stopping would leave a known state.
+        await RunRewriteStepAsync("Undo", session, writesRepo: true, cancelLabel: null, async (_, _) =>
         {
             RestoreResult restore;
             try
@@ -1036,7 +1154,7 @@ public partial class ProjectDetailViewModel
         RewriteOperationKind.PurgePath when SplitList(RewritePurgePathsText).Count == 0 && RewritePurgeMinSizeText.Trim().Length == 0 =>
             "Enter at least one path to purge, or a minimum blob size.",
         RewriteOperationKind.PurgePath when RewritePurgeMinSizeText.Trim().Length > 0 && ParseMinSize() is null =>
-            "The minimum blob size must be a whole number of bytes above zero.",
+            ByteSizeText.ProblemWith(RewritePurgeMinSizeText),
         RewriteOperationKind.RewriteMessages when RewriteMessageFindText.Length == 0 =>
             "Enter the message text to find.",
         RewriteOperationKind.RewriteIdentity when RewriteOldName.Trim().Length == 0 && RewriteOldEmail.Trim().Length == 0 =>
@@ -1046,8 +1164,22 @@ public partial class ProjectDetailViewModel
         _ => null,
     };
 
-    private long? ParseMinSize() =>
-        long.TryParse(RewritePurgeMinSizeText.Trim(), out var size) && size > 0 ? size : null;
+    private long? ParseMinSize() => ByteSizeText.TryParse(RewritePurgeMinSizeText, out var size) ? size : null;
+
+    /// <summary>
+    /// What the typed size resolved to, or why it did not. Rendered beside the field so the byte
+    /// count the engine will actually compare against is never left to be inferred from a unit.
+    /// </summary>
+    [ObservableProperty] private string _rewritePurgeMinSizeEcho = "";
+
+    partial void OnRewritePurgeMinSizeTextChanged(string value) => UpdateMinSizeEcho();
+
+    private void UpdateMinSizeEcho() =>
+        RewritePurgeMinSizeEcho = RewritePurgeMinSizeText.Trim().Length == 0
+            ? ""
+            : ByteSizeText.TryParse(RewritePurgeMinSizeText, out var size)
+                ? $"= {size:N0} bytes"
+                : ByteSizeText.ProblemWith(RewritePurgeMinSizeText);
 
     internal RewriteRequest BuildRewriteRequest()
     {
@@ -1207,7 +1339,9 @@ public partial class ProjectDetailViewModel
     /// session is parked releases the gate on the parked lane instead, so returning to that
     /// repository finds a finished rewrite finished rather than permanently busy.
     /// </summary>
-    private async Task RunRewriteStepAsync(string label, IRewriteSession session, bool writesRepo, Func<Task> body)
+    private async Task RunRewriteStepAsync(
+        string label, IRewriteSession session, bool writesRepo, string? cancelLabel,
+        Func<CancellationToken, IProgress<RewritePhase>, Task> body)
     {
         if (RefuseRewriteStepWhileBusy()) return;
         var repo = RepoPath;
@@ -1215,13 +1349,33 @@ public partial class ProjectDetailViewModel
         IsBusy = true;
         RewriteRunning = true;
         _busyGateHolder = gate;
+        RewriteCancelLabel = cancelLabel ?? "";
+        RewriteCanCancel = cancelLabel is not null;
         RewriteStatusText = $"{label}…";
         RewriteErrorText = "";
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _rewriteStepInFlight = done.Task;
         try
         {
-            await body();
+            await body(gate.Cancellation.Token, new RewritePhaseReporter(p => OnRewritePhase(gate, session, p)));
+        }
+        catch (OperationCanceledException) when (gate.Cancellation.IsCancellationRequested)
+        {
+            // Only steps that throw on cancel land here — the execute reports its cancellation
+            // as an outcome instead. Nothing was applied either way, which is why this states it.
+            if (OwnsLiveWizard(session))
+            {
+                InvalidateRewritePreview();
+                RewriteErrorText = "";
+                RewriteStatusText = $"{label} cancelled — nothing was changed.";
+            }
+            else if (ParkedLaneFor(session) is { } cancelledLane)
+            {
+                cancelledLane.Report = null;
+                cancelledLane.Succeeded = false;
+                cancelledLane.ErrorText = "";
+                cancelledLane.StatusText = $"{label} cancelled — nothing was changed.";
+            }
         }
         catch (Exception ex)
         {
@@ -1244,15 +1398,86 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
+            // Closed before the gate is released, so a cancel arriving between the two finds an
+            // offer already withdrawn rather than a disposed source.
+            gate.CancelClosed = true;
             if (ReferenceEquals(_busyGateHolder, gate))
             {
                 _busyGateHolder = null;
                 IsBusy = false;
                 RewriteRunning = false;
+                RewriteCanCancel = false;
+                RewriteCancelLabel = "";
             }
             if (!OwnsLiveWizard(session) && ParkedLaneFor(session) is { } lane)
+            {
                 lane.Running = false;
+                lane.CanCancel = false;
+                lane.CancelLabel = "";
+            }
+            gate.Cancellation.Dispose();
             done.SetResult();
+        }
+    }
+
+    /// <summary>
+    /// Stops the step in flight, if it is still stoppable. The cancel reaches only the step this
+    /// wizard's own session raised the gate for: another repository's parked rewrite holds its
+    /// own source, and a step that has passed the swap's point of no return holds none that
+    /// would be honoured.
+    /// </summary>
+    [RelayCommand]
+    private void CancelRewriteStep()
+    {
+        var session = _rewriteSession;
+        if (session is null) return;
+        if (_busyGateHolder is not RewriteStepGate gate || !ReferenceEquals(gate.Session, session)) return;
+        if (gate.CancelClosed)
+        {
+            RewriteCanCancel = false;
+            RewriteStatusText = RewriteApplyingNotice;
+            return;
+        }
+        RewriteCanCancel = false;
+        RewriteStatusText = "Cancelling — waiting for the current step to stop…";
+        gate.Cancellation.Cancel();
+    }
+
+    /// <summary>
+    /// Carries a rewrite's phase back to the thread the step was started from — the swap reports
+    /// from whatever pool thread its git call resumed on, and every handler here writes bound
+    /// state. <see cref="Progress{T}"/> posts unconditionally, which would leave a report made on
+    /// the captured context itself queued behind the very step that is waiting to observe it; a
+    /// report already on that context therefore runs inline.
+    /// </summary>
+    private sealed class RewritePhaseReporter(Action<RewritePhase> handler) : IProgress<RewritePhase>
+    {
+        private readonly SynchronizationContext? _context = SynchronizationContext.Current;
+
+        public void Report(RewritePhase value)
+        {
+            if (_context is null || ReferenceEquals(SynchronizationContext.Current, _context)) handler(value);
+            else _context.Post(_ => handler(value), null);
+        }
+    }
+
+    /// <summary>
+    /// Withdraws the cancel offer the instant the swap stops honouring it. The gate is closed
+    /// too, so a click that raced the report is refused by the step rather than dropped.
+    /// </summary>
+    private void OnRewritePhase(RewriteStepGate gate, IRewriteSession session, RewritePhase phase)
+    {
+        if (phase != RewritePhase.Applying) return;
+        gate.CancelClosed = true;
+        if (OwnsLiveWizard(session))
+        {
+            RewriteCanCancel = false;
+            RewriteStatusText = RewriteApplyingNotice;
+        }
+        else if (ParkedLaneFor(session) is { } lane)
+        {
+            lane.CanCancel = false;
+            lane.StatusText = RewriteApplyingNotice;
         }
     }
 
@@ -1265,5 +1490,66 @@ public partial class ProjectDetailViewModel
         if (!IsBusy) return false;
         RewriteStatusText = "Another operation is running on this repository — wait for it to finish.";
         return true;
+    }
+}
+
+/// <summary>
+/// A byte count typed the way sizes are read: a plain number of bytes, or a decimal with a
+/// KB/MB/GB unit (KiB/MiB/GiB accepted as the same thing). Units are binary — 1 KB is 1024
+/// bytes — which is what a repository's object sizes are reported in, and the parsed byte count
+/// is echoed back rather than left implied. Parsing is invariant-culture so a decimal point
+/// means the same thing on every machine.
+/// </summary>
+internal static class ByteSizeText
+{
+    private const long Kilo = 1024L;
+
+    private static readonly (string Suffix, long Multiplier)[] Units =
+    [
+        // Longest first: "kib" must not match as "k" with "ib" left over.
+        ("kib", Kilo), ("mib", Kilo * Kilo), ("gib", Kilo * Kilo * Kilo),
+        ("kb", Kilo), ("mb", Kilo * Kilo), ("gb", Kilo * Kilo * Kilo),
+        ("k", Kilo), ("m", Kilo * Kilo), ("g", Kilo * Kilo * Kilo),
+        ("b", 1L),
+    ];
+
+    /// <summary>The byte count the text names, or false when it names none. Zero and negatives are not sizes and are rejected.</summary>
+    public static bool TryParse(string text, out long bytes)
+    {
+        bytes = 0;
+        var trimmed = (text ?? "").Trim();
+        if (trimmed.Length == 0) return false;
+
+        var unit = 1L;
+        foreach (var (suffix, multiplier) in Units)
+        {
+            if (trimmed.Length <= suffix.Length ||
+                !trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+            unit = multiplier;
+            trimmed = trimmed[..^suffix.Length].TrimEnd();
+            break;
+        }
+
+        if (!decimal.TryParse(trimmed, System.Globalization.NumberStyles.AllowDecimalPoint,
+                System.Globalization.CultureInfo.InvariantCulture, out var value) || value <= 0)
+            return false;
+
+        // Rounded up: a size that lands between bytes must not silently include a file smaller
+        // than the one the reader named.
+        var scaled = decimal.Ceiling(value * unit);
+        if (scaled > long.MaxValue) return false;
+        bytes = (long)scaled;
+        return bytes > 0;
+    }
+
+    /// <summary>Why <paramref name="text"/> is not a size, phrased for the field it was typed into.</summary>
+    public static string ProblemWith(string text)
+    {
+        var trimmed = (text ?? "").Trim();
+        if (trimmed.Length == 0)
+            return "Enter a size, for example 500 KB.";
+        return TryParse(trimmed, out _)
+            ? ""
+            : $"“{trimmed}” is not a size. Enter a number of bytes, or a size with a unit — 900, 500 KB, 1.5 MB, 2 GB.";
     }
 }

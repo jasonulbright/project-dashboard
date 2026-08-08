@@ -7,11 +7,14 @@ namespace ProjectDashboard.Services.Rewrite;
 /// <summary>
 /// Orchestrates a gated history rewrite for a wizard to drive. <see cref="PreviewAsync"/>
 /// runs the engine WITHOUT swapping, so the report can be shown before anything is
-/// committed to. <see cref="ExecuteAsync(RewriteRequest, CancellationToken)"/> runs the
-/// safety-railed pipeline: acquire the busy lease, refuse a dirty tree, take a verified
+/// committed to. <see cref="ExecuteAsync(RewriteRequest, CancellationToken, IProgress{RewritePhase})"/>
+/// runs the safety-railed pipeline: acquire the busy lease, refuse a dirty tree, take a verified
 /// backup, journal the in-flight op, rewrite, then swap — each step refusable, and no
 /// history reaches the repository without a restorable backup behind it. Nothing is ever
 /// auto-pushed.
+///
+/// Cancellation is a safe-point contract: the whole pipeline is freely cancellable until the
+/// swap's point of no return, and refused after it, so a cancelled run has changed nothing.
 /// </summary>
 public sealed class RewriteCoordinator
 {
@@ -108,14 +111,17 @@ public sealed class RewriteCoordinator
     }
 
     /// <summary>Runs the full gated pipeline, rewriting fresh. Equivalent to previewing and executing in one call, without keeping the temp bare.</summary>
-    public Task<RewriteExecutionResult> ExecuteAsync(RewriteRequest request, CancellationToken ct = default) =>
-        ExecuteCoreAsync(request, preview: null, ct);
+    public Task<RewriteExecutionResult> ExecuteAsync(
+        RewriteRequest request, CancellationToken ct = default, IProgress<RewritePhase>? phase = null) =>
+        ExecuteCoreAsync(request, preview: null, ct, phase);
 
     /// <summary>Runs the full gated pipeline reusing a preview's already-rewritten temp bare, so the engine is not run twice.</summary>
-    public Task<RewriteExecutionResult> ExecuteAsync(PreviewHandle preview, CancellationToken ct = default) =>
-        ExecuteCoreAsync(preview.Request, preview, ct);
+    public Task<RewriteExecutionResult> ExecuteAsync(
+        PreviewHandle preview, CancellationToken ct = default, IProgress<RewritePhase>? phase = null) =>
+        ExecuteCoreAsync(preview.Request, preview, ct, phase);
 
-    private async Task<RewriteExecutionResult> ExecuteCoreAsync(RewriteRequest request, PreviewHandle? preview, CancellationToken ct)
+    private async Task<RewriteExecutionResult> ExecuteCoreAsync(
+        RewriteRequest request, PreviewHandle? preview, CancellationToken ct, IProgress<RewritePhase>? phase)
     {
         request.Options.Validate();
         var repo = request.RepoPath;
@@ -128,6 +134,8 @@ public sealed class RewriteCoordinator
         UndoHandle? undo = null;
         try
         {
+            phase?.Report(RewritePhase.Preparing);
+
             // 1b. Staleness gate: a preview's bare was exported when the dry run ran and is
             // installed verbatim, so a ref that moved since is absent from it and the swap
             // would erase whatever landed. Read under the lease, before the backup, so the
@@ -201,7 +209,7 @@ public sealed class RewriteCoordinator
             SwapResult swap;
             try
             {
-                swap = await _swap.ApplySwapAsync(repo, tempBare, ct);
+                swap = await _swap.ApplySwapAsync(repo, tempBare, phase, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -223,6 +231,16 @@ public sealed class RewriteCoordinator
             // 7. Success: clear the journal, hand back the report and a one-click undo.
             await _journal.CompleteAsync(repo, ct);
             return new RewriteExecutionResult { Success = true, Report = report, Swap = swap, Undo = undo };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The swap refuses cancellation past its point of no return, so reaching here means
+            // no ref moved. The journal records operations that were INTERRUPTED and may need
+            // recovery; a run that stopped at a safe point is neither, and leaving the entry
+            // would raise a crash-recovery prompt at the next launch over a repository nothing
+            // touched. Cleared under an uncancellable token, or the clear would be cancelled too.
+            await _journal.CompleteAsync(repo, CancellationToken.None);
+            return RewriteExecutionResult.CancelledBeforeApply();
         }
         finally
         {

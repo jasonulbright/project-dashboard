@@ -31,6 +31,11 @@ public sealed record SwapResult(
 /// working tree. A partial, unrecoverable state is impossible by construction — the
 /// pre-flight guards the checkout before any ref moves, and the ref reconciliation is a
 /// single all-or-nothing `git update-ref --stdin`.
+///
+/// Cancellation is honoured only up to the point of no return marked inside
+/// <see cref="ApplySwapAsync"/>: everything before it is pre-flight and a scratch-namespace
+/// fetch, everything after it moves the source's own refs and runs under
+/// <see cref="CancellationToken.None"/>.
 /// </summary>
 public class SwapService
 {
@@ -61,8 +66,15 @@ public class SwapService
     /// non-remote refs match the temp bare, HEAD is repositioned, and the working tree is
     /// reset. Remote-tracking refs (refs/remotes/*) are never touched — divergence shows
     /// until an explicit force-push, which is not this stage.
+    ///
+    /// Throws <see cref="OperationCanceledException"/> for a cancellation observed before the
+    /// point of no return, having changed no ref; a cancellation requested after it is not
+    /// honoured and the swap runs to completion. <paramref name="phase"/> is reported exactly
+    /// once, at that boundary, so a surface offering cancel withdraws the offer at the same
+    /// instant the swap stops accepting it.
     /// </summary>
-    public virtual async Task<SwapResult> ApplySwapAsync(string sourceRepo, string tempBareRepo, CancellationToken ct = default)
+    public virtual async Task<SwapResult> ApplySwapAsync(
+        string sourceRepo, string tempBareRepo, IProgress<RewritePhase>? phase = null, CancellationToken ct = default)
     {
         // (a) A dirty source cannot be reset without discarding uncommitted work; the caller
         // offers stash, not this method. A null state means git could not read the repo at
@@ -115,6 +127,17 @@ public class SwapService
             if (!fetch.Success)
                 return SwapResult.Refused($"fetching rewritten objects failed — nothing changed: {fetch.FirstError}");
 
+            // ── Point of no return ──────────────────────────────────────────────────────
+            // Everything above is pre-flight plus a fetch into a scratch namespace the finally
+            // deletes, so a cancellation observed here has moved no ref. Below, `git update-ref
+            // --stdin` commits its transaction by renaming lock files one at a time: killing it
+            // part-way through leaves some refs moved and others not — the one outcome this
+            // stage exists to make impossible. The tail therefore runs under a token that is
+            // never cancelled, and the cancel offer is withdrawn on this line.
+            ct.ThrowIfCancellationRequested();
+            phase?.Report(RewritePhase.Applying);
+            var applying = CancellationToken.None;
+
             // Reconcile the source's non-remote refs to EXACTLY the temp bare's in one atomic
             // `git update-ref --stdin`: delete refs the rewrite dropped, set the rest. The whole
             // script commits under one lock, so a ref-lock contention, a missing target object,
@@ -134,7 +157,7 @@ public class SwapService
             {
                 var reconcile = await ProcessRunner.RunWithInputAsync(
                     _gitExe, ["-c", "core.quotepath=false", "update-ref", "--stdin"],
-                    script.ToString(), sourceRepo, RefTimeout, GitEnvironment, ct);
+                    script.ToString(), sourceRepo, RefTimeout, GitEnvironment, applying);
                 if (!reconcile.Success)
                     return SwapResult.Refused($"ref reconciliation transaction failed — nothing changed: {reconcile.FirstError}");
             }
@@ -142,11 +165,11 @@ public class SwapService
             // HEAD, then the working tree. A symbolic HEAD names the branch; a detached HEAD is
             // written with --no-deref so it is not followed into a branch move.
             if (head.Value.SymbolicTarget is { } branch)
-                await RunCheckedAsync(sourceRepo, ["symbolic-ref", "HEAD", branch], RefTimeout, ct);
+                await RunCheckedAsync(sourceRepo, ["symbolic-ref", "HEAD", branch], RefTimeout, applying);
             else
-                await RunCheckedAsync(sourceRepo, ["update-ref", "--no-deref", "HEAD", head.Value.Oid], RefTimeout, ct);
+                await RunCheckedAsync(sourceRepo, ["update-ref", "--no-deref", "HEAD", head.Value.Oid], RefTimeout, applying);
 
-            var reset = await RunAsync(sourceRepo, ["reset", "--hard", head.Value.Oid], ResetTimeout, ct);
+            var reset = await RunAsync(sourceRepo, ["reset", "--hard", head.Value.Oid], ResetTimeout, applying);
             if (!reset.Success)
                 return new SwapResult(false,
                     $"refs reconciled but working-tree reset failed: {reset.FirstError}", changes, oldHead, head.Value.Oid);

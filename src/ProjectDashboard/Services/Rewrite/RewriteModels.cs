@@ -4,6 +4,20 @@ using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.Services.Rewrite;
 
+/// <summary>
+/// How far a rewrite has got, for a surface that may only offer cancel while cancelling is
+/// still safe. <see cref="SwapService.ApplySwapAsync"/> reports <see cref="Applying"/> on the
+/// same line that stops honouring the token, so the offer and the guarantee move together.
+/// </summary>
+public enum RewritePhase
+{
+    /// <summary>Export, transform, import, verification, and the swap's pre-flight. All scratch work; cancelling changes no ref.</summary>
+    Preparing,
+
+    /// <summary>The swap's ref transaction. Cancellation is no longer honoured — the transaction is all-or-nothing.</summary>
+    Applying,
+}
+
 /// <summary>What to rewrite and where: the target repository plus the content operations.</summary>
 public sealed class RewriteRequest
 {
@@ -102,15 +116,24 @@ public sealed class UndoHandle
 }
 
 /// <summary>
-/// The outcome of <see cref="RewriteCoordinator.ExecuteAsync(RewriteRequest, CancellationToken)"/>.
+/// The outcome of <see cref="RewriteCoordinator.ExecuteAsync(RewriteRequest, CancellationToken, IProgress{RewritePhase})"/>.
 /// On success the source history is rewritten, <see cref="Report"/> describes it, and
 /// <see cref="Undo"/> offers one-click restore. On failure <see cref="FailureReason"/> says
 /// why; <see cref="Undo"/> is still present whenever a backup was taken, so a partially
 /// applied swap can be reverted even though this stage guarantees the swap itself is atomic.
+/// <see cref="Cancelled"/> is its own outcome, neither success nor failure, and carries no
+/// undo because there is nothing to undo.
 /// </summary>
 public sealed class RewriteExecutionResult
 {
     public required bool Success { get; init; }
+
+    /// <summary>
+    /// True when the run stopped because cancellation was requested. Cancellation is only
+    /// observed before the swap's point of no return, so this outcome means no ref, commit, or
+    /// file in the repository was changed.
+    /// </summary>
+    public bool Cancelled { get; init; }
 
     public string? FailureReason { get; init; }
 
@@ -123,6 +146,14 @@ public sealed class RewriteExecutionResult
     internal static RewriteExecutionResult Failed(
         string reason, UndoHandle? undo = null, RewriteReport? report = null, SwapResult? swap = null) =>
         new() { Success = false, FailureReason = reason, Undo = undo, Report = report, Swap = swap };
+
+    /// <summary>
+    /// The cancelled outcome. No undo travels with it: a cancellation is only observed while the
+    /// repository is still untouched, so offering to restore the backup would offer to restore a
+    /// state the repository is already in. The backup itself stays on disk for the Backups surface.
+    /// </summary>
+    internal static RewriteExecutionResult CancelledBeforeApply() =>
+        new() { Success = false, Cancelled = true };
 }
 
 /// <summary>Scratch tree helpers for the rewrite work area under AppPaths — deletion clears the read-only bit git sets on object files.</summary>
