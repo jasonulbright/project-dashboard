@@ -1057,6 +1057,8 @@ public partial class ProjectDetailPage
                         ToolTip = LinkDisclosure(target)
                     };
                     var launch = NavigationTarget(target);
+                    // Click is raised by the mouse and by Hyperlink.DoClick, so the keyboard
+                    // path launches through this handler rather than a second copy of it.
                     hyperlink.Click += (_, _) =>
                     {
                         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(launch) { UseShellExecute = true }); }
@@ -1073,6 +1075,48 @@ public partial class ProjectDetailPage
 
         if (lastIndex < text.Length)
             inlines.Add(new Run(text[lastIndex..]));
+    }
+
+    /// <summary>
+    /// The hyperlink a caret at <paramref name="position"/> addresses, or null when it
+    /// addresses none. A caret resting on the boundary either side of a link has the
+    /// enclosing paragraph as its parent, not the link, so both adjacent elements are
+    /// considered — otherwise the link is only reachable from strictly inside its text.
+    /// </summary>
+    internal static Hyperlink? HyperlinkAt(TextPointer? position)
+    {
+        if (position is null) return null;
+        return Enclosing(position.Parent)
+            ?? Enclosing(position.GetAdjacentElement(LogicalDirection.Forward) as DependencyObject)
+            ?? Enclosing(position.GetAdjacentElement(LogicalDirection.Backward) as DependencyObject);
+    }
+
+    private static Hyperlink? Enclosing(DependencyObject? node)
+    {
+        for (; node is not null; node = node switch
+             {
+                 FrameworkContentElement content => content.Parent,
+                 FrameworkElement element => element.Parent,
+                 _ => null,
+             })
+        {
+            if (node is Hyperlink link) return link;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Enter opens the link the caret addresses. A Hyperlink inside a RichTextBox never
+    /// takes keyboard focus — the text editor owns the keyboard and the caret is its
+    /// cursor — so without this a rendered markdown link is reachable by mouse only.
+    /// </summary>
+    private void RenderedText_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None) return;
+        if (sender is not System.Windows.Controls.RichTextBox rtb) return;
+        if (HyperlinkAt(rtb.CaretPosition) is not { } link) return;
+        link.DoClick();
+        e.Handled = true;
     }
 
     /// <summary>

@@ -433,10 +433,14 @@
                                      document receives mouse input at all: without it the
                                      rendered markdown link is styled as a link, carries its
                                      tooltip, and does nothing when clicked. IsReadOnly still
-                                     blocks editing. -->
+                                     blocks editing. The caret is the keyboard's cursor in a
+                                     RichTextBox, so it has to be visible for the reader to
+                                     steer Enter onto a link. -->
                                 <RichTextBox x:Name="ReadmeRichText"
                                              IsReadOnly="True"
                                              IsDocumentEnabled="True"
+                                             IsReadOnlyCaretVisible="True"
+                                             PreviewKeyDown="RenderedText_PreviewKeyDown"
                                              BorderThickness="0"
                                              Background="Transparent"
                                              FontFamily="Segoe UI"
@@ -454,6 +458,8 @@
                                 <RichTextBox x:Name="ChangelogRichText"
                                              IsReadOnly="True"
                                              IsDocumentEnabled="True"
+                                             IsReadOnlyCaretVisible="True"
+                                             PreviewKeyDown="RenderedText_PreviewKeyDown"
                                              BorderThickness="0"
                                              Background="Transparent"
                                              FontFamily="Segoe UI"
@@ -1220,6 +1226,8 @@
                                                   PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
                                         <RichTextBox x:Name="IssueConversationRich" IsReadOnly="True"
                                                      IsDocumentEnabled="True"
+                                                     IsReadOnlyCaretVisible="True"
+                                                     PreviewKeyDown="RenderedText_PreviewKeyDown"
                                                      BorderThickness="0" Background="Transparent"
                                                      FontFamily="Segoe UI" FontSize="13"
                                                      AutomationProperties.Name="Issue conversation" />
@@ -1543,6 +1551,8 @@
                                                   PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
                                         <RichTextBox x:Name="PullRequestConversationRich" IsReadOnly="True"
                                                      IsDocumentEnabled="True"
+                                                     IsReadOnlyCaretVisible="True"
+                                                     PreviewKeyDown="RenderedText_PreviewKeyDown"
                                                      BorderThickness="0" Background="Transparent"
                                                      FontFamily="Segoe UI" FontSize="13"
                                                      AutomationProperties.Name="Pull request conversation" />
@@ -2254,6 +2264,8 @@
                                                   PreviewMouseWheel="ScrollViewer_PreviewMouseWheel">
                                         <RichTextBox x:Name="ReleaseNotesRich" IsReadOnly="True"
                                                      IsDocumentEnabled="True"
+                                                     IsReadOnlyCaretVisible="True"
+                                                     PreviewKeyDown="RenderedText_PreviewKeyDown"
                                                      BorderThickness="0" Background="Transparent"
                                                      FontFamily="Segoe UI" FontSize="13"
                                                      AutomationProperties.Name="Release notes" />
