@@ -131,6 +131,25 @@ public class GitHubArgBuilderTests
     }
 
     [Fact]
+    public void ReleaseCreate_PinsTheCommitTheLocalTagNames()
+    {
+        // The tag the picker offered may not be on the remote yet. --target is what the
+        // automatic tag creation uses, so the remote tag lands on that commit instead of
+        // the default branch head.
+        Assert.Equal(
+            ["release", "create", "v1.0.0", "--title", "One", "--notes-file", "n.md",
+             "--target", "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3"],
+            GitHubService.BuildReleaseCreateArgs("v1.0.0", "One", "n.md", draft: false, prerelease: false,
+                targetSha: "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3"));
+    }
+
+    [Fact]
+    public void ReleaseCreate_WithNoResolvedCommit_OmitsTheTargetFlag()
+        => Assert.DoesNotContain("--target",
+            GitHubService.BuildReleaseCreateArgs("v1.0.0", "One", "n.md", draft: false, prerelease: false,
+                targetSha: ""));
+
+    [Fact]
     public void Visibility_CarriesConsequencesFlag()
     {
         Assert.Equal(
@@ -287,6 +306,48 @@ public class GitHubArgBuilderTests
         // gh selects assets with filepath.Match, which has no escape on Windows: the
         // pattern "build[1].zip" matches "build1.zip" and never the literal name.
         Assert.True(GitHubService.NeedsFullReleaseFetch(name));
+    }
+
+    [Theory]
+    [InlineData("setup.exe")]
+    [InlineData("build[1].zip")]
+    [InlineData("Project Dashboard 2.0.0.msi")]
+    public void PlainAssetNames_AreUsableAsAPathComponent(string name)
+        => Assert.True(GitHubService.IsPlainAssetFileName(name));
+
+    [Theory]
+    [InlineData(@"..\..\Users\me\.ssh\id_ed25519[1]")]
+    [InlineData("../../etc/hosts*")]
+    [InlineData(@"C:\Windows\System32\drivers\etc\hosts?")]
+    [InlineData(@"sub\build[1].zip")]
+    [InlineData("sub/build[1].zip")]
+    [InlineData(@"\\server\share\payload[1].exe")]
+    public void AssetNamesCarryingAPath_AreRefused(string name)
+    {
+        // The name comes from the release payload and is combined with the scratch
+        // directory on the glob-fallback path: a rooted or traversing name resolves
+        // outside the scratch and the move would relocate an unrelated local file.
+        Assert.False(GitHubService.IsPlainAssetFileName(name));
+    }
+
+    [Fact]
+    public async Task ATraversingGlobbedAssetName_IsRefusedBeforeAnythingIsFetched()
+    {
+        // The refusal has to land before the scratch fetch: past it, the move out of the
+        // scratch directory resolves outside it and relocates a local file to the
+        // reader's save destination.
+        var outside = Path.Combine(TestEnv.NewDir("asset-guard"), "keep.txt");
+        await File.WriteAllTextAsync(outside, "not an asset");
+        var destination = Path.Combine(TestEnv.NewDir("asset-guard-dest"), "setup.exe");
+        var name = Path.Combine("..", "..", "keep[1].txt");
+
+        var result = await new GitHubService(new SettingsService())
+            .DownloadReleaseAssetAsync("o/r", "v1.0.0", name, destination);
+
+        Assert.False(result.Success);
+        Assert.Contains("not a plain asset file name", result.FirstError);
+        Assert.True(File.Exists(outside));
+        Assert.False(File.Exists(destination));
     }
 
     [Theory]

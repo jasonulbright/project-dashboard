@@ -1017,7 +1017,8 @@ public class GitHubService(SettingsService settingsService)
     /// there from the current branch.
     /// </summary>
     public async Task<ProcessResult> CreateReleaseAsync(string repoPath, string tag, string title,
-        string notes, bool draft = false, bool prerelease = false, CancellationToken ct = default)
+        string notes, bool draft = false, bool prerelease = false, string targetSha = "",
+        CancellationToken ct = default)
     {
         // Notes travel via --notes-file: a command-line argument caps out (and mangles
         // quoting) long before real release notes do.
@@ -1026,7 +1027,7 @@ public class GitHubService(SettingsService settingsService)
         {
             await File.WriteAllTextAsync(notesFile, notes, ct);
             return await RunMutationAsync($"gh release create {tag}",
-                BuildReleaseCreateArgs(tag, title, notesFile, draft, prerelease), repoPath, ct: ct);
+                BuildReleaseCreateArgs(tag, title, notesFile, draft, prerelease, targetSha), repoPath, ct: ct);
         }
         finally
         {
@@ -1034,13 +1035,21 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
-    internal static List<string> BuildReleaseCreateArgs(string tag, string title, string notesFile, bool draft, bool prerelease)
+    /// <summary>
+    /// --target names the commit the tag is created from when the tag is not on the
+    /// remote yet; GitHub ignores it when the tag already exists there. Passing the
+    /// commit the local tag points at therefore pins the release to that commit in the
+    /// unpushed case and changes nothing in the pushed case.
+    /// </summary>
+    internal static List<string> BuildReleaseCreateArgs(string tag, string title, string notesFile,
+        bool draft, bool prerelease, string targetSha = "")
     {
         // --notes-file always present, even for empty notes: without any notes flag gh
         // falls into its interactive prompt, which GH_PROMPT_DISABLED turns into a failure.
         var args = new List<string> { "release", "create", tag, "--title", title, "--notes-file", notesFile };
         if (draft) args.Add("--draft");
         if (prerelease) args.Add("--prerelease");
+        if (targetSha.Length > 0) { args.Add("--target"); args.Add(targetSha); }
         return args;
     }
 
@@ -1094,8 +1103,8 @@ public class GitHubService(SettingsService settingsService)
     /// is there. gh selects assets by glob and Go's matcher has no escape on Windows, so a
     /// name carrying glob metacharacters cannot be expressed as a pattern that matches
     /// itself: those fall back to fetching the release into a scratch directory and moving
-    /// the exact name out of it. Both paths end with the asset at the requested path or a
-    /// failed result.
+    /// the exact name out of it, and that path refuses any name that is not a single path
+    /// component. Both paths end with the asset at the requested path or a failed result.
     /// </summary>
     public async Task<ProcessResult> DownloadReleaseAssetAsync(string repoSlug, string tag, string assetName,
         string destinationPath, CancellationToken ct = default)
@@ -1103,6 +1112,10 @@ public class GitHubService(SettingsService settingsService)
         if (!NeedsFullReleaseFetch(assetName))
             return await RunMutationAsync($"gh release download {tag} ({assetName})",
                 BuildAssetDownloadArgs(repoSlug, tag, assetName, destinationPath), timeout: LogFetchTimeout, ct: ct);
+
+        if (!IsPlainAssetFileName(assetName))
+            return new ProcessResult(1, "", $"{assetName} is not a plain asset file name — not downloading it.",
+                TimedOut: false);
 
         var scratch = Path.Combine(Path.GetTempPath(), $"pd-release-asset-{Guid.NewGuid():N}");
         try
@@ -1136,6 +1149,15 @@ public class GitHubService(SettingsService settingsService)
     /// </summary>
     internal static bool NeedsFullReleaseFetch(string assetName) =>
         assetName.AsSpan().IndexOfAny('*', '?', '[') >= 0;
+
+    /// <summary>
+    /// Whether the name is usable as a single path component. The name comes from the
+    /// release payload and the glob-fallback path combines it with a scratch directory:
+    /// a rooted or traversing name resolves outside that directory, and the move out of
+    /// it would relocate an unrelated local file to the reader's chosen destination.
+    /// </summary>
+    internal static bool IsPlainAssetFileName(string assetName) =>
+        assetName.Length > 0 && Path.GetFileName(assetName) == assetName;
 
     internal static List<string> BuildAssetDownloadArgs(string repoSlug, string tag, string assetName, string destinationPath) =>
         ["release", "download", tag, "--repo", repoSlug, "--pattern", assetName,

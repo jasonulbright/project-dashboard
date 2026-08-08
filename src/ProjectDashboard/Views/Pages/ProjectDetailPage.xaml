@@ -2041,6 +2041,20 @@
                                                   SelectedItem="{Binding NewReleaseTag}"
                                                   Width="260" HorizontalAlignment="Left" FontSize="12" Margin="0,0,0,4"
                                                   AutomationProperties.Name="Release tag" />
+                                        <TextBlock Text="A tag not yet pushed is created on the remote by publishing, on the commit it points at here."
+                                                   FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding AvailableTagNames.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                         <TextBlock Text="This repository has no tags — create one on the Branches tab first."
                                                    FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
                                                    Foreground="{StaticResource StatusWarnFg}">

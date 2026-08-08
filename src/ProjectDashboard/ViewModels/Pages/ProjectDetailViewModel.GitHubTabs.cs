@@ -86,6 +86,7 @@ public partial class ProjectDetailViewModel
         SelectedRelease = null;
         ReleaseComposeVisible = false;
         AvailableTagNames = [];
+        _releaseTagTargets.Clear();
         NewReleaseTag = null;
         NewReleaseTitle = "";
         NewReleaseBody = "";
@@ -142,6 +143,17 @@ public partial class ProjectDetailViewModel
 
     internal virtual Task<List<GitHubNotification>?> FetchNotificationsAsync(string slug)
         => _gitHubService.GetNotificationsAsync(slug);
+
+    internal virtual Task<List<TagInfo>> FetchReleaseTagsAsync(string repoPath)
+        => _gitService.GetTagsAsync(repoPath);
+
+    /// <summary>
+    /// Publishes the release. Overridable so the tag the picker resolved and the commit
+    /// it pins are observable without cutting a release on GitHub.
+    /// </summary>
+    internal virtual Task<ProcessResult> CreateReleaseRemoteAsync(string repoPath, string tag, string title,
+        string body, bool draft, bool prerelease, string targetSha)
+        => _gitHubService.CreateReleaseAsync(repoPath, tag, title, body, draft, prerelease, targetSha);
 
     /// <summary>
     /// The one mutation whose failure the caller inspects and whose success rewrites the
@@ -202,6 +214,9 @@ public partial class ProjectDetailViewModel
         WorkflowJobs = [];
         WorkflowJobsError = "";
         if (value is not null) _ = LoadWorkflowJobsAsync(value);
+        // No fetch starts for a cleared selection, so nothing else would ever take the
+        // spinner back down.
+        else WorkflowJobsLoading = false;
     }
 
     private async Task LoadWorkflowJobsAsync(WorkflowRun run)
@@ -209,6 +224,7 @@ public partial class ProjectDetailViewModel
         var slug = Slug;
         if (slug.Length == 0) return;
         var gen = _generation;
+        var fetch = ++_workflowJobsFetch;
         WorkflowJobsLoading = true;
         try
         {
@@ -223,7 +239,7 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
-            if (IsCurrent(gen)) WorkflowJobsLoading = false;
+            if (IsCurrent(gen) && _workflowJobsFetch == fetch) WorkflowJobsLoading = false;
         }
     }
 
@@ -327,19 +343,29 @@ public partial class ProjectDetailViewModel
     private void CancelNewRelease() => ReleaseComposeVisible = false;
 
     /// <summary>
-    /// The repository's own tags. A release is cut from a tag that already exists, so
-    /// the picker is the tag list and never a free-text box that would have gh create
-    /// a tag as a side effect of publishing.
+    /// The repository's own tags, with the commit each one names. The picker is that
+    /// list and never a free-text box, so the tag released from is always one this
+    /// repository actually holds; a tag not yet pushed is created on the remote by
+    /// publishing, at the commit recorded here.
     /// </summary>
     private async Task LoadReleaseTagsAsync()
     {
         var repo = RepoPath;
         if (repo.Length == 0) return;
         var gen = _generation;
-        var tags = await _gitService.GetTagsAsync(repo);
+        var tags = await FetchReleaseTagsAsync(repo);
         if (!IsCurrent(gen)) return;
         AvailableTagNames = new ObservableCollection<string>(tags.Select(t => t.Name));
+        _releaseTagTargets.Clear();
+        foreach (var tag in tags)
+            _releaseTagTargets[tag.Name] = tag.TargetSha;
     }
+
+    /// <summary>Tag names are byte-exact refs; two tags differing only in case are two tags.</summary>
+    private readonly Dictionary<string, string> _releaseTagTargets = new(StringComparer.Ordinal);
+
+    /// <summary>The commit the named tag points at, or null when the picker never resolved one.</summary>
+    internal string? ResolveReleaseTagTarget(string tag) => _releaseTagTargets.GetValueOrDefault(tag);
 
     [RelayCommand]
     private async Task SubmitNewRelease()
@@ -373,8 +399,9 @@ public partial class ProjectDetailViewModel
         var draft = NewReleaseDraft;
         var prerelease = NewReleasePrerelease;
         var gen = _generation;
+        var target = ResolveReleaseTagTarget(tag) ?? "";
         var ok = await RunGitHubOp(
-            () => _gitHubService.CreateReleaseAsync(repo, tag, title, body, draft, prerelease),
+            () => CreateReleaseRemoteAsync(repo, tag, title, body, draft, prerelease, target),
             $"Create release {tag}");
         if (ok && IsCurrent(gen))
         {
@@ -471,6 +498,7 @@ public partial class ProjectDetailViewModel
             return;
         }
         var gen = _generation;
+        var fetch = ++_repoSettingsFetch;
         RepoSettingsLoading = true;
         try
         {
@@ -488,7 +516,7 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
-            if (IsCurrent(gen)) RepoSettingsLoading = false;
+            if (IsCurrent(gen) && _repoSettingsFetch == fetch) RepoSettingsLoading = false;
         }
     }
 
@@ -670,6 +698,11 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = ProjectSwitchedNotice("Visibility change");
             return;
         }
+        if (IsBusy)
+        {
+            GitHubStatusText = BusyGateNotice("Visibility change");
+            return;
+        }
 
         var result = await RunGitHubOpResult(() => _gitHubService.SetRepoVisibilityAsync(slug, token),
             "Change visibility");
@@ -692,10 +725,15 @@ public partial class ProjectDetailViewModel
     /// <summary>
     /// A visibility change holds a server-side lock for several seconds; a follow-on
     /// change inside that window comes back as HTTP 422 or 409, which reads as an
-    /// unexplained failure unless it is named.
+    /// unexplained failure unless it is named. The status code alone does not identify
+    /// it — an organization policy refusal and an archived repository are 422 too, and
+    /// the code can appear inside an echoed URL — so the lock wording is used only when
+    /// the server also said the change is in progress. Every other failure carries the
+    /// server's own text, which is the only sentence that says what to do about it.
     /// </summary>
     internal static string VisibilityFailureMessage(string error) =>
-        error.Contains("422", StringComparison.Ordinal) || error.Contains("409", StringComparison.Ordinal)
+        (error.Contains("422", StringComparison.Ordinal) || error.Contains("409", StringComparison.Ordinal)) &&
+        error.Contains("in progress", StringComparison.OrdinalIgnoreCase)
             ? "Change visibility failed: a previous visibility change is still in progress — retry shortly."
             : $"Change visibility failed: {error}";
 
@@ -721,6 +759,7 @@ public partial class ProjectDetailViewModel
             return;
         }
         var gen = _generation;
+        var fetch = ++_notificationsFetch;
         NotificationsLoading = true;
         try
         {
@@ -736,7 +775,7 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
-            if (IsCurrent(gen)) NotificationsLoading = false;
+            if (IsCurrent(gen) && _notificationsFetch == fetch) NotificationsLoading = false;
         }
     }
 
@@ -766,9 +805,7 @@ public partial class ProjectDetailViewModel
             return;
         }
         var gen = _generation;
-        if (!await ConfirmAsync("Mark all read?",
-                $"Mark all {count} notification(s) on {slug} as read?\n\nThis cannot be undone from here.",
-                "Mark all read")) return;
+        if (!await ConfirmAsync("Mark all read?", MarkAllReadMessage(slug, count), "Mark all read")) return;
         if (!IsCurrent(gen))
         {
             GitHubStatusText = ProjectSwitchedNotice("Mark all read");
@@ -777,6 +814,15 @@ public partial class ProjectDetailViewModel
         var ok = await RunGitHubOp(() => _gitHubService.MarkRepoNotificationsReadAsync(slug), "Mark all read");
         if (ok && IsCurrent(gen)) await LoadNotifications();
     }
+
+    /// <summary>
+    /// The list is one page of threads; the call clears every thread on the repository.
+    /// The confirmation names the repository-wide scope rather than the visible count,
+    /// which would understate what is being agreed to.
+    /// </summary>
+    internal static string MarkAllReadMessage(string slug, int shown) =>
+        $"Mark every unread notification thread on {slug} as read?\n\n" +
+        $"This clears threads beyond the {shown} shown here. It cannot be undone from here.";
 
     [RelayCommand]
     private void OpenNotification(GitHubNotification? notification)
@@ -828,6 +874,11 @@ public partial class ProjectDetailViewModel
             GitHubStatusText = ProjectSwitchedNotice("Repository delete");
             return;
         }
+        if (IsBusy)
+        {
+            GitHubStatusText = BusyGateNotice("Repository delete");
+            return;
+        }
 
         var localPath = RepoPath;
         var result = await RunGitHubOpResult(() => DeleteRepoRemoteAsync(slug), $"Delete {slug}");
@@ -852,8 +903,12 @@ public partial class ProjectDetailViewModel
         }
         RepoSettings = null;
         RepoSettingsLoaded = false;
+        // The selections outlive their lists and keep their detail panes and row
+        // commands armed against a repository that is gone.
+        SelectedRelease = null;
         Releases = [];
         ReleasesLoaded = false;
+        SelectedWorkflowRun = null;
         WorkflowRuns = [];
         WorkflowRunsLoaded = false;
         Notifications = [];
@@ -882,6 +937,23 @@ public partial class ProjectDetailViewModel
     }
 
     // ── Shared plumbing ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Identifies the newest fetch of a surface that shows a loading flag. A superseded
+    /// fetch clearing the flag in its finally flashes the empty-state text over a fetch
+    /// still in flight, so only the newest fetch may clear it.
+    /// </summary>
+    private int _workflowJobsFetch;
+    private int _repoSettingsFetch;
+    private int _notificationsFetch;
+
+    /// <summary>
+    /// Says a typed confirmation was spent on an op that never started because another
+    /// gh op held the gate when the dialog closed. Written by the caller after the
+    /// generation guard, so a project switch is reported as a switch and not as this.
+    /// </summary>
+    internal static string BusyGateNotice(string op) =>
+        $"{op} cancelled — another GitHub operation was already running when the dialog closed.";
 
     /// <summary>
     /// The exact string handed to the shell for a URL that came from a gh payload, or

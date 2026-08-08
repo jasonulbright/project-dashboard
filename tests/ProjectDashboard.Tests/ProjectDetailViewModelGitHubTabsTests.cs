@@ -108,6 +108,86 @@ public class ProjectDetailViewModelGitHubTabsTests
     }
 
     [Fact]
+    public async Task ASupersededJobFetch_LeavesTheLiveFetchsSpinnerUp()
+    {
+        // The first fetch returns after the reader has moved to another run. Clearing the
+        // flag there flashes the empty-state text over a run that is still loading.
+        var first = new TaskCompletionSource<List<WorkflowJob>?>();
+        var second = new TaskCompletionSource<List<WorkflowJob>?>();
+        var vm = new StubTabsViewModel { Runs = [Run(1), Run(2)], JobGates = new Queue<TaskCompletionSource<List<WorkflowJob>?>>([first, second]) };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.LoadWorkflowRunsCommand.ExecuteAsync(null);
+
+        vm.SelectedWorkflowRun = vm.WorkflowRuns[0];
+        vm.SelectedWorkflowRun = vm.WorkflowRuns[1];
+        first.SetResult([new WorkflowJob { Id = 1, Name = "stale" }]);
+
+        Assert.True(vm.WorkflowJobsLoading);
+        Assert.Empty(vm.WorkflowJobs);
+
+        second.SetResult([new WorkflowJob { Id = 2, Name = "live" }]);
+
+        Assert.False(vm.WorkflowJobsLoading);
+        Assert.Equal("live", Assert.Single(vm.WorkflowJobs).Name);
+    }
+
+    [Fact]
+    public async Task DeselectingTheRun_TakesTheSpinnerDownWithIt()
+    {
+        var gate = new TaskCompletionSource<List<WorkflowJob>?>();
+        var vm = new StubTabsViewModel { Runs = [Run(1)], JobGates = new Queue<TaskCompletionSource<List<WorkflowJob>?>>([gate]) };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.LoadWorkflowRunsCommand.ExecuteAsync(null);
+        vm.SelectedWorkflowRun = vm.WorkflowRuns[0];
+
+        vm.SelectedWorkflowRun = null;
+
+        Assert.False(vm.WorkflowJobsLoading);
+    }
+
+    [Fact]
+    public async Task ASupersededSettingsFetch_LeavesTheLiveFetchsSpinnerUp()
+    {
+        var first = new TaskCompletionSource<RepoSettings?>();
+        var second = new TaskCompletionSource<RepoSettings?>();
+        var vm = new StubTabsViewModel { SettingsGates = new Queue<TaskCompletionSource<RepoSettings?>>([first, second]) };
+        await vm.SetProjectAsync(RemoteProject());
+
+        var stale = vm.LoadRepoSettingsCommand.ExecuteAsync(null);
+        var live = vm.LoadRepoSettingsCommand.ExecuteAsync(null);
+        first.SetResult(new RepoSettings { DefaultBranch = "main" });
+
+        Assert.True(vm.RepoSettingsLoading);
+
+        second.SetResult(new RepoSettings { DefaultBranch = "main" });
+        await stale;
+        await live;
+
+        Assert.False(vm.RepoSettingsLoading);
+    }
+
+    [Fact]
+    public async Task ASupersededNotificationFetch_LeavesTheLiveFetchsSpinnerUp()
+    {
+        var first = new TaskCompletionSource<List<GitHubNotification>?>();
+        var second = new TaskCompletionSource<List<GitHubNotification>?>();
+        var vm = new StubTabsViewModel { NotificationGates = new Queue<TaskCompletionSource<List<GitHubNotification>?>>([first, second]) };
+        await vm.SetProjectAsync(RemoteProject());
+
+        var stale = vm.LoadNotificationsCommand.ExecuteAsync(null);
+        var live = vm.LoadNotificationsCommand.ExecuteAsync(null);
+        first.SetResult([]);
+
+        Assert.True(vm.NotificationsLoading);
+
+        second.SetResult([]);
+        await stale;
+        await live;
+
+        Assert.False(vm.NotificationsLoading);
+    }
+
+    [Fact]
     public async Task RefreshingTheRunList_KeepsTheSelectedRun()
     {
         // Every refresh builds new instances; dropping the selection would blank the
@@ -220,8 +300,8 @@ public class ProjectDetailViewModelGitHubTabsTests
     [Fact]
     public async Task SubmitRelease_WithATagThatIsNotInTheRepository_RefusesBeforeSpawningGh()
     {
-        // gh would create the tag as a side effect of publishing; a release is cut from
-        // a tag that already exists.
+        // Publishing creates the tag on the remote when it is missing there, so a name
+        // the repository does not hold would become a tag on the default branch head.
         var vm = new StubTabsViewModel();
         await vm.SetProjectAsync(RemoteProject());
         vm.AvailableTagNames = ["v1.0.0"];
@@ -246,6 +326,59 @@ public class ProjectDetailViewModelGitHubTabsTests
         await vm.SubmitNewReleaseCommand.ExecuteAsync(null);
 
         Assert.Equal("Enter a release title first.", vm.GitHubStatusText);
+    }
+
+    [Fact]
+    public async Task SubmitRelease_PinsTheCommitTheSelectedTagNames()
+    {
+        // The picker lists LOCAL tags. An unpushed one is created on the remote by
+        // publishing, and without the commit it would be created on the default branch
+        // head — a release pointing at code the tag never named.
+        var vm = new StubTabsViewModel
+        {
+            Tags = [new TagInfo { Name = "v1.0.0", TargetSha = "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3" },
+                    new TagInfo { Name = "v0.9.0", TargetSha = "1111111111111111111111111111111111111111" }]
+        };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.ShowNewReleaseCommand.ExecuteAsync(null);
+        vm.NewReleaseTag = "v1.0.0";
+        vm.NewReleaseTitle = "One";
+
+        await vm.SubmitNewReleaseCommand.ExecuteAsync(null);
+
+        Assert.Equal("v1.0.0", vm.CreatedTag);
+        Assert.Equal("9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3", vm.CreatedTargetSha);
+    }
+
+    [Fact]
+    public async Task SubmitRelease_WithNoCommitResolvedForTheTag_SendsNoTarget()
+    {
+        var vm = new StubTabsViewModel { Tags = [new TagInfo { Name = "v1.0.0", TargetSha = "" }] };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.ShowNewReleaseCommand.ExecuteAsync(null);
+        vm.NewReleaseTag = "v1.0.0";
+        vm.NewReleaseTitle = "One";
+
+        await vm.SubmitNewReleaseCommand.ExecuteAsync(null);
+
+        Assert.Equal("v1.0.0", vm.CreatedTag);
+        Assert.Equal("", vm.CreatedTargetSha);
+    }
+
+    [Fact]
+    public async Task ProjectSwitch_DropsTheResolvedTagCommits()
+    {
+        var vm = new StubTabsViewModel
+        {
+            Tags = [new TagInfo { Name = "v1.0.0", TargetSha = "9f1c0de4a2b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3" }]
+        };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.ShowNewReleaseCommand.ExecuteAsync(null);
+
+        await vm.SetProjectAsync(RemoteProject());
+
+        Assert.Empty(vm.AvailableTagNames);
+        Assert.Null(vm.ResolveReleaseTagTarget("v1.0.0"));
     }
 
     [Fact]
@@ -470,9 +603,21 @@ public class ProjectDetailViewModelGitHubTabsTests
 
     [Theory]
     [InlineData("HTTP 422: Visibility change already in progress")]
-    [InlineData("HTTP 409: conflict")]
+    [InlineData("HTTP 409: a visibility change is IN PROGRESS for this repository")]
     public void VisibilityFailure_DuringTheServerLock_IsNamedRatherThanGeneric(string error)
         => Assert.Contains("still in progress — retry shortly",
+            ProjectDetailViewModel.VisibilityFailureMessage(error));
+
+    [Theory]
+    // An organization policy refusal is a 422 the reader has to read: relabelling it as
+    // the server lock hides the only sentence that says what to do about it.
+    [InlineData("HTTP 422: Organization members are not permitted to make repositories public")]
+    [InlineData("HTTP 422: Repository is archived and cannot be modified")]
+    [InlineData("HTTP 409: reference already exists")]
+    // The code appears only inside an echoed URL — no 4xx status at all.
+    [InlineData("HTTP 403: Forbidden (https://api.github.com/repos/o/r-422/x)")]
+    public void VisibilityFailure_ForAnother4xx_CarriesTheServerMessage(string error)
+        => Assert.Equal($"Change visibility failed: {error}",
             ProjectDetailViewModel.VisibilityFailureMessage(error));
 
     [Fact]
@@ -565,6 +710,17 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Equal(0, vm.Confirms);
     }
 
+    [Fact]
+    public void MarkAllReadConfirm_NamesTheWholeRepositoryNotThePageShown()
+    {
+        // The list is one page; the call clears every thread on the repository. A count
+        // taken from the visible rows would understate what the reader is agreeing to.
+        var message = ProjectDetailViewModel.MarkAllReadMessage("o/r", 50);
+        Assert.Contains("every unread notification thread on o/r", message);
+        Assert.Contains("clears threads beyond the 50 shown here", message);
+        Assert.DoesNotContain("Mark all 50", message);
+    }
+
     // ── Danger zone (G-09) ──────────────────────────────────────────────────────
 
     [Fact]
@@ -650,10 +806,17 @@ public class ProjectDetailViewModelGitHubTabsTests
             DangerZone = true,
             TypedConfirmation = "o/r",
             Settings = new RepoSettings { Name = "r" },
+            Runs = [Run(1)],
+            Jobs = [],
+            SeedReleases = [new Release { TagName = "v1.0.0" }],
             DeleteResult = new ProcessResult(0, "", "", TimedOut: false)
         };
         await vm.SetProjectAsync(project);
         await vm.LoadRepoSettingsCommand.ExecuteAsync(null);
+        await vm.LoadWorkflowRunsCommand.ExecuteAsync(null);
+        await vm.LoadReleasesCommand.ExecuteAsync(null);
+        vm.SelectedWorkflowRun = vm.WorkflowRuns[0];
+        vm.SelectedRelease = vm.Releases[0];
 
         await vm.DeleteRepoCommand.ExecuteAsync(null);
 
@@ -669,6 +832,42 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Null(vm.RepoSettings);
         Assert.False(vm.RepoSettingsLoaded);
         Assert.False(vm.DeleteScopeHintVisible);
+        // A live selection keeps its detail pane and its row commands armed against a
+        // repository that is gone.
+        Assert.Null(vm.SelectedRelease);
+        Assert.Null(vm.SelectedWorkflowRun);
+    }
+
+    [Fact]
+    public async Task DeleteRepo_WithTheGateTakenWhileTheDialogWasOpen_SaysTheConfirmationWasSpent()
+    {
+        // The typed slug is spent the moment the dialog closes. Dropping it silently
+        // leaves a reader who typed the name watching a button that did nothing.
+        var vm = new StubTabsViewModel { DangerZone = true, TypedConfirmation = "o/r", TakeGateWhilePrompting = true };
+        await vm.SetProjectAsync(RemoteProject());
+
+        await vm.DeleteRepoCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.DeleteAttempts);
+        Assert.Equal(ProjectDetailViewModel.BusyGateNotice("Repository delete"), vm.GitHubStatusText);
+    }
+
+    [Fact]
+    public async Task VisibilityChange_WithTheGateTakenWhileTheDialogWasOpen_SaysTheConfirmationWasSpent()
+    {
+        var vm = new StubTabsViewModel
+        {
+            Settings = new RepoSettings { Visibility = "private" },
+            TypedConfirmation = "o/r",
+            TakeGateWhilePrompting = true
+        };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.LoadRepoSettingsCommand.ExecuteAsync(null);
+        vm.SelectedRepoVisibility = RepoVisibility.Public;
+
+        await vm.ChangeRepoVisibilityCommand.ExecuteAsync(null);
+
+        Assert.Equal(ProjectDetailViewModel.BusyGateNotice("Visibility change"), vm.GitHubStatusText);
     }
 
     [Fact]
@@ -781,15 +980,26 @@ public class ProjectDetailViewModelGitHubTabsTests
         public List<Release>? SeedReleases { get; init; }
         public RepoSettings? Settings { get; init; }
         public List<GitHubNotification>? SeedNotifications { get; init; }
+        public List<TagInfo> Tags { get; init; } = [];
         public string? SavePath { get; init; }
         public string? TypedConfirmation { get; init; }
         public ProcessResult DeleteResult { get; init; } = new(0, "", "", TimedOut: false);
         public bool DangerZone { get; set; }
 
+        /// <summary>Takes the busy gate from inside the typed prompt, as a mutation landing while the dialog pumps does.</summary>
+        public bool TakeGateWhilePrompting { get; init; }
+
+        /// <summary>Hand-completed fetches, in call order, for the overlapping-load cases.</summary>
+        public Queue<TaskCompletionSource<List<WorkflowJob>?>>? JobGates { get; init; }
+        public Queue<TaskCompletionSource<RepoSettings?>>? SettingsGates { get; init; }
+        public Queue<TaskCompletionSource<List<GitHubNotification>?>>? NotificationGates { get; init; }
+
         public int RunFetches { get; private set; }
         public int TextPrompts { get; private set; }
         public int Confirms { get; private set; }
         public int DeleteAttempts { get; private set; }
+        public string? CreatedTag { get; private set; }
+        public string? CreatedTargetSha { get; private set; }
         public List<string> Opened { get; } = [];
 
         internal override bool ReadDangerZoneEnabled() => DangerZone;
@@ -801,14 +1011,25 @@ public class ProjectDetailViewModelGitHubTabsTests
         }
 
         internal override Task<List<WorkflowJob>?> FetchWorkflowJobsAsync(string slug, long runId)
-            => Task.FromResult(Jobs);
+            => JobGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Jobs);
 
         internal override Task<List<Release>?> FetchReleasesAsync(string slug) => Task.FromResult(SeedReleases);
 
-        internal override Task<RepoSettings?> FetchRepoSettingsAsync(string slug) => Task.FromResult(Settings);
+        internal override Task<RepoSettings?> FetchRepoSettingsAsync(string slug)
+            => SettingsGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Settings);
 
         internal override Task<List<GitHubNotification>?> FetchNotificationsAsync(string slug)
-            => Task.FromResult(SeedNotifications);
+            => NotificationGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(SeedNotifications);
+
+        internal override Task<List<TagInfo>> FetchReleaseTagsAsync(string repoPath) => Task.FromResult(Tags);
+
+        internal override Task<ProcessResult> CreateReleaseRemoteAsync(string repoPath, string tag, string title,
+            string body, bool draft, bool prerelease, string targetSha)
+        {
+            CreatedTag = tag;
+            CreatedTargetSha = targetSha;
+            return Task.FromResult(new ProcessResult(0, "", "", TimedOut: false));
+        }
 
         internal override Task<ProcessResult> DeleteRepoRemoteAsync(string slug)
         {
@@ -819,6 +1040,7 @@ public class ProjectDetailViewModelGitHubTabsTests
         internal override Task<string?> PromptForTextAsync(string title, string message, string confirmLabel)
         {
             TextPrompts++;
+            if (TakeGateWhilePrompting) IsBusy = true;
             return Task.FromResult(TypedConfirmation);
         }
 
