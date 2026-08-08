@@ -92,4 +92,18 @@ internal static class Git
     /// <summary>Runs git expecting failure to be possible (e.g. a conflicting merge); returns the result.</summary>
     public static Task<ProcessResult> TryRunAsync(string workDir, params string[] args) =>
         ProcessRunner.RunAsync("git", args, workDir, TimeSpan.FromSeconds(60));
+
+    /// <summary>
+    /// Runs git with a stdin payload, throwing on failure. Building a few hundred commits
+    /// with one `fast-import` stream costs one process; the same history through add/commit
+    /// pairs costs hundreds and dominates the test run.
+    /// </summary>
+    public static async Task<string> RunWithStdinAsync(string workDir, string stdin, params string[] args)
+    {
+        var result = await ProcessRunner.RunWithInputAsync("git", args, stdin, workDir, TimeSpan.FromSeconds(120));
+        if (!result.Success)
+            throw new InvalidOperationException(
+                $"fixture git {string.Join(' ', args)} failed in {workDir}: {result.FirstError}");
+        return result.StdOut;
+    }
 }
