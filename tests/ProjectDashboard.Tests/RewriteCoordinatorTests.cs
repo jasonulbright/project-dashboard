@@ -389,6 +389,66 @@ public class RewriteCoordinatorTests
     }
 
     [Fact]
+    public async Task ApplySwap_RewrittenPathIsPastMaxPath_RefusesBeforeAnyRefMoves()
+    {
+        using var f = NewFixture();
+        f.Write("a.txt", "clean content\n");
+        f.CommitAll("one");
+        var before = RefState(f.SourcePath);
+
+        // Every component is legal and under the NTFS 255-character name cap, so only the
+        // whole-path budget can catch this. A bare repo stores it; `reset --hard` cannot
+        // write it while core.longpaths is off.
+        var deep = string.Join('/', Enumerable.Repeat(new string('d', 60), 5)) + "/leaf.txt";
+        Assert.True(deep.Length > 260, $"fixture path is only {deep.Length} characters");
+        const string content = "payload\n";
+        const string message = "crafted commit\n";
+        var stream =
+            $"blob\nmark :1\ndata {Encoding.UTF8.GetByteCount(content)}\n{content}" +
+            "commit refs/heads/main\nmark :2\n" +
+            "author T <t@t> 1700000000 +0000\ncommitter T <t@t> 1700000000 +0000\n" +
+            $"data {message.Length}\n{message}" +
+            $"M 100644 :1 {deep}\n\n";
+        var bare = CraftBare(stream);
+
+        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var result = await swap.ApplySwapAsync(f.SourcePath, bare);
+
+        Assert.False(result.Success);
+        Assert.Contains("check out", result.RefusalReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("259-character", result.RefusalReason, StringComparison.Ordinal);
+        Assert.Equal(before, RefState(f.SourcePath));
+        _output.WriteLine($"MAX_PATH pre-flight refusal: {result.RefusalReason}");
+    }
+
+    [Fact]
+    public async Task ApplySwap_LongPathsEnabled_AcceptsAPathPastMaxPath()
+    {
+        using var f = NewFixture();
+        f.Write("a.txt", "clean content\n");
+        f.CommitAll("one");
+        f.Git("config", "core.longpaths", "true");
+
+        var deep = string.Join('/', Enumerable.Repeat(new string('d', 60), 5)) + "/leaf.txt";
+        const string content = "payload\n";
+        const string message = "crafted commit\n";
+        var stream =
+            $"blob\nmark :1\ndata {Encoding.UTF8.GetByteCount(content)}\n{content}" +
+            "commit refs/heads/main\nmark :2\n" +
+            "author T <t@t> 1700000000 +0000\ncommitter T <t@t> 1700000000 +0000\n" +
+            $"data {message.Length}\n{message}" +
+            $"M 100644 :1 {deep}\n\n";
+        var bare = CraftBare(stream);
+
+        var swap = new SwapService(new GitService(), GitGuard.GitExe);
+        var result = await swap.ApplySwapAsync(f.SourcePath, bare);
+
+        // The guard must not refuse what git can actually write; the swap goes through.
+        Assert.True(result.Success, result.RefusalReason);
+        _output.WriteLine("core.longpaths=true lifts the whole-path budget");
+    }
+
+    [Fact]
     public async Task ApplySwap_UpdateRefTransactionFails_LeavesEverySourceRefUnchanged()
     {
         using var f = NewFixture();

@@ -90,9 +90,11 @@ public class SwapService
             return SwapResult.Refused($"could not read refs from the rewrite target '{tempBareRepo}'");
 
         // (b) NTFS pre-scan BEFORE any real ref moves: a mid-swap `reset --hard` that fails
-        // on an illegal name would leave refs advanced past a tree the working copy cannot
-        // hold. Scanning every rewritten tree up front makes that impossible.
-        if (await FirstUncheckoutablePathAsync(tempBareRepo, desired, ct) is { } bad)
+        // on an illegal name — or on a path past MAX_PATH — would leave refs advanced past a
+        // tree the working copy cannot hold. Scanning every rewritten tree up front makes that
+        // impossible.
+        var pathBudget = await CheckoutPathBudgetAsync(sourceRepo, ct);
+        if (await FirstUncheckoutablePathAsync(tempBareRepo, desired, pathBudget, ct) is { } bad)
             return SwapResult.Refused($"rewritten path '{bad.Path}' can never check out on Windows: {bad.Reason}");
 
         // (c) fsck the temp bare: a corrupt object graph must never be fetched into the source.
@@ -247,9 +249,26 @@ public class SwapService
         return new HeadState(oid.StdOut.Trim(), null);
     }
 
+    /// <summary>
+    /// Characters a repo-relative path may occupy in <paramref name="sourceRepo"/>'s working tree.
+    /// The budget depends on the checkout's own location, so it is read from the source rather than
+    /// assumed; an unreadable toplevel or config falls back to the strict MAX_PATH reading, which
+    /// refuses more than it must but never lets a path through that the reset would fail on.
+    /// </summary>
+    private async Task<int> CheckoutPathBudgetAsync(string sourceRepo, CancellationToken ct)
+    {
+        var longPaths = await RunAsync(sourceRepo, ["config", "--type=bool", "--get", "core.longpaths"], RefTimeout, ct);
+        if (longPaths.Success && longPaths.StdOut.Trim() == "true")
+            return int.MaxValue;
+
+        var toplevel = await RunAsync(sourceRepo, ["rev-parse", "--show-toplevel"], RefTimeout, ct);
+        var root = toplevel.Success ? toplevel.StdOut.Trim() : "";
+        return WindowsPathGuard.BudgetFor(root.Length > 0 ? root : System.IO.Path.GetFullPath(sourceRepo), longPathsEnabled: false);
+    }
+
     /// <summary>Scans every rewritten tree for a path a Windows checkout could never realize. Tag-of-blob/tree refs carry no tree and are skipped.</summary>
     private async Task<(string Path, string Reason)?> FirstUncheckoutablePathAsync(
-        string tempBareRepo, IReadOnlyDictionary<string, string> refs, CancellationToken ct)
+        string tempBareRepo, IReadOnlyDictionary<string, string> refs, int pathBudget, CancellationToken ct)
     {
         var scanned = new HashSet<string>(StringComparer.Ordinal);
         foreach (var oid in refs.Values)
@@ -262,7 +281,7 @@ public class SwapService
             if (!lsTree.Success)
                 continue;
             var paths = lsTree.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(p => p.TrimEnd('\r'));
-            if (WindowsPathGuard.FirstUncheckoutable(paths) is { } bad)
+            if (WindowsPathGuard.FirstUncheckoutable(paths, pathBudget) is { } bad)
                 return bad;
         }
         return null;
