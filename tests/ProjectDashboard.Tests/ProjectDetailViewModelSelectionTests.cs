@@ -347,6 +347,26 @@ public class ProjectDetailViewModelSelectionTests
         Assert.False(vm.UndoOfferVisible);
     }
 
+    /// <summary>
+    /// Unstaging everything is the inverse of staging everything only from an empty index: it
+    /// clears whatever else was staged first, which the offer would be claiming to restore. The
+    /// offer is withheld rather than reworded, because no single command reverses the operation.
+    /// </summary>
+    [Fact]
+    public async Task StagingEverythingOverAStagedFile_OffersNothing()
+    {
+        using var repo = await ThreeEditedFilesAsync("vm-undo-stageall-dirty");
+        await repo.GitAsync("add", "b.txt");
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+        Assert.NotEmpty(vm.StagedFiles);
+
+        await vm.StageAllCommand.ExecuteAsync(null);
+
+        Assert.Equal("Stage all done.", vm.SyncStatusText);
+        Assert.Equal(3, vm.StagedFiles.Count);
+        Assert.False(vm.UndoOfferVisible);
+    }
+
     [Fact]
     public async Task UnstagingEverything_OffersToStageItAgain()
     {

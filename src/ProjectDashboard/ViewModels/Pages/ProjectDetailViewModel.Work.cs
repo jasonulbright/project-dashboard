@@ -255,7 +255,12 @@ public partial class ProjectDetailViewModel
         if (IsBusy) { SyncStatusText = BusyNotice("Stage all"); return; }
         var repo = RepoPath;
         var gen = _generation;
-        if (await RunOp(r => _gitService.StageAllAsync(r), "Stage all", repo, gen) && IsCurrent(gen))
+        // `git restore --staged .` clears the whole index, not the paths `git add -A` just added
+        // to it. Content staged before this ran would go with them, so the offer stands only
+        // where the index was empty and unstaging everything is the exact inverse.
+        var indexWasEmpty = StagedFiles.Count == 0;
+        if (await RunOp(r => _gitService.StageAllAsync(r), "Stage all", repo, gen) && IsCurrent(gen)
+            && indexWasEmpty)
             OfferUndo("Unstage all", "Unstage all", repo, r => _gitService.UnstageAllAsync(r));
     }
 

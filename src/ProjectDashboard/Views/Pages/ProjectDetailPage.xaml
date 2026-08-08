@@ -382,12 +382,13 @@
                                Visibility="{Binding StaleLockRetryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                Command="{Binding RemoveStaleLockAndRetryCommand}" />
                     <!-- The inverse of what just finished, beside the line reporting it. Only
-                         reversible operations put one here. -->
+                         reversible operations put one here, and the label names the action the
+                         button runs — the name it is read out under says no more than that. -->
                     <ui:Button Content="{Binding UndoOfferLabel}" FontSize="12" Padding="10,4" Margin="10,0,0,0"
                                VerticalAlignment="Center"
                                Visibility="{Binding UndoOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                Command="{Binding RunUndoOfferCommand}"
-                               AutomationProperties.Name="Reverse the operation that just finished" />
+                               AutomationProperties.Name="{Binding UndoOfferLabel}" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                     <ui:Button Content="Fetch" FontSize="12" Padding="10,4" Margin="0,0,6,0"

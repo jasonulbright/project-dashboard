@@ -149,7 +149,8 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// An offer stands only where ONE git command puts the paths the operation named back the
-    /// way they were: stage and unstage, in either direction, whole-tree or by selection.
+    /// way they were: stage and unstage by selection, in either direction, and whole-tree only
+    /// where the whole-tree command's inverse touches nothing else.
     /// Nothing irreversible is offered one — a discard, a stash drop, a branch delete removes
     /// content no command can reconstruct, and an "undo" beside them would promise a recovery
     /// that does not exist. Their confirmation is what carries the weight instead.
