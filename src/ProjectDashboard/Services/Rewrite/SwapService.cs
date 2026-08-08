@@ -117,6 +117,9 @@ public class SwapService
         var scratch = $"refs/pd-swap/{Guid.NewGuid():N}";
         try
         {
+            // A cancelled fetch can leave a partial .git/objects/pack/tmp_pack_* behind. It is
+            // unreferenced, reclaimed by git gc, and moves no ref, commit, or tracked file — so
+            // the cancelled outcome's claim that nothing was touched still holds.
             var fetch = await RunAsync(sourceRepo,
             [
                 "-c", "transfer.fsckObjects=true", "fetch", "--no-tags", "--no-write-fetch-head", "--quiet",

@@ -38,7 +38,7 @@ public class BackupsSurfaceTests
         BackupService? backups = null,
         RewriteRecoveryService? recovery = null,
         RepoBusyRegistry? busy = null) =>
-        new(null!, new GitService(), null!, null, busy, backups, recovery);
+        new(null!, new GitService(), null!, null, busy, backups: backups, recovery: recovery);
 
     private static async Task<RewriteRecoveryService> DetectedRecoveryAsync(RewriteJournalEntry entry)
     {
