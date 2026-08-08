@@ -74,7 +74,7 @@ The desktop client release — the dashboard becomes a full local git client.
 - **Sync All** -- fetches every clean repo, fast-forwards the ones behind and pushes the ones ahead; dirty, diverged, detached, and conflicted repos are skipped and reported
 - **Command palette** (Ctrl+K) -- fuzzy-jump to any project or action
 - **Auto-refresh** -- a debounced file watcher updates a card within a couple of seconds of an on-disk edit, commit, or branch switch (toggle in Settings)
-- **Remote discovery** (ROADMAP v1.1) -- your GitHub repos with no local clone appear as one-click-cloneable "Cloud" cards (toggle in Settings)
+- **Remote discovery** -- your GitHub repos with no local clone appear as one-click-cloneable "Cloud" cards (toggle in Settings)
 - Cards now show the current branch, ahead/behind, and a loud attention state for conflict / mid-operation / detached repos
 - `PD_DATA_DIR` environment variable relocates all app state under one directory (portable mode)
 

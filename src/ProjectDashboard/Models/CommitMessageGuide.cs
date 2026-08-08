@@ -1,7 +1,7 @@
 namespace ProjectDashboard.Models;
 
 /// <summary>
-/// What the commit box says about the message being typed (X-05). Guidance only: git accepts
+/// What the commit box says about the message being typed. Guidance only: git accepts
 /// any of these messages, so nothing here blocks a commit — an over-long subject is reported,
 /// never truncated or refused.
 /// </summary>
