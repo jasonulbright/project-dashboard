@@ -108,4 +108,33 @@ public class ProjectDetailTabsTests
     {
         Assert.Equal(DetailTabLoad.None, ProjectDetailTabs.LoadForTab(tab, Nothing));
     }
+
+    [Theory]
+    [InlineData(DetailTab.Overview, 0)]
+    [InlineData(DetailTab.History, 1)]
+    [InlineData(DetailTab.Repo, 2)]
+    public void IndexOfTab_FindsTheTabByItsTag(DetailTab tab, int expected)
+    {
+        IEnumerable<DetailTab?> tags = [DetailTab.Overview, DetailTab.History, DetailTab.Repo];
+
+        Assert.Equal(expected, ProjectDetailTabs.IndexOfTab(tags, tab));
+    }
+
+    /// <summary>
+    /// A deep link to a surface this page does not host must leave the selection alone
+    /// rather than land on whatever occupies that position.
+    /// </summary>
+    [Fact]
+    public void IndexOfTab_UnhostedTagSelectsNothing()
+    {
+        Assert.Null(ProjectDetailTabs.IndexOfTab([DetailTab.Overview, DetailTab.Changes], DetailTab.Repo));
+        Assert.Null(ProjectDetailTabs.IndexOfTab([], DetailTab.Overview));
+    }
+
+    /// <summary>An untagged tab is not a match for any surface, and never shifts the count.</summary>
+    [Fact]
+    public void IndexOfTab_SkipsUntaggedTabs()
+    {
+        Assert.Equal(2, ProjectDetailTabs.IndexOfTab([null, null, DetailTab.Issues], DetailTab.Issues));
+    }
 }

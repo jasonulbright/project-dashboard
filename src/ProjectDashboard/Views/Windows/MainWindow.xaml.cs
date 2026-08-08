@@ -1013,56 +1013,15 @@ public partial class MainWindow : INavigationWindow
 
     // ── Detail-tab deep links (X-11) ─────────────────────────────────────────
 
+    /// <summary>
+    /// The tab is handed to the page the navigation is about to build, alongside the
+    /// project the same navigation hands over. Navigate() does not attach the page's
+    /// content before it returns, so nothing here can address the page directly.
+    /// </summary>
     private void NavigateToProjectTab(Models.ProjectInfo project, DetailTab tab)
     {
+        ProjectDetailPage.RequestedTab = tab;
         NavigateToProject(project);
-        TrySelectDetailTab(tab, attemptsLeft: 8);
-    }
-
-    /// <summary>
-    /// The detail page publishes no tab-selection API, so the shell selects the tab
-    /// through the visual tree. Navigate() does not synchronously attach the page's
-    /// content, and the attempt count is what covers that: a single dispatcher pass
-    /// silently lands on the previous page.
-    /// </summary>
-    private void TrySelectDetailTab(DetailTab tab, int attemptsLeft)
-    {
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
-        {
-            if (SelectDetailTab(tab)) return;
-            if (attemptsLeft > 1) TrySelectDetailTab(tab, attemptsLeft - 1);
-            else Log.Warn($"could not select detail tab {tab}: no visible tab host found");
-        }));
-    }
-
-    private bool SelectDetailTab(DetailTab tab)
-    {
-        foreach (var control in FindVisualChildren<System.Windows.Controls.TabControl>(RootNavigation))
-        {
-            if (!control.IsVisible) continue;
-            foreach (var item in control.Items)
-            {
-                // The DetailTab tag identifies the detail page's work-area host; any
-                // other TabControl in the tree carries different tags.
-                if (item is System.Windows.Controls.TabItem { Tag: DetailTab tag } tabItem && tag == tab)
-                {
-                    control.SelectedItem = tabItem;
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
-    {
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is T match) yield return match;
-            foreach (var nested in FindVisualChildren<T>(child)) yield return nested;
-        }
     }
 
     public INavigationView GetNavigation() => RootNavigation;

@@ -51,6 +51,23 @@ public static class ProjectDetailTabs
     }
 
     /// <summary>
+    /// Position of the first tab tagged <paramref name="tab"/>, or null when the sequence
+    /// carries none. A deep link names the surface it wants, never its position: the
+    /// positions shift as tabs are added, and a stale one selects a different surface
+    /// without failing.
+    /// </summary>
+    public static int? IndexOfTab(IEnumerable<DetailTab?> tags, DetailTab tab)
+    {
+        var index = 0;
+        foreach (var tag in tags)
+        {
+            if (tag == tab) return index;
+            index++;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// The lazy load a tab needs on activation. Only the remote/expensive surfaces
     /// fetch; each guard mirrors its command's own "already loaded" check so a
     /// revisit stays inert.

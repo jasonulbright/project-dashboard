@@ -195,6 +195,14 @@ public partial class ProjectDetailPage
 
         RenderDocuments();
 
+        // Ahead of the load below, so the deep-linked surface is the one whose data is
+        // fetched rather than the default tab's.
+        if (RequestedTab is { } requested)
+        {
+            RequestedTab = null;
+            SelectTab(requested);
+        }
+
         // Project switched while a lazy tab was active: its data was reset, reload it.
         LoadDataForActiveTab();
 
@@ -292,6 +300,26 @@ public partial class ProjectDetailPage
         : _viewModel.ReflogVisible ? _viewModel.CloseReflogCommand
         : _viewModel.RewriteWizardVisible ? _viewModel.CloseRewriteWizardCommand
         : null;
+
+    /// <summary>
+    /// The work-area tab a deep link asked for, consumed by the next page to load. A
+    /// navigation does not attach the page's content before it returns, so the shell
+    /// cannot hold the page it is opening; the tab travels the same way the project it
+    /// belongs to does. Consumed once — a later navigation carrying no tab lands on the
+    /// page's own default surface.
+    /// </summary>
+    public static Models.DetailTab? RequestedTab { get; set; }
+
+    /// <summary>
+    /// Selects the work-area tab tagged <paramref name="tab"/>. A tab this page does not
+    /// host leaves the selection where it is.
+    /// </summary>
+    public void SelectTab(Models.DetailTab tab)
+    {
+        var tags = WorkTabs.Items.OfType<TabItem>().Select(item => item.Tag as Models.DetailTab?);
+        if (ProjectDetailTabs.IndexOfTab(tags, tab) is { } index)
+            WorkTabs.SelectedIndex = index;
+    }
 
     /// <summary>Lazy-loads tab data the first time a surface is opened for the current project.</summary>
     private void WorkTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)

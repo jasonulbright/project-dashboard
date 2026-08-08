@@ -45,8 +45,6 @@ public partial class DashboardViewModel : ObservableObject
 
     /// <summary>
     /// Raised to open a project's detail view with one work-area tab already selected.
-    /// The detail page exposes no tab-selection API, so MainWindow drives the selection
-    /// from the shell side after navigation.
     /// </summary>
     public event Action<ProjectInfo, DetailTab>? NavigateToProjectTabRequested;
 
