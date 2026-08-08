@@ -29,10 +29,10 @@ public class SettingsService
     /// hold it until relaunch re-derive from this instead. Raised outside the file lock,
     /// on the thread that called <see cref="Save"/>.
     ///
-    /// A single writer is not required: writes are numbered under the file lock, so a
-    /// write overtaken by a newer one is dropped instead of delivering a stale snapshot
-    /// after the newer one. Subscribers therefore never regress to superseded state,
-    /// whatever thread or scheduling order the writes arrive on.
+    /// Raise order matches write order only while the writes share a thread. Across
+    /// threads the numbering drops a write that a newer one has already published by the
+    /// time it reaches the gate; a raise that passed the gate before the newer write
+    /// published still runs, so a subscriber can still be handed the older snapshot last.
     /// </summary>
     public event Action<SettingsChange>? Changed;
 
@@ -84,9 +84,9 @@ public class SettingsService
         }
 
         // Fire outside the lock: a subscriber runs arbitrary work (a re-scan starts here)
-        // and must not hold every other writer off the settings file while it does. The
-        // publication gate replaces the ordering the lock would have given: a write that
-        // lost the race to a newer one delivers nothing rather than a stale snapshot.
+        // and must not hold every other writer off the settings file while it does. A write
+        // already superseded when it reaches the gate delivers nothing rather than a stale
+        // snapshot.
         if (!Publication.TryPublish(sequence)) return true;
 
         try { Changed?.Invoke(new SettingsChange(previous, settings)); }
@@ -97,10 +97,11 @@ public class SettingsService
 }
 
 /// <summary>
-/// Orders event publication independently of thread scheduling. Each write takes a number
-/// under the writer's lock; a write whose number is no longer the highest published is
-/// dropped, so a subscriber can never be handed a snapshot older than one it already has.
-/// Lock-free, so publishing never blocks another writer.
+/// Drops a settings write that a newer one has already published. Each write takes a number
+/// under the writer's lock; a write descheduled between taking its number and reaching the
+/// gate delivers nothing instead of an out-of-date snapshot. The gate covers a write that
+/// arrives after a newer publication, not one already past it — a raise in flight when a
+/// newer write publishes still completes. Lock-free, so publishing never blocks a writer.
 /// </summary>
 internal sealed class PublicationOrder
 {
