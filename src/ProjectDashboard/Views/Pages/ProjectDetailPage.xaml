@@ -141,13 +141,72 @@
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            Text="{Binding Project.FullPath}" />
             </StackPanel>
+
+            <!-- ═══ INTERRUPTED-OPERATION BANNER ═══
+                 A history operation that died mid-flight left a journal entry the app found at
+                 startup. Nothing is restored here and nothing is restored automatically: the
+                 reader chooses to restore, to keep the record for next launch, or to discard it.
+                 Disabled behind a safety overlay with the rest of the page. -->
+            <Border x:Name="RecoveryBanner"
+                    IsEnabled="{Binding SafetyOverlayHidden}"
+                    Visibility="{Binding RecoveryBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    Background="{StaticResource StatusBadBg}"
+                    BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
+                    Padding="12,10" Margin="0,10,0,0">
+                <StackPanel>
+                    <DockPanel>
+                        <ui:SymbolIcon DockPanel.Dock="Left" Symbol="Warning24" Foreground="{StaticResource StatusBadFg}"
+                                       FontSize="16" Margin="0,0,10,0" VerticalAlignment="Top" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top"
+                                    Margin="12,0,0,0">
+                            <ui:Button Content="Open Backups…" FontSize="12" Padding="10,4" Margin="0,0,6,0"
+                                       Appearance="Primary"
+                                       Command="{Binding OpenBackupsForRecoveryCommand}"
+                                       AutomationProperties.Name="Open the backup this interrupted operation recorded" />
+                            <ui:Button Content="Keep the record" FontSize="12" Padding="10,4" Margin="0,0,6,0"
+                                       Command="{Binding KeepRecoveryRecordCommand}"
+                                       ToolTip="Hide this until the next launch, keeping the record"
+                                       AutomationProperties.Name="Keep the interrupted-operation record" />
+                            <ui:Button Content="Discard the record…" FontSize="12" Padding="10,4"
+                                       Command="{Binding BeginDiscardRecoveryRecordCommand}"
+                                       ToolTip="Drop the record permanently — the backup itself is kept"
+                                       AutomationProperties.Name="Discard the interrupted-operation record" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding RecoveryBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
+                                   AutomationProperties.Name="Interrupted history operation" />
+                    </DockPanel>
+
+                    <!-- Discarding abandons the only record that this repository may be
+                         mid-operation, so it is typed out like every other irreversible choice. -->
+                    <StackPanel Margin="26,10,0,0"
+                                Visibility="{Binding RecoveryDiscardVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock TextWrapping="Wrap" FontSize="12"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   Text="Discarding drops the record that an operation here was interrupted. The backup it names stays on disk and stays restorable from Backups. Type this repository's name to confirm." />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <ui:TextBox Width="260"
+                                        Text="{Binding RecoveryDiscardInput, UpdateSourceTrigger=PropertyChanged}"
+                                        PlaceholderText="Type the repository name"
+                                        FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                        AutomationProperties.Name="Type the repository name to discard the record" />
+                            <ui:Button Content="Discard" Appearance="Danger" FontSize="12" Padding="12,4" Margin="8,0,0,0"
+                                       Command="{Binding DiscardRecoveryRecordCommand}"
+                                       AutomationProperties.Name="Confirm discarding the interrupted-operation record" />
+                            <ui:Button Content="Cancel" FontSize="12" Padding="12,4" Margin="6,0,0,0"
+                                       Command="{Binding CancelDiscardRecoveryRecordCommand}"
+                                       AutomationProperties.Name="Keep the interrupted-operation record after all" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
 
         <!-- ═══ STATE BANNER ═══ -->
         <!-- Disabled behind the wizard's scrim with the branch bar and the work-area tabs: these
              rows sit outside the TabControl, so without this a keystroke still reaches them. -->
         <Border Grid.Row="1" x:Name="StateBanner"
-                IsEnabled="{Binding RewriteWizardHidden}"
+                IsEnabled="{Binding SafetyOverlayHidden}"
                 Visibility="{Binding StateBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Background="{StaticResource StatusWarnBg}"
                 BorderBrush="{StaticResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
@@ -167,7 +226,7 @@
              behind the scrim it merges the remote's un-rewritten history back over the rewrite
              the Result screen is still reporting on. -->
         <Border Grid.Row="2" x:Name="BranchBar"
-                IsEnabled="{Binding RewriteWizardHidden}"
+                IsEnabled="{Binding SafetyOverlayHidden}"
                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                 CornerRadius="8" Padding="12,6" Margin="0,8,0,8">
             <DockPanel>
@@ -207,7 +266,7 @@
 
         <!-- ═══ WORK AREA TABS ═══ -->
         <TabControl Grid.Row="3" x:Name="WorkTabs" Background="Transparent" BorderThickness="0"
-                    IsEnabled="{Binding RewriteWizardHidden}"
+                    IsEnabled="{Binding SafetyOverlayHidden}"
                     SelectionChanged="WorkTabs_SelectionChanged">
 
             <!-- ── OVERVIEW ── -->
@@ -572,6 +631,14 @@
                                    Command="{Binding OpenRewriteWizardCommand}"
                                    ToolTip="Rewrite this repository's history — replace text, remove files, or fix authorship"
                                    AutomationProperties.Name="Rewrite history" />
+                        <!-- The durable route to a backup: the wizard's Undo belongs to one live
+                             session, and closing it takes the only in-session restore with it. -->
+                        <ui:Button DockPanel.Dock="Right" Content="Backups…" FontSize="12" Padding="12,4"
+                                   Margin="0,0,8,0"
+                                   Icon="{ui:SymbolIcon ArrowUndo24}"
+                                   Command="{Binding OpenBackupsCommand}"
+                                   ToolTip="Browse the backups taken before this repository's history operations, and restore one"
+                                   AutomationProperties.Name="Browse backups" />
                         <TextBlock FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                    Text="Rewriting replaces commits with new ones. A backup is taken first and nothing is pushed." />
@@ -2458,5 +2525,12 @@
         <pages:RewriteWizardView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                                  Visibility="{Binding RewriteWizardVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                  AutomationProperties.Name="Rewrite history wizard" />
+
+        <!-- ═══ BACKUPS ═══
+             A pane on the same terms as the wizard: the restore it offers replaces every ref in
+             the repository, so the surfaces behind it are disabled rather than merely covered. -->
+        <pages:BackupsView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                           Visibility="{Binding BackupsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                           AutomationProperties.Name="Backups browser" />
     </Grid>
 </Page>

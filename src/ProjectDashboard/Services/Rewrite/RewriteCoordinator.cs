@@ -163,7 +163,7 @@ public sealed class RewriteCoordinator
             BackupHandle backup;
             try
             {
-                backup = await _backup.CreateBackupAsync(repo, ct);
+                backup = await _backup.CreateBackupAsync(repo, "History rewrite", ct);
             }
             catch (BackupException ex)
             {

@@ -35,8 +35,28 @@ public sealed class RefsSnapshot
     public string UtcStamp { get; set; } = "";
     public string HeadRef { get; set; } = "";
     public string HeadObjectId { get; set; } = "";
+
+    /// <summary>
+    /// What the backup was taken for, in the words a reader browsing backups needs. Empty for a
+    /// sidecar written before the field existed, which a listing reports as unrecorded rather
+    /// than guessing.
+    /// </summary>
+    public string Operation { get; set; } = "";
+
     public List<RefEntry> Refs { get; set; } = [];
 }
+
+/// <summary>
+/// What a backup's sidecar says about the state it captured, for a surface listing backups to
+/// restore. Read from disk on demand: a backup that cannot produce this is one whose sidecar is
+/// missing or unreadable, which is exactly the backup a restore would refuse.
+/// </summary>
+public sealed record BackupDetails(
+    string Operation,
+    int RefCount,
+    string HeadRef,
+    string HeadObjectId,
+    long BundleBytes);
 
 /// <summary>
 /// Outcome of a restore. The ref reconciliation is all-or-nothing, but the steps after it —

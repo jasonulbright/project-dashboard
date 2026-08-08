@@ -43,7 +43,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         GitHubService gitHubService,
         IRewriteSessionFactory? rewriteSessions = null,
         Services.Safety.RepoBusyRegistry? busyRegistry = null,
-        SettingsService? settingsService = null)
+        SettingsService? settingsService = null,
+        Services.Safety.BackupService? backups = null,
+        Services.Safety.RewriteRecoveryService? recovery = null)
     {
         _discoveryService = discoveryService;
         _gitService = gitService;
@@ -51,6 +53,10 @@ public partial class ProjectDetailViewModel : ObservableObject
         _settingsService = settingsService;
         _rewriteSessions = rewriteSessions;
         _busyRegistry = busyRegistry ?? new Services.Safety.RepoBusyRegistry();
+        // Null when the host supplied none: the Backups surface then refuses instead of
+        // pretending a repository has no backups.
+        _backups = backups;
+        _recovery = recovery;
         ConfirmPrompt = ConfirmAsync;
         ConfirmSurgeryAsync = c => ConfirmAsync(c.Title, c.Message, c.ConfirmLabel);
 
@@ -142,6 +148,10 @@ public partial class ProjectDetailViewModel : ObservableObject
             return;
         }
 
+        // Reads the OUTGOING repository's overlay too: a browser left open would keep listing
+        // the previous repository's backups behind the incoming project's page.
+        CloseBackupsOnProjectSwitch();
+
         // Reads the OUTGOING repository, so it runs before the swap below.
         ParkRewriteSessionForThisRepo();
 
@@ -191,6 +201,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         // dry run, which changed nothing and is re-runnable.
         ResetRewriteState();
         RestoreParkedRewrite();
+        RefreshRecoveryBanner();
 
         ApplyProjectContent(p);
     }

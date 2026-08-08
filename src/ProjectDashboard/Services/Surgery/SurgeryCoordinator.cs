@@ -184,7 +184,7 @@ public sealed class SurgeryCoordinator
                 BackupHandle handle;
                 try
                 {
-                    handle = await _backup.CreateBackupAsync(repoPath, ct);
+                    handle = await _backup.CreateBackupAsync(repoPath, $"Commit surgery ({phase})", ct);
                 }
                 catch (BackupException ex)
                 {

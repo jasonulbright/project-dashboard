@@ -224,9 +224,9 @@ public class RewriteWizardViewModelTests
 
         // The surface the scrim covers is disabled, so no keystroke reaches it.
         Assert.True(vm.RewriteWizardVisible);
-        Assert.False(vm.RewriteWizardHidden);
+        Assert.False(vm.SafetyOverlayHidden);
         vm.CloseRewriteWizardCommand.Execute(null);
-        Assert.True(vm.RewriteWizardHidden);
+        Assert.True(vm.SafetyOverlayHidden);
         vm.OpenRewriteWizardCommand.Execute(null);
 
         Assert.True(vm.RewriteStepIsOperation);
@@ -1011,7 +1011,7 @@ public class RewriteWizardViewModelTests
         Assert.True(vm.IsBusy);
         Assert.True(vm.RewriteRunning);
         Assert.True(vm.RewriteWizardVisible);
-        Assert.False(vm.RewriteWizardHidden);
+        Assert.False(vm.SafetyOverlayHidden);
         await vm.PullCommand.ExecuteAsync(null);
         Assert.Equal(0, await repo.CommitCountAsync() - await repo.CommitCountAsync()); // repo untouched
         Assert.Equal("", vm.SyncStatusText);

@@ -38,23 +38,40 @@ public class RewriteWizardFocusContainmentTests
             @"<TabControl\b[^>]*>", RegexOptions.Singleline);
 
         Assert.True(tabs.Success, "the work-area TabControl was not found");
-        Assert.Contains(@"IsEnabled=""{Binding RewriteWizardHidden}""", tabs.Value);
+        Assert.Contains(@"IsEnabled=""{Binding SafetyOverlayHidden}""", tabs.Value);
     }
 
     /// <summary>
     /// The header rows sit outside the TabControl, so disabling the tabs alone leaves Fetch,
     /// Pull, Push, the stale-lock retry, and Open in Terminal reachable behind the scrim.
     /// </summary>
+    /// <summary>
+    /// The backups pane offers a restore that replaces every ref in the repository, so it is a
+    /// safety overlay on the same terms as the wizard and needs the same containment.
+    /// </summary>
+    [Fact]
+    public void TheBackupsPane_CyclesEveryNavigationModeWithinItself()
+    {
+        var xaml = File.ReadAllText(SourceFile("BackupsView.xaml"));
+        var pane = Regex.Match(xaml, @"<Border\b[^>]*MaxWidth=""940""[^>]*>", RegexOptions.Singleline);
+
+        Assert.True(pane.Success, "the backups pane's root border was not found");
+        Assert.Contains(@"KeyboardNavigation.TabNavigation=""Cycle""", pane.Value);
+        Assert.Contains(@"KeyboardNavigation.ControlTabNavigation=""Cycle""", pane.Value);
+        Assert.Contains(@"KeyboardNavigation.DirectionalNavigation=""Cycle""", pane.Value);
+    }
+
     [Theory]
     [InlineData("StateBanner")]
     [InlineData("BranchBar")]
+    [InlineData("RecoveryBanner")]
     public void ThePageHeaderRows_AreDisabledWhileTheWizardIsUp(string name)
     {
         var row = Regex.Match(File.ReadAllText(SourceFile("ProjectDetailPage.xaml")),
             @"<Border\b[^>]*x:Name=""" + name + @"""[^>]*>", RegexOptions.Singleline);
 
         Assert.True(row.Success, $"the {name} border was not found");
-        Assert.Contains(@"IsEnabled=""{Binding RewriteWizardHidden}""", row.Value);
+        Assert.Contains(@"IsEnabled=""{Binding SafetyOverlayHidden}""", row.Value);
     }
 
     /// <summary>
@@ -123,7 +140,7 @@ public class RewriteWizardFocusContainmentTests
     /// <summary>
     /// The page's arrangement: a header row of controls and an overlay pane above it.
     /// <paramref name="contained"/> applies the two halves of the containment together — the
-    /// header's RewriteWizardHidden binding, resolved to the value that binding would produce,
+    /// header's SafetyOverlayHidden binding, resolved to the value that binding would produce,
     /// and the pane's navigation-mode cycles — because either half alone still leaks.
     /// </summary>
     private static (Grid Root, StackPanel Header, Button First, Button Last) BuildReplica(

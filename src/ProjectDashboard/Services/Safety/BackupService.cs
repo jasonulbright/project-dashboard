@@ -40,9 +40,11 @@ public sealed class BackupService
     /// Bundles every ref and records the ref layout, then prunes older backups down to
     /// BackupRetentionCount. Throws <see cref="BackupException"/> on any failure — a
     /// caller must never proceed with a destructive op believing a backup exists when it
-    /// does not.
+    /// does not. <paramref name="operation"/> is recorded in the sidecar so a reader browsing
+    /// backups months later can tell which one preceded which change.
     /// </summary>
-    public async Task<BackupHandle> CreateBackupAsync(string repoPath, CancellationToken ct = default)
+    public async Task<BackupHandle> CreateBackupAsync(
+        string repoPath, string operation = "", CancellationToken ct = default)
     {
         if (!GitService.IsGitRepo(repoPath))
             throw new BackupException($"'{repoPath}' is not a git repository — refusing to back up.");
@@ -57,7 +59,7 @@ public sealed class BackupService
 
         // Snapshot refs BEFORE the bundle: the two are captured against the same repo
         // state, and a bundle with no matching snapshot is useless for a targeted restore.
-        var snapshot = await CaptureRefsAsync(repoPath, stamp, ct);
+        var snapshot = await CaptureRefsAsync(repoPath, stamp, operation, ct);
 
         // `git bundle --all` captures every ref plus the top refs/stash entry, but no reflogs
         // and no deeper stash-stack entries; those older stash states and reflog-only commits
@@ -117,6 +119,30 @@ public sealed class BackupService
         // Stamp is a fixed-width sortable UTC string, so ordinal-descending is newest-first.
         handles.Sort((a, b) => string.CompareOrdinal(b.UtcStamp, a.UtcStamp));
         return Task.FromResult(handles);
+    }
+
+    /// <summary>
+    /// What one backup's sidecar records. Null when the sidecar is missing or unreadable —
+    /// which is also the state in which <see cref="RestoreAsync"/> refuses, so a listing that
+    /// cannot describe a backup is telling the truth about it being unrestorable.
+    /// </summary>
+    public BackupDetails? ReadDetails(BackupHandle handle)
+    {
+        var snapshot = ReadSnapshot(handle.RefsSnapshotPath);
+        if (snapshot is null) return null;
+
+        long bytes = 0;
+        try
+        {
+            var info = new FileInfo(handle.BundlePath);
+            if (info.Exists) bytes = info.Length;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not size backup bundle {handle.BundlePath}", ex);
+        }
+
+        return new BackupDetails(snapshot.Operation, snapshot.Refs.Count, snapshot.HeadRef, snapshot.HeadObjectId, bytes);
     }
 
     /// <summary>
@@ -246,9 +272,9 @@ public sealed class BackupService
         return stamp;
     }
 
-    private async Task<RefsSnapshot> CaptureRefsAsync(string repoPath, string stamp, CancellationToken ct)
+    private async Task<RefsSnapshot> CaptureRefsAsync(string repoPath, string stamp, string operation, CancellationToken ct)
     {
-        var snapshot = new RefsSnapshot { RepoPath = repoPath, UtcStamp = stamp };
+        var snapshot = new RefsSnapshot { RepoPath = repoPath, UtcStamp = stamp, Operation = operation };
 
         var refs = await _git.RunAsync(repoPath,
             ["for-each-ref", "--format=%(objectname) %(refname)"], ct, RefTimeout);

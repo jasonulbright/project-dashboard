@@ -32,6 +32,23 @@
             </StackPanel>
         </Border>
 
+        <!-- Interrupted-history banner: a repository whose last history operation died mid-flight
+             is only offered a restore on its own page, so the dashboard is where a reader who
+             never opens that page finds out. No action here — every gate lives on that page. -->
+        <Border DockPanel.Dock="Top"
+                Visibility="{Binding RecoveryBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{StaticResource StatusBadBg}"
+                BorderBrush="{StaticResource StatusBadFg}" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <ui:SymbolIcon Symbol="Warning24" Foreground="{StaticResource StatusBadFg}" FontSize="16"
+                               Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding RecoveryBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
+                           AutomationProperties.Name="Interrupted history operations" />
+            </StackPanel>
+        </Border>
+
         <!-- GitHub-not-ready banner: shows when gh is missing or not signed in -->
         <Border DockPanel.Dock="Top"
                 Visibility="{Binding GhBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"

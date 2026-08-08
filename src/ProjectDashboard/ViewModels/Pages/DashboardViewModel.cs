@@ -19,6 +19,9 @@ public partial class DashboardViewModel : ObservableObject
     private readonly ProjectWatcherService _watcher;
     private readonly RepoBusyRegistry _busyRegistry;
     private readonly Action<Action> _uiPost;
+
+    /// <summary>Null when the host supplied none; the dashboard then reports no interrupted operations rather than inventing one.</summary>
+    private readonly RewriteRecoveryService? _recovery;
     private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
@@ -82,7 +85,7 @@ public partial class DashboardViewModel : ObservableObject
     /// dispatcher to marshal through, and a default that silently drops the callback there
     /// would drop the re-scan that a released repository lease is supposed to start.
     /// </summary>
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
@@ -93,6 +96,11 @@ public partial class DashboardViewModel : ObservableObject
         _busyRegistry = busyRegistry;
         _uiPost = uiPost ?? PostToApplicationDispatcher;
         _searchService = new RepoSearchService(gitService, busyRegistry);
+        _recovery = recovery;
+        // Detection completed before any window existed, so the list is read rather than
+        // subscribed to; the change event only carries a later decision to drop a record.
+        if (recovery is not null) recovery.PendingChanged += UpdateRecoveryBanner;
+        UpdateRecoveryBanner();
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
         ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
@@ -224,6 +232,12 @@ public partial class DashboardViewModel : ObservableObject
     // Discovery failure banner — a faulted scan must not just show an empty dashboard.
     [ObservableProperty] private string _discoveryErrorText = "";
     [ObservableProperty] private bool _discoveryErrorVisible;
+
+    // Interrupted-history banner. The per-repository offer to restore lives on that
+    // repository's page; a reader who never opens it would otherwise never learn the
+    // operation was interrupted at all, so the dashboard names the repositories.
+    [ObservableProperty] private bool _recoveryBannerVisible;
+    [ObservableProperty] private string _recoveryBannerText = "";
 
     // Transient operation feedback (clone / bulk sync progress and outcomes).
     [ObservableProperty] private string _opStatusText = "";
@@ -1280,6 +1294,35 @@ public partial class DashboardViewModel : ObservableObject
     {
         _ghBannerDismissed = true;
         GhBannerVisible = false;
+    }
+
+    /// <summary>
+    /// Names the repositories whose last history operation was interrupted. It offers no action
+    /// of its own: restoring is gated on the repository's own page, where the backup, the
+    /// clean-tree check, and the typed confirmation live.
+    /// </summary>
+    private void UpdateRecoveryBanner()
+    {
+        RecoveryBannerText = DescribeInterrupted(_recovery?.Pending ?? []) ?? "";
+        RecoveryBannerVisible = RecoveryBannerText.Length > 0;
+    }
+
+    /// <summary>
+    /// The banner's wording, or null when there is nothing to report. Kept pure so the claim it
+    /// makes is testable without standing up a dashboard's timer, watcher, and first scan.
+    /// </summary>
+    internal static string? DescribeInterrupted(IReadOnlyList<RewriteJournalEntry> pending)
+    {
+        if (pending.Count == 0) return null;
+
+        var names = pending
+            .Select(e => System.IO.Path.GetFileName(e.RepoPath.TrimEnd('\\', '/')))
+            .Where(n => n.Length > 0)
+            .ToList();
+        var listed = names.Count > 0 ? string.Join(", ", names) : "an unnamed repository";
+        return pending.Count == 1
+            ? $"A history operation on {listed} was interrupted. Open that project to restore its backup or dismiss the record — nothing has been restored."
+            : $"History operations on {pending.Count} repositories were interrupted ({listed}). Open each project to restore its backup or dismiss the record — nothing has been restored.";
     }
 
     [RelayCommand]

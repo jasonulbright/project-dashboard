@@ -110,7 +110,9 @@ public partial class App : Application
                     sp.GetRequiredService<GitHubService>(),
                     sp.GetRequiredService<IRewriteSessionFactory>(),
                     sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
-                    sp.GetRequiredService<SettingsService>())
+                    sp.GetRequiredService<SettingsService>(),
+                    sp.GetRequiredService<Services.Safety.BackupService>(),
+                    sp.GetRequiredService<Services.Safety.RewriteRecoveryService>())
                 {
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });

@@ -256,14 +256,13 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _rewriteWizardVisible;
 
     /// <summary>
-    /// Bound to the IsEnabled of every surface the wizard's scrim covers: the work-area tabs,
-    /// the state banner, and the branch bar. The scrim stops the mouse only; without this, a
-    /// keystroke and a screen reader still reach the discard, stage, branch-delete, and Pull
-    /// controls behind it — and a Pull merges the un-rewritten remote history back in.
+    /// <see cref="SafetyOverlayHidden"/> is bound to the IsEnabled of every surface a safety
+    /// overlay's scrim covers: the work-area tabs, the state banner, the branch bar, and the
+    /// recovery banner. The scrim stops the mouse only; without this, a keystroke and a screen
+    /// reader still reach the discard, stage, branch-delete, and Pull controls behind it — and a
+    /// Pull merges the un-rewritten remote history back in.
     /// </summary>
-    public bool RewriteWizardHidden => !RewriteWizardVisible;
-
-    partial void OnRewriteWizardVisibleChanged(bool value) => OnPropertyChanged(nameof(RewriteWizardHidden));
+    partial void OnRewriteWizardVisibleChanged(bool value) => OnPropertyChanged(nameof(SafetyOverlayHidden));
     [ObservableProperty] private RewriteWizardStep _rewriteStep;
     [ObservableProperty] private bool _rewriteStepIsOperation = true;
     [ObservableProperty] private bool _rewriteStepIsScope;
