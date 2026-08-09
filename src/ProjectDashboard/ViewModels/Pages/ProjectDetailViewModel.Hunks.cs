@@ -28,13 +28,22 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _diffIsCombined;
 
     /// <summary>
-    /// The hunk the pane should land on once the refresh a hunk operation triggers has rebuilt
-    /// the rows. The rebuild replaces every <see cref="DiffLine"/>, so a selection held by
-    /// reference is lost and the reader is thrown back to the top of a long diff.
+    /// The hunk the pane should land on once a re-read has rebuilt the rows. The rebuild
+    /// replaces every <see cref="DiffLine"/>, so a selection held by reference is lost and the
+    /// reader is thrown back to the top of a long diff.
     /// The file and side it was taken in travel with it: a file switch racing the refresh
-    /// renders a different diff, where the same index names a hunk the reader never acted on.
+    /// renders a different diff, where the same place names a hunk the reader never acted on.
     /// </summary>
-    private (string Path, bool Staged, int Hunk)? _diffFocus;
+    private DiffFocus? _diffFocus;
+
+    /// <summary>
+    /// Where the pane lands, named one of two ways. A hunk operation names the INDEX: the hunk
+    /// it moved is gone from this side, and the index that followed it is where the reader was
+    /// left. A re-read after an edit made outside the app names the HEADER: nothing moved across
+    /// the index, the hunk the reader is on is still theirs, and an edit above it renumbers every
+    /// index below. <see cref="Hunk"/> is -1 wherever a header names the place.
+    /// </summary>
+    private readonly record struct DiffFocus(string Path, bool Staged, int Hunk, string? Header = null);
 
     /// <summary>
     /// Everything a hunk operation acts on, read at the moment the reader chose it. An
@@ -213,7 +222,7 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        _diffFocus = (hunk.File.Path, hunk.Staged, hunk.Hunk);
+        _diffFocus = new DiffFocus(hunk.File.Path, hunk.Staged, hunk.Hunk);
         var ok = await RunOp(r => operate(r, patch), label, repo, gen);
         if (!ok) _diffFocus = null;
     }
@@ -240,11 +249,13 @@ public partial class ProjectDetailViewModel
         DiffTarget is { } target ? ShowDiffAsync(target.File, target.Staged) : Task.CompletedTask;
 
     /// <summary>
-    /// Re-selects the row the reader was on once the rows have been rebuilt. The hunk that was
-    /// staged, unstaged, or discarded is gone from this side, so the same index now names the
-    /// hunk that followed it; clamped to the last hunk when it was the final one.
-    /// Only for the file and side the operation ran on: the focus is spent either way, so a
-    /// diff for anything else drops it rather than selecting a hunk of its own at that index.
+    /// Re-selects the row the reader was on once the rows have been rebuilt. A focus taken by
+    /// index follows a hunk operation: the hunk it moved is gone from this side, so the same
+    /// index now names the hunk that followed it, clamped to the last when it was the final one.
+    /// A focus taken by header follows a re-read of a file nothing moved, and a header the
+    /// re-read no longer holds leaves the pane on no row rather than on a hunk at that place.
+    /// Only for the file and side the focus was taken on: it is spent either way, so a diff for
+    /// anything else drops it rather than selecting a hunk of its own.
     /// </summary>
     private void RestoreDiffFocus(WorkingFile file, bool staged)
     {
@@ -255,6 +266,8 @@ public partial class ProjectDetailViewModel
 
         var headers = DiffLines.Where(l => l.IsHunkStart).ToList();
         if (headers.Count == 0) return;
-        SelectedDiffLine = headers[Math.Min(focus.Hunk, headers.Count - 1)];
+        SelectedDiffLine = focus.Header is { } header
+            ? headers.FirstOrDefault(l => string.Equals(l.Text, header, StringComparison.Ordinal))
+            : headers[Math.Min(focus.Hunk, headers.Count - 1)];
     }
 }

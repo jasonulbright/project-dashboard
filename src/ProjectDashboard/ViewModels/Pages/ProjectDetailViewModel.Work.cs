@@ -292,18 +292,104 @@ public partial class ProjectDetailViewModel
             var diff = await _gitService.GetFileDiffAsync(repo, file, staged);
             if (!IsCurrent(gen) || !ReferenceEquals(staged ? SelectedStagedFile : SelectedUnstagedFile, file))
                 return; // selection or project changed mid-await
-            DiffIsBinary = diff?.IsBinary ?? false;
-            DiffIsCombined = diff?.IsCombined ?? false;
-            DiffIsTruncated = diff?.Truncated ?? false;
-            SelectedDiffLine = null;
-            DiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
-            RestoreDiffFocus(file, staged);
+            ApplyDiff(diff, file, staged);
         }
         catch (Exception ex)
         {
             Log.Warn($"diff load failed for {file.Path}", ex);
             if (IsCurrent(gen)) { DiffLines = []; _diffFocus = null; }
         }
+    }
+
+    private void ApplyDiff(FileDiff? diff, WorkingFile file, bool staged)
+    {
+        DiffIsBinary = diff?.IsBinary ?? false;
+        DiffIsCombined = diff?.IsCombined ?? false;
+        DiffIsTruncated = diff?.Truncated ?? false;
+        SelectedDiffLine = null;
+        DiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
+        RestoreDiffFocus(file, staged);
+    }
+
+    /// <summary>
+    /// Re-reads the diff on display for a file a working-state read carried forward. An instance
+    /// that did not move fires no selection handler, so nothing else re-renders it: the rows on
+    /// screen keep describing the file as it was before an edit made outside the app, and only
+    /// a reselect or a manual refresh would replace them.
+    ///
+    /// The row the reader is on is re-found by its hunk HEADER, not its index: an edit above it
+    /// renumbers every hunk below, and index N of the re-read names a hunk nobody chose. A hunk
+    /// the re-read no longer holds leaves the pane on no row.
+    ///
+    /// A read that describes what the pane already shows writes nothing. The signal covers the
+    /// whole repository, so a save to any other file raises it too, and replacing the rows there
+    /// would drop the reader's row — and with it the hunk gates — for a file nothing touched.
+    /// </summary>
+    private async Task FollowShownDiffAsync(WorkingFile file, bool staged)
+    {
+        var gen = _generation;
+        var repo = RepoPath;
+        // A focus a hunk operation already placed names where that operation left the reader,
+        // and this read is the render that consumes it.
+        var pending = _diffFocus;
+        var header = SelectedDiffLine is { HunkIndex: >= 0 } row ? HeaderTextFor(row.HunkIndex) : null;
+        try
+        {
+            var diff = await _gitService.GetFileDiffAsync(repo, file, staged);
+            if (!IsCurrent(gen) || !ReferenceEquals(staged ? SelectedStagedFile : SelectedUnstagedFile, file))
+                return;
+            if (DescribesShownDiff(diff)) return;
+            _diffFocus = pending ?? (header is null ? null : new DiffFocus(file.Path, staged, Hunk: -1, header));
+            ApplyDiff(diff, file, staged);
+        }
+        catch (Exception ex)
+        {
+            // The rows stay where they are: nobody asked for this read, and blanking the pane on
+            // a read that failed would cost the reader their place over a transient failure.
+            Log.Warn($"diff follow-up failed for {file.Path}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Whether a re-read describes exactly what the pane already shows. Rows carry no value
+    /// equality — every parse builds new instances — so they are compared on what they render.
+    /// </summary>
+    private bool DescribesShownDiff(FileDiff? diff)
+    {
+        if ((diff?.IsBinary ?? false) != DiffIsBinary ||
+            (diff?.IsCombined ?? false) != DiffIsCombined ||
+            (diff?.Truncated ?? false) != DiffIsTruncated) return false;
+
+        var read = diff?.Lines ?? [];
+        if (read.Count != DiffLines.Count) return false;
+        for (var i = 0; i < read.Count; i++)
+            if (!SameRow(DiffLines[i], read[i])) return false;
+        return true;
+    }
+
+    private static bool SameRow(DiffLine shown, DiffLine read) =>
+        shown.Kind == read.Kind &&
+        shown.HunkIndex == read.HunkIndex &&
+        shown.IsNoNewlineMarker == read.IsNoNewlineMarker &&
+        string.Equals(shown.Text, read.Text, StringComparison.Ordinal) &&
+        string.Equals(shown.OldNumber, read.OldNumber, StringComparison.Ordinal) &&
+        string.Equals(shown.NewNumber, read.NewNumber, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Re-renders the pane if the refresh that just ran carried its file forward. A file whose
+    /// status moved got a fresh instance, and the selection handler firing on it has already
+    /// started the read; a file that left the list cleared the pane. The file the read
+    /// re-matched is the only one left describing a working tree that has moved on — an edit
+    /// made outside the app, and equally a hunk operation that took one hunk of several and
+    /// left the file on the same side of the index it was already on.
+    /// Rides the refresh's own completion, so the busy gates the refresh yielded to cover this
+    /// read too and no second trigger is needed.
+    /// </summary>
+    private Task FollowShownDiffAfterRefreshAsync((WorkingFile File, bool Staged)? shown)
+    {
+        if (shown is not { } before || DiffTarget is not { } after) return Task.CompletedTask;
+        if (before.Staged != after.Staged || !ReferenceEquals(before.File, after.File)) return Task.CompletedTask;
+        return DiffRefresh = FollowShownDiffAsync(after.File, after.Staged);
     }
 
     [RelayCommand]
@@ -842,7 +928,9 @@ public partial class ProjectDetailViewModel
                 _staleLockRetryLabel = label;
                 StaleLockRetryVisible = true;
             }
+            var shown = DiffTarget;
             await RefreshWorkingStateAsync();
+            await FollowShownDiffAfterRefreshAsync(shown);
             return result.Success;
         }
         catch (Exception ex)

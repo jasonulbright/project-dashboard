@@ -77,7 +77,9 @@ public partial class ProjectDetailViewModel
             return;
         }
         _watcherRefreshPending = false;
+        var shown = DiffTarget;
         await SafeRefreshWorkingStateAsync();
+        await FollowShownDiffAfterRefreshAsync(shown);
     }
 
     private void OnRepoLeaseChanged(string repoPath) => _uiPost(DrainWatcherRefresh);
@@ -117,7 +119,9 @@ public partial class ProjectDetailViewModel
             SyncStatusText = BusyNotice("Refresh");
             return;
         }
+        var shown = DiffTarget;
         await SafeRefreshWorkingStateAsync();
+        await FollowShownDiffAfterRefreshAsync(shown);
     }
 
     private static void PostToApplicationDispatcher(Action callback) =>

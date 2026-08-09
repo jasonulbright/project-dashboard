@@ -20,6 +20,13 @@ public class ProjectDetailViewModelHunkTests
     // First and last lines edited; 3 lines of context leaves two separate hunks.
     private const string FifteenEdited =
         "L1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nL15\n";
+    // The same two hunks with the FIRST one's content changed again, in place: the line counts
+    // hold, so every hunk header is the one the pane is already showing.
+    private const string FifteenEditedAgain =
+        "X1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nL15\n";
+    // And with the LAST one's content changed again instead.
+    private const string FifteenEditedTail =
+        "L1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nX15\n";
 
     private sealed class ConfirmingViewModel(GitService git, bool answer)
         : ProjectDetailViewModel(null!, git, null!)
@@ -36,16 +43,16 @@ public class ProjectDetailViewModelHunkTests
     }
 
     /// <summary>
-    /// Answers the confirmation only once an edit elsewhere in the repository has been
-    /// signalled and the refresh it triggers has finished — the interleave a dialog that
-    /// holds no busy gate is open for.
+    /// Answers the confirmation only once an edit made outside the app has been signalled and
+    /// the refresh it triggers has finished — the interleave a dialog that holds no busy gate
+    /// is open for.
     /// </summary>
-    private sealed class RefreshingConfirmViewModel(GitService git, TempRepo repo, string repoDir)
+    private sealed class RefreshingConfirmViewModel(GitService git, Action edit, string repoDir)
         : ProjectDetailViewModel(null!, git, null!, uiPost: callback => callback())
     {
         internal override async Task<bool> ConfirmAsync(string title, string message, string confirmText)
         {
-            repo.WriteFile("elsewhere.txt", "touched outside the app\n");
+            edit();
             OnWatchedReposChanged([repoDir]);
             await WatcherRefresh;
             return true;
@@ -468,7 +475,10 @@ public class ProjectDetailViewModelHunkTests
     public async Task AConfirmedHunkDiscard_RunsTheHunkTheDialogNamedThroughARefreshThatLandsWhileItIsOpen()
     {
         using var repo = await TwoHunkRepoAsync("vm-hunk-discard-refresh");
-        var vm = new RefreshingConfirmViewModel(new GitService(), repo, Path.GetFileName(repo.Path));
+        var vm = new RefreshingConfirmViewModel(
+            new GitService(),
+            () => repo.WriteFile("elsewhere.txt", "touched outside the app\n"),
+            Path.GetFileName(repo.Path));
         await vm.SetProjectAsync(ProjectFor(repo));
         await vm.WorkingStateRefresh;
         await SelectUnstagedHunkAsync(vm, 0);
@@ -482,8 +492,37 @@ public class ProjectDetailViewModelHunkTests
     }
 
     /// <summary>
+    /// The harder interleave of the same shape: the edit landing while the dialog is open is to
+    /// the SHOWN file, so the refresh re-renders the pane the reader chose the hunk in and every
+    /// row behind the dialog is replaced. No gate is needed for it — the operation captured its
+    /// file, side, hunk and header before the dialog opened, and the fresh raw read it applies
+    /// is checked against that captured header — so what OK runs is still the hunk the
+    /// confirmation named, and the edit made meanwhile is left alone.
+    /// </summary>
+    [Fact]
+    public async Task AConfirmedHunkDiscard_RunsTheHunkTheDialogNamedThroughAReRenderOfItsOwnPane()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-discard-rerender");
+        var vm = new RefreshingConfirmViewModel(
+            new GitService(),
+            () => repo.WriteFile("file.txt", FifteenEditedTail),
+            Path.GetFileName(repo.Path));
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 0);
+
+        await vm.DiscardHunkCommand.ExecuteAsync(null);
+
+        // The confirmed hunk is reverted; the second hunk carries the edit made behind the dialog.
+        var text = repo.ReadFile("file.txt");
+        Assert.StartsWith("l1\n", text);
+        Assert.EndsWith("X15\n", text);
+    }
+
+    /// <summary>
     /// A refresh caused by an edit to another file moves nothing about the file the pane is
-    /// showing, so it keeps its rows and the hunk the reader is on. Rebuilding them throws
+    /// showing, so it keeps its rows and the hunk the reader is on. The re-read taken of it
+    /// describes what is already on screen and writes nothing: rebuilding the rows would throw
     /// the reader back to the top of the diff on every unrelated save in the repository.
     /// </summary>
     [Fact]
@@ -529,6 +568,95 @@ public class ProjectDetailViewModelHunkTests
         Assert.Null(vm.SelectedUnstagedFile);
         Assert.Null(vm.SelectedDiffLine);
         Assert.Empty(vm.DiffLines);
+    }
+
+    /// <summary>
+    /// The case neither of the two above covers: the file the pane is showing was edited outside
+    /// the app and stayed on the same side of the index in the same state. Nothing about the row
+    /// it is listed as moved, so no selection handler fires and the pane would go on rendering
+    /// the file as it was until the reader reselected it or pressed refresh.
+    /// </summary>
+    [Fact]
+    public async Task ARefreshAfterTheShownFileIsEditedOutside_ReRendersItAndKeepsTheHunkTheReaderIsOn()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-shown-edited");
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!, uiPost: callback => callback());
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 1);
+
+        var shownFile = vm.SelectedUnstagedFile;
+        var header = vm.SelectedDiffLine!.Text;
+        Assert.True(DiffTouches(vm.DiffLines, "L1"));
+
+        // In place, so the file keeps its status and its row: the first hunk's content changes
+        // and every hunk header — the second one's included — is the one already on screen.
+        repo.WriteFile("file.txt", FifteenEditedAgain);
+        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        await vm.WatcherRefresh;
+
+        // Carried forward by the working-state read, and re-rendered anyway.
+        Assert.Same(shownFile, vm.SelectedUnstagedFile);
+        Assert.True(DiffTouches(vm.DiffLines, "X1"));
+        Assert.False(DiffTouches(vm.DiffLines, "L1"));
+
+        // The reader is still on their hunk — matched back by its header, since every row is new.
+        Assert.NotNull(vm.SelectedDiffLine);
+        Assert.True(vm.SelectedDiffLine!.IsHunkStart);
+        Assert.Equal(header, vm.SelectedDiffLine.Text);
+        Assert.Equal(1, vm.SelectedDiffLine.HunkIndex);
+        Assert.Null(vm.StageHunkBlockedReason);
+    }
+
+    /// <summary>
+    /// The same re-render when the hunk the reader was on is not in the re-read at all: an
+    /// outside edit reverted it. Landing on whatever hunk now sits at that index would arm the
+    /// staging buttons on a change the reader never chose, so the pane lands on no row.
+    /// </summary>
+    [Fact]
+    public async Task ARefreshAfterTheShownHunkIsRevertedOutside_ClearsTheSelectionRatherThanMovingIt()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-shown-reverted");
+        var vm = new ProjectDetailViewModel(null!, new GitService(), null!, uiPost: callback => callback());
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 0);
+
+        // Only the last line stays edited, so the hunk the pane is on is gone from the file.
+        repo.WriteFile("file.txt", "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nL15\n");
+        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        await vm.WatcherRefresh;
+
+        Assert.False(DiffTouches(vm.DiffLines, "L1"));
+        Assert.True(DiffTouches(vm.DiffLines, "L15"));
+        Assert.Null(vm.SelectedDiffLine);
+        Assert.Equal("Select a line inside a hunk first.", vm.StageHunkBlockedReason);
+    }
+
+    /// <summary>
+    /// A hunk operation leaves the file on the side it was already on whenever hunks of it
+    /// remain, so the working-state read carries its row forward and nothing re-renders the
+    /// pane. The rows would then still show the hunk the operation just reverted.
+    /// </summary>
+    [Fact]
+    public async Task DiscardHunk_ReRendersThePaneItLeftOnTheSameSideOfTheIndex()
+    {
+        using var repo = await TwoHunkRepoAsync("vm-hunk-discard-rerender-pane");
+        var vm = new ConfirmingViewModel(new GitService(), answer: true);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await SelectUnstagedHunkAsync(vm, 0);
+
+        await vm.DiscardHunkCommand.ExecuteAsync(null);
+        await vm.DiffRefresh;
+
+        // file.txt is still unstaged and still selected — and the reverted hunk is off the pane.
+        Assert.Same(vm.UnstagedFiles.Single(f => f.Path == "file.txt"), vm.SelectedUnstagedFile);
+        Assert.False(DiffTouches(vm.DiffLines, "L1"));
+        Assert.True(DiffTouches(vm.DiffLines, "L15"));
+        // The hunk that followed the reverted one is where the operation left the reader.
+        Assert.NotNull(vm.SelectedDiffLine);
+        Assert.True(vm.SelectedDiffLine!.IsHunkStart);
     }
 
     [Theory]
