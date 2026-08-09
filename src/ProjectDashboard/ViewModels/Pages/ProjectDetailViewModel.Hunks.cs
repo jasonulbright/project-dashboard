@@ -71,6 +71,9 @@ public partial class ProjectDetailViewModel
         : target.Staged && target.File.OrigPath is not null ? "This is a staged rename — unstage the file to work on its hunks."
         : DiffIsBinary ? "Binary file — there are no hunks to stage."
         : DiffIsCombined ? "This is a merge diff — resolve the conflict and stage the file."
+        // A truncated diff is a prefix, so the rows below the cut are missing and the slice a
+        // row names can be half a hunk. Applying that patch is a corrupt edit, not a partial one.
+        : DiffIsTruncated ? "This diff was too large to read in full — stage or discard the whole file instead."
         : SelectedDiffLine is not { HunkIndex: >= 0 } ? "Select a line inside a hunk first."
         : null;
 
@@ -103,6 +106,7 @@ public partial class ProjectDetailViewModel
             case nameof(IsBusy):
             case nameof(DiffIsBinary):
             case nameof(DiffIsCombined):
+            case nameof(DiffIsTruncated):
             case nameof(DiffLines):
                 StageHunkCommand.NotifyCanExecuteChanged();
                 UnstageHunkCommand.NotifyCanExecuteChanged();

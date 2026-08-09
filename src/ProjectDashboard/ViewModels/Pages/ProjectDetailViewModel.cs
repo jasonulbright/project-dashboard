@@ -333,6 +333,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         DiffTitle = "";
         DiffIsBinary = false;
         DiffIsCombined = false;
+        DiffIsTruncated = false;
         SelectedDiffLine = null;
         CommitMessage = "";
         AmendMode = false;

@@ -355,7 +355,9 @@ public class GitService
             Log.Warn($"git diff failed for {file.Path}: {result.FirstError}");
             return null;
         }
-        return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+        var diff = FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+        if (diff is not null) diff.Truncated = result.Truncated;
+        return diff;
     }
 
     private static FileDiff? SynthesizeUntrackedDiff(string repoPath, string relPath)
@@ -1150,7 +1152,7 @@ public class GitService
             Log.Warn($"git blame failed for {filePath} in {repoPath}: {result.FirstError}");
             return new BlameResult([], true, ReadFailureText(result));
         }
-        return new BlameResult(ParseBlamePorcelain(result.StdOut));
+        return new BlameResult(ParseBlamePorcelain(result.StdOut), Truncated: result.Truncated);
     }
 
     /// <summary>

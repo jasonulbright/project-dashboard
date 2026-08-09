@@ -39,6 +39,7 @@ public partial class ProjectDetailViewModel
     /// <summary>True once a read has finished and found nothing; the empty state must not show before that.</summary>
     [ObservableProperty] private bool _fileHistoryEmpty;
     [ObservableProperty] private bool _blameEmpty;
+    [ObservableProperty] private bool _blameTruncated;
 
     [ObservableProperty] private string _fileHistoryStatusText = "";
     [ObservableProperty] private string _fileHistoryErrorText = "";
@@ -67,6 +68,7 @@ public partial class ProjectDetailViewModel
         SelectedBlameLine = null;
         FileHistoryEmpty = false;
         BlameEmpty = false;
+        BlameTruncated = false;
         FileHistoryStatusText = "";
         FileHistoryErrorText = "";
         FileHistoryVisible = true;
@@ -87,6 +89,7 @@ public partial class ProjectDetailViewModel
         SelectedBlameLine = null;
         FileHistoryEmpty = false;
         BlameEmpty = false;
+        BlameTruncated = false;
         FileHistoryLoading = false;
         BlameLoading = false;
         FileHistoryStatusText = "";
@@ -156,6 +159,7 @@ public partial class ProjectDetailViewModel
 
             BlameLines = new ObservableCollection<BlameLine>(blame.Lines);
             BlameEmpty = blame.Lines.Count == 0;
+            BlameTruncated = blame.Truncated;
         }
         catch (Exception ex)
         {

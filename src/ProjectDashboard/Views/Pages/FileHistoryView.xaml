@@ -158,9 +158,14 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="Blame" FontSize="13" FontWeight="SemiBold"
-                                   Margin="0,0,0,6"
-                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                        <StackPanel Grid.Row="0" Margin="0,0,0,6">
+                            <TextBlock Text="Blame" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource FileHistoryHint}" Margin="0,4,0,0"
+                                       AutomationProperties.AutomationId="BlameTruncatedNotice"
+                                       Text="This blame was too large to read in full — the lines below stop where the read did."
+                                       Visibility="{Binding BlameTruncated, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </StackPanel>
 
                         <Border Grid.Row="1" CornerRadius="6" Padding="12,10" VerticalAlignment="Top"
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"

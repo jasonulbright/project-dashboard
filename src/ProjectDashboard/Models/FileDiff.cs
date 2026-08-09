@@ -40,6 +40,13 @@ public sealed class FileDiff
     public bool IsBinary { get; set; }
     /// <summary>True for a merge/combined diff (git diff --cc) — rendered read-only, not column-parsed.</summary>
     public bool IsCombined { get; set; }
+
+    /// <summary>
+    /// True when the capture budget stopped the raw diff short. The rows are then a prefix of
+    /// the file's real diff, and a hunk sliced out of them can be an incomplete patch.
+    /// </summary>
+    public bool Truncated { get; set; }
+
     public List<DiffLine> Lines { get; } = [];
 
     /// <summary>

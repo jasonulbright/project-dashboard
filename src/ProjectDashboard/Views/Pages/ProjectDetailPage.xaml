@@ -904,6 +904,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="{Binding DiffTitle}" Style="{StaticResource PaneHeader}"
@@ -941,12 +942,18 @@
                                            Text="Select a line to choose its hunk; double-click a hunk header to stage or unstage it." />
                             </DockPanel>
 
-                            <TextBlock Grid.Row="2" Text="Binary file — no text diff." FontSize="12"
+                            <TextBlock Grid.Row="2" Margin="0,0,0,6" FontSize="12" TextWrapping="Wrap"
+                                       AutomationProperties.AutomationId="DiffTruncatedNotice"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       Text="This diff was too large to read in full — the rows below stop where the read did, and hunk actions are unavailable."
+                                       Visibility="{Binding DiffIsTruncated, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="3" Text="Binary file — no text diff." FontSize="12"
                                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                        Visibility="{Binding DiffIsBinary, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             <!-- Binary diffs parse to zero lines, so the empty list simply
                                  sits behind the binary note above. -->
-                            <ListBox x:Name="WorkingDiffRows" Grid.Row="2" ItemsSource="{Binding DiffLines}"
+                            <ListBox x:Name="WorkingDiffRows" Grid.Row="3" ItemsSource="{Binding DiffLines}"
                                      SelectedItem="{Binding SelectedDiffLine}"
                                      Style="{StaticResource DiffListStyle}"
                                      Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}"
@@ -975,7 +982,7 @@
 
                             <!-- Same rows, same hunk indexes, same selection: the two panes are
                                  one diff rendered two ways, and only one of them is up. -->
-                            <ListBox x:Name="WorkingDiffColumns" Grid.Row="2" ItemsSource="{Binding DiffRows}"
+                            <ListBox x:Name="WorkingDiffColumns" Grid.Row="3" ItemsSource="{Binding DiffRows}"
                                      SelectedItem="{Binding SelectedDiffRow}"
                                      Style="{StaticResource SideBySideListStyle}"
                                      Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}"

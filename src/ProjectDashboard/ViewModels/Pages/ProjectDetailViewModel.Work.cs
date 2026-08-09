@@ -22,6 +22,7 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private ObservableCollection<DiffLine> _diffLines = [];
     [ObservableProperty] private string _diffTitle = "";
     [ObservableProperty] private bool _diffIsBinary;
+    [ObservableProperty] private bool _diffIsTruncated;
     [ObservableProperty] private string _commitMessage = "";
     [ObservableProperty] private bool _amendMode;
     [ObservableProperty] private bool _isBusy;
@@ -275,6 +276,7 @@ public partial class ProjectDetailViewModel
         DiffTitle = "";
         DiffIsBinary = false;
         DiffIsCombined = false;
+        DiffIsTruncated = false;
         SelectedDiffLine = null;
         _diffFocus = null;
     }
@@ -291,6 +293,7 @@ public partial class ProjectDetailViewModel
                 return; // selection or project changed mid-await
             DiffIsBinary = diff?.IsBinary ?? false;
             DiffIsCombined = diff?.IsCombined ?? false;
+            DiffIsTruncated = diff?.Truncated ?? false;
             SelectedDiffLine = null;
             DiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
             RestoreDiffFocus(file, staged);

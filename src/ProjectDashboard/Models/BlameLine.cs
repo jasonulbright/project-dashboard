@@ -25,6 +25,8 @@ public sealed class BlameLine
 
 /// <summary>
 /// One file's blame, or why it has none. A blame git could not perform exits non-zero rather
-/// than throwing, so an empty list alone cannot be told apart from an empty file.
+/// than throwing, so an empty list alone cannot be told apart from an empty file. A blame whose
+/// porcelain outran the capture budget parses to a prefix of the file and is flagged truncated.
 /// </summary>
-public sealed record BlameResult(List<BlameLine> Lines, bool HasError = false, string ErrorText = "");
+public sealed record BlameResult(
+    List<BlameLine> Lines, bool HasError = false, string ErrorText = "", bool Truncated = false);

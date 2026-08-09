@@ -10,6 +10,19 @@ public sealed record ProcessResult(int ExitCode, string StdOut, string StdErr, b
 {
     public bool Success => ExitCode == 0 && !TimedOut;
 
+    /// <summary>
+    /// True when the capture budget stopped the output short: <see cref="StdOut"/> and
+    /// <see cref="StdErr"/> then hold a prefix of what the child wrote, not the whole of it.
+    /// A parse of a truncated capture is partial by construction and says so to its reader.
+    /// </summary>
+    public bool Truncated { get; init; }
+
+    /// <summary>
+    /// Characters the child wrote across both streams, the surplus the budget discarded
+    /// included. Zero when the drain was abandoned and neither capture was read.
+    /// </summary>
+    public long OutputChars { get; init; }
+
     /// <summary>First non-empty stderr line, else stdout line — for compact UI/log messages.</summary>
     public string FirstError
     {
@@ -38,15 +51,24 @@ public static class ProcessRunner
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
+    /// <summary>
+    /// Characters retained per stream before the capture stops growing. Draining continues past
+    /// it — an unread pipe blocks the child — so the budget bounds memory, never the drain. It
+    /// is far above any output this app parses and exists so one runaway child cannot exhaust
+    /// the process; a caller that knows its own ceiling passes a tighter one.
+    /// </summary>
+    public const int DefaultCaptureCharBudget = 32 * 1024 * 1024;
+
     public static Task<ProcessResult> RunAsync(
         string fileName,
         IEnumerable<string> arguments,
         string? workingDirectory = null,
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string>? environment = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int captureCharBudget = DefaultCaptureCharBudget)
         => RunCoreAsync(fileName, arguments, workingDirectory, timeout, environment,
-                        onStdOutLine: null, onStdErrLine: null, standardInput: null, ct);
+                        onStdOutLine: null, onStdErrLine: null, standardInput: null, ct, captureCharBudget);
 
     /// <summary>
     /// RunAsync that also writes <paramref name="standardInput"/> to the child's stdin and
@@ -67,7 +89,7 @@ public static class ProcessRunner
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default)
         => RunCoreAsync(fileName, arguments, workingDirectory, timeout, environment,
-                        onStdOutLine: null, onStdErrLine: null, standardInput, ct);
+                        onStdOutLine: null, onStdErrLine: null, standardInput, ct, DefaultCaptureCharBudget);
 
     /// <summary>
     /// RunAsync plus live output: each completed line is handed to the matching callback while
@@ -78,9 +100,9 @@ public static class ProcessRunner
     /// back up the pipes or kill the child — lines queue between the pipe reader and the
     /// callback, and the process result is never held hostage to delivery; CR, LF, and CRLF
     /// each terminate a callback line (git progress redraws lines with bare CR); timeout,
-    /// cancellation, and kill semantics are identical to RunAsync. Memory is O(total output):
-    /// the full capture accrues alongside any queued undelivered lines, so per-line callbacks
-    /// suit progress- and log-scale output, not bulk data transfer.
+    /// cancellation, and kill semantics are identical to RunAsync. The capture is bounded by
+    /// <see cref="DefaultCaptureCharBudget"/>, the queue of undelivered lines is not, so
+    /// per-line callbacks suit progress- and log-scale output, not bulk data transfer.
     /// </summary>
     public static Task<ProcessResult> RunStreamingAsync(
         string fileName,
@@ -92,7 +114,7 @@ public static class ProcessRunner
         Action<string>? onStdErrLine,
         CancellationToken ct = default)
         => RunCoreAsync(fileName, args, workingDirectory, timeout, environment,
-                        onStdOutLine, onStdErrLine, standardInput: null, ct);
+                        onStdOutLine, onStdErrLine, standardInput: null, ct, DefaultCaptureCharBudget);
 
     private static async Task<ProcessResult> RunCoreAsync(
         string fileName,
@@ -103,7 +125,8 @@ public static class ProcessRunner
         Action<string>? onStdOutLine,
         Action<string>? onStdErrLine,
         string? standardInput,
-        CancellationToken ct)
+        CancellationToken ct,
+        int captureCharBudget)
     {
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(10);
 
@@ -141,8 +164,8 @@ public static class ProcessRunner
         }
 
         // Drain both pipes from the start — never let either fill.
-        var (stdOutTask, stdOutDelivery) = BeginDrain(process.StandardOutput, onStdOutLine, fileName, "stdout");
-        var (stdErrTask, stdErrDelivery) = BeginDrain(process.StandardError, onStdErrLine, fileName, "stderr");
+        var (stdOutTask, stdOutDelivery) = BeginDrain(process.StandardOutput, onStdOutLine, fileName, "stdout", captureCharBudget);
+        var (stdErrTask, stdErrDelivery) = BeginDrain(process.StandardError, onStdErrLine, fileName, "stderr", captureCharBudget);
 
         // One budget covers the whole run. It is armed before stdin because a child that never
         // reads fills the pipe buffer and blocks the write: on the caller's token alone that
@@ -187,12 +210,16 @@ public static class ProcessRunner
         // stdout/stderr with TimedOut set: neither capture is read on this path, so even a
         // pipe whose read completed reports empty.
         string stdOut = "", stdErr = "";
+        var truncated = false;
+        long outputChars = 0;
         var drained = false;
         try
         {
             await Task.WhenAll(stdOutTask, stdErrTask).WaitAsync(TimeSpan.FromSeconds(timedOut ? 5 : 30));
-            stdOut = stdOutTask.Result;
-            stdErr = stdErrTask.Result;
+            stdOut = stdOutTask.Result.Text;
+            stdErr = stdErrTask.Result.Text;
+            truncated = stdOutTask.Result.Truncated || stdErrTask.Result.Truncated;
+            outputChars = stdOutTask.Result.TotalChars + stdErrTask.Result.TotalChars;
             drained = true;
         }
         catch (TimeoutException)
@@ -226,7 +253,20 @@ public static class ProcessRunner
         // Distinguish caller cancellation from a genuine timeout.
         ct.ThrowIfCancellationRequested();
 
-        return new ProcessResult(timedOut ? -1 : process.ExitCode, stdOut, stdErr, timedOut);
+        return new ProcessResult(timedOut ? -1 : process.ExitCode, stdOut, stdErr, timedOut)
+        {
+            Truncated = truncated,
+            OutputChars = outputChars
+        };
+    }
+
+    /// <summary>
+    /// One stream's capture. <see cref="TotalChars"/> counts everything the child wrote on it,
+    /// so a capture the budget cut short is the one whose total outruns its retained text.
+    /// </summary>
+    private readonly record struct Capture(string Text, long TotalChars)
+    {
+        public bool Truncated => TotalChars > Text.Length;
     }
 
     /// <summary>
@@ -247,16 +287,16 @@ public static class ProcessRunner
     }
 
     /// <summary>
-    /// Starts draining one pipe. Without a callback this is a plain read-to-end. With one, the
-    /// reader pushes completed lines into an unbounded queue consumed on a thread-pool task, so
-    /// the pipe is drained at full speed no matter how slow the callback is — a subscriber can
+    /// Starts draining one pipe. Without a callback the stream is only captured. With one, the
+    /// reader also pushes completed lines into an unbounded queue consumed on a thread-pool task,
+    /// so the pipe is drained at full speed no matter how slow the callback is — a subscriber can
     /// never fill the pipe and block the child.
     /// </summary>
-    private static (Task<string> Capture, Task? Delivery) BeginDrain(
-        StreamReader reader, Action<string>? onLine, string fileName, string streamName)
+    private static (Task<Capture> Capture, Task? Delivery) BeginDrain(
+        StreamReader reader, Action<string>? onLine, string fileName, string streamName, int charBudget)
     {
         if (onLine is null)
-            return (reader.ReadToEndAsync(CancellationToken.None), null);
+            return (CaptureAsync(reader, lines: null, charBudget), null);
 
         var lines = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
         {
@@ -287,23 +327,30 @@ public static class ProcessRunner
             }
         });
 
-        return (CaptureAndStreamAsync(reader, lines.Writer), delivery);
+        return (CaptureAsync(reader, lines.Writer, charBudget), delivery);
     }
 
-    private static async Task<string> CaptureAndStreamAsync(StreamReader reader, ChannelWriter<string> lines)
+    private static async Task<Capture> CaptureAsync(StreamReader reader, ChannelWriter<string>? lines, int charBudget)
     {
         var captured = new StringBuilder();
         var lineBuf = new StringBuilder();
         var buffer = new char[4096];
         var sawCr = false;
+        long total = 0;
         try
         {
             int read;
             while ((read = await reader.ReadAsync(buffer.AsMemory(), CancellationToken.None)) > 0)
             {
                 // Raw characters (line endings included) go to the capture untouched; the
-                // line split below is a parallel view, not a transformation.
-                captured.Append(buffer, 0, read);
+                // line split below is a parallel view, not a transformation. Past the budget
+                // the surplus is counted and dropped: reading has to continue either way,
+                // because a pipe left unread blocks the child.
+                total += read;
+                var room = charBudget - captured.Length;
+                captured.Append(buffer, 0, Math.Clamp(room, 0, read));
+
+                if (lines is null) continue;
                 for (var i = 0; i < read; i++)
                 {
                     var c = buffer[i];
@@ -328,16 +375,16 @@ public static class ProcessRunner
                     }
                 }
             }
-            if (lineBuf.Length > 0)
+            if (lines is not null && lineBuf.Length > 0)
                 lines.TryWrite(lineBuf.ToString());
         }
         finally
         {
             // Delivery ends only when the writer completes — including when the read faults
             // after a kill.
-            lines.Complete();
+            lines?.Complete();
         }
-        return captured.ToString();
+        return new Capture(captured.ToString(), total);
     }
 
     /// <summary>True if an executable exists at the path, or bare name resolution is being attempted.</summary>
