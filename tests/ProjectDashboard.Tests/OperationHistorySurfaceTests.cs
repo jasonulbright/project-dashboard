@@ -231,6 +231,44 @@ public class OperationHistorySurfaceTests
         Assert.Equal(OperationOutcome.Refused, record.Outcome);
     }
 
+    /// <summary>
+    /// A reflog expire that git rejects is not a gate refusal: every gate passed and git ran. The
+    /// distinction is what the record's outcome carries, and reporting it as refused would tell a
+    /// reader the operation never started.
+    /// </summary>
+    [Fact]
+    public async Task ADeepCleanWhoseExpireFails_IsRecordedAsFailedNotRefused()
+    {
+        using var repo = await RailsRepo.CreateAsync("ops-expire-fails");
+        var history = NewHistory();
+        var git = new FailingReflogExpireGitService();
+        var service = new DeepCleanService(git, new RepoBusyRegistry(), new RewriteJournal(), history);
+
+        var result = await service.RunAsync(repo.Path);
+
+        Assert.False(result.Success);
+        Assert.False(result.Gated);
+        Assert.Contains("nothing was pruned", result.RefusalReason!, StringComparison.Ordinal);
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationCategory.DeepClean, record.Category);
+        Assert.Equal(OperationOutcome.Failed, record.Outcome);
+        Assert.Contains("nothing was pruned", record.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>Rejects the reflog expire and nothing else, so every gate ahead of it still passes.</summary>
+    private sealed class FailingReflogExpireGitService : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args as IReadOnlyList<string> ?? args.ToList();
+            return list.Count > 1 && list[0] == "reflog" && list[1] == "expire"
+                ? Task.FromResult(new ProcessResult(1, "", "fatal: could not expire reflogs", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
     [Fact]
     public async Task AForcePushWithNothingToPush_IsRecordedAsRefused()
     {
