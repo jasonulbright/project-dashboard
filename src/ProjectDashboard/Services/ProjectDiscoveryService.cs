@@ -126,9 +126,24 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     }
 
     /// <summary>
+    /// The account's repositories that no discovered project is a clone of. Identity is the
+    /// canonical GitHub slug and nothing else: a folder name names no repository, so an
+    /// unrelated local "api" — one with no remote, or one on another host — would otherwise
+    /// hide the account's own owner/api behind a card that describes a different tree. A clone
+    /// under a renamed folder is still matched, by the slug its remote carries.
+    /// </summary>
+    internal static List<RemoteRepo> RemotesWithoutALocalClone(
+        IReadOnlyList<ProjectInfo> local, IReadOnlyList<RemoteRepo> remotes)
+    {
+        var localSlugs = new HashSet<string>(
+            local.Select(p => p.GitHubSlug).Where(s => s.Length > 0), StringComparer.OrdinalIgnoreCase);
+
+        return remotes.Where(r => !localSlugs.Contains(r.NameWithOwner)).ToList();
+    }
+
+    /// <summary>
     /// Adds the signed-in user's repositories that have no local clone as remote-only
-    /// ("Cloud") entries. A repo is "local" if any discovered project's GitHub slug or
-    /// folder name matches it, so a repo cloned under a renamed folder isn't duplicated.
+    /// ("Cloud") entries.
     /// </summary>
     private async Task AppendRemoteOnlyAsync(List<ProjectInfo> local, CancellationToken ct)
     {
@@ -137,16 +152,8 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         catch (Exception ex) { Log.Warn("remote-only discovery skipped", ex); return; }
         if (remotes.Count == 0) return;
 
-        var localSlugs = new HashSet<string>(
-            local.Select(p => p.GitHubSlug).Where(s => s.Length > 0), StringComparer.OrdinalIgnoreCase);
-        var localNames = new HashSet<string>(
-            local.Select(p => p.DirectoryName), StringComparer.OrdinalIgnoreCase);
-
-        foreach (var repo in remotes)
+        foreach (var repo in RemotesWithoutALocalClone(local, remotes))
         {
-            if (localSlugs.Contains(repo.NameWithOwner) || localNames.Contains(repo.Name))
-                continue;
-
             // A remote-only card has no local path, so there's no manifest to key on —
             // synthesize one from the repo description (the manifest editor is unavailable
             // until it's cloned anyway).
