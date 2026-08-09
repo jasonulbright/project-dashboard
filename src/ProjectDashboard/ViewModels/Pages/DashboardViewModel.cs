@@ -19,6 +19,7 @@ public partial class DashboardViewModel : ObservableObject
     private readonly GitService _gitService;
     private readonly ProjectWatcherService _watcher;
     private readonly RepoBusyRegistry _busyRegistry;
+    private readonly OperationHistory _history;
     private readonly ProjectTemplateService _templateService;
     private readonly Action<Action> _uiPost;
 
@@ -119,8 +120,12 @@ public partial class DashboardViewModel : ObservableObject
     /// dispatcher to marshal through, and a default that silently drops the callback there
     /// would drop the re-scan that a released repository lease is supposed to start.
     /// </summary>
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null, UpdateCheckService? updateCheck = null)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null, UpdateCheckService? updateCheck = null, OperationHistory? history = null)
     {
+        // Defaulted rather than left null: these are the same fetch, pull, and push the detail page
+        // records, and a repository would otherwise hold a record of one and not the other
+        // depending on which surface the reader happened to run it from.
+        _history = history ?? new OperationHistory();
         _discoveryService = discoveryService;
         _navigationService = navigationService;
         _settingsService = settingsService;
@@ -503,86 +508,135 @@ public partial class DashboardViewModel : ObservableObject
     /// Runs one card-level git op under the same refusals bulk sync applies. Every path
     /// out of here writes OpStatusText: a refused action that said nothing would read as
     /// a dead button.
+    ///
+    /// One record per click, labelled by the verb the reader pressed rather than by each git
+    /// call it took: a card Pull fetches first, and two rows for one button would make the
+    /// repository's ledger describe this app's internals instead of the operation asked of it.
+    /// Refusals are recorded for the same reason the detail page records them — a button that did
+    /// nothing is what a history has to explain.
     /// </summary>
     private async Task RunCardActionAsync(ProjectInfo? project, CardAction action)
     {
         if (project is null) return;
         var verb = DashboardCardActions.Verb(action);
         var name = project.DirectoryName;
+        var repo = project.FullPath;
+        var started = DateTimeOffset.UtcNow;
+        var recorded = false;
 
-        var busy = !string.IsNullOrEmpty(project.FullPath) && _busyRegistry.IsBusy(project.FullPath);
+        // Bound to the path the click named, never a live one. A remote-only card has none, and a
+        // record needs a repository to belong to.
+        void Record(OperationOutcome outcome, string detail)
+        {
+            if (string.IsNullOrWhiteSpace(repo) || recorded) return;
+            recorded = true;
+            try
+            {
+                _history.Append(OperationRecord.For(
+                    repo, OperationCategory.Remote, verb, outcome, detail, started));
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"could not record the card {verb} for {repo}", ex);
+            }
+        }
+
+        var busy = !string.IsNullOrEmpty(repo) && _busyRegistry.IsBusy(repo);
         var refusal = DashboardCardActions.RefuseReason(project, action, _bulkOpRunning, busy);
         if (refusal is not null)
         {
             OpStatusText = $"{verb} {name}: {refusal}";
+            Record(OperationOutcome.Refused, refusal);
             return;
         }
 
         // The lease both claims the repo and makes the watcher, the periodic reconcile,
         // and Sync All skip it while git is writing refs here.
-        if (!_busyRegistry.TryAcquire(project.FullPath, out var lease))
+        if (!_busyRegistry.TryAcquire(repo, out var lease))
         {
             OpStatusText = $"{verb} {name}: {DashboardCardActions.BusyReason}";
+            Record(OperationOutcome.Refused, DashboardCardActions.BusyReason);
             return;
         }
 
         try
         {
             OpStatusText = $"{verb} {name}…";
-            var fetch = await _gitService.FetchAsync(project.FullPath);
+            var fetch = await _gitService.FetchAsync(repo);
             if (!fetch.Success)
             {
                 OpStatusText = $"{name}: fetch failed — {fetch.FirstError}";
+                Record(OperationOutcome.Failed, fetch.FirstError);
                 return;
             }
             if (action == CardAction.Fetch)
             {
                 OpStatusText = $"{name}: fetched.";
+                Record(OperationOutcome.Succeeded, "");
                 return;
             }
 
-            var state = await _gitService.GetWorkingStateAsync(project.FullPath);
+            var state = await _gitService.GetWorkingStateAsync(repo);
             var postFetch = DashboardCardActions.RefuseReason(
                 project, action, bulkOpRunning: false, repoBusy: false, hasUpstream: state?.HasUpstream);
             if (postFetch is not null)
             {
                 OpStatusText = $"{verb} {name}: {postFetch}";
+                Record(OperationOutcome.Refused, postFetch);
                 return;
             }
             if (state is null)
             {
                 OpStatusText = $"{verb} {name}: {DashboardCardActions.StatusUnavailableReason}";
+                Record(OperationOutcome.Refused, DashboardCardActions.StatusUnavailableReason);
                 return;
             }
 
             // Divergence is only knowable after the fetch; the pre-flight guard saw stale counts.
             if (state.Ahead > 0 && state.Behind > 0)
             {
-                OpStatusText = $"{verb} {name}: diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal.";
+                var diverged = $"diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal.";
+                OpStatusText = $"{verb} {name}: {diverged}";
+                Record(OperationOutcome.Refused, diverged);
                 return;
             }
 
             if (action == CardAction.Pull)
             {
-                if (state.Behind == 0) { OpStatusText = $"{name}: already up to date."; return; }
-                var pull = await _gitService.PullAsync(project.FullPath);
+                if (state.Behind == 0)
+                {
+                    OpStatusText = $"{name}: already up to date.";
+                    Record(OperationOutcome.Succeeded, "Fetched. Already up to date.");
+                    return;
+                }
+                var pull = await _gitService.PullAsync(repo);
                 OpStatusText = pull.Success
                     ? $"{name}: pulled {state.Behind}."
                     : $"{name}: pull failed — {pull.FirstError}";
+                Record(pull.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                    pull.Success ? "" : pull.FirstError);
             }
             else
             {
-                if (state.Ahead == 0) { OpStatusText = $"{name}: nothing to push."; return; }
-                var push = await _gitService.PushAsync(project.FullPath);
+                if (state.Ahead == 0)
+                {
+                    OpStatusText = $"{name}: nothing to push.";
+                    Record(OperationOutcome.Succeeded, "Fetched. Nothing to push.");
+                    return;
+                }
+                var push = await _gitService.PushAsync(repo);
                 OpStatusText = push.Success
                     ? $"{name}: pushed {state.Ahead}."
                     : $"{name}: push failed — {push.FirstError}";
+                Record(push.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                    push.Success ? "" : push.FirstError);
             }
         }
         catch (Exception ex)
         {
             OpStatusText = $"{verb} {name}: {ex.Message}";
-            Log.Warn($"card {verb} failed for {project.FullPath}", ex);
+            Log.Warn($"card {verb} failed for {repo}", ex);
+            Record(OperationOutcome.Failed, ex.Message);
         }
         finally
         {
@@ -1154,6 +1208,29 @@ public partial class DashboardViewModel : ObservableObject
         await Task.WhenAll(candidates.Select(async p =>
         {
             await semaphore.WaitAsync();
+            var started = DateTimeOffset.UtcNow;
+            var recorded = false;
+
+            // One record per repository the sync reached, not one per git call: the reader pressed
+            // one button, and each repository is one unit of that work. A repository the candidate
+            // filter excluded is not recorded at all — nothing was attempted against it, and a
+            // refusal row per repository per sync would fill every ledger with work nobody asked of
+            // that repository.
+            void Record(OperationOutcome outcome, string detail)
+            {
+                if (string.IsNullOrWhiteSpace(p.FullPath) || recorded) return;
+                recorded = true;
+                try
+                {
+                    _history.Append(OperationRecord.For(
+                        p.FullPath, OperationCategory.Remote, "Sync all", outcome, detail, started));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"could not record the sync-all outcome for {p.FullPath}", ex);
+                }
+            }
+
             try
             {
                 var name = p.DirectoryName;
@@ -1163,6 +1240,7 @@ public partial class DashboardViewModel : ObservableObject
                 if (!_busyRegistry.TryAcquire(p.FullPath, out var lease))
                 {
                     outcomes.Add($"{name}: skipped — {DashboardCardActions.BusyReason}");
+                    Record(OperationOutcome.Refused, DashboardCardActions.BusyReason);
                     return;
                 }
 
@@ -1172,26 +1250,48 @@ public partial class DashboardViewModel : ObservableObject
                     if (!fetch.Success)
                     {
                         outcomes.Add($"{name}: fetch failed — {fetch.FirstError}");
+                        Record(OperationOutcome.Failed, fetch.FirstError);
                         return;
                     }
 
                     var state = await _gitService.GetWorkingStateAsync(p.FullPath);
-                    if (state is null || !state.HasUpstream) return; // fetched; nothing to reconcile
+                    if (state is null)
+                    {
+                        // The fetch landed and the reconcile never ran, and which of the two the
+                        // repository is now in cannot be read — that is neither a success nor a
+                        // failure of the sync.
+                        Record(OperationOutcome.Unknown,
+                            "Fetched, but the repository's status could not be read, so nothing was reconciled.");
+                        return;
+                    }
+                    if (!state.HasUpstream)
+                    {
+                        Record(OperationOutcome.Succeeded, "Fetched. No upstream to reconcile.");
+                        return; // fetched; nothing to reconcile
+                    }
 
                     switch (ahead: state.Ahead, behind: state.Behind)
                     {
                         case (0, 0):
+                            Record(OperationOutcome.Succeeded, "Fetched. Already in sync.");
                             break;
                         case (0, > 0):
                             var pull = await _gitService.PullAsync(p.FullPath);
                             outcomes.Add(pull.Success ? $"{name}: pulled {state.Behind}" : $"{name}: pull failed — {pull.FirstError}");
+                            Record(pull.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                                pull.Success ? $"Fetched and pulled {state.Behind}." : pull.FirstError);
                             break;
                         case ( > 0, 0):
                             var push = await _gitService.PushAsync(p.FullPath);
                             outcomes.Add(push.Success ? $"{name}: pushed {state.Ahead}" : $"{name}: push failed — {push.FirstError}");
+                            Record(push.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                                push.Success ? $"Fetched and pushed {state.Ahead}." : push.FirstError);
                             break;
                         default:
-                            outcomes.Add($"{name}: diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal");
+                            var diverged = $"diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal";
+                            outcomes.Add($"{name}: {diverged}");
+                            // Fetched, then declined to reconcile: bulk sync never creates a merge.
+                            Record(OperationOutcome.Refused, $"Fetched, then {diverged}.");
                             break;
                     }
                 }
@@ -1200,6 +1300,7 @@ public partial class DashboardViewModel : ObservableObject
             {
                 outcomes.Add($"{p.DirectoryName}: {ex.Message}");
                 Log.Warn($"sync-all failed for {p.FullPath}", ex);
+                Record(OperationOutcome.Failed, ex.Message);
             }
             finally
             {
