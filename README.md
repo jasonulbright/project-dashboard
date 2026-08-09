@@ -66,6 +66,7 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Remote discovery** — GitHub repos with no local clone appear as "Cloud" cards you can clone in one click (toggle in Settings)
 - **Safety rails** — every destructive operation stands on an automatic backup, a preview, and a confirmation. Whole-history rewrites, force pushes, repository deletion, and remote-branch deletion require the repository name typed out. While a repo is under a long operation the file watcher, refresh timer, discovery scan, and Sync All leave it alone and catch up afterward
 - **Keyboard and screen reader** — full no-mouse operation: `Ctrl+K` palette, `?` cheat sheet, arrow-key pane navigation, Tab/arrows/Enter through the card grid, `Ctrl+1`–`Ctrl+9` and `Ctrl+0` for detail tabs, Alt+Left / Backspace to go back, keyboard-activatable chips and rows, visible focus rings. Every list row, outcome, and state is named for a screen reader, and status colors hold a 4.5:1 contrast floor
+- **Update check** — on launch, at most once a day, the app asks GitHub for this project's latest published release and compares it with the running build. A newer one shows a dismissible notice with a link to its release page; nothing is downloaded, installed, or run. The request carries no account, repository, or usage data, and a Settings toggle turns it off so no request is made at all
 - **Live-apply settings** — theme, refresh interval, watcher toggle, and projects root take effect when you save, not on the next launch
 - **Window state** — size, position, and pane collapse state persisted across restarts, in device pixels so a mixed-DPI setup restores where you left it
 - **Discovery cache** — instant relaunch from cached data; manual Refresh and Settings → Sync Now bypass the cache
@@ -120,7 +121,9 @@ pwsh -File installer\build-portable.ps1
 
 On first launch, the app scans `C:\projects` for git repositories. Change the root path in Settings.
 
-Settings also has: theme (light/dark), refresh interval, excluded directories, a `gh.exe` path picker, toggles for GitHub discovery (Cloud cards) and on-disk auto-refresh, and the opt-in that puts the danger zone on a project's Repo tab. Saving applies every one of them to the running app.
+Settings also has: theme (light/dark), refresh interval, excluded directories, a `gh.exe` path picker, toggles for GitHub discovery (Cloud cards) and on-disk auto-refresh, the update check with a "Check now" button and the last check's outcome, and the opt-in that puts the danger zone on a project's Repo tab. Saving applies every one of them to the running app.
+
+The update check is the only request the app makes on its own initiative. It is an anonymous public read of `https://api.github.com/repos/jasonulbright/project-dashboard/releases/latest` — no token, no account, no repository or usage data, and no telemetry of any kind. GitHub sees an address, a time, and the app's name and version, the same as visiting the releases page in a browser. Turning the toggle off stops it entirely, on launch and from the button.
 
 ### Data storage
 
