@@ -95,6 +95,13 @@ public partial class ProjectDetailViewModel
     private bool IsCurrent(int gen) => gen == _generation;
 
     /// <summary>
+    /// How many times a different project has been applied. Read by tests that have to show a
+    /// switch was NOT applied: the in-flight work of the project on screen is invalidated by the
+    /// bump, so a switch skipped correctly is one that left this alone.
+    /// </summary>
+    internal int AppliedGeneration => _generation;
+
+    /// <summary>
     /// Reload the working state and dependent UI (branch bar, banner, lists).
     ///
     /// Every caller joins the one read in flight and leaves a pass owed behind it. Two reads

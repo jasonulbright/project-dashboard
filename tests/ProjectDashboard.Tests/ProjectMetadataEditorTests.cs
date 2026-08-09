@@ -36,6 +36,34 @@ public class ProjectMetadataEditorTests
         }
     }
 
+    /// <summary>
+    /// Holds the first write open until released, so a second switch can be landed inside it.
+    /// Racing the interleave against a real write instead makes it a wall-clock bet.
+    /// </summary>
+    private sealed class GatedDiscoveryService(bool succeeds)
+        : ProjectDiscoveryService(null!, null!, null!, new ManifestStore())
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _suspended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManifestStore _store = new();
+
+        public List<(string RepoPath, ProjectManifest Manifest)> Attempts { get; } = [];
+
+        /// <summary>Completes once a write is parked in the gate.</summary>
+        public Task Suspended => _suspended.Task;
+
+        public void Release() => _gate.TrySetResult();
+
+        public override async Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest,
+            CancellationToken ct = default)
+        {
+            Attempts.Add((repoPath, manifest));
+            _suspended.TrySetResult();
+            await _gate.Task;
+            return succeeds && _store.Save(repoPath, manifest);
+        }
+    }
+
     private static ProjectInfo ProjectNamed(string folder, ProjectManifest manifest) => new()
     {
         DirectoryName = folder,
@@ -285,6 +313,77 @@ public class ProjectMetadataEditorTests
         Assert.Equal("metadata-editor-other", vm.Project!.DirectoryName);
         Assert.False(vm.IsEditingNotes);
         Assert.Equal("second\n", vm.Notes);
+        Assert.Equal(ProjectDetailViewModel.NotesLeftUnsaved("metadata-editor"), vm.NotesStatusText);
+    }
+
+    /// <summary>
+    /// Two clicks land while the outgoing project's notes write is in flight. The write suspends
+    /// the FIRST switch, the second runs to completion and takes the screen, and then the first
+    /// resumes — carrying a project the reader has already navigated past. Applied there, it puts
+    /// the earlier project back on screen and bumps the generation out from under the loads the
+    /// visible switch started.
+    /// </summary>
+    [Fact]
+    public async Task ASwitchOvertakenWhileWritingNotes_DoesNotPutItsProjectBackOnScreen()
+    {
+        var discovery = new GatedDiscoveryService(succeeds: true);
+        var vm = await VmOnAsync(discovery, new ProjectManifest { Notes = "a\n" });
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "TASK: typed on A\n";
+
+        // Click B: parks inside A's manifest write.
+        var switchToB = vm.SetProjectAsync(ProjectNamed("editor-b", new ProjectManifest { Notes = "b\n" }));
+        await discovery.Suspended;
+        Assert.False(switchToB.IsCompleted);
+
+        // Click C while B is parked: the editor is already closed, so this one writes nothing
+        // and applies immediately.
+        await vm.SetProjectAsync(ProjectNamed("editor-c", new ProjectManifest { Notes = "c\n" }));
+        Assert.Equal("editor-c", vm.Project!.DirectoryName);
+        var generationOnC = vm.AppliedGeneration;
+
+        discovery.Release();
+        await switchToB;
+
+        // B's continuation is stale: no reversion, and the generation C's in-flight reads are
+        // guarded by is untouched.
+        Assert.Equal("editor-c", vm.Project!.DirectoryName);
+        Assert.Equal("c\n", vm.Notes);
+        Assert.Equal(generationOnC, vm.AppliedGeneration);
+
+        // The notes write itself still completed, against the project they were typed in.
+        var attempt = Assert.Single(discovery.Attempts);
+        Assert.Equal(RepoPath, attempt.RepoPath);
+        Assert.True(new ManifestStore().TryGet(RepoPath, out var stored));
+        Assert.Equal("TASK: typed on A\n", stored!.Notes);
+    }
+
+    /// <summary>
+    /// The overtaken switch is dropped, but the failure it discovered is not: the notice names
+    /// the project the notes were typed in, so it is true on whatever page is showing, and this
+    /// is the only moment the reader can be told.
+    /// </summary>
+    [Fact]
+    public async Task ASwitchOvertakenAfterAFailedNotesWrite_StillReportsTheFailureOnThePageShowing()
+    {
+        var discovery = new GatedDiscoveryService(succeeds: false);
+        var vm = await VmOnAsync(discovery, new ProjectManifest { Notes = "a\n" });
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "BUG: typed on A\n";
+
+        var switchToB = vm.SetProjectAsync(ProjectNamed("editor-b", new ProjectManifest { Notes = "b\n" }));
+        await discovery.Suspended;
+
+        await vm.SetProjectAsync(ProjectNamed("editor-c", new ProjectManifest { Notes = "c\n" }));
+        var generationOnC = vm.AppliedGeneration;
+
+        discovery.Release();
+        await switchToB;
+
+        // The page stayed on C, and the notice names A — not the project on screen.
+        Assert.Equal("editor-c", vm.Project!.DirectoryName);
+        Assert.Equal("c\n", vm.Notes);
+        Assert.Equal(generationOnC, vm.AppliedGeneration);
         Assert.Equal(ProjectDetailViewModel.NotesLeftUnsaved("metadata-editor"), vm.NotesStatusText);
     }
 

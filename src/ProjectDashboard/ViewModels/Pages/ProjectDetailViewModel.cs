@@ -207,10 +207,34 @@ public partial class ProjectDetailViewModel : ObservableObject
         return NotesLeftUnsaved(outgoing.DisplayName);
     }
 
+    /// <summary>
+    /// Claimed by each call to <see cref="SetProjectAsync"/> before it awaits the outgoing
+    /// project's notes write. A later call can run to completion during that await, so the
+    /// captured value is what tells a resuming continuation that the project it names is no
+    /// longer the one the reader asked for. Separate from <see cref="_generation"/>, which counts
+    /// switches actually APPLIED and invalidates their in-flight reads — bumping that here would
+    /// invalidate the loads of a switch that is still on screen.
+    /// Read and written only between awaits, like the generation counter beside it.
+    /// </summary>
+    private int _switchSequence;
+
     public async Task SetProjectAsync(ProjectInfo project)
     {
+        var switchToken = ++_switchSequence;
+
         // Ahead of the swap, while Project still names the repository the text was typed against.
         var unsavedNotes = await SaveNotesLeavingProjectAsync(project);
+
+        // A later switch took the page while that write was in flight, and has already applied.
+        // Applying this one would put the project clicked BEFORE it back on screen and bump the
+        // generation out from under the loads the visible switch started.
+        if (switchToken != _switchSequence)
+        {
+            // The notice still lands: it names the project the notes were typed in, so it is
+            // true on whatever page is showing, and this is the only moment it can be told.
+            if (unsavedNotes is not null) NotesStatusText = unsavedNotes;
+            return;
+        }
 
         // Local data renders instantly from what discovery already loaded. The issues
         // LIST is the one remote thing this page shows, and discovery no longer
