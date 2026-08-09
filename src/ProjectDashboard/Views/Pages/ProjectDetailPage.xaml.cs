@@ -892,13 +892,68 @@ public partial class ProjectDetailPage
         if (string.IsNullOrWhiteSpace(basePath) || string.IsNullOrWhiteSpace(imgSrc)) return null;
         try
         {
-            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath))
-                     + Path.DirectorySeparatorChar;
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath));
             var full = Path.GetFullPath(Path.Combine(basePath, imgSrc));
-            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+            if (!IsUnder(full, root)) return null;
+
+            // Spelling a path inside the repository is not the same as landing inside it: a
+            // reparse point along the way forwards the read wherever it points, and a repository
+            // can carry one (git materializes a symlink blob, and a junction needs no privilege
+            // to create). Containment is decided again with every link on both paths resolved.
+            return IsUnder(ResolveLinks(full), ResolveLinks(root)) ? full : null;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
+            return null;
+        }
+    }
+
+    private static bool IsUnder(string candidate, string root) =>
+        candidate.StartsWith(
+            Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// <paramref name="full"/> with every reparse point along it replaced by its target. The
+    /// framework resolves only the component it is handed — a link check on the last one reports
+    /// null for a plain file reached through a junctioned parent — so each component is resolved
+    /// in turn and the rest re-based onto the target. Resolution stops at the first component
+    /// that does not exist, because the resolvers throw there and nothing beyond it can be a
+    /// link; the remainder is appended as written.
+    /// </summary>
+    private static string ResolveLinks(string full)
+    {
+        var root = Path.GetPathRoot(full);
+        if (string.IsNullOrEmpty(root)) return full;
+
+        var segments = full[root.Length..].Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        var resolved = root;
+        for (var i = 0; i < segments.Length; i++)
+        {
+            resolved = Path.Combine(resolved, segments[i]);
+            if (!Path.Exists(resolved))
+                return Path.Combine([resolved, .. segments[(i + 1)..]]);
+            if (LinkTargetOf(resolved) is { } target)
+                resolved = target;
+        }
+        return resolved;
+    }
+
+    /// <summary>The final target of a reparse point, or null when the path is not one.</summary>
+    private static string? LinkTargetOf(string path)
+    {
+        try
+        {
+            FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+            return info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+        }
+        catch (IOException)
+        {
+            // A cycle or a chain past the platform's link depth. Neither resolves to anything
+            // a containment check could clear, so the path stays as written and fails it.
             return null;
         }
     }
