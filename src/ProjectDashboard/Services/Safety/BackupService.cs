@@ -184,7 +184,10 @@ public sealed class BackupService
     /// remote-tracking refs, which describe the remote rather than this repository's history and
     /// come back on the next fetch, and symbolic refs, whose update writes through to a target the
     /// same script already names. Neither is deleted, rewound, or recreated by a restore, and the
-    /// result message counts what was left alone.
+    /// result message counts what was left alone. Leaving a symbolic ref alone can leave it
+    /// dangling: one created after the backup, aliasing a branch the reconciliation deletes,
+    /// survives the restore pointing at a ref that no longer exists — a state git permits and
+    /// resolves to nothing.
     ///
     /// A failure in either step after that transaction returns <see cref="RestoreResult.Success"/>
     /// false with <see cref="RestoreResult.RefsRestored"/> true: the pre-rewrite content is

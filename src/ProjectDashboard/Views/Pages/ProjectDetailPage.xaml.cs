@@ -900,6 +900,12 @@ public partial class ProjectDetailPage
             // reparse point along the way forwards the read wherever it points, and a repository
             // can carry one (git materializes a symlink blob, and a junction needs no privilege
             // to create). Containment is decided again with every link on both paths resolved.
+            //
+            // The decision and the open that follows it are two steps, so a reparse point swapped
+            // into the path between them is read as its new target: containment holds against the
+            // tree as it stands at this line, not against one being rewritten concurrently. That
+            // residual is accepted — writing the tree during a render already requires local code
+            // execution, which reaches the same files directly.
             return IsUnder(ResolveLinks(full), ResolveLinks(root)) ? full : null;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
