@@ -594,8 +594,13 @@ public partial class ProjectDetailPage
                     }
                     else
                     {
-                        var imgPath = Path.IsPathRooted(imgSrc) ? imgSrc : Path.Combine(basePath, imgSrc);
-                        if (File.Exists(imgPath))
+                        var imgPath = ContainedImagePath(basePath, imgSrc);
+                        if (imgPath is null)
+                        {
+                            doc.Blocks.Add(ImageUnavailable(alt));
+                            rendered = true;
+                        }
+                        else if (File.Exists(imgPath))
                         {
                             // Streamed, not read into a byte array first: the pixel budget
                             // is the bound on the decode, and nothing should have to hold a
@@ -872,6 +877,31 @@ public partial class ProjectDetailPage
     /// URL is reached; each entry is removed as its fetch completes.
     /// </summary>
     private static readonly ConcurrentDictionary<string, Task<BitmapImage?>> RemoteImageFetches = new();
+
+    /// <summary>
+    /// The absolute path a local markdown image source names, or null when it lands outside
+    /// <paramref name="basePath"/>. A rooted source and a relative one laden with ".." both
+    /// address any file the user can read, and the rendered document is repository content:
+    /// nothing outside the repository is opened, whatever the source spells. Containment is
+    /// decided on canonical paths — comparing the unresolved text lets "repo\..\secrets" pass —
+    /// and against the root plus its separator, so a sibling directory sharing the root's name
+    /// as a prefix is outside it.
+    /// </summary>
+    internal static string? ContainedImagePath(string basePath, string imgSrc)
+    {
+        if (string.IsNullOrWhiteSpace(basePath) || string.IsNullOrWhiteSpace(imgSrc)) return null;
+        try
+        {
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath))
+                     + Path.DirectorySeparatorChar;
+            var full = Path.GetFullPath(Path.Combine(basePath, imgSrc));
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>The alt-text line shown wherever an image is refused or fails to decode.</summary>
     private static Paragraph ImageUnavailable(string alt) =>
