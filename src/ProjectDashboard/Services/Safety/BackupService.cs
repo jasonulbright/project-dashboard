@@ -206,6 +206,9 @@ public sealed class BackupService
         // instead of being silently overwritten by the snapshot's value.
         var desired = snapshot.Refs.ToDictionary(r => r.Name, r => r.ObjectId, StringComparer.Ordinal);
         var current = await ReadCurrentRefsAsync(handle.RepoPath, ct);
+        if (current is null)
+            return new RestoreResult(false,
+                $"The current ref layout of '{handle.RepoPath}' could not be read — refusing to restore.");
 
         var script = new StringBuilder();
         foreach (var (name, oid) in current)
@@ -306,14 +309,20 @@ public sealed class BackupService
         return snapshot;
     }
 
-    private async Task<Dictionary<string, string>> ReadCurrentRefsAsync(string repoPath, CancellationToken ct)
+    /// <summary>
+    /// Every ref and its object id, or null when git could not read the layout. An unreadable
+    /// layout is never an empty one: reconciling against it would skip every delete the snapshot
+    /// calls for and report a full restore over refs the backup never held.
+    /// </summary>
+    private async Task<Dictionary<string, string>?> ReadCurrentRefsAsync(string repoPath, CancellationToken ct)
     {
         var refs = await _git.RunAsync(repoPath,
             ["for-each-ref", "--format=%(objectname) %(refname)"], ct, RefTimeout);
+        if (!refs.Success)
+            return null;
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (refs.Success)
-            foreach (var (name, oid) in ParseRefLines(refs.StdOut))
-                map[name] = oid;
+        foreach (var (name, oid) in ParseRefLines(refs.StdOut))
+            map[name] = oid;
         return map;
     }
 

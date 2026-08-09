@@ -169,6 +169,42 @@ public class BackupServiceTests
             (await repo.GitAsync("rev-parse", "refs/heads/feature")).Trim());
     }
 
+    /// <summary>Fails the ref-layout read the restore reconciles against, leaving every other git call alone.</summary>
+    private sealed class UnreadableRefLayoutGitService : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            return argv.Contains("for-each-ref")
+                ? Task.FromResult(new ProcessResult(128, "", "fatal: could not read refs", TimedOut: false))
+                : base.RunAsync(repoPath, argv, environment, ct, timeout);
+        }
+    }
+
+    [Fact]
+    public async Task Restore_CurrentRefLayoutUnreadable_RefusesInsteadOfSkippingEveryDelete()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        // A branch the backup never saw: a restore that read the layout as empty would leave it
+        // standing and still report success.
+        await repo.GitAsync("branch", "stray");
+        var mutated = await repo.RefStateAsync();
+
+        var blind = new BackupService(new UnreadableRefLayoutGitService(), new SettingsService());
+        var result = await blind.RestoreAsync(handle);
+
+        Assert.False(result.Success);
+        Assert.False(result.RefsRestored);
+        Assert.Contains("ref layout", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(mutated, await repo.RefStateAsync());
+        Assert.Contains("refs/heads/stray", await repo.RefStateAsync(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Restore_DirtyWorktree_ReportsDiscardedChangeCount()
     {
