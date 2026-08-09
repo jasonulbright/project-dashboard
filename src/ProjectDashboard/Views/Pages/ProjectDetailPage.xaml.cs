@@ -519,6 +519,7 @@ public partial class ProjectDetailPage
         Paragraph? currentParagraph = null;
         bool inCodeBlock = false;
         var codeBlockLines = new List<string>();
+        RootFinalPath? imageRoots = null;
 
         foreach (var rawLine in lines)
         {
@@ -600,7 +601,8 @@ public partial class ProjectDetailPage
                         // reads the file the check cleared. Streamed, not read into a byte
                         // array first, because the pixel budget is the bound on the decode and
                         // nothing should hold a whole file in memory to find out it is too large.
-                        using var data = OpenContainedImage(basePath, imgSrc, out var refusedImage);
+                        using var data = OpenContainedImage(basePath, imgSrc, out var refusedImage,
+                            imageRoots ??= new RootFinalPath());
                         if (data is not null)
                         {
                             var bitmap = DecodeBounded(data);
@@ -941,7 +943,11 @@ public partial class ProjectDetailPage
     /// resolution cannot widen containment either: the file's own final path is authoritative,
     /// so a root that moved under the check yields a refusal, never an escape.
     /// </para></summary>
-    internal static FileStream? OpenContainedImage(string basePath, string imgSrc, out bool refused)
+    internal static FileStream? OpenContainedImage(string basePath, string imgSrc, out bool refused) =>
+        OpenContainedImage(basePath, imgSrc, out refused, new RootFinalPath());
+
+    private static FileStream? OpenContainedImage(string basePath, string imgSrc, out bool refused,
+        RootFinalPath roots)
     {
         refused = true;
         if (ContainedImagePath(basePath, imgSrc) is not { } candidate) return null;
@@ -958,7 +964,7 @@ public partial class ProjectDetailPage
             return null;
         }
 
-        var root = FinalPathOfDirectory(Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath)));
+        var root = roots.For(basePath);
         var opened = FinalPathOfHandle(stream.SafeFileHandle);
         if (root is null || opened is null || !IsUnder(opened, root))
         {
@@ -968,6 +974,31 @@ public partial class ProjectDetailPage
 
         refused = false;
         return stream;
+    }
+
+    /// <summary>
+    /// The root every image of one render pass is compared against, resolved once. Resolving it
+    /// opens and closes a directory handle, and a document of many images repeated that per
+    /// image for an answer that is the same operand every time.
+    /// <para>
+    /// Held for the pass and no longer: the root is one reparse point away from naming a
+    /// different directory, so an answer kept across renders would decide containment against a
+    /// directory the repository no longer is. Within a pass the cached answer can only refuse
+    /// more, never allow more — a root that moves after it was read moves the files reached
+    /// through it too, so their final paths stop matching the answer held here.
+    /// </para><para>
+    /// Only the ROOT is cached. The per-file resolution stays per image: that handle is what the
+    /// bytes are decoded from, and resolving it is what binds the check to the object read.
+    /// </para></summary>
+    private sealed class RootFinalPath
+    {
+        private readonly Dictionary<string, string?> _byBasePath = new(StringComparer.OrdinalIgnoreCase);
+
+        public string? For(string basePath) =>
+            _byBasePath.TryGetValue(basePath, out var final)
+                ? final
+                : _byBasePath[basePath] =
+                    FinalPathOfDirectory(Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath)));
     }
 
     // GetFinalPathNameByHandle resolves from the object a handle already holds, which no path-based
