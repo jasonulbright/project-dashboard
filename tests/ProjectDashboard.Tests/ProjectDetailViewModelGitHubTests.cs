@@ -416,6 +416,37 @@ public class ProjectDetailViewModelGitHubTests
         Assert.False(vm.IsBusy);
     }
 
+    /// <summary>Answers every confirmation yes, so a command's own gate is the only thing left between the click and the work.</summary>
+    private sealed class ConfirmingViewModel(Services.Safety.RepoBusyRegistry registry)
+        : ProjectDetailViewModel(null!, new GitService(), null!, busyRegistry: registry)
+    {
+        internal override Task<bool> ConfirmAsync(string title, string message, string confirmText) =>
+            Task.FromResult(true);
+    }
+
+    /// <summary>
+    /// `gh pr checkout` moves HEAD and the working tree, so it belongs behind the repository
+    /// lease and not only behind this page's busy flag: a rewrite's swap holds the lease from
+    /// another surface entirely, and a checkout landing inside it moves the tree the swap is
+    /// about to reset.
+    /// </summary>
+    [Fact]
+    public async Task CheckoutPr_WhileTheRepositoryIsLeased_RefusesInsteadOfRunningUnderIt()
+    {
+        var registry = new Services.Safety.RepoBusyRegistry();
+        var vm = new ConfirmingViewModel(registry);
+        var project = RemoteProject();
+        await vm.SetProjectAsync(project);
+        vm.SelectedPullRequest = new GitHubPullRequest { Number = 12, Title = "wire it up" };
+
+        using var lease = registry.Acquire(project.FullPath);
+        await vm.CheckoutPrCommand.ExecuteAsync(null);
+
+        Assert.Contains("another operation is running on this repository",
+            vm.GitHubStatusText, StringComparison.Ordinal);
+        Assert.False(vm.IsBusy);
+    }
+
     [Fact]
     public async Task GitHubMutationGuards_NoOpWithoutRemoteOrSelection()
     {

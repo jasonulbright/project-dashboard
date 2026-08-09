@@ -652,8 +652,8 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var ok = await RunGitHubOp(() => _gitHubService.CheckoutPullRequestAsync(repo, pr.Number),
-            $"Checkout #{pr.Number} ({target})");
+        var ok = await RunGitHubRepoOp(() => _gitHubService.CheckoutPullRequestAsync(repo, pr.Number),
+            $"Checkout #{pr.Number} ({target})", repo);
         if (ok) await SafeRefreshWorkingStateAsync();
     }
 
@@ -774,6 +774,25 @@ public partial class ProjectDetailViewModel
     /// </summary>
     private async Task<bool> RunGitHubOp(Func<Task<ProcessResult>> op, string label)
         => await RunGitHubOpResult(op, label) is { Success: true };
+
+    /// <summary>
+    /// <see cref="RunGitHubOp"/> for a gh command that writes this repository rather than only
+    /// its GitHub side. The page's own busy flag ends at the page; the repository lease is the
+    /// gate that holds across them, and a checkout moving HEAD and the working tree inside a
+    /// rewrite's swap is what it exists to stop. Remote-only gh mutations stay on the light gate,
+    /// because nothing they touch is on disk.
+    /// </summary>
+    private async Task<bool> RunGitHubRepoOp(Func<Task<ProcessResult>> op, string label, string repo)
+    {
+        if (IsBusy || repo.Length == 0) return false;
+        if (!_busyRegistry.TryAcquire(repo, out var lease))
+        {
+            GitHubStatusText = $"{label} refused: another operation is running on this repository.";
+            return false;
+        }
+        using (lease)
+            return await RunGitHubOpResult(op, label) is { Success: true };
+    }
 
     /// <summary>
     /// <see cref="RunGitHubOp"/> for callers that must read the failure itself — the
