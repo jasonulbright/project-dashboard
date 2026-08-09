@@ -200,14 +200,62 @@ public class MarkdownImageJunctionTests
     /// A second open by path would put back the window the handle closes, whatever the first one
     /// decided. The page opens an image source exactly once — the stream the check cleared — and
     /// reads image bytes through no other route.
-    /// </summary>
+    /// <para>
+    /// Scoped to the methods that make up the local-image path, not to the whole file: what is
+    /// guarded is that image bytes come from the checked handle, and an unrelated file read
+    /// elsewhere in a page of this size is not evidence against that. Within the region every
+    /// route to file bytes is refused, not only the two the first version of this named — a
+    /// bypass would be written with whichever API the author reached for.
+    /// </para></summary>
     [Fact]
     public void TheRenderer_ReadsImageBytesOnlyFromTheCheckedHandle()
     {
         var source = RepoSource.Read("src/ProjectDashboard/Views/Pages/ProjectDetailPage.xaml.cs");
 
-        Assert.DoesNotContain("File.OpenRead", source);
-        Assert.DoesNotContain("File.ReadAllBytes", source);
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(source, @"new FileStream\("));
+        var render = MethodBody(source, "private static void AppendMarkdown(");
+        var open = MethodBody(source, "private static FileStream? OpenContainedImage(");
+        var contain = MethodBody(source, "internal static string? ContainedImagePath(");
+        var decode = MethodBody(source, "internal static BitmapImage? DecodeBounded(");
+
+        // Anchored, so a slice that matched the wrong text fails here rather than passing empty.
+        Assert.Contains("OpenContainedImage(", render);
+        Assert.Contains("DecodeBounded(", render);
+        Assert.Contains("new FileStream(", open);
+        Assert.Contains("IsUnder(", contain);
+        Assert.Contains("StreamSource", decode);
+
+        var region = string.Concat(render, open, contain, decode);
+        foreach (var bypass in new[]
+                 {
+                     "File.Open", "File.ReadAll", "File.ReadLines",
+                     "new StreamReader(", "new BinaryReader(", "MemoryMappedFile"
+                 })
+            Assert.DoesNotContain(bypass, region);
+
+        // The one open is the one the containment check is decided on.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(region, @"new FileStream\("));
+    }
+
+    /// <summary>
+    /// The body of the named method, brace-matched from its signature. Every brace in these
+    /// bodies is code — a literal one would unbalance the count — so a slice that comes back
+    /// short is caught by the anchor its caller asserts on it.
+    /// </summary>
+    private static string MethodBody(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"method not found in the rendered source: {signature}");
+        var open = source.IndexOf('{', start);
+        Assert.True(open > start, $"no body found for {signature}");
+
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{') depth++;
+            else if (source[i] == '}' && --depth == 0) return source[open..(i + 1)];
+        }
+
+        Assert.Fail($"unbalanced braces after {signature}");
+        return "";
     }
 }
