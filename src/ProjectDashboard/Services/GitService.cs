@@ -1484,13 +1484,18 @@ public class GitService
         return RunAsync(repoPath, args, ct, TimeSpan.FromSeconds(30));
     }
 
-    public async Task<List<FileDiff>> GetStashDiffAsync(string repoPath, string stashRef, CancellationToken ct = default)
+    /// <summary>
+    /// The stashed change as a parsed diff, or null when the read failed. An empty list means a
+    /// stash that recorded no file change; reported as the same value, a failed read would offer
+    /// a reader an empty preview of work that is still in the stash.
+    /// </summary>
+    public async Task<List<FileDiff>?> GetStashDiffAsync(string repoPath, string stashRef, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath, ["stash", "show", "-p", "--no-color", stashRef], ct);
         if (!result.Success)
         {
             Log.Warn($"git stash show failed for {stashRef} in {repoPath}: {result.FirstError}");
-            return [];
+            return null;
         }
         return FileDiff.ParseUnified(result.StdOut);
     }

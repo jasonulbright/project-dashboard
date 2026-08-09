@@ -2406,81 +2406,163 @@
 
             <!-- ── STASHES ── -->
             <TabItem Header="Stashes" Tag="{x:Static models:DetailTab.Stashes}">
-                <Grid Margin="0,12,0,0" MaxWidth="860" HorizontalAlignment="Left">
+                <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <DockPanel Grid.Row="0" Margin="0,0,0,8">
                         <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4"
                                    Icon="{ui:SymbolIcon ArrowSync24}"
-                                   Command="{Binding LoadStashesCommand}" />
+                                   Command="{Binding LoadStashesCommand}"
+                                   AutomationProperties.Name="Refresh the stash list" />
                         <TextBlock FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                   Text="Apply keeps the stash; Pop applies and removes it; Drop deletes it (confirmed)." />
+                                   Text="Apply keeps the stash; Pop applies and removes it; Drop deletes it (confirmed). Selecting a stash shows what it holds." />
                     </DockPanel>
+
                     <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            CornerRadius="8" Padding="10,8">
-                        <Grid>
-                            <TextBlock Text="No stashes." FontSize="12"
-                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Stashes.Count}" Value="0">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <ListBox ItemsSource="{Binding Stashes}"
-                                     SelectedItem="{Binding SelectedStash}"
-                                     Background="Transparent" BorderThickness="0"
-                                     AutomationProperties.Name="Stashes">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="AutomationProperties.Name">
-                                            <Setter.Value>
-                                                <MultiBinding StringFormat="{}{0}: {1}">
-                                                    <Binding Path="Ref" />
-                                                    <Binding Path="Subject" />
-                                                </MultiBinding>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:StashEntry}">
-                                        <DockPanel Margin="0,2">
-                                            <TextBlock DockPanel.Dock="Left" Width="92" Text="{Binding Ref}"
-                                                       FontFamily="Cascadia Code,Consolas" FontSize="12"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="{DynamicResource StatusInfoFg}" />
-                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                <TextBlock Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
-                                                           FontSize="11" Margin="0,0,12,0" VerticalAlignment="Center"
-                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                                                <ui:Button Content="Apply" FontSize="11" Padding="8,2" Margin="0,0,6,0"
-                                                           Command="{Binding DataContext.StashApplyCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                           CommandParameter="{Binding}" />
-                                                <ui:Button Content="Pop" FontSize="11" Padding="8,2" Margin="0,0,6,0"
-                                                           Command="{Binding DataContext.StashPopCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                           CommandParameter="{Binding}" />
-                                                <ui:Button Content="Drop" FontSize="11" Padding="8,2"
-                                                           Command="{Binding DataContext.StashDropCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                           CommandParameter="{Binding}" />
-                                            </StackPanel>
-                                            <TextBlock Text="{Binding Subject}" FontSize="12" VerticalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
-                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                        </DockPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </Grid>
+                            CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
+                        <DockPanel>
+                            <ui:Button DockPanel.Dock="Right" Content="Stash changes" Appearance="Primary"
+                                       FontSize="12" Padding="12,4" Margin="10,0,0,0" VerticalAlignment="Bottom"
+                                       Command="{Binding StashChangesCommand}"
+                                       ToolTip="Save the working tree onto the stash stack and leave it clean"
+                                       AutomationProperties.Name="Stash the working tree changes" />
+                            <CheckBox DockPanel.Dock="Right" Content="Include untracked files" FontSize="12"
+                                      Margin="12,0,0,0" VerticalAlignment="Bottom"
+                                      IsChecked="{Binding StashIncludeUntracked}"
+                                      ToolTip="Take files git is not tracking yet into the stash as well"
+                                      AutomationProperties.Name="Include untracked files in the stash" />
+                            <StackPanel>
+                                <TextBlock Text="Message" FontSize="12" Margin="0,0,0,2"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                <TextBox Text="{Binding NewStashMessage, UpdateSourceTrigger=PropertyChanged}"
+                                         FontSize="12"
+                                         AutomationProperties.Name="Stash message"
+                                         ToolTip="What this snapshot is; left empty, git names it after the current commit" />
+                            </StackPanel>
+                        </DockPanel>
                     </Border>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3*" MinWidth="360" />
+                            <ColumnDefinition Width="4*" MinWidth="280" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
+                            <Grid>
+                                <TextBlock Text="No stashes." FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Stashes.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding Stashes}"
+                                         SelectedItem="{Binding SelectedStash}"
+                                         Background="Transparent" BorderThickness="0"
+                                         AutomationProperties.Name="Stashes">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="AutomationProperties.Name">
+                                                <Setter.Value>
+                                                    <MultiBinding StringFormat="{}{0}: {1}">
+                                                        <Binding Path="Ref" />
+                                                        <Binding Path="Subject" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:StashEntry}">
+                                            <DockPanel Margin="0,2">
+                                                <TextBlock DockPanel.Dock="Left" Width="92" Text="{Binding Ref}"
+                                                           FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource StatusInfoFg}" />
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <TextBlock Text="{Binding Date, Converter={StaticResource RelativeTimeConverter}}"
+                                                               FontSize="11" Margin="0,0,12,0" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                    <ui:Button Content="Apply" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                                               Command="{Binding DataContext.StashApplyCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                               CommandParameter="{Binding}" />
+                                                    <ui:Button Content="Pop" FontSize="11" Padding="8,2" Margin="0,0,6,0"
+                                                               Command="{Binding DataContext.StashPopCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                               CommandParameter="{Binding}" />
+                                                    <ui:Button Content="Drop" FontSize="11" Padding="8,2"
+                                                               Command="{Binding DataContext.StashDropCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                               CommandParameter="{Binding}" />
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Subject}" FontSize="12" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="10,8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="What this stash holds" Style="{StaticResource PaneHeader}" />
+                                <TextBlock Grid.Row="1" Text="{Binding StashDiffError}" FontSize="12" TextWrapping="Wrap"
+                                           Margin="0,0,0,6"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           Foreground="{DynamicResource StatusWarnFg}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding StashDiffError}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ComboBox Grid.Row="2" ItemsSource="{Binding StashDiffFiles}"
+                                          SelectedItem="{Binding SelectedStashDiffFile}"
+                                          DisplayMemberPath="Path" FontSize="12" Margin="0,0,0,6"
+                                          AutomationProperties.Name="File changed in the selected stash">
+                                    <ComboBox.Style>
+                                        <Style TargetType="ComboBox">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding StashDiffFiles.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ComboBox.Style>
+                                </ComboBox>
+                                <ListBox Grid.Row="3" ItemsSource="{Binding StashDiffLines}"
+                                         Style="{StaticResource DiffListStyle}"
+                                         Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                         AutomationProperties.Name="Stash diff" />
+                                <ListBox Grid.Row="3" ItemsSource="{Binding StashDiffRows}"
+                                         Style="{StaticResource SideBySideListStyle}"
+                                         Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                         AutomationProperties.Name="Stash diff, side by side" />
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Grid>
             </TabItem>
 

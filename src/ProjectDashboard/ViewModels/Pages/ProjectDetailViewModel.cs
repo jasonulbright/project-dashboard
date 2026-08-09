@@ -247,6 +247,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         ResetInternalsState();
         Stashes = [];
         StashesLoaded = false;
+        SelectedStash = null;
+        NewStashMessage = "";
+        StashIncludeUntracked = false;
         SelectedCommit = null;
         CommitFiles = [];
         CommitDiffLines = [];

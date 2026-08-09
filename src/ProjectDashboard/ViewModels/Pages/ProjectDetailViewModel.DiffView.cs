@@ -15,6 +15,7 @@ public partial class ProjectDetailViewModel
     /// <summary>The rows the two-column panes render. Empty while the unified mode is on.</summary>
     [ObservableProperty] private ObservableCollection<SideBySideRow> _diffRows = [];
     [ObservableProperty] private ObservableCollection<SideBySideRow> _commitDiffRows = [];
+    [ObservableProperty] private ObservableCollection<SideBySideRow> _stashDiffRows = [];
 
     /// <summary>The two-column pane's selected row, kept in step with <see cref="SelectedDiffLine"/>.</summary>
     [ObservableProperty] private SideBySideRow? _selectedDiffRow;
@@ -66,11 +67,14 @@ public partial class ProjectDetailViewModel
         OnPropertyChanged(nameof(DiffLayoutLabel));
         RebuildDiffRows();
         RebuildCommitDiffRows();
+        RebuildStashDiffRows();
     }
 
     partial void OnDiffLinesChanged(ObservableCollection<DiffLine> value) => RebuildDiffRows();
 
     partial void OnCommitDiffLinesChanged(ObservableCollection<DiffLine> value) => RebuildCommitDiffRows();
+
+    partial void OnStashDiffLinesChanged(ObservableCollection<DiffLine> value) => RebuildStashDiffRows();
 
     /// <summary>
     /// Built only for the mode that renders them: a reader who never leaves the unified pane
@@ -85,6 +89,11 @@ public partial class ProjectDetailViewModel
     private void RebuildCommitDiffRows() =>
         CommitDiffRows = DiffSideBySide
             ? new ObservableCollection<SideBySideRow>(SideBySideDiff.Build(CommitDiffLines))
+            : [];
+
+    private void RebuildStashDiffRows() =>
+        StashDiffRows = DiffSideBySide
+            ? new ObservableCollection<SideBySideRow>(SideBySideDiff.Build(StashDiffLines))
             : [];
 
     partial void OnSelectedDiffLineChanged(DiffLine? value)

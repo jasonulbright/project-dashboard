@@ -61,6 +61,8 @@ public partial class ProjectDetailViewModel
     // ── Stashes tab ──────────────────────────────────────────────────────────
     [ObservableProperty] private ObservableCollection<StashEntry> _stashes = [];
     [ObservableProperty] private StashEntry? _selectedStash;
+    [ObservableProperty] private string _newStashMessage = "";
+    [ObservableProperty] private bool _stashIncludeUntracked;
 
     // ── History tab ──────────────────────────────────────────────────────────
     [ObservableProperty] private GitCommit? _selectedCommit;
@@ -509,6 +511,41 @@ public partial class ProjectDetailViewModel
         }
     }
 
+    /// <summary>
+    /// Whether a push would take anything. `git stash push` exits zero and saves nothing when the
+    /// tree holds only files it was not asked to take, so a run reported from the exit code alone
+    /// claims a snapshot that does not exist.
+    /// </summary>
+    private bool HasChangesToStash() =>
+        WorkingState is { } state && state.Files.Any(f => StashIncludeUntracked || !f.IsUntracked);
+
+    [RelayCommand]
+    private async Task StashChanges()
+    {
+        if (IsBusy) { SyncStatusText = BusyNotice("Stash changes"); return; }
+        if (RepoPath.Length == 0) return;
+        if (!HasChangesToStash())
+        {
+            SyncStatusText = WorkingState is { IsDirty: true }
+                ? "Nothing to stash — only untracked files have changed; turn on \"Include untracked files\" to take them."
+                : "Nothing to stash — the working tree is clean.";
+            return;
+        }
+
+        var message = NewStashMessage.Trim();
+        var includeUntracked = StashIncludeUntracked;
+        var gen = _generation;
+        var ok = await RunOp(
+            repo => _gitService.StashPushAsync(repo, message.Length == 0 ? null : message, includeUntracked),
+            "Stash changes", RepoPath, gen);
+        // A stale success must not blank a message typed on the project switched to.
+        if (ok && IsCurrent(gen))
+        {
+            NewStashMessage = "";
+            await LoadStashes();
+        }
+    }
+
     [RelayCommand]
     private async Task StashApply(StashEntry? stash)
     {
@@ -557,6 +594,60 @@ public partial class ProjectDetailViewModel
             confirmedRepo, gen);
         if (ok) await LoadStashes();
     }
+
+    // ── Stash preview ───────────────────────────────────────────────────────
+
+    /// <summary>Files the selected stash changed, and the rows of the one being read.</summary>
+    [ObservableProperty] private ObservableCollection<FileDiff> _stashDiffFiles = [];
+    [ObservableProperty] private FileDiff? _selectedStashDiffFile;
+    [ObservableProperty] private ObservableCollection<DiffLine> _stashDiffLines = [];
+    [ObservableProperty] private string _stashDiffError = "";
+
+    private const string StashDiffReadFailed =
+        "Couldn't read this stash — it is still in the list; nothing about it has changed.";
+
+    /// <summary>
+    /// The preview read a stash selection started and did not await. Held so a caller can wait
+    /// for the rows that selection asked for; polling the collection cannot tell one stash's
+    /// rows from the previous one's.
+    /// </summary>
+    internal Task StashDiffRefresh { get; private set; } = Task.CompletedTask;
+
+    partial void OnSelectedStashChanged(StashEntry? value)
+    {
+        StashDiffFiles = [];
+        SelectedStashDiffFile = null;
+        StashDiffLines = [];
+        StashDiffError = "";
+        if (value is not null) StashDiffRefresh = LoadStashDiffAsync(value);
+    }
+
+    private async Task LoadStashDiffAsync(StashEntry stash)
+    {
+        var gen = _generation;
+        var repo = RepoPath;
+        if (repo.Length == 0) return;
+        try
+        {
+            var files = await _gitService.GetStashDiffAsync(repo, stash.Ref);
+            if (!IsCurrent(gen) || !ReferenceEquals(SelectedStash, stash)) return;
+            if (files is null)
+            {
+                StashDiffError = StashDiffReadFailed;
+                return;
+            }
+            StashDiffFiles = new ObservableCollection<FileDiff>(files);
+            SelectedStashDiffFile = StashDiffFiles.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"stash diff failed for {stash.Ref}", ex);
+            if (IsCurrent(gen) && ReferenceEquals(SelectedStash, stash)) StashDiffError = StashDiffReadFailed;
+        }
+    }
+
+    partial void OnSelectedStashDiffFileChanged(FileDiff? value) =>
+        StashDiffLines = new ObservableCollection<DiffLine>(value?.Lines ?? []);
 
     // ── History ─────────────────────────────────────────────────────────────
 

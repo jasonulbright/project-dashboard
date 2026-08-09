@@ -46,8 +46,18 @@ public class GitServiceStashDepthTests
         await _git.StashPushAsync(repo.Path, "wip");
 
         var diffs = await _git.GetStashDiffAsync(repo.Path, "stash@{0}");
+        Assert.NotNull(diffs);
         var diff = Assert.Single(diffs);
         Assert.Equal("file.txt", diff.Path);
         Assert.Contains(diff.Lines, l => l is { Kind: ProjectDashboard.Models.DiffLineKind.Added, Text: "line two" });
+    }
+
+    /// <summary>An empty list means a stash that changed nothing; a failed read must not say that.</summary>
+    [Fact]
+    public async Task GetStashDiff_OnARefThatDoesNotResolve_ReturnsNullRatherThanNoChanges()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("stash-diff-missing");
+
+        Assert.Null(await _git.GetStashDiffAsync(repo.Path, "stash@{9}"));
     }
 }
