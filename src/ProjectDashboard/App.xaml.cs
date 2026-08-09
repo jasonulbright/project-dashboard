@@ -144,6 +144,10 @@ public partial class App : Application
                 services.AddSingleton<Services.Safety.BackupService>();
                 services.AddSingleton<Services.Safety.RewriteRecoveryService>();
 
+                // Reads one public release document and compares it with this build. Registered
+                // as a singleton so the dashboard reads the same answer the check published.
+                services.AddSingleton<Services.Update.UpdateCheckService>();
+
                 // Rewrite engine. Singletons because the coordinator's collaborators cache
                 // probes (git executable, settings) and the busy registry must be the one
                 // registry every destructive surface contends on. Explicit factories because
@@ -205,6 +209,9 @@ public partial class App : Application
                 // complete before ApplicationHostService shows the interactive window.
                 services.AddHostedService(sp => sp.GetRequiredService<Services.Safety.RewriteRecoveryService>());
                 services.AddHostedService<ApplicationHostService>();
+                // Last: the update check is the opposite of crash recovery — it gates nothing,
+                // so it starts once the window is already up and is cancelled at shutdown.
+                services.AddHostedService(sp => sp.GetRequiredService<Services.Update.UpdateCheckService>());
             })
             .Build();
 

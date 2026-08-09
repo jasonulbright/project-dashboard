@@ -1,5 +1,6 @@
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Update;
 using Wpf.Ui.Appearance;
 
 namespace ProjectDashboard.ViewModels.Pages;
@@ -7,12 +8,14 @@ namespace ProjectDashboard.ViewModels.Pages;
 public partial class SettingsViewModel : ObservableObject
 {
     /// <summary>Assembly version — the single source; never hand-maintained in XAML.</summary>
-    public static string AppVersion { get; } =
-        $"v{System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown"}";
+    public static string AppVersion => AppVersionInfo.Display;
 
     private readonly SettingsService _settingsService;
     private readonly GitHubService _gitHubService;
     private readonly DashboardViewModel _dashboardViewModel;
+
+    /// <summary>Null when the host supplied none; the page then offers no manual check.</summary>
+    private readonly UpdateCheckService? _updateCheck;
 
     [ObservableProperty] private ApplicationTheme _currentTheme = ApplicationTheme.Dark;
     [ObservableProperty] private string _projectsRootPath = "";
@@ -23,14 +26,17 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _enableGitHubDiscovery = true;
     [ObservableProperty] private bool _enableAutoRefresh = true;
     [ObservableProperty] private bool _dangerZoneEnabled;
+    [ObservableProperty] private bool _enableUpdateCheck = true;
+    [ObservableProperty] private string _updateCheckStatus = "";
     [ObservableProperty] private string _syncStatus = "";
     [ObservableProperty] private string _saveStatus = "";
 
-    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel)
+    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null)
     {
         _settingsService = settingsService;
         _gitHubService = gitHubService;
         _dashboardViewModel = dashboardViewModel;
+        _updateCheck = updateCheck;
 
         LoadSettings();
         _ = CheckGitHubStatusAsync();
@@ -53,6 +59,8 @@ public partial class SettingsViewModel : ObservableObject
         EnableGitHubDiscovery = settings.EnableGitHubDiscovery;
         EnableAutoRefresh = settings.EnableAutoRefresh;
         DangerZoneEnabled = settings.DangerZoneEnabled;
+        EnableUpdateCheck = settings.EnableUpdateCheck;
+        UpdateCheckStatus = DescribeLastCheck(settings);
 
         if (Enum.TryParse<ApplicationTheme>(settings.Theme, out var theme))
         {
@@ -104,6 +112,7 @@ public partial class SettingsViewModel : ObservableObject
         settings.EnableGitHubDiscovery = EnableGitHubDiscovery;
         settings.EnableAutoRefresh = EnableAutoRefresh;
         settings.DangerZoneEnabled = DangerZoneEnabled;
+        settings.EnableUpdateCheck = EnableUpdateCheck;
 
         // The startup probe covers only a location unwritable at launch. A volume that
         // turns read-only mid-session fails here, and an unreported failure loses the
@@ -111,6 +120,42 @@ public partial class SettingsViewModel : ObservableObject
         SaveStatus = _settingsService.Save(settings)
             ? SavedMessage(DateTime.Now, _dashboardViewModel is { } dashboard ? dashboard.RescanStatus : "")
             : $"Save failed — could not write {AppPaths.SettingsFile}. See the log for details.";
+
+        UpdateCheckStatus = DescribeLastCheck(settings);
+    }
+
+    /// <summary>
+    /// The update line: the last check's own outcome, and when it ran. A failing check is
+    /// silent on the dashboard, so this line is where a check that has been failing since an
+    /// earlier session becomes visible.
+    /// </summary>
+    internal static string DescribeLastCheck(AppSettings settings)
+    {
+        if (!settings.EnableUpdateCheck) return UpdateCheckService.DisabledStatus;
+        if (settings.LastUpdateCheckUtc is not { } stamp) return "Not checked yet.";
+
+        var outcome = settings.LastUpdateCheckStatus.Length > 0 ? settings.LastUpdateCheckStatus : "Checked.";
+        return $"{outcome} Last checked {stamp.ToLocalTime():yyyy-MM-dd HH:mm}.";
+    }
+
+    /// <summary>
+    /// The check the user asked for: it ignores the launch cooldown and reports its own
+    /// reason, including a failure the launch path would have kept to the log. The toggle is
+    /// persisted first — the checker reads the file, so an on-screen tick that had not been
+    /// saved would otherwise be answered as though the feature were off.
+    /// </summary>
+    [RelayCommand]
+    private async Task CheckForUpdates()
+    {
+        if (_updateCheck is null)
+        {
+            UpdateCheckStatus = "Update checks are unavailable in this session.";
+            return;
+        }
+
+        SaveSettings();
+        UpdateCheckStatus = "Checking...";
+        UpdateCheckStatus = (await _updateCheck.CheckAsync(manual: true)).Status;
     }
 
     /// <summary>Reports the deferral in the save notice, phrased as a fact about the save.</summary>

@@ -74,6 +74,31 @@
             </StackPanel>
         </Border>
 
+        <!-- Update-available banner: a newer release exists. Its one action opens that
+             release's page in a browser — the app never fetches or runs a release artifact. -->
+        <Border DockPanel.Dock="Top"
+                Visibility="{Binding UpdateBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <ui:SymbolIcon Symbol="ArrowDownload24" Foreground="{DynamicResource StatusInfoFg}" FontSize="16"
+                               Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding UpdateBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           MaxWidth="760"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
+                           AutomationProperties.AutomationId="DashboardUpdateBannerText"
+                           AutomationProperties.LiveSetting="Polite" />
+                <ui:Button Content="View release" FontSize="12" Padding="10,4" Margin="14,0,0,0"
+                           Appearance="Primary"
+                           AutomationProperties.Name="View the release on GitHub"
+                           Command="{Binding OpenUpdateReleaseCommand}" />
+                <ui:Button Content="Dismiss" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                           AutomationProperties.Name="Dismiss the update notice"
+                           Command="{Binding DismissUpdateBannerCommand}" />
+            </StackPanel>
+        </Border>
+
         <!-- GitHub-not-ready banner: shows when gh is missing or not signed in -->
         <Border DockPanel.Dock="Top"
                 Visibility="{Binding GhBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}"

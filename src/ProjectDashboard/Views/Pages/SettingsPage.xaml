@@ -151,6 +151,29 @@
                        FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
 
+            <!-- Update check -->
+            <TextBlock Text="Updates" FontSize="16" Margin="0,24,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <CheckBox Content="Check for a newer release on launch"
+                      IsChecked="{Binding EnableUpdateCheck}"
+                      Margin="0,0,0,4"
+                      AutomationProperties.Name="Check for a newer release on launch" />
+            <TextBlock Text="Once a day at most, the app asks GitHub for this project's latest published release and compares it with this build. It sends no account, repository, or usage data — GitHub sees an address, a time, and the app's name and version, the same as visiting the releases page in a browser. Nothing is downloaded or installed: a newer release shows a dismissible notice on the dashboard with a link to its release page. Off means no request is made at all, on launch or from the button below."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <ui:Button Content="Check now"
+                           Icon="{ui:SymbolIcon ArrowSync24}"
+                           Command="{Binding CheckForUpdatesCommand}"
+                           IsEnabled="{Binding EnableUpdateCheck}"
+                           AutomationProperties.Name="Check for a newer release now" />
+                <TextBlock Text="{Binding UpdateCheckStatus}"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
+                           MaxWidth="420"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+            </StackPanel>
+
             <!-- Danger zone opt-in -->
             <TextBlock Text="Danger Zone" FontSize="16" Margin="0,24,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />

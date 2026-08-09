@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using ProjectDashboard.Services.Safety;
+using ProjectDashboard.Services.Update;
 using ProjectDashboard.Views.Pages;
 
 namespace ProjectDashboard.ViewModels.Pages;
@@ -23,6 +24,9 @@ public partial class DashboardViewModel : ObservableObject
 
     /// <summary>Null when the host supplied none; the dashboard then reports no interrupted operations rather than inventing one.</summary>
     private readonly RewriteRecoveryService? _recovery;
+
+    /// <summary>Null when the host supplied none; the dashboard then shows no update notice.</summary>
+    private readonly UpdateCheckService? _updateCheck;
     private DispatcherTimer? _refreshTimer;
 
     [ObservableProperty] private ObservableCollection<ProjectInfo> _projects = [];
@@ -115,7 +119,7 @@ public partial class DashboardViewModel : ObservableObject
     /// dispatcher to marshal through, and a default that silently drops the callback there
     /// would drop the re-scan that a released repository lease is supposed to start.
     /// </summary>
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null, UpdateCheckService? updateCheck = null)
     {
         _discoveryService = discoveryService;
         _navigationService = navigationService;
@@ -132,6 +136,15 @@ public partial class DashboardViewModel : ObservableObject
         // subscribed to; the change event only carries a later decision to drop a record.
         if (recovery is not null) recovery.PendingChanged += UpdateRecoveryBanner;
         UpdateRecoveryBanner();
+
+        _updateCheck = updateCheck;
+        if (updateCheck is not null)
+        {
+            // The launch check can complete before this view model exists, so its answer is
+            // read as well as subscribed to.
+            updateCheck.AvailableChanged += OnUpdateAvailableChanged;
+            ShowAvailableUpdate();
+        }
 
         LoadProjectsCommand = new AsyncRelayCommand(LoadProjectsAsync);
         ForceRefreshCommand = new AsyncRelayCommand(ForceRefreshAsync);
@@ -282,6 +295,14 @@ public partial class DashboardViewModel : ObservableObject
     // operation was interrupted at all, so the dashboard names the repositories.
     [ObservableProperty] private bool _recoveryBannerVisible;
     [ObservableProperty] private string _recoveryBannerText = "";
+
+    // Update-available banner. A notice, not a prompt: it is dismissible, it appears where the
+    // reader already is rather than in front of a launch, and its one action opens the release
+    // page in a browser. Nothing is fetched, verified, or run on the reader's behalf.
+    [ObservableProperty] private bool _updateBannerVisible;
+    [ObservableProperty] private string _updateBannerText = "";
+    private string _updateReleaseUrl = "";
+    private bool _updateBannerDismissed;
 
     // Transient operation feedback (clone / bulk sync progress and outcomes). OpStatusText is
     // announced as it changes, so it carries milestones only: a per-repository counter written
@@ -1743,6 +1764,63 @@ public partial class DashboardViewModel : ObservableObject
         return pending.Count == 1
             ? $"A history operation on {listed} was interrupted. Open that project to restore its backup or dismiss the record — nothing has been restored."
             : $"History operations on {pending.Count} repositories were interrupted ({listed}). Open each project to restore its backup or dismiss the record — nothing has been restored.";
+    }
+
+    /// <summary>The check answers on whichever thread it ran on; the banner belongs to the UI thread.</summary>
+    private void OnUpdateAvailableChanged() => _uiPost(ShowAvailableUpdate);
+
+    private void ShowAvailableUpdate()
+    {
+        if (_updateBannerDismissed) return;
+
+        if (_updateCheck?.Available is not { } update)
+        {
+            _updateReleaseUrl = "";
+            UpdateBannerVisible = false;
+            return;
+        }
+
+        _updateReleaseUrl = update.ReleaseUrl;
+        UpdateBannerText = DescribeAvailableUpdate(update, AppVersionInfo.Display);
+        UpdateBannerVisible = true;
+    }
+
+    /// <summary>
+    /// The notice's wording. Both versions are named: "an update is available" without the
+    /// build in hand leaves a reader unable to tell whether it is the one they installed.
+    /// </summary>
+    private static string DescribeAvailableUpdate(AvailableUpdate update, string currentDisplay) =>
+        $"Project Dashboard {update.Display} is available — this build is {currentDisplay}. "
+        + "Opening the release page is all this does; nothing is downloaded or installed.";
+
+    /// <summary>
+    /// Opens the release page for the offered version. The link arrived in a network
+    /// response, so it is re-measured against the pinned releases path here, at the last
+    /// point before it reaches the shell, and handed to the same launcher every other
+    /// rendered link goes through.
+    /// </summary>
+    [RelayCommand]
+    private void OpenUpdateRelease()
+    {
+        if (!ReleaseLink.TryNormalize(_updateReleaseUrl, out var target))
+        {
+            Log.Warn("Refused an update link that is not under this project's releases page.");
+            OpStatusText = "That release link was refused — open the releases page from the repository instead.";
+            return;
+        }
+
+        ProjectDetailPage.LaunchNavigable(target);
+    }
+
+    /// <summary>
+    /// Drops the notice for this session. Not persisted: the next launch's check re-derives
+    /// it, and a dismissal that outlived the release it was about would hide a later one.
+    /// </summary>
+    [RelayCommand]
+    private void DismissUpdateBanner()
+    {
+        _updateBannerDismissed = true;
+        UpdateBannerVisible = false;
     }
 
     [RelayCommand]
