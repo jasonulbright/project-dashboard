@@ -62,6 +62,44 @@ public class GitServiceBranchExtraTests
     }
 
     [Fact]
+    public async Task CheckoutRemoteBranch_UsesTheLocalNameGivenRatherThanTheDerivedOne()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-name-seed");
+        await seed.GitAsync("switch", "-c", "release");
+        seed.WriteFile("r.txt", "release\n");
+        await seed.CommitAllAsync("release work");
+        await seed.GitAsync("switch", "main");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-name-clone");
+        await _git.FetchAsync(clone.Path);
+
+        Assert.True((await _git.CheckoutRemoteBranchAsync(clone.Path, "origin/release", "staging")).Success);
+
+        var state = await _git.GetWorkingStateAsync(clone.Path);
+        Assert.Equal("staging", state!.Branch);
+        Assert.Equal("origin/release", state.Upstream);
+    }
+
+    [Fact]
+    public async Task CheckoutRemoteBranch_RefusesANameAlreadyTakenAndLeavesItWhereItWas()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-clash-seed");
+        await seed.GitAsync("switch", "-c", "release");
+        seed.WriteFile("r.txt", "release\n");
+        await seed.CommitAllAsync("release work");
+        await seed.GitAsync("switch", "main");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-clash-clone");
+        await _git.FetchAsync(clone.Path);
+        var mainSha = (await clone.GitAsync("rev-parse", "refs/heads/main")).Trim();
+
+        var result = await _git.CheckoutRemoteBranchAsync(clone.Path, "origin/release", "main");
+
+        Assert.False(result.Success);
+        Assert.Equal(mainSha, (await clone.GitAsync("rev-parse", "refs/heads/main")).Trim());
+    }
+
+    [Fact]
     public async Task DeleteRemoteBranch_RemovesItFromOrigin()
     {
         using var seed = await TempRepo.CreateWithCommitAsync("drb-seed");
@@ -99,6 +137,72 @@ public class GitServiceBranchExtraTests
 
         Assert.True((await _git.PruneRemoteAsync(clone.Path, "origin")).Success);
         Assert.DoesNotContain("origin/gone", (await _git.GetRemoteBranchesAsync(clone.Path)).Branches);
+    }
+
+    [Fact]
+    public async Task PruneDryRun_NamesTheStaleRefsWithoutDroppingThem()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("prune-dry-seed");
+        await seed.GitAsync("branch", "gone");
+        await seed.GitAsync("branch", "also-gone");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "prune-dry-clone");
+        await _git.FetchAsync(clone.Path);
+        await Git.RunAsync(bare.Path, "branch", "-D", "gone");
+        await Git.RunAsync(bare.Path, "branch", "-D", "also-gone");
+
+        var preview = await _git.PruneRemoteDryRunAsync(clone.Path, "origin");
+
+        Assert.False(preview.HasError);
+        Assert.Equal(new[] { "origin/also-gone", "origin/gone" },
+            preview.Refs.OrderBy(r => r, StringComparer.Ordinal).ToArray());
+        // A preview that pruned would leave the reader confirming something already done.
+        var stillThere = (await _git.GetRemoteBranchesAsync(clone.Path)).Branches;
+        Assert.Contains("origin/gone", stillThere);
+        Assert.Contains("origin/also-gone", stillThere);
+    }
+
+    [Fact]
+    public async Task PruneDryRun_OnARemoteWithNothingStale_AnswersWithAnEmptyListAndNoError()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("prune-clean-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "prune-clean-clone");
+        await _git.FetchAsync(clone.Path);
+
+        var preview = await _git.PruneRemoteDryRunAsync(clone.Path, "origin");
+
+        Assert.False(preview.HasError);
+        Assert.Empty(preview.Refs);
+    }
+
+    /// <summary>
+    /// A remote that cannot be reached answers nothing. Reporting that as an empty list would
+    /// state there is nothing stale under it, which the run never established.
+    /// </summary>
+    [Fact]
+    public async Task PruneDryRun_AgainstAnUnreachableRemote_ReportsTheFailureRatherThanNothingStale()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("prune-unreachable");
+        await repo.GitAsync("remote", "add", "origin",
+            "file:///" + Path.Combine(Path.GetTempPath(), "project-dashboard-no-such-origin.git").Replace('\\', '/'));
+
+        var preview = await _git.PruneRemoteDryRunAsync(repo.Path, "origin");
+
+        Assert.True(preview.HasError);
+        Assert.NotEqual("", preview.ErrorText);
+        Assert.Empty(preview.Refs);
+    }
+
+    [Fact]
+    public void ThePruneParser_TakesOnlyTheRefsAndIgnoresTheHeaderAndAnyMalformedLine()
+    {
+        var parsed = GitService.ParsePrunableRefs(
+            "Pruning origin\nURL: file:///tmp/bare.git\n * [would prune] origin/gone\r\n" +
+            " * [would prune] \n * [pruned] origin/already\n * origin/nomarker\n" +
+            " * [would prune] origin/feature/one\n");
+
+        Assert.Equal(new[] { "origin/gone", "origin/feature/one" }, parsed.ToArray());
     }
 
     [Fact]

@@ -29,8 +29,15 @@ public class RemotesSurfaceTests
         public int Prompts { get; private set; }
         public string LastPromptMessage { get; private set; } = "";
 
+        public int Confirmations { get; private set; }
+        public string LastConfirmMessage { get; private set; } = "";
+
         internal override Task<bool> ConfirmAsync(string title, string message, string confirmText)
-            => Task.FromResult(confirm);
+        {
+            Confirmations++;
+            LastConfirmMessage = message;
+            return Task.FromResult(confirm);
+        }
 
         internal override Task<string?> PromptForTextAsync(string title, string message, string confirmLabel)
         {
@@ -354,6 +361,245 @@ public class RemotesSurfaceTests
         Assert.Equal("https://example.test/moved.git", origin.FetchUrl);
         Assert.Equal("https://example.test/push.git", origin.PushUrl);
         Assert.Contains("push URL was left alone", vm.RemotesStatusText);
+    }
+
+    // ── Pruning a remote ────────────────────────────────────────────────────
+
+    /// <summary>Clone whose origin has lost the branches the clone still holds tracking refs for.</summary>
+    private static async Task<(TempRepo Seed, TempRepo Bare, TempRepo Clone)> StaleTrackingRefsAsync(string prefix)
+    {
+        var seed = await TempRepo.CreateWithCommitAsync($"{prefix}-seed");
+        await seed.GitAsync("branch", "gone");
+        await seed.GitAsync("branch", "also-gone");
+        var bare = await TempRepo.CreateBareFromAsync(seed);
+        var clone = await TempRepo.CloneFromAsync(bare, $"{prefix}-clone");
+        await Git.RunAsync(bare.Path, "branch", "-D", "gone");
+        await Git.RunAsync(bare.Path, "branch", "-D", "also-gone");
+        return (seed, bare, clone);
+    }
+
+    [Fact]
+    public async Task PruningARemote_NamesTheStaleRefsInTheConfirmationAndDropsOnlyThisRepositorysCopies()
+    {
+        var (seed, bare, clone) = await StaleTrackingRefsAsync("prune-vm");
+        using var _ = seed;
+        using var __ = bare;
+        using var ___ = clone;
+
+        var vm = await OpenedOn(clone);
+        Assert.Contains("origin/gone", vm.RemoteBranches);
+
+        await vm.PruneRemoteCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains("origin/gone", vm.LastConfirmMessage);
+        Assert.Contains("origin/also-gone", vm.LastConfirmMessage);
+        Assert.DoesNotContain("origin/gone", vm.RemoteBranches);
+        Assert.DoesNotContain("origin/also-gone", vm.RemoteBranches);
+        Assert.Contains("Pruned 2 remote-tracking branches", vm.RemotesStatusText);
+        // The branch the remote still publishes is not stale and is left alone.
+        Assert.Contains("origin/main", vm.RemoteBranches);
+        Assert.Contains("main", await Git.RunAsync(bare.Path, "branch", "--list"));
+    }
+
+    [Fact]
+    public async Task PruningARemote_CancelledAtTheConfirmation_LeavesTheStaleRefsInPlace()
+    {
+        var (seed, bare, clone) = await StaleTrackingRefsAsync("prune-cancel");
+        using var _ = seed;
+        using var __ = bare;
+        using var ___ = clone;
+
+        var vm = await OpenedOn(clone, confirm: false);
+
+        await vm.PruneRemoteCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains("origin/gone", vm.RemoteBranches);
+        Assert.Contains("origin/gone",
+            (await clone.GitAsync("for-each-ref", "--format=%(refname:short)", "refs/remotes")));
+        Assert.Equal("", vm.RemotesStatusText);
+    }
+
+    [Fact]
+    public async Task PruningARemoteWithNothingStale_SaysSoWithoutAskingForAConfirmation()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("prune-clean-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "prune-clean-clone");
+
+        var vm = await OpenedOn(clone);
+        await vm.PruneRemoteCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.Confirmations);
+        Assert.Contains("Nothing to prune", vm.RemotesStatusText);
+        Assert.Equal("", vm.RemotesErrorText);
+    }
+
+    /// <summary>
+    /// The dry run is what the confirmation is composed from. A run that answered nothing is not
+    /// a remote with nothing stale, and offering the prune off it would name no refs at all.
+    /// </summary>
+    [Fact]
+    public async Task APruneDryRunThatFails_RefusesTheOfferRatherThanConfirmingAgainstAnEmptyList()
+    {
+        var (seed, bare, clone) = await StaleTrackingRefsAsync("prune-read-fails");
+        using var _ = seed;
+        using var __ = bare;
+        using var ___ = clone;
+
+        var vm = new RemotesViewModel(git: new PruneDryRunRefusingGit());
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(clone));
+        await vm.LoadBranchesTabCommand.ExecuteAsync(null);
+
+        await vm.PruneRemoteCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.Confirmations);
+        Assert.Contains("Could not read what pruning origin would drop", vm.RemotesErrorText);
+        Assert.Contains("refused by the fixture", vm.RemotesErrorText);
+        Assert.Equal("", vm.RemotesStatusText);
+        Assert.Contains("origin/gone", vm.RemoteBranches);
+    }
+
+    /// <summary>Exits the prune dry run non-zero, leaving the prune itself and every read real.</summary>
+    private sealed class PruneDryRunRefusingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list is ["remote", "prune", _, "--dry-run"]
+                ? Task.FromResult(new ProcessResult(128, "", "refused by the fixture", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
+    [Fact]
+    public void ThePruneConfirmation_NamesTheRefsAndCountsTheRestWhenTheListRunsLong()
+    {
+        var many = Enumerable.Range(1, 15).Select(i => $"origin/topic-{i}").ToList();
+
+        var message = ProjectDetailViewModel.PruneMessage("origin", many);
+
+        Assert.Contains("origin/topic-1", message);
+        Assert.Contains("origin/topic-12", message);
+        Assert.DoesNotContain("origin/topic-13", message);
+        Assert.Contains("…and 3 more", message);
+        Assert.Contains("Nothing on the remote changes", message);
+    }
+
+    [Fact]
+    public void ThePruneConfirmation_ReadsAsOneBranchWhenThereIsOnlyOne()
+    {
+        var message = ProjectDetailViewModel.PruneMessage("origin", ["origin/gone"]);
+
+        Assert.Contains("1 remote-tracking branch here is no longer on origin", message);
+    }
+
+    // ── Checking out a branch from a remote ─────────────────────────────────
+
+    [Fact]
+    public async Task SelectingARemoteBranch_ProposesTheLocalNameWithTheRemotePrefixStripped()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-name-seed");
+        await seed.GitAsync("branch", "feature/one");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-name-clone");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedRemoteBranch = "origin/feature/one";
+
+        // Only the remote name goes; a branch name with slashes in it keeps them.
+        Assert.Equal("feature/one", vm.RemoteBranchLocalName);
+    }
+
+    [Fact]
+    public async Task CheckingOutARemoteBranch_CreatesALocalBranchTrackingItAndSwitchesToIt()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-vm-seed");
+        await seed.GitAsync("switch", "-c", "release");
+        seed.WriteFile("r.txt", "release\n");
+        await seed.CommitAllAsync("release work");
+        await seed.GitAsync("switch", "main");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-vm-clone");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedRemoteBranch = "origin/release";
+        Assert.Equal("release", vm.RemoteBranchLocalName);
+
+        await vm.CheckoutRemoteBranchCommand.ExecuteAsync(null);
+
+        Assert.Equal("release", (await clone.GitAsync("symbolic-ref", "--short", "HEAD")).Trim());
+        Assert.Equal("origin/release", vm.Branches.Single(b => b.Name == "release").Upstream);
+        Assert.Contains("nothing was fetched", vm.RemotesStatusText);
+        Assert.Equal("", vm.RemotesErrorText);
+    }
+
+    [Fact]
+    public async Task CheckingOutARemoteBranch_UnderAnEditedName_UsesTheNameTyped()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-edit-seed");
+        await seed.GitAsync("branch", "release");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-edit-clone");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedRemoteBranch = "origin/release";
+        vm.RemoteBranchLocalName = "staging";
+        await vm.CheckoutRemoteBranchCommand.ExecuteAsync(null);
+
+        Assert.Equal("staging", (await clone.GitAsync("symbolic-ref", "--short", "HEAD")).Trim());
+        Assert.Equal("origin/release", vm.Branches.Single(b => b.Name == "staging").Upstream);
+        Assert.DoesNotContain(vm.Branches, b => b.Name == "release");
+    }
+
+    /// <summary>
+    /// git owns the collision answer here, as it does for the sibling create-branch action. What
+    /// matters is that the failure is reported and the branch already holding the name is left
+    /// exactly where it was.
+    /// </summary>
+    [Fact]
+    public async Task CheckingOutARemoteBranch_UnderANameAlreadyHere_FailsAndLeavesThatBranchAlone()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-clash-seed");
+        await seed.GitAsync("switch", "-c", "release");
+        seed.WriteFile("r.txt", "release\n");
+        await seed.CommitAllAsync("release work");
+        await seed.GitAsync("switch", "main");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-clash-clone");
+        var mainSha = (await clone.GitAsync("rev-parse", "refs/heads/main")).Trim();
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedRemoteBranch = "origin/release";
+        vm.RemoteBranchLocalName = "main";
+        await vm.CheckoutRemoteBranchCommand.ExecuteAsync(null);
+
+        Assert.Contains("Check out main failed", vm.RemotesErrorText);
+        Assert.Equal(mainSha, (await clone.GitAsync("rev-parse", "refs/heads/main")).Trim());
+        Assert.Equal("main", (await clone.GitAsync("symbolic-ref", "--short", "HEAD")).Trim());
+    }
+
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("two..dots")]
+    public async Task CheckingOutARemoteBranch_UnderAnInvalidName_IsRefusedBeforeGitIsAsked(string name)
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("crb-badname-seed");
+        await seed.GitAsync("branch", "release");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "crb-badname-clone");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedRemoteBranch = "origin/release";
+        vm.RemoteBranchLocalName = name;
+        await vm.CheckoutRemoteBranchCommand.ExecuteAsync(null);
+
+        Assert.Contains("is not a valid branch name", vm.RemotesErrorText);
+        Assert.Equal("main", (await clone.GitAsync("symbolic-ref", "--short", "HEAD")).Trim());
     }
 
     // ── Deleting a branch on a remote ───────────────────────────────────────

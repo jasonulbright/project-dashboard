@@ -290,7 +290,7 @@ public class TagsSurfaceTests
         // The remote's copy is a separate ref that only a push could remove, and none ran.
         Assert.Contains("shared", await Git.RunAsync(bare.Path, "tag", "--list"));
         Assert.Contains("origin", vm.LastConfirmMessage);
-        Assert.Contains("never pushes tags", vm.TagsStatusText);
+        Assert.Contains("only sends tags", vm.TagsStatusText);
         Assert.Empty(vm.Tags);
     }
 
@@ -307,6 +307,183 @@ public class TagsSurfaceTests
         var withRemotes = ProjectDetailViewModel.RemoteTagNotice(["origin", "mirror"]);
         Assert.Contains("origin, mirror", withRemotes);
         Assert.Contains("takes a push", withRemotes);
+    }
+
+    // ── Push ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ThePushTarget_DefaultsToOriginWhereItIsConfigured()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-target-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-target-clone");
+        await clone.GitAsync("remote", "add", "mirror", "https://example.test/m.git");
+        await clone.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(clone);
+
+        Assert.Contains("origin", vm.TagRemoteNames);
+        Assert.Contains("mirror", vm.TagRemoteNames);
+        Assert.Equal("origin", vm.SelectedTagRemote);
+    }
+
+    [Fact]
+    public async Task ThePushTarget_FallsBackToTheOnlyRemoteWhenItIsNotCalledOrigin()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tags-target-alt");
+        await repo.GitAsync("remote", "add", "mirror", "https://example.test/m.git");
+        await repo.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(repo);
+
+        Assert.Equal("mirror", vm.SelectedTagRemote);
+    }
+
+    [Fact]
+    public async Task WithNoRemoteConfigured_ThereIsNowhereToPushAndNeitherPushCanRun()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("tags-no-remote");
+        await repo.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(repo);
+
+        Assert.Null(vm.SelectedTagRemote);
+        Assert.False(vm.PushTagCommand.CanExecute(null));
+        Assert.False(vm.PushAllTagsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task PushingTheSelectedTag_PutsItOnTheRemoteAndLeavesTheTagHereWhereItIs()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-push-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-push-clone");
+        await clone.GitAsync("tag", "v1");
+        await clone.GitAsync("tag", "v2");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedTag = vm.Tags.Single(t => t.Name == "v1");
+        await vm.PushTagCommand.ExecuteAsync(null);
+
+        var onRemote = await Git.RunAsync(bare.Path, "tag", "--list");
+        Assert.Contains("v1", onRemote);
+        // Only the selected tag went; the other is still local-only.
+        Assert.DoesNotContain("v2", onRemote);
+        Assert.Contains("Pushed v1 to origin", vm.TagsStatusText);
+        Assert.Equal("", vm.TagsErrorText);
+        Assert.Equal(2, vm.Tags.Count);
+    }
+
+    [Fact]
+    public async Task PushingAllTags_SendsEveryTagThisRepositoryHolds()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-pushall-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-pushall-clone");
+        await clone.GitAsync("tag", "v1");
+        await clone.GitAsync("tag", "-a", "v2", "-m", "second");
+
+        var vm = await OpenedOn(clone);
+        await vm.PushAllTagsCommand.ExecuteAsync(null);
+
+        var onRemote = await Git.RunAsync(bare.Path, "tag", "--list");
+        Assert.Contains("v1", onRemote);
+        Assert.Contains("v2", onRemote);
+        Assert.Contains("All 2 tags here are now on origin", vm.TagsStatusText);
+        Assert.Equal("", vm.TagsErrorText);
+    }
+
+    /// <summary>
+    /// A remote that refuses the ref for its own protection is the one failure neither retrying
+    /// nor renaming answers, and git's own wording does not say so. Every other refusal keeps
+    /// git's text alone.
+    /// </summary>
+    [Fact]
+    public async Task ATagTheRemoteRefusesForItsProtection_IsNamedAsProtectedRatherThanLeftGeneric()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-protected-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-protected-clone");
+        RefuseEveryPush(bare, "GH006: Protected tag update failed for refs/tags/v1.");
+        await clone.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedTag = vm.Tags.Single();
+        await vm.PushTagCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("v1", await Git.RunAsync(bare.Path, "tag", "--list"));
+        Assert.Contains("protected on the remote", vm.TagsErrorText);
+        Assert.Contains("v1 was not pushed", vm.TagsStatusText);
+        Assert.Single(vm.Tags);
+    }
+
+    [Fact]
+    public async Task ATagTheRemoteRefusesForAnyOtherReason_KeepsGitsOwnWordingWithoutClaimingProtection()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-refused-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-refused-clone");
+        RefuseEveryPush(bare, "the fixture declines this one");
+        await clone.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedTag = vm.Tags.Single();
+        await vm.PushTagCommand.ExecuteAsync(null);
+
+        Assert.Contains("Push v1 to origin failed", vm.TagsErrorText);
+        Assert.DoesNotContain("protected on the remote", vm.TagsErrorText);
+    }
+
+    /// <summary>Makes the bare origin reject every incoming push, echoing the given remote-side text.</summary>
+    private static void RefuseEveryPush(TempRepo bare, string remoteText) =>
+        File.WriteAllText(Path.Combine(bare.Path, "hooks", "pre-receive"),
+            $"#!/bin/sh\necho \"{remoteText}\" >&2\nexit 1\n");
+
+    [Theory]
+    // The remote named its protection alongside the rejection.
+    [InlineData("remote: GH006: Protected tag update failed for refs/tags/v1.\n" +
+                " ! [remote rejected] v1 -> v1 (pre-receive hook declined)", true)]
+    [InlineData("remote: GH013: Repository rule violations found\n" +
+                "remote: - Cannot create ref due to creations being restricted\n" +
+                " ! [remote rejected] v1 -> v1 (push declined due to repository rule violations)", true)]
+    [InlineData(" ! [remote rejected] v1 -> v1 (protected tag hook declined)", true)]
+    // A tag already on the remote at another commit is rejected too, and that one is answerable here.
+    [InlineData(" ! [rejected] v1 -> v1 (already exists)\nerror: failed to push some refs", false)]
+    [InlineData(" ! [remote rejected] v1 -> v1 (pre-receive hook declined)", false)]
+    [InlineData("", false)]
+    public void OnlyARefusalThatNamesAProtection_IsReadAsOne(string output, bool protectedRef)
+        => Assert.Equal(protectedRef, ProjectDetailViewModel.IsProtectedRefRefusal(output));
+
+    [Fact]
+    public async Task ClosingTheViewer_DropsThePushTargetTheRepositoryChose()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-push-close-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-push-close-clone");
+        await clone.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(clone);
+        Assert.Equal("origin", vm.SelectedTagRemote);
+
+        vm.CloseTagsCommand.Execute(null);
+
+        Assert.Null(vm.SelectedTagRemote);
+        Assert.False(vm.PushAllTagsCommand.CanExecute(null));
+    }
+
+    /// <summary>
+    /// The overlay's own copy told the reader nothing here pushes. With a push on the surface
+    /// that sentence would be false, and the one that replaces it has to keep saying what a push
+    /// still does not do.
+    /// </summary>
+    [Fact]
+    public async Task TheOverlayCopy_DescribesThePushRatherThanDisclaimingIt()
+    {
+        var markup = await File.ReadAllTextAsync(ViewSource("TagsView.xaml"));
+
+        Assert.DoesNotContain("no action on this surface pushes", markup);
+        Assert.Contains("Pushing sends a tag to the remote you choose", markup);
+        Assert.Contains("nothing on this surface removes a tag from a remote", markup);
     }
 
     [Fact]

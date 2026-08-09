@@ -20,3 +20,10 @@ public sealed record RemotesResult(List<RemoteEntry> Remotes, bool HasError = fa
 /// <see cref="RemotesResult"/> carries the flag: the empty list is otherwise ambiguous.
 /// </summary>
 public sealed record RemoteBranchesResult(List<string> Branches, bool HasError = false, string ErrorText = "");
+
+/// <summary>
+/// The remote-tracking refs a prune would drop, or why the question could not be answered. The
+/// dry run contacts the remote, so a refusal is a live outcome and an empty list on its own
+/// cannot be told apart from a remote with nothing stale under it.
+/// </summary>
+public sealed record PrunePreview(List<string> Refs, bool HasError = false, string ErrorText = "");

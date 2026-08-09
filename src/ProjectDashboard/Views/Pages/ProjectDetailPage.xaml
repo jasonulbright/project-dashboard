@@ -1658,10 +1658,15 @@
                                                 PlaceholderText="fetch URL" FontSize="12"
                                                 AutomationProperties.Name="Fetch URL for the selected remote" />
                                 </DockPanel>
-                                <ui:Button Content="Remove remote" FontSize="11" Padding="10,3" Appearance="Danger"
-                                           HorizontalAlignment="Left" Margin="0,0,0,10"
-                                           Command="{Binding RemoveRemoteCommand}"
-                                           AutomationProperties.Name="Remove the selected remote" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <ui:Button Content="Remove remote" FontSize="11" Padding="10,3" Appearance="Danger"
+                                               Command="{Binding RemoveRemoteCommand}"
+                                               AutomationProperties.Name="Remove the selected remote" />
+                                    <ui:Button Content="Prune…" FontSize="11" Padding="10,3" Margin="8,0,0,0"
+                                               Command="{Binding PruneRemoteCommand}"
+                                               ToolTip="Drop this repository's tracking refs for branches the remote no longer has — shows what would go first"
+                                               AutomationProperties.Name="Prune the selected remote's stale tracking branches" />
+                                </StackPanel>
 
                                 <TextBlock Text="Add a remote" Style="{StaticResource PaneHeader}" />
                                 <DockPanel Margin="0,0,0,6">
@@ -1711,6 +1716,21 @@
                             </Grid>
 
                             <StackPanel Grid.Row="5" Margin="0,8,0,0">
+                                <DockPanel Margin="0,0,0,6">
+                                    <ui:Button DockPanel.Dock="Right" Content="Check out locally" FontSize="11"
+                                               Padding="10,3" Margin="8,0,0,0"
+                                               Command="{Binding CheckoutRemoteBranchCommand}"
+                                               ToolTip="Create a local branch tracking the selected remote branch and switch to it"
+                                               AutomationProperties.Name="Check the selected remote branch out as a local branch" />
+                                    <ui:TextBox Text="{Binding RemoteBranchLocalName, UpdateSourceTrigger=PropertyChanged}"
+                                                PlaceholderText="local branch name" FontSize="12"
+                                                FontFamily="Cascadia Code,Consolas"
+                                                AutomationProperties.Name="Name for the local branch">
+                                        <ui:TextBox.InputBindings>
+                                            <KeyBinding Key="Enter" Command="{Binding CheckoutRemoteBranchCommand}" />
+                                        </ui:TextBox.InputBindings>
+                                    </ui:TextBox>
+                                </DockPanel>
                                 <ui:Button Content="Delete on the remote…" FontSize="11" Padding="10,3"
                                            Appearance="Danger" HorizontalAlignment="Left"
                                            Command="{Binding DeleteRemoteBranchCommand}"

@@ -7,10 +7,10 @@ namespace ProjectDashboard.ViewModels.Pages;
 /// The tag viewer, opened from History because every tag names a commit in that list and the
 /// one it creates lands on whichever commit is selected there.
 ///
-/// Everything here is local. Creating, deleting, and checking a tag out touch refs in this
-/// repository only; no path pushes, and no path deletes a tag on a remote. A delete is therefore
-/// reported for what it is — the local ref is gone and a remote's copy of it is not — rather than
-/// as the tag having been removed.
+/// Creating, deleting, and checking a tag out touch refs in this repository only. A push is the
+/// one outward action, and it only adds: it sends a tag to the chosen remote and removes nothing
+/// there. No path deletes a tag on a remote, so a delete is reported for what it is — the local
+/// ref is gone and a remote's copy of it is not — rather than as the tag having been removed.
 /// </summary>
 public partial class ProjectDetailViewModel
 {
@@ -22,11 +22,14 @@ public partial class ProjectDetailViewModel
         OnPropertyChanged(nameof(MaintenanceOverlayHidden));
     }
 
-    [ObservableProperty] private ObservableCollection<TagInfo> _tags = [];
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PushAllTagsCommand))]
+    private ObservableCollection<TagInfo> _tags = [];
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DeleteTagCommand))]
     [NotifyCanExecuteChangedFor(nameof(CheckOutTagAsBranchCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PushTagCommand))]
     private TagInfo? _selectedTag;
 
     /// <summary>True once a read has finished and found none. The empty state must not show before that.</summary>
@@ -48,6 +51,15 @@ public partial class ProjectDetailViewModel
 
     /// <summary>Names of this repository's remotes, read when the viewer opens; empty when it has none.</summary>
     [ObservableProperty] private ObservableCollection<string> _tagRemoteNames = [];
+
+    /// <summary>Where a push sends tags. Null when no remote is configured or the remote read failed.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PushTagCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PushAllTagsCommand))]
+    private string? _selectedTagRemote;
+
+    /// <summary>The remote a clone gets by default, preferred as the push target when it is configured.</summary>
+    private const string ConventionalRemoteName = "origin";
 
     private const string RemotesUnreadablePrefix = "Could not read this repository's remotes: ";
 
@@ -90,6 +102,7 @@ public partial class ProjectDetailViewModel
         Tags = [];
         TagRemoteNames = [];
         SelectedTag = null;
+        SelectedTagRemote = null;
         NewTagName = "";
         NewTagMessage = "";
         TagBranchName = "";
@@ -113,6 +126,7 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
 
         var keep = SelectedTag?.Name;
+        var keepRemote = SelectedTagRemote;
         TagsResult tags;
         RemotesResult remotes;
         try
@@ -147,6 +161,10 @@ public partial class ProjectDetailViewModel
         TagsEmpty = Tags.Count == 0;
         TagRemoteNames = new ObservableCollection<string>(remotes.Remotes.Select(r => r.Name));
         SelectedTag = Tags.FirstOrDefault(t => t.Name == keep) ?? Tags.FirstOrDefault();
+        SelectedTagRemote =
+            keepRemote is not null && TagRemoteNames.Contains(keepRemote) ? keepRemote
+            : TagRemoteNames.Contains(ConventionalRemoteName) ? ConventionalRemoteName
+            : TagRemoteNames.FirstOrDefault();
 
         // The two reads answer different questions: a refused remote read leaves the push targets
         // unknown and establishes nothing about the tags it never touched, so it is reported
@@ -247,14 +265,114 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// What a local delete leaves standing. A tag on a remote is a separate ref that only a push
-    /// can remove, and this app performs no such push — so the reader is told which remotes could
-    /// still be carrying the tag rather than left to assume it is gone everywhere.
+    /// of a deletion can remove, and no surface here performs one — so the reader is told which
+    /// remotes could still be carrying the tag rather than left to assume it is gone everywhere.
     /// </summary>
     internal static string RemoteTagNotice(IReadOnlyCollection<string> remoteNames) =>
         remoteNames.Count == 0
             ? "This repository has no remotes, so nothing here knows of another copy."
             : $"The delete is local. If {string.Join(", ", remoteNames)} also carries this tag, it still will — " +
-              "removing a tag from a remote takes a push, and this app never pushes tags.";
+              "removing a tag from a remote takes a push that deletes it there, and this surface only sends tags.";
+
+    // ── Push ────────────────────────────────────────────────────────────────────
+
+    private bool CanPushTag() =>
+        SelectedTag is not null && SelectedTagRemote is not null && !IsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Sends the selected tag to the chosen remote. Additive and unconfirmed, the same risk class
+    /// as pushing commits: it creates the ref there and moves nothing here. A remote that refuses
+    /// the ref leaves both sides as they were.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanPushTag))]
+    private async Task PushTag()
+    {
+        var tag = SelectedTag;
+        var remote = SelectedTagRemote;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (tag is null || remote is null || repo.Length == 0) return;
+        if (IsBusy) { TagsErrorText = BusyNotice("Push tag"); return; }
+
+        TagsErrorText = "";
+        var ok = await RunOp(r => _gitService.PushTagAsync(r, remote, tag.Name),
+            $"Push {tag.Name} to {remote}", repo, gen, TagPushRefusalAdvice);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            TagsErrorText = SyncStatusText;
+            TagsStatusText = $"{tag.Name} was not pushed. It is unchanged here.";
+            return;
+        }
+        TagsStatusText = $"Pushed {tag.Name} to {remote}. Both carry it now, and the tag here did not move.";
+    }
+
+    private bool CanPushAllTags() =>
+        SelectedTagRemote is not null && Tags.Count > 0 && !IsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Sends every tag this repository holds to the chosen remote. Refs are not pushed as one
+    /// unit, so a run the remote partly refused is reported as partial rather than as a failure
+    /// that changed nothing there.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanPushAllTags))]
+    private async Task PushAllTags()
+    {
+        var remote = SelectedTagRemote;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (remote is null || repo.Length == 0) return;
+        if (IsBusy) { TagsErrorText = BusyNotice("Push tags"); return; }
+
+        TagsErrorText = "";
+        var count = Tags.Count;
+        var ok = await RunOp(r => _gitService.PushAllTagsAsync(r, remote), $"Push all tags to {remote}",
+            repo, gen, TagPushRefusalAdvice);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            TagsErrorText = SyncStatusText;
+            TagsStatusText =
+                $"Not every tag reached {remote}. Any the remote accepted are there; the rest are unchanged, " +
+                "here and on the remote.";
+            return;
+        }
+        // A tag the remote already carried needed no transfer; what the run establishes is that
+        // every tag here is now there, which is what is claimed.
+        TagsStatusText =
+            $"All {count} tag{(count == 1 ? "" : "s")} here {(count == 1 ? "is" : "are")} now on {remote}. " +
+            $"A tag only on {remote} is untouched — this sends tags, it does not fetch or remove any.";
+    }
+
+    /// <summary>
+    /// The sentence a rejected tag push needs beyond git's own. git reports the rejection and the
+    /// remote's reason for it; neither says the tag cannot be pushed from here at all, which is
+    /// the one failure retrying or renaming will not fix.
+    /// </summary>
+    internal static string? TagPushRefusalAdvice(ProcessResult result) =>
+        IsProtectedRefRefusal(result.StdErr) || IsProtectedRefRefusal(result.StdOut)
+            ? "This tag is protected on the remote and cannot be pushed from here — the protection has to be " +
+              "lifted on the remote first."
+            : null;
+
+    /// <summary>
+    /// Wordings a remote uses when its own protection or ruleset refused a ref, matched against
+    /// the remote's echoed lines.
+    /// </summary>
+    private static readonly string[] ProtectionRefusalMarkers =
+        ["protected tag", "protected ref", "protected branch", "GH006", "GH013", "rule violations", "being restricted"];
+
+    /// <summary>
+    /// Whether a push a remote rejected was rejected for a protection rule. The rejection line
+    /// alone does not establish it — a tag already on the remote at another commit is rejected
+    /// too, and that one is answered here rather than on the remote — so the reason has to name
+    /// the protection as well.
+    /// </summary>
+    internal static bool IsProtectedRefRefusal(string output) =>
+        output.Contains("[remote rejected]", StringComparison.Ordinal) &&
+        ProtectionRefusalMarkers.Any(m => output.Contains(m, StringComparison.OrdinalIgnoreCase));
 
     // ── Check out as a branch ───────────────────────────────────────────────────
 

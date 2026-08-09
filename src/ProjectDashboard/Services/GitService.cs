@@ -904,11 +904,18 @@ public class GitService
             .ToList());
     }
 
-    /// <summary>Creates a local tracking branch for a remote-tracking ref (strips the leading "&lt;remote&gt;/").</summary>
-    public Task<ProcessResult> CheckoutRemoteBranchAsync(string repoPath, string remoteBranch, CancellationToken ct = default)
+    /// <summary>
+    /// Creates a local tracking branch for a remote-tracking ref. The local name defaults to the
+    /// ref with its leading "&lt;remote&gt;/" stripped; a caller that offers that name for editing
+    /// passes what was typed instead, so the branch created is the one the surface showed.
+    /// </summary>
+    public Task<ProcessResult> CheckoutRemoteBranchAsync(string repoPath, string remoteBranch,
+        string? localName = null, CancellationToken ct = default)
     {
         var slash = remoteBranch.IndexOf('/');
-        var local = slash >= 0 ? remoteBranch[(slash + 1)..] : remoteBranch;
+        var local = string.IsNullOrWhiteSpace(localName)
+            ? slash >= 0 ? remoteBranch[(slash + 1)..] : remoteBranch
+            : localName.Trim();
         return RunAsync(repoPath, ["switch", "-c", local, "--track", remoteBranch], ct);
     }
 
@@ -918,6 +925,43 @@ public class GitService
 
     public Task<ProcessResult> PruneRemoteAsync(string repoPath, string remote, CancellationToken ct = default)
         => RunAsync(repoPath, ["remote", "prune", remote], ct, NetworkTimeout);
+
+    /// <summary>
+    /// The remote-tracking refs a prune would drop, read without dropping any. Contacts the
+    /// remote: staleness is what this repository holds that the remote no longer publishes, so
+    /// an unreachable remote yields no answer rather than an empty one.
+    /// </summary>
+    public async Task<PrunePreview> PruneRemoteDryRunAsync(string repoPath, string remote,
+        CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["remote", "prune", remote, "--dry-run"], ct, NetworkTimeout);
+        if (!result.Success)
+        {
+            Log.Warn($"git remote prune --dry-run failed for {repoPath}: {result.FirstError}");
+            return new PrunePreview([], true, ReadFailureText(result, NetworkTimeout));
+        }
+        return new PrunePreview(ParsePrunableRefs(result.StdOut));
+    }
+
+    /// <summary>
+    /// Refs out of a prune dry run. Each stale one is announced as " * [would prune] &lt;ref&gt;";
+    /// the header lines naming the remote and its URL carry no ref, and a marker with nothing
+    /// after it names none either.
+    /// </summary>
+    internal static List<string> ParsePrunableRefs(string stdOut)
+    {
+        const string marker = "[would prune]";
+        var refs = new List<string>();
+        foreach (var raw in stdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.TrimEnd('\r');
+            var at = line.IndexOf(marker, StringComparison.Ordinal);
+            if (at < 0) continue;
+            var name = line[(at + marker.Length)..].Trim();
+            if (name.Length > 0) refs.Add(name);
+        }
+        return refs;
+    }
 
     /// <summary>Points a local branch at a remote-tracking ref (`&lt;remote&gt;/&lt;branch&gt;`); no network runs.</summary>
     public Task<ProcessResult> SetUpstreamAsync(string repoPath, string branch, string upstream,

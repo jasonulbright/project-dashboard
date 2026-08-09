@@ -72,7 +72,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Style="{StaticResource TagHint}"
-                               Text="Everything here is local. Creating, deleting, or checking out a tag changes refs in this repository only — no action on this surface pushes to a remote or removes a tag from one." />
+                               Text="Creating, deleting, and checking out a tag change refs in this repository only. Pushing sends a tag to the remote you choose and adds it there; nothing on this surface removes a tag from a remote." />
 
                     <Grid Grid.Row="1">
                         <Border CornerRadius="6" Padding="12,10"
@@ -196,6 +196,29 @@
                                        Command="{Binding DeleteTagCommand}"
                                        ToolTip="Delete the selected tag from this repository only"
                                        AutomationProperties.Name="Delete the selected tag" />
+
+                            <TextBlock Text="Send tags to a remote" FontSize="13" FontWeight="SemiBold"
+                                       Margin="0,12,0,4"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource TagHint}"
+                                       Text="A push adds the tag to the remote and removes nothing there. With no remote configured there is nowhere to send one." />
+                            <DockPanel>
+                                <ComboBox DockPanel.Dock="Left" Width="130" Margin="0,0,8,0"
+                                          ItemsSource="{Binding TagRemoteNames}"
+                                          SelectedItem="{Binding SelectedTagRemote}"
+                                          FontSize="12" FontFamily="Cascadia Code,Consolas"
+                                          AutomationProperties.Name="Remote to push tags to" />
+                                <ui:Button DockPanel.Dock="Left" Content="Push tag" FontSize="12" Padding="12,4"
+                                           Margin="0,0,8,0"
+                                           Command="{Binding PushTagCommand}"
+                                           ToolTip="Send the selected tag to the chosen remote"
+                                           AutomationProperties.Name="Push the selected tag to the chosen remote" />
+                                <ui:Button Content="Push all tags" FontSize="12" Padding="12,4"
+                                           HorizontalAlignment="Left"
+                                           Command="{Binding PushAllTagsCommand}"
+                                           ToolTip="Send every tag in this repository to the chosen remote"
+                                           AutomationProperties.Name="Push every tag in this repository to the chosen remote" />
+                            </DockPanel>
                         </StackPanel>
                     </Grid>
                 </Grid>

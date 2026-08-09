@@ -5,8 +5,9 @@ namespace ProjectDashboard.ViewModels.Pages;
 
 /// <summary>
 /// The Branches tab's second half: the remotes this repository is configured with, and the
-/// operations on a local branch that are about its relationship to one — rename, upstream,
-/// comparison, and deleting the branch on the remote.
+/// operations that are about a branch's relationship to one — rename, upstream, comparison,
+/// checking a remote branch out here, pruning refs the remote no longer has, and deleting the
+/// branch on the remote.
 ///
 /// Everything but the last is local and reversible. Deleting a branch on a remote is the only
 /// outward-facing action on the page that is not a push of this repository's own work: it removes
@@ -23,6 +24,7 @@ public partial class ProjectDetailViewModel
     [NotifyCanExecuteChangedFor(nameof(RemoveRemoteCommand))]
     [NotifyCanExecuteChangedFor(nameof(RenameRemoteCommand))]
     [NotifyCanExecuteChangedFor(nameof(SetRemoteUrlCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PruneRemoteCommand))]
     private RemoteEntry? _selectedRemote;
 
     /// <summary>Real "loaded" flag — a repository with no remotes is the common case, so an empty list cannot stand in.</summary>
@@ -58,7 +60,18 @@ public partial class ProjectDetailViewModel
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DeleteRemoteBranchCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CheckoutRemoteBranchCommand))]
     private string? _selectedRemoteBranch;
+
+    /// <summary>Name the local branch would take; proposed from the selected ref and editable before the checkout.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CheckoutRemoteBranchCommand))]
+    private string _remoteBranchLocalName = "";
+
+    // A name proposed for the previously selected ref would create a branch tracking this one
+    // under the other one's name.
+    partial void OnSelectedRemoteBranchChanged(string? value) =>
+        RemoteBranchLocalName = value is null ? "" : SplitTrackingRef(value).Branch;
 
     partial void OnSelectedRemoteChanged(RemoteEntry? value)
     {
@@ -297,6 +310,155 @@ public partial class ProjectDetailViewModel
         // set-url writes the fetch URL; a separately configured push URL is left as it was.
         RemotesStatusText = $"{remote.Name} now fetches from {url}. Any separate push URL was left alone.";
         await LoadRemotes();
+    }
+
+    // ── Pruning a remote ────────────────────────────────────────────────────────
+
+    private bool CanPruneRemote() => SelectedRemote is not null && !IsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Drops this repository's remote-tracking refs for branches the remote no longer has. The
+    /// dry run that composes the confirmation is a read and takes no lease; only the prune is
+    /// gated. A dry run that could not be performed refuses the offer: its empty list would
+    /// otherwise be shown as "nothing is stale", which it never established.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanPruneRemote))]
+    private async Task PruneRemote()
+    {
+        var remote = SelectedRemote;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (remote is null || repo.Length == 0) return;
+        if (IsBusy) { RemotesErrorText = BusyNotice("Prune"); return; }
+
+        RemotesErrorText = "";
+        RemotesStatusText = $"Reading what pruning {remote.Name} would drop…";
+        PrunePreview preview;
+        try
+        {
+            preview = await _gitService.PruneRemoteDryRunAsync(repo, remote.Name);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"prune dry run failed for {repo}", ex);
+            if (!IsCurrent(gen)) return;
+            RemotesErrorText = PrunePreviewFailure(remote.Name, ex.Message);
+            RemotesStatusText = "";
+            return;
+        }
+        if (!IsCurrent(gen)) return;
+
+        if (preview.HasError)
+        {
+            RemotesErrorText = PrunePreviewFailure(remote.Name, preview.ErrorText);
+            RemotesStatusText = "";
+            return;
+        }
+        if (preview.Refs.Count == 0)
+        {
+            RemotesStatusText =
+                $"Nothing to prune — every remote-tracking branch under {remote.Name} is still on the remote.";
+            return;
+        }
+
+        var confirmed = await ConfirmPrompt("Prune this remote?", PruneMessage(remote.Name, preview.Refs), "Prune");
+        if (!confirmed)
+        {
+            RemotesStatusText = "";
+            return;
+        }
+        if (!IsCurrent(gen))
+        {
+            RemotesStatusText = ProjectSwitchedNotice("Prune");
+            return;
+        }
+
+        // The prune measures staleness again for itself, so the preview is what was offered and
+        // not what runs. The count reported is the difference the list actually shows afterwards.
+        var before = RemoteBranches.ToList();
+        var ok = await RunOp(r => _gitService.PruneRemoteAsync(r, remote.Name), $"Prune {remote.Name}", repo, gen);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            RemotesErrorText = SyncStatusText;
+            RemotesStatusText = "";
+            return;
+        }
+        await LoadRemotes();
+        await LoadBranches();
+        if (!IsCurrent(gen)) return;
+
+        var dropped = before.Count(r => !RemoteBranches.Contains(r));
+        RemotesStatusText =
+            $"Pruned {dropped} remote-tracking branch{(dropped == 1 ? "" : "es")} under {remote.Name}. " +
+            "Nothing on the remote changed, and no local branch was deleted.";
+    }
+
+    /// <summary>
+    /// The confirmation for a prune, composed from the dry run so the refs at risk are named
+    /// rather than counted. A long list is cut short with the remainder counted, so the dialog
+    /// stays readable.
+    /// </summary>
+    internal static string PruneMessage(string remote, IReadOnlyList<string> refs)
+    {
+        const int shown = 12;
+        var named = string.Join("\n", refs.Take(shown).Select(r => $"  {r}"));
+        var rest = refs.Count > shown ? $"\n  …and {refs.Count - shown} more" : "";
+        var one = refs.Count == 1;
+        return $"Prune {remote}?\n\n" +
+               $"{refs.Count} remote-tracking branch{(one ? "" : "es")} here {(one ? "is" : "are")} no longer on " +
+               $"{remote}:\n\n{named}{rest}\n\n" +
+               "Only this repository's copies go. Nothing on the remote changes, and no local branch is deleted — " +
+               "one that tracked a pruned ref is left tracking something the remote no longer has.";
+    }
+
+    internal static string PrunePreviewFailure(string remote, string error) =>
+        $"Could not read what pruning {remote} would drop, so nothing was pruned: {error}";
+
+    // ── Checking out a branch from a remote ─────────────────────────────────────
+
+    private bool CanCheckoutRemoteBranch() =>
+        SelectedRemoteBranch is not null && RemoteBranchLocalName.Trim().Length > 0 && !IsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Creates a local branch tracking the selected remote-tracking ref and switches to it.
+    /// A name already taken here is left to git to refuse, which names the branch holding it;
+    /// the sibling create-branch action pre-checks nothing either.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCheckoutRemoteBranch))]
+    private async Task CheckoutRemoteBranch()
+    {
+        var trackingRef = SelectedRemoteBranch;
+        var name = RemoteBranchLocalName.Trim();
+        var repo = RepoPath;
+        var gen = _generation;
+        if (trackingRef is null || name.Length == 0 || repo.Length == 0) return;
+        if (IsBusy) { RemotesErrorText = BusyNotice("Check out"); return; }
+
+        if (!await _gitService.IsValidBranchNameAsync(repo, name))
+        {
+            if (IsCurrent(gen)) RemotesErrorText = InvalidBranchNameMessage(name);
+            return;
+        }
+        if (!IsCurrent(gen)) return;
+
+        RemotesErrorText = "";
+        var ok = await RunOp(r => _gitService.CheckoutRemoteBranchAsync(r, trackingRef, name),
+            $"Check out {name}", repo, gen);
+        if (!IsCurrent(gen)) return;
+
+        if (!ok)
+        {
+            RemotesErrorText = SyncStatusText;
+            RemotesStatusText = "";
+            return;
+        }
+        RemotesStatusText =
+            $"Created {name} here from {trackingRef} and switched to it. It tracks {trackingRef}; nothing was fetched.";
+        await LoadBranches();
+        await LoadRemotes();
+        await ReloadCommitsAsync();
     }
 
     // ── Deleting a branch on a remote ───────────────────────────────────────────
