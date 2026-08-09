@@ -72,8 +72,10 @@ public sealed class RewriteRecoveryService : IHostedService
             Pending = await _journal.ReadAllPendingAsync(cancellationToken);
             foreach (var entry in Pending)
             {
-                Log.Error($"Interrupted history rewrite detected for '{entry.RepoPath}' " +
-                          $"(phase '{entry.Phase}', started {entry.UtcStamp}) — awaiting restore decision.");
+                // Detection succeeding is not a failure: the entry is the journal doing its job,
+                // and the backup it points at is intact until the reader rules on it.
+                Log.Warn($"Interrupted history rewrite detected for '{entry.RepoPath}' " +
+                         $"(phase '{entry.Phase}', started {entry.UtcStamp}) — awaiting restore decision.");
                 try { PendingDetected?.Invoke(entry); }
                 catch (Exception ex) { Log.Warn("Pending-rewrite subscriber threw", ex); }
             }

@@ -1,3 +1,4 @@
+using ProjectDashboard.Services;
 using ProjectDashboard.Services.Safety;
 using Xunit;
 
@@ -244,6 +245,38 @@ public class RewriteJournalTests
         Assert.Same(pending, raised);
         // Detection must not clear the journal — the entry is held for a restore prompt.
         Assert.True(File.Exists(path));
+    }
+
+    /// <summary>
+    /// A pending entry is the journal doing its job: the interruption already happened, the
+    /// backup it names is intact, and the reader is being asked to rule on it. Logged at the
+    /// level a failure uses, every launch after one reads as the app itself breaking, and a
+    /// report skimmed for errors leads away from what actually needs attention.
+    /// </summary>
+    [Fact]
+    public async Task RecoveryService_Startup_LogsADetectedEntryAsANoticeRatherThanAFailure()
+    {
+        var journal = new RewriteJournal(TempJournalPath());
+        var repoPath = $@"C:\projects\log-level-{Guid.NewGuid():N}";
+        await journal.BeginAsync(new RewriteJournalEntry { RepoPath = repoPath, Phase = "swap" });
+
+        var offset = File.Exists(AppPaths.LogFile) ? new FileInfo(AppPaths.LogFile).Length : 0;
+        await new RewriteRecoveryService(journal).StartAsync(CancellationToken.None);
+
+        // Another collection appends to the same file, so the entry is found by its own repo path.
+        var text = ReadLogFrom(offset);
+        Assert.Contains($"[WARN] Interrupted history rewrite detected for '{repoPath}'", text);
+        Assert.DoesNotContain($"[ERROR] Interrupted history rewrite detected for '{repoPath}'", text);
+    }
+
+    private static string ReadLogFrom(long offset)
+    {
+        using var stream = new FileStream(
+            AppPaths.LogFile, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        stream.Seek(offset, SeekOrigin.Begin);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     [Fact]
