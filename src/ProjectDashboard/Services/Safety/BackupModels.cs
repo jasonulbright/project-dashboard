@@ -66,7 +66,10 @@ public sealed record BackupDetails(
 /// transaction committed, so a caller never reports an unchanged repository over restored refs.
 /// A restore's working-tree reset discards uncommitted changes; <see cref="WorktreeWasDirty"/>
 /// and <see cref="DiscardedChangeCount"/> report what the reset threw away so a confirm UI can
-/// warn before the caller triggers one.
+/// warn before the caller triggers one. Both are measured against the pre-restore HEAD, before any
+/// ref moves, so they count the reader's own uncommitted edits and nothing else: content that
+/// differs only because the restored history differs is restored work, not discarded work, and a
+/// count taken after the ref transaction would fold it in and call a clean tree dirty.
 /// </summary>
 public sealed record RestoreResult(
     bool Success,

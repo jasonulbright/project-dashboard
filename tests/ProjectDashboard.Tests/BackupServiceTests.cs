@@ -377,6 +377,33 @@ public class BackupServiceTests
         Assert.Equal("one\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "file.txt")));
     }
 
+    /// <summary>
+    /// The reconciliation repoints the branch under an index that still matches the newer history,
+    /// so a count read after it sees every old-versus-restored difference as a staged change. A
+    /// tree the gate just verified clean must not be reported as having lost uncommitted work.
+    /// </summary>
+    [Fact]
+    public async Task Restore_CleanTreeOverNewerHistory_ReportsNothingDiscarded()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        repo.Write("file.txt", "two\n");
+        await repo.CommitAllAsync("second");
+        repo.Write("added.txt", "later work\n");
+        await repo.CommitAllAsync("third");
+
+        var result = await service.RestoreAsync(handle, allowDirty: false);
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.WorktreeWasDirty);
+        Assert.Equal(0, result.DiscardedChangeCount);
+        // The restore still did its work — the newer history is gone from the tree.
+        Assert.Equal("one\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "file.txt")));
+        Assert.False(File.Exists(System.IO.Path.Combine(repo.Path, "added.txt")));
+    }
+
     [Fact]
     public async Task Restore_DirtyWorktreeWithoutAllowDirty_RefusesAndKeepsTheUncommittedWork()
     {

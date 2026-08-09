@@ -665,9 +665,10 @@ public class ProjectDetailViewModelSurgeryTests
         var confirmation = Assert.Single(seen);
         Assert.Contains("holds 1 uncommitted change(s) right now", confirmation.Message);
         Assert.Contains("hard reset", confirmation.Message);
-        // The service counts against the restored refs, so the edit and the file the restored
-        // commit re-adds are both in its total — its number is the one reported, not a recount.
-        Assert.Equal("Restored — 2 uncommitted change(s) were discarded.", vm.SurgeryStatusText);
+        // The edit is the only uncommitted work the reset destroys; the file the restored commit
+        // re-adds is work coming back, not work lost, so the outcome names the same one change the
+        // confirmation named rather than folding the restored difference into the total.
+        Assert.Equal("Restored — 1 uncommitted change(s) were discarded.", vm.SurgeryStatusText);
         Assert.False(vm.SurgeryUndoVisible);
         Assert.Equal(["beta", "alpha", "seed"], await repo.SubjectsAsync());
         Assert.Equal("seed content\n", repo.Read("seed.txt"));

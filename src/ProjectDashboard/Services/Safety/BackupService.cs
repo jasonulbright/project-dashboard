@@ -226,20 +226,27 @@ public sealed class BackupService
         // as old as the bundle verify and the unbundle together, and the closing `reset --hard`
         // discards whatever was written since — which the bundle, holding committed history only,
         // cannot put back. This is the last point at which a refusal still changes nothing. An
-        // unreadable tree is a refusal too, never a proceed on an assumed-clean one. A sanctioned
-        // discard skips the gate and reports its count from the read taken beside the reset.
+        // unreadable tree is a refusal too, never a proceed on an assumed-clean one.
+        //
+        // This read is also the reported count, and it is taken before any ref moves for a reason:
+        // the reconciliation repoints the branch under an unchanged index, so a read taken after it
+        // shows every old-versus-restored difference as a staged change and would name a clean tree
+        // dirty on nearly every restore.
         var bare = await IsBareAsync(handle.RepoPath, ct);
         var resetsWorktree = snapshot.HeadObjectId.Length > 0 && !bare;
-        if (resetsWorktree && !allowDirty)
+        var wasDirty = false;
+        var discardedCount = 0;
+        if (resetsWorktree)
         {
-            var gate = await _git.RunAsync(handle.RepoPath, ["status", "--porcelain"], ct, RefTimeout);
-            if (!gate.Success)
+            var dirty = await _git.RunAsync(handle.RepoPath, ["status", "--porcelain"], ct, RefTimeout);
+            if (!dirty.Success)
                 return new RestoreResult(false,
-                    $"The working tree of '{handle.RepoPath}' could not be read — refusing to restore: {gate.FirstError}");
-            var pending = gate.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-            if (pending > 0)
+                    $"The working tree of '{handle.RepoPath}' could not be read — refusing to restore: {dirty.FirstError}");
+            discardedCount = dirty.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+            wasDirty = discardedCount > 0;
+            if (wasDirty && !allowDirty)
                 return new RestoreResult(false,
-                    $"The working tree has {pending} uncommitted change(s) that this restore's hard reset " +
+                    $"The working tree has {discardedCount} uncommitted change(s) that this restore's hard reset " +
                     "would discard, and the backup holds committed history only — refusing to restore.");
         }
 
@@ -297,20 +304,8 @@ public sealed class BackupService
                 $"Refs restored but HEAD could not be repositioned: {head.FirstError}",
                 RefsRestored: true);
 
-        var wasDirty = false;
-        var discardedCount = 0;
         if (resetsWorktree)
         {
-            // Counted against the RESTORED refs, which is what the reset is about to discard
-            // against: a file the restored commit re-adds is part of that total, and a count
-            // taken before the reconciliation would not see it.
-            var dirty = await _git.RunAsync(handle.RepoPath, ["status", "--porcelain"], ct, RefTimeout);
-            if (dirty.Success)
-            {
-                discardedCount = dirty.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-                wasDirty = discardedCount > 0;
-            }
-
             var reset = await _git.RunAsync(handle.RepoPath, ["reset", "--hard", snapshot.HeadObjectId], ct, BundleTimeout);
             if (!reset.Success)
                 return new RestoreResult(false, $"Refs restored but working-tree reset failed: {reset.FirstError}",
