@@ -90,6 +90,27 @@ public class OperationHistoryTests
     /// leaves a line that parses as neither record, and the tail read would then be short by more
     /// than the one record that lost.
     /// </summary>
+    /// <summary>
+    /// A cut landing inside a surrogate pair leaves an unpaired surrogate, which the JSON writer
+    /// refuses to transcode; the append swallows that throw, so the record would vanish instead of
+    /// being shortened. Emoji reach the ledger through verbatim commit subjects and branch names.
+    /// </summary>
+    [Fact]
+    public void ADetailClampedInsideASurrogatePair_IsStillWritten()
+    {
+        var history = NewHistory();
+        var repo = RepoPathFor("surrogate");
+        // Every char before the cap is single-unit, so the pair straddles it exactly.
+        var detail = new string('x', OperationRecord.MaxDetailLength - 1) + "🎯🎯";
+
+        history.Append(OperationRecord.For(repo, OperationCategory.Working, "Commit",
+            OperationOutcome.Failed, detail, DateTimeOffset.UtcNow));
+
+        var read = Assert.Single(history.Tail(repo).Records);
+        Assert.EndsWith("x…", read.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(read.Detail, c => char.IsSurrogate(c));
+    }
+
     [Fact]
     public void ConcurrentAppends_LeaveNoTornLine()
     {

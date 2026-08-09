@@ -128,6 +128,15 @@ public sealed class OperationRecord
             Recovery = recovery
         };
 
-    private static string Clamp(string value, int max) =>
-        value.Length <= max ? value : value[..max] + "…";
+    /// <summary>
+    /// Truncates without splitting a surrogate pair. A cut landing between the two halves of one
+    /// leaves an unpaired surrogate, which the JSON writer refuses to transcode — and the append
+    /// swallows that throw, so the record would be dropped rather than shortened.
+    /// </summary>
+    private static string Clamp(string value, int max)
+    {
+        if (value.Length <= max) return value;
+        var cut = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
+        return value[..cut] + "…";
+    }
 }
