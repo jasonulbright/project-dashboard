@@ -198,6 +198,53 @@ public class ProjectMetadataEditorTests
         Assert.Equal("Tools", vm.SelectedCategory);
     }
 
+    /// <summary>
+    /// Every navigation back to the page re-applies the project already open. Re-reading the
+    /// stored notes over an open editor discards exactly the text the close is there to save.
+    /// </summary>
+    [Fact]
+    public async Task ReloadingTheSameProject_LeavesAnOpenNotesEditorAlone()
+    {
+        var project = new ProjectInfo
+        {
+            DirectoryName = "metadata-editor",
+            DisplayName = "metadata-editor",
+            FullPath = RepoPath,
+            HasManifest = true,
+            Manifest = new ProjectManifest { Notes = "stored\n" }
+        };
+        var vm = new ProjectDetailViewModel(RealDiscovery(), new GitService(), null!);
+        await vm.SetProjectAsync(project);
+
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "TASK: half typed\n";
+
+        await vm.SetProjectAsync(project);
+
+        Assert.True(vm.IsEditingNotes);
+        Assert.Equal("TASK: half typed\n", vm.Notes);
+    }
+
+    /// <summary>Closing the editor first is what makes the incoming project re-read its own notes.</summary>
+    [Fact]
+    public async Task SwitchingProjectsWithTheEditorOpen_ReadsTheIncomingProjectsNotes()
+    {
+        var vm = VmOn(RealDiscovery(), new ProjectManifest { Notes = "first\n" });
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "abandoned\n";
+
+        await vm.SetProjectAsync(new ProjectInfo
+        {
+            DirectoryName = "other",
+            DisplayName = "other",
+            FullPath = @"C:\projects\metadata-editor-other",
+            Manifest = new ProjectManifest { Notes = "second\n" }
+        });
+
+        Assert.False(vm.IsEditingNotes);
+        Assert.Equal("second\n", vm.Notes);
+    }
+
     [Fact]
     public void TheNotesButton_NamesWhatItDoesInEitherState()
     {

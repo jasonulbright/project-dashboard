@@ -358,7 +358,10 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedStatus = p.Manifest.Status;
         SelectedCategory = p.Manifest.Category;
         ValidationSchedule = p.Manifest.ValidationSchedule;
-        Notes = p.Manifest.Notes;
+        // A reload of the project already open re-reads the stored notes. While the editor is
+        // open it holds text nothing has written yet, and the stored value is what that text is
+        // replacing. A switch closes the editor first, so the incoming project still re-reads.
+        if (!IsEditingNotes) Notes = p.Manifest.Notes;
     }
 
     /// <summary>
