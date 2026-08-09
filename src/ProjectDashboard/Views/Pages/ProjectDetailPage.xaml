@@ -1334,15 +1334,21 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="{Binding SelectedCommitFile.Path, FallbackValue=Diff}"
                                        Style="{StaticResource PaneHeader}" FontFamily="Cascadia Code,Consolas" />
-                            <ListBox Grid.Row="1" ItemsSource="{Binding CommitDiffLines}"
+                            <TextBlock Grid.Row="1" Margin="0,0,0,6" FontSize="12" TextWrapping="Wrap"
+                                       AutomationProperties.AutomationId="CommitDiffTruncatedNotice"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       Text="This diff was too large to read in full — the rows below stop where the read did."
+                                       Visibility="{Binding CommitDiffIsTruncated, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <ListBox Grid.Row="2" ItemsSource="{Binding CommitDiffLines}"
                                      Style="{StaticResource DiffListStyle}"
                                      Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}"
                                      AutomationProperties.Name="Commit diff" />
-                            <ListBox Grid.Row="1" ItemsSource="{Binding CommitDiffRows}"
+                            <ListBox Grid.Row="2" ItemsSource="{Binding CommitDiffRows}"
                                      Style="{StaticResource SideBySideListStyle}"
                                      Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}"
                                      AutomationProperties.Name="Commit diff, side by side" />

@@ -158,6 +158,46 @@ public class TruncatedReadSurfaceTests
     }
 
     [Fact]
+    public async Task ATruncatedCommitDiffRead_CarriesTheFlagToTheResultAndThePane()
+    {
+        using var repo = await TwoHunkRepoAsync("commit-diff-truncated");
+        await repo.CommitAllAsync("edit the fifteen lines");
+        var git = new TruncatingGitService("show");
+
+        var head = await git.RunAsync(repo.Path, ["rev-parse", "HEAD"]);
+        var hash = head.StdOut.Trim();
+
+        var diff = await git.GetCommitFileDiffAsync(repo.Path, hash, "file.txt");
+        Assert.NotNull(diff);
+        Assert.True(diff.Truncated);
+
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        vm.SelectedCommit = new GitCommit { Hash = hash };
+        await vm.CommitFilesRefresh;
+        vm.SelectedCommitFile = vm.CommitFiles.First(f => f.Path == "file.txt");
+        await vm.CommitDiffRefresh;
+
+        Assert.True(vm.CommitDiffIsTruncated);
+        Assert.NotEmpty(vm.CommitDiffLines);
+    }
+
+    [Fact]
+    public async Task AWholeCommitDiffRead_LeavesThePaneUnflagged()
+    {
+        using var repo = await TwoHunkRepoAsync("commit-diff-whole");
+        await repo.CommitAllAsync("edit the fifteen lines");
+        var git = new GitService();
+
+        var head = await git.RunAsync(repo.Path, ["rev-parse", "HEAD"]);
+        var diff = await git.GetCommitFileDiffAsync(repo.Path, head.StdOut.Trim(), "file.txt");
+
+        Assert.NotNull(diff);
+        Assert.False(diff.Truncated);
+    }
+
+    [Fact]
     public async Task ATruncatedBlameRead_CarriesTheFlagToTheResultAndThePane()
     {
         using var repo = await TwoHunkRepoAsync("blame-truncated");

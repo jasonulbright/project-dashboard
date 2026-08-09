@@ -70,6 +70,7 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private ObservableCollection<CommitFile> _commitFiles = [];
     [ObservableProperty] private CommitFile? _selectedCommitFile;
     [ObservableProperty] private ObservableCollection<DiffLine> _commitDiffLines = [];
+    [ObservableProperty] private bool _commitDiffIsTruncated;
 
     // ── Pull requests tab ────────────────────────────────────────────────────
     [ObservableProperty] private ObservableCollection<GitHubPullRequest> _pullRequests = [];
@@ -649,14 +650,23 @@ public partial class ProjectDetailViewModel
 
     // ── History ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The commit reads the History tab started and did not await. Held for the same reason
+    /// <see cref="DiffRefresh"/> is: a caller — and a headless test — waits on the read instead
+    /// of polling the properties it writes.
+    /// </summary>
+    internal Task CommitFilesRefresh { get; private set; } = Task.CompletedTask;
+    internal Task CommitDiffRefresh { get; private set; } = Task.CompletedTask;
+
     partial void OnSelectedCommitChanged(GitCommit? value)
     {
         CommitFiles = [];
         CommitDiffLines = [];
+        CommitDiffIsTruncated = false;
         SelectedCommitFile = null;
         OnPropertyChanged(nameof(TagTargetLabel));
         if (value is not null)
-            _ = LoadCommitFilesAsync(value);
+            CommitFilesRefresh = LoadCommitFilesAsync(value);
     }
 
     private async Task LoadCommitFilesAsync(GitCommit commit)
@@ -677,8 +687,9 @@ public partial class ProjectDetailViewModel
     partial void OnSelectedCommitFileChanged(CommitFile? value)
     {
         CommitDiffLines = [];
+        CommitDiffIsTruncated = false;
         if (value is not null && SelectedCommit is not null)
-            _ = LoadCommitDiffAsync(SelectedCommit, value);
+            CommitDiffRefresh = LoadCommitDiffAsync(SelectedCommit, value);
     }
 
     private async Task LoadCommitDiffAsync(GitCommit commit, CommitFile file)
@@ -688,7 +699,10 @@ public partial class ProjectDetailViewModel
         {
             var diff = await _gitService.GetCommitFileDiffAsync(RepoPath, commit.Ref, file.Path);
             if (IsCurrent(gen) && ReferenceEquals(SelectedCommitFile, file))
+            {
                 CommitDiffLines = new ObservableCollection<DiffLine>(diff?.Lines ?? []);
+                CommitDiffIsTruncated = diff?.Truncated ?? false;
+            }
         }
         catch (Exception ex)
         {

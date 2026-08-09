@@ -380,6 +380,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedCommit = null;
         CommitFiles = [];
         CommitDiffLines = [];
+        CommitDiffIsTruncated = false;
         ResetHistoryWindow();
         CloseFileHistoryOnProjectSwitch();
         CloseCommitGraphOnProjectSwitch();

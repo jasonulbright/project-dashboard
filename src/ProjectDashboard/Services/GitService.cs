@@ -768,7 +768,9 @@ public class GitService
         var result = await RunAsync(repoPath,
             ["show", "--no-color", "--format=", hash, "--", LiteralPathspec(filePath)], ct);
         if (!result.Success) return null;
-        return FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+        var diff = FileDiff.ParseUnified(result.StdOut).FirstOrDefault();
+        if (diff is not null) diff.Truncated = result.Truncated;
+        return diff;
     }
 
     public async Task<TagsResult> GetTagsAsync(string repoPath, CancellationToken ct = default)
