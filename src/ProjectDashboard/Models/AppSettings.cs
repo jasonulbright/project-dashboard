@@ -25,6 +25,21 @@ public sealed class AppSettings
     public bool DangerZoneEnabled { get; set; }
 
     /// <summary>
+    /// Whether the app may read the project's latest published release and compare it with
+    /// this build. Off makes every path — launch and manual — read nothing and send nothing.
+    /// </summary>
+    public bool EnableUpdateCheck { get; set; } = true;
+
+    /// <summary>When the last update check ran, whatever it concluded. Null until one has.</summary>
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+
+    /// <summary>
+    /// What the last update check concluded, as it is reported on the Settings page. Persisted
+    /// so the cooldown cannot hide a check that has been failing since an earlier session.
+    /// </summary>
+    public string LastUpdateCheckStatus { get; set; } = "";
+
+    /// <summary>
     /// Full paths of repos pinned to the front of the card grid. Paths, not folder
     /// names: two roots can hold folders of the same name.
     /// </summary>
