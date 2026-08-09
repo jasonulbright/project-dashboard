@@ -1501,7 +1501,11 @@ public class GitService
             Log.Warn($"git stash show failed for {stashRef} in {repoPath}: {result.FirstError}");
             return null;
         }
-        return FileDiff.ParseUnified(result.StdOut);
+        var diffs = FileDiff.ParseUnified(result.StdOut);
+        // The budget cuts one read covering every file, so the prefix is short of the whole
+        // stash — not only of the file its last row fell in.
+        foreach (var diff in diffs) diff.Truncated = result.Truncated;
+        return diffs;
     }
 
     public async Task<List<WorktreeEntry>> GetWorktreesAsync(string repoPath, CancellationToken ct = default)

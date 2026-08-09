@@ -237,4 +237,12 @@ public class StashesTabTests
     {
         Assert.Contains(binding, Markup);
     }
+
+    [Theory]
+    [InlineData(@"AutomationProperties.AutomationId=""StashDiffTruncatedNotice""")]
+    [InlineData("{Binding StashDiffIsTruncated, Converter={StaticResource BooleanToVisibilityConverter}}")]
+    public void TheTruncationNotice_IsRenderedByTheStashesTab(string markup)
+    {
+        Assert.Contains(markup, Markup);
+    }
 }

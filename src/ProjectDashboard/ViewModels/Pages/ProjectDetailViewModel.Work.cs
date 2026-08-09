@@ -601,6 +601,7 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private FileDiff? _selectedStashDiffFile;
     [ObservableProperty] private ObservableCollection<DiffLine> _stashDiffLines = [];
     [ObservableProperty] private string _stashDiffError = "";
+    [ObservableProperty] private bool _stashDiffIsTruncated;
 
     private const string StashDiffReadFailed =
         "Couldn't read this stash — it is still in the list; nothing about it has changed.";
@@ -618,6 +619,7 @@ public partial class ProjectDetailViewModel
         SelectedStashDiffFile = null;
         StashDiffLines = [];
         StashDiffError = "";
+        StashDiffIsTruncated = false;
         if (value is not null) StashDiffRefresh = LoadStashDiffAsync(value);
     }
 
@@ -636,6 +638,7 @@ public partial class ProjectDetailViewModel
                 return;
             }
             StashDiffFiles = new ObservableCollection<FileDiff>(files);
+            StashDiffIsTruncated = files.Exists(f => f.Truncated);
             SelectedStashDiffFile = StashDiffFiles.FirstOrDefault();
         }
         catch (Exception ex)

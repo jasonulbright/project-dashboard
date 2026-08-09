@@ -2560,6 +2560,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="What this stash holds" Style="{StaticResource PaneHeader}" />
@@ -2577,7 +2578,12 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <ComboBox Grid.Row="2" ItemsSource="{Binding StashDiffFiles}"
+                                <TextBlock Grid.Row="2" Margin="0,0,0,6" FontSize="12" TextWrapping="Wrap"
+                                           AutomationProperties.AutomationId="StashDiffTruncatedNotice"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                           Text="This stash was too large to read in full — the rows below stop where the read did."
+                                           Visibility="{Binding StashDiffIsTruncated, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <ComboBox Grid.Row="3" ItemsSource="{Binding StashDiffFiles}"
                                           SelectedItem="{Binding SelectedStashDiffFile}"
                                           DisplayMemberPath="Path" FontSize="12" Margin="0,0,0,6"
                                           AutomationProperties.Name="File changed in the selected stash">
@@ -2591,11 +2597,11 @@
                                         </Style>
                                     </ComboBox.Style>
                                 </ComboBox>
-                                <ListBox Grid.Row="3" ItemsSource="{Binding StashDiffLines}"
+                                <ListBox Grid.Row="4" ItemsSource="{Binding StashDiffLines}"
                                          Style="{StaticResource DiffListStyle}"
                                          Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}"
                                          AutomationProperties.Name="Stash diff" />
-                                <ListBox Grid.Row="3" ItemsSource="{Binding StashDiffRows}"
+                                <ListBox Grid.Row="4" ItemsSource="{Binding StashDiffRows}"
                                          Style="{StaticResource SideBySideListStyle}"
                                          Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}"
                                          AutomationProperties.Name="Stash diff, side by side" />

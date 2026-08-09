@@ -198,6 +198,76 @@ public class TruncatedReadSurfaceTests
     }
 
     [Fact]
+    public async Task ATruncatedStashDiffRead_CarriesTheFlagToTheParsedDiffAndThePane()
+    {
+        using var repo = await TwoHunkRepoAsync("stash-diff-truncated");
+        var git = new TruncatingGitService("show");
+
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await vm.StashChangesCommand.ExecuteAsync(null);
+
+        var files = await git.GetStashDiffAsync(repo.Path, "stash@{0}");
+        Assert.NotNull(files);
+        Assert.NotEmpty(files);
+        Assert.All(files, f => Assert.True(f.Truncated));
+
+        vm.SelectedStash = Assert.Single(vm.Stashes);
+        await vm.StashDiffRefresh;
+
+        Assert.True(vm.StashDiffIsTruncated);
+        Assert.NotEmpty(vm.StashDiffLines);
+    }
+
+    [Fact]
+    public async Task AWholeStashDiffRead_LeavesThePaneUnflagged()
+    {
+        using var repo = await TwoHunkRepoAsync("stash-diff-whole");
+        var git = new GitService();
+
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await vm.StashChangesCommand.ExecuteAsync(null);
+
+        var files = await git.GetStashDiffAsync(repo.Path, "stash@{0}");
+        Assert.NotNull(files);
+        Assert.All(files, f => Assert.False(f.Truncated));
+
+        vm.SelectedStash = Assert.Single(vm.Stashes);
+        await vm.StashDiffRefresh;
+
+        Assert.False(vm.StashDiffIsTruncated);
+        Assert.NotEmpty(vm.StashDiffLines);
+    }
+
+    /// <summary>
+    /// The flag belongs to the selection that set it: a truncated stash left on the pane while
+    /// the reader moves to another entry would say the next stash's whole preview stops early.
+    /// </summary>
+    [Fact]
+    public async Task MovingOffATruncatedStash_ClearsTheFlagWithThePreview()
+    {
+        using var repo = await TwoHunkRepoAsync("stash-diff-truncated-clear");
+        var git = new TruncatingGitService("show");
+
+        var vm = new ProjectDetailViewModel(null!, git, null!);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.WorkingStateRefresh;
+        await vm.StashChangesCommand.ExecuteAsync(null);
+
+        vm.SelectedStash = Assert.Single(vm.Stashes);
+        await vm.StashDiffRefresh;
+        Assert.True(vm.StashDiffIsTruncated);
+
+        vm.SelectedStash = null;
+
+        Assert.False(vm.StashDiffIsTruncated);
+        Assert.Empty(vm.StashDiffLines);
+    }
+
+    [Fact]
     public async Task ATruncatedBlameRead_CarriesTheFlagToTheResultAndThePane()
     {
         using var repo = await TwoHunkRepoAsync("blame-truncated");
