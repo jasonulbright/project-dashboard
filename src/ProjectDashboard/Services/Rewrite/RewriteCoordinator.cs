@@ -273,9 +273,13 @@ public sealed class RewriteCoordinator
             }
 
             if (!swap.Success)
+                // The swap distinguishes its own gates — dirty tree, unrepresentable Windows path,
+                // failed fsck, a ref transaction that committed nothing — from the reset that runs
+                // after the refs have already moved. Only the second changed the repository.
                 return new RewriteExecutionResult
                 {
                     Success = false,
+                    Refused = swap.NothingMoved,
                     FailureReason = swap.RefusalReason,
                     Report = report,
                     Swap = swap,

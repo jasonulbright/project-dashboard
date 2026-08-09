@@ -126,6 +126,69 @@ public class OperationHistoryJournalFailureTests
         Assert.Equal(OperationCategory.Rewrite, record.Category);
     }
 
+    /// <summary>
+    /// The swap's own gates all run before its point of no return and change nothing, so a rewrite
+    /// they turn away is a refusal. The reset that follows the committed ref transaction is the one
+    /// failure that left the repository altered, and it stays a failure.
+    /// </summary>
+    [Theory]
+    [InlineData(true, OperationOutcome.Refused)]
+    [InlineData(false, OperationOutcome.Failed)]
+    public async Task ASwapVerdict_IsRecordedAsARefusalOnlyWhenNothingMoved(
+        bool refusedBeforeThePointOfNoReturn, OperationOutcome expected)
+    {
+        using var fixture = new FixtureRepo(bareSource: false, prefix: "ops-swap-verdict-");
+        fixture.Write("a.txt", "SECRET-TOKEN-12345\n");
+        fixture.CommitAll("one");
+
+        var history = NewHistory();
+        var git = new GitService();
+        var swap = refusedBeforeThePointOfNoReturn
+            ? new StubSwap(SwapResult.Refused("rewrite target failed fsck — refusing the swap"))
+            : new StubSwap(new SwapResult(false, "refs reconciled but working-tree reset failed: disk full", [], null, null));
+
+        var coordinator = new RewriteCoordinator(
+            new BackupService(git, new SettingsService(), history), new RepoBusyRegistry(), git, swap,
+            new RewriteJournal(Path.Combine(TestEnv.NewDir("ops-swap-journal"), "rewrite-journal.json")),
+            gitExecutable: GitGuard.GitExe, history: history);
+
+        var result = await coordinator.ExecuteAsync(new RewriteRequest
+        {
+            RepoPath = fixture.SourcePath,
+            Options = new RewriteOptions
+            {
+                ContentOps =
+                [
+                    new LiteralReplace
+                    {
+                        Find = Encoding.UTF8.GetBytes("SECRET-TOKEN-12345"),
+                        Replace = Encoding.UTF8.GetBytes("[REDACTED]")
+                    }
+                ]
+            },
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3)
+        });
+
+        Assert.False(result.Success);
+        Assert.Equal(refusedBeforeThePointOfNoReturn, result.Refused);
+        var record = Assert.Single(history.Tail(fixture.SourcePath).Records);
+        Assert.Equal(expected, record.Outcome);
+        Assert.Equal(swap.Verdict.RefusalReason, record.Detail);
+    }
+
+    /// <summary>Hands back a fixed verdict without touching the repository.</summary>
+    private sealed class StubSwap : SwapService
+    {
+        public StubSwap(SwapResult verdict) : base(new GitService()) => Verdict = verdict;
+
+        public SwapResult Verdict { get; }
+
+        public override Task<SwapResult> ApplySwapAsync(
+            string sourceRepo, string tempBareRepo, IProgress<RewritePhase>? phase = null,
+            CancellationToken ct = default) => Task.FromResult(Verdict);
+    }
+
     /// <summary>Makes the journal unwritable at the reset, which runs after its entry was written.</summary>
     private sealed class SealJournalOnResetGitService : GitService
     {

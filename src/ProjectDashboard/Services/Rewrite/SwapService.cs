@@ -19,7 +19,14 @@ public sealed record SwapResult(
     string? OldHead,
     string? NewHead)
 {
-    public static SwapResult Refused(string reason) => new(false, reason, [], null, null);
+    /// <summary>
+    /// True when the swap stopped before its point of no return, so no ref, no HEAD, and no
+    /// tracked file moved. The one failure this is false for is the working-tree reset, which runs
+    /// after the ref transaction has already committed.
+    /// </summary>
+    public bool NothingMoved { get; init; }
+
+    public static SwapResult Refused(string reason) => new(false, reason, [], null, null) { NothingMoved = true };
 }
 
 /// <summary>
