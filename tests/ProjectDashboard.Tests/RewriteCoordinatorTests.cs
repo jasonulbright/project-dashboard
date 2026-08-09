@@ -494,6 +494,61 @@ public class RewriteCoordinatorTests
         _output.WriteLine($"mid-prepare dirty refusal: {result.RefusalReason}");
     }
 
+    /// <summary>Moves a source branch the moment the swap's object fetch returns — after the swap has read the ref layout it reconciles against.</summary>
+    private sealed class MovesRefAfterFetch(string repoPath, string branch, string target) : GitService
+    {
+        private int _fired;
+
+        public override async Task<ProcessResult> RunAsync(
+            string repo, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            var result = await base.RunAsync(repo, argv, environment, ct, timeout);
+            if (argv.Contains("fetch") && Interlocked.Exchange(ref _fired, 1) == 0)
+                FixtureRepo.RunGit(repoPath, ["branch", "-f", branch, target], null, null);
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task ApplySwap_RefMovedAfterTheLayoutWasRead_RefusesInsteadOfOverwritingIt()
+    {
+        using var f = NewFixture();
+        f.Write("a.txt", $"{Needle}\n");
+        f.CommitAll("one");
+        f.Git("branch", "feature");
+        f.Write("b.txt", "clean\n");
+        f.CommitAll("two");
+
+        var rewriter = new HistoryRewriter(GitGuard.GitExe);
+        await rewriter.RunAsync(new HistoryRewriteRequest
+        {
+            SourceRepository = f.SourcePath,
+            WorkingDirectory = f.WorkDir,
+            TargetBareRepository = f.TargetPath,
+            ExportTimeout = TimeSpan.FromMinutes(3),
+            ImportTimeout = TimeSpan.FromMinutes(3),
+            Rewrite = LiteralScrub(),
+            GitExecutable = GitGuard.GitExe
+        });
+
+        var mainOid = FixtureRepo.RunGit(f.SourcePath, ["rev-parse", "refs/heads/main"], null, null).Trim();
+
+        // refs/heads/feature moves to main's tip while the swap is preparing, so the value the
+        // reconciliation was built against is stale by the time the transaction runs.
+        var swap = new SwapService(new MovesRefAfterFetch(f.SourcePath, "feature", "main"));
+        var result = await swap.ApplySwapAsync(f.SourcePath, f.TargetPath);
+
+        Assert.False(result.Success);
+        Assert.Contains("reconciliation", result.RefusalReason, StringComparison.OrdinalIgnoreCase);
+        // The external move stands and main was never rewritten — the transaction aborted whole.
+        Assert.Equal(mainOid, FixtureRepo.RunGit(f.SourcePath, ["rev-parse", "refs/heads/feature"], null, null).Trim());
+        Assert.Equal(mainOid, FixtureRepo.RunGit(f.SourcePath, ["rev-parse", "refs/heads/main"], null, null).Trim());
+        Assert.True(GrepHits(f.SourcePath, AllCommits(f.SourcePath), Needle) >= 1);
+        _output.WriteLine($"stale-ref refusal: {result.RefusalReason}");
+    }
+
     [Fact]
     public async Task ApplySwap_UpdateRefTransactionFails_LeavesEverySourceRefUnchanged()
     {

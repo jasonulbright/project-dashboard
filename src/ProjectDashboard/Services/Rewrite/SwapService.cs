@@ -51,6 +51,13 @@ public class SwapService
     private static readonly TimeSpan RefTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ResetTimeout = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The expected-old value that requires a ref to be absent. `git update-ref --stdin` reads a
+    /// quoted empty string as "must not exist"; a zero object id means the same but only at the
+    /// repository's own hash length, so it fails outright in a SHA-256 repository.
+    /// </summary>
+    private const string MustNotExist = "\"\"";
+
     private readonly GitService _git;
 
     public SwapService(GitService git) => _git = git;
@@ -157,14 +164,20 @@ public class SwapService
             // script commits under one lock, so a ref-lock contention, a missing target object,
             // or an IO stall aborts the entire transaction with NOTHING changed — never a partial
             // swap. HEAD is set after, since a symbolic HEAD is not expressible in this script.
+            //
+            // Every line carries the value the ref held when `current` was read, so a ref another
+            // process moved in the window since that read aborts the whole transaction instead of
+            // being silently overwritten by the rewrite's value.
             var changes = BuildRefChanges(current, desired);
             var script = new StringBuilder();
             foreach (var change in changes)
             {
+                var expected = change.OldOid ?? MustNotExist;
                 if (change.NewOid is null)
-                    script.Append("delete ").Append(change.RefName).Append('\n');
+                    script.Append("delete ").Append(change.RefName).Append(' ').Append(expected).Append('\n');
                 else
-                    script.Append("update ").Append(change.RefName).Append(' ').Append(change.NewOid).Append('\n');
+                    script.Append("update ").Append(change.RefName).Append(' ').Append(change.NewOid)
+                        .Append(' ').Append(expected).Append('\n');
             }
 
             if (script.Length > 0)

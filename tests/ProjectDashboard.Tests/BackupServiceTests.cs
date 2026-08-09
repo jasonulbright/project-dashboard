@@ -126,6 +126,49 @@ public class BackupServiceTests
         Assert.DoesNotContain("refs/heads/phantom", await repo.RefStateAsync());
     }
 
+    /// <summary>Moves a branch immediately before the restore's ref transaction runs — after the restore has read the layout it reconciles against.</summary>
+    private sealed class MovesRefBeforeRefTransaction(string repoPath, string branch, string target) : GitService
+    {
+        private int _fired;
+
+        public override Task<ProcessResult> RunWithInputAsync(
+            string repo, IEnumerable<string> args, string standardInput,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            if (Interlocked.Exchange(ref _fired, 1) == 0)
+                Git.RunAsync(repoPath, ["branch", "-f", branch, target]).GetAwaiter().GetResult();
+            return base.RunWithInputAsync(repo, args, standardInput, ct, timeout);
+        }
+    }
+
+    [Fact]
+    public async Task Restore_RefMovedAfterTheLayoutWasRead_RefusesInsteadOfOverwritingIt()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        await repo.GitAsync("branch", "feature");
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        repo.Write("file.txt", "two\n");
+        await repo.CommitAllAsync("second");
+        var mutated = await repo.RefStateAsync();
+
+        // refs/heads/feature moves to main's tip after the restore read the current layout, so
+        // the value its reconciliation was built against is stale by the time it commits.
+        var racing = new BackupService(new MovesRefBeforeRefTransaction(repo.Path, "feature", "main"), new SettingsService());
+        var result = await racing.RestoreAsync(handle);
+
+        Assert.False(result.Success);
+        Assert.Contains("reconciliation", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.RefsRestored);
+        // Not one ref was rewound, and the external move stands.
+        var after = await repo.RefStateAsync();
+        Assert.NotEqual(mutated, after);
+        Assert.Equal(
+            (await repo.GitAsync("rev-parse", "refs/heads/main")).Trim(),
+            (await repo.GitAsync("rev-parse", "refs/heads/feature")).Trim());
+    }
+
     [Fact]
     public async Task Restore_DirtyWorktree_ReportsDiscardedChangeCount()
     {

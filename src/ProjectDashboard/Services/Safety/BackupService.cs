@@ -25,6 +25,13 @@ public sealed class BackupService
     private static readonly TimeSpan BundleTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RefTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// The expected-old value that requires a ref to be absent. `git update-ref --stdin` reads a
+    /// quoted empty string as "must not exist"; a zero object id means the same but only at the
+    /// repository's own hash length, so it fails outright in a SHA-256 repository.
+    /// </summary>
+    private const string MustNotExist = "\"\"";
+
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     private readonly GitService _git;
@@ -193,15 +200,20 @@ public sealed class BackupService
         // reconciliation with NOTHING changed — never the partial, mislabeled-atomic restore
         // this rail exists to prevent. `delete <ref>` removes even the checked-out branch, where
         // `branch -d` would refuse.
+        //
+        // Every line carries the value the ref held when the current layout was read, so a ref
+        // another process moved in the window since that read aborts the whole transaction
+        // instead of being silently overwritten by the snapshot's value.
         var desired = snapshot.Refs.ToDictionary(r => r.Name, r => r.ObjectId, StringComparer.Ordinal);
         var current = await ReadCurrentRefsAsync(handle.RepoPath, ct);
 
         var script = new StringBuilder();
-        foreach (var name in current.Keys)
+        foreach (var (name, oid) in current)
             if (!desired.ContainsKey(name))
-                script.Append("delete ").Append(name).Append('\n');
+                script.Append("delete ").Append(name).Append(' ').Append(oid).Append('\n');
         foreach (var (name, oid) in desired)
-            script.Append("update ").Append(name).Append(' ').Append(oid).Append('\n');
+            script.Append("update ").Append(name).Append(' ').Append(oid).Append(' ')
+                .Append(current.TryGetValue(name, out var old) ? old : MustNotExist).Append('\n');
 
         if (script.Length > 0)
         {
