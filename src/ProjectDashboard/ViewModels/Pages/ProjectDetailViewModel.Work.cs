@@ -324,6 +324,11 @@ public partial class ProjectDetailViewModel
     /// A read that describes what the pane already shows writes nothing. The signal covers the
     /// whole repository, so a save to any other file raises it too, and replacing the rows there
     /// would drop the reader's row — and with it the hunk gates — for a file nothing touched.
+    ///
+    /// Runs only from the drain, so no second pass is ever in flight beside this one. That is
+    /// what makes the focus below safe to read here and write after the await: a pass that
+    /// overlapped this one would snapshot the same focus before this one spent it, and apply an
+    /// index a hunk operation has already been paid out for a second time.
     /// </summary>
     private async Task FollowShownDiffAsync(WorkingFile file, bool staged)
     {
@@ -384,12 +389,44 @@ public partial class ProjectDetailViewModel
     /// left the file on the same side of the index it was already on.
     /// Rides the refresh's own completion, so the busy gates the refresh yielded to cover this
     /// read too and no second trigger is needed.
+    ///
+    /// Every caller joins the one follow-up in flight and leaves a pass owed behind it, for the
+    /// reason the working-state read is single-flighted: one refresh joins another's read, so
+    /// both resume together, and two diff reads running side by side both write the pane — the
+    /// one that started earlier can finish later and leave the rows describing a file that has
+    /// already moved on.
     /// </summary>
     private Task FollowShownDiffAfterRefreshAsync((WorkingFile File, bool Staged)? shown)
     {
         if (shown is not { } before || DiffTarget is not { } after) return Task.CompletedTask;
         if (before.Staged != after.Staged || !ReferenceEquals(before.File, after.File)) return Task.CompletedTask;
-        return DiffRefresh = FollowShownDiffAsync(after.File, after.Staged);
+
+        _diffFollowOwed = true;
+        return DiffRefresh = _diffFollow.IsCompleted
+            ? _diffFollow = DrainShownDiffFollowsAsync()
+            : _diffFollow;
+    }
+
+    private Task _diffFollow = Task.CompletedTask;
+    private bool _diffFollowOwed;
+
+    /// <summary>
+    /// Runs follow-up reads until none is owed. The flag is lowered before the read starts and
+    /// is only ever touched on the UI thread between awaits, so a refresh landing while a read
+    /// is in flight is always answered by a pass that starts after it — the last write is the
+    /// newest read.
+    /// Each pass reads the pane's target again rather than the one the caller validated: a
+    /// selection that moved while the previous pass ran is already being rendered by the read
+    /// that selection started.
+    /// </summary>
+    private async Task DrainShownDiffFollowsAsync()
+    {
+        while (_diffFollowOwed)
+        {
+            _diffFollowOwed = false;
+            if (DiffTarget is not { } target) return;
+            await FollowShownDiffAsync(target.File, target.Staged);
+        }
     }
 
     [RelayCommand]
