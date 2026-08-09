@@ -641,22 +641,31 @@ public class OperationHistorySurfaceTests
     }
 
     /// <summary>
-    /// Records hold repository paths and verbatim git output. Nothing carries them off the machine:
-    /// the bug-report autofill states the environment only, and the portfolio export describes
-    /// projects.
+    /// Records hold repository paths and verbatim git output. Nothing carries them off the machine.
+    ///
+    /// The dashboard writes to the ledger — card actions and Sync All record there — so the check
+    /// on that file is scoped to the one method whose output leaves the machine: the pre-filled
+    /// issue body, which states the environment and nothing read from disk. The portfolio export
+    /// has no business with the ledger at all.
     /// </summary>
     [Fact]
     public void NoOutwardSurface_CarriesTheLedger()
     {
-        foreach (var file in new[]
-                 {
-                     "src/ProjectDashboard/ViewModels/Pages/DashboardViewModel.cs",
-                     "src/ProjectDashboard/Services/PortfolioExport.cs"
-                 })
-        {
-            var source = RepoSource.Read(file);
-            Assert.DoesNotContain("OperationHistory", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("HistoryRoot", source, StringComparison.Ordinal);
-        }
+        var export = RepoSource.Read("src/ProjectDashboard/Services/PortfolioExport.cs");
+        Assert.DoesNotContain("OperationHistory", export, StringComparison.Ordinal);
+        Assert.DoesNotContain("HistoryRoot", export, StringComparison.Ordinal);
+
+        var dashboard = RepoSource.Read("src/ProjectDashboard/ViewModels/Pages/DashboardViewModel.cs");
+        var start = dashboard.IndexOf("private static string BugReportBody()", StringComparison.Ordinal);
+        Assert.True(start >= 0, "the bug-report body moved; this is the surface that leaves the machine");
+        var body = dashboard[start..dashboard.IndexOf("\n    }", start, StringComparison.Ordinal)];
+
+        Assert.DoesNotContain("History", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_history", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("LocalDir", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("LogFile", body, StringComparison.Ordinal);
+        // What it does carry: the build and the platform, and no repository at all.
+        Assert.Contains("OSDescription", body, StringComparison.Ordinal);
+        Assert.Contains("FrameworkDescription", body, StringComparison.Ordinal);
     }
 }
