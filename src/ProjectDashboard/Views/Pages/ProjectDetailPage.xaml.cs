@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +11,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Microsoft.Win32.SafeHandles;
 using ProjectDashboard.ViewModels.Pages;
 
 namespace ProjectDashboard.Views.Pages;
@@ -594,20 +596,20 @@ public partial class ProjectDetailPage
                     }
                     else
                     {
-                        var imgPath = ContainedImagePath(basePath, imgSrc);
-                        if (imgPath is null)
+                        // The stream is the containment decision, held open: decoding from it
+                        // reads the file the check cleared. Streamed, not read into a byte
+                        // array first, because the pixel budget is the bound on the decode and
+                        // nothing should hold a whole file in memory to find out it is too large.
+                        using var data = OpenContainedImage(basePath, imgSrc, out var refusedImage);
+                        if (data is not null)
                         {
-                            doc.Blocks.Add(ImageUnavailable(alt));
-                            rendered = true;
-                        }
-                        else if (File.Exists(imgPath))
-                        {
-                            // Streamed, not read into a byte array first: the pixel budget
-                            // is the bound on the decode, and nothing should have to hold a
-                            // whole file in memory to find out the source is too large.
-                            using var data = File.OpenRead(imgPath);
                             var bitmap = DecodeBounded(data);
                             doc.Blocks.Add(bitmap is null ? ImageUnavailable(alt) : ImageBlock(bitmap));
+                            rendered = true;
+                        }
+                        else if (refusedImage)
+                        {
+                            doc.Blocks.Add(ImageUnavailable(alt));
                             rendered = true;
                         }
                     }
@@ -886,7 +888,11 @@ public partial class ProjectDetailPage
     /// decided on canonical paths — comparing the unresolved text lets "repo\..\secrets" pass —
     /// and against the root plus its separator, so a sibling directory sharing the root's name
     /// as a prefix is outside it.
-    /// </summary>
+    /// <para>
+    /// This decides a path, and a path is not a read: what a rendered image is decoded from is
+    /// gated by <see cref="OpenContainedImage"/>, which decides containment again on the file it
+    /// holds open. Nothing renders bytes read from a path cleared here.
+    /// </para></summary>
     internal static string? ContainedImagePath(string basePath, string imgSrc)
     {
         if (string.IsNullOrWhiteSpace(basePath) || string.IsNullOrWhiteSpace(imgSrc)) return null;
@@ -900,12 +906,6 @@ public partial class ProjectDetailPage
             // reparse point along the way forwards the read wherever it points, and a repository
             // can carry one (git materializes a symlink blob, and a junction needs no privilege
             // to create). Containment is decided again with every link on both paths resolved.
-            //
-            // The decision and the open that follows it are two steps, so a reparse point swapped
-            // into the path between them is read as its new target: containment holds against the
-            // tree as it stands at this line, not against one being rewritten concurrently. That
-            // residual is accepted — writing the tree during a render already requires local code
-            // execution, which reaches the same files directly.
             return IsUnder(ResolveLinks(full), ResolveLinks(root)) ? full : null;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -918,6 +918,118 @@ public partial class ProjectDetailPage
         candidate.StartsWith(
             Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar,
             StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The file a local markdown image source names, already open for reading, or null when
+    /// nothing was opened. <paramref name="refused"/> tells the two nulls apart: true for a
+    /// source that resolved outside the repository, false when there was nothing to open —
+    /// which the caller renders as it renders a missing file, not as a refusal.
+    /// <para>
+    /// The check and the read are bound to one file object. The file is opened FIRST and
+    /// containment is then decided on the final path of that HANDLE, so the answer describes
+    /// the object the stream already holds rather than whatever the path names next: a reparse
+    /// point swapped into the path after the check redirects nothing, because the bytes are
+    /// decoded from this stream and the path is never opened a second time.
+    /// </para><para>
+    /// Both sides of the comparison come from the same resolver so they share its namespace —
+    /// prefixed, with drive substitutions and mapped drives already collapsed. A final path
+    /// compared against a <see cref="Path.GetFullPath(string)"/> string would refuse whole
+    /// classes of ordinary repository (a subst'd drive, a mapped share) as escapes.
+    /// </para><para>
+    /// The root is resolved by path rather than held open, because it is only the operand of a
+    /// comparison — nothing is read through it, so a handle would bind nothing. Racing the root
+    /// resolution cannot widen containment either: the file's own final path is authoritative,
+    /// so a root that moved under the check yields a refusal, never an escape.
+    /// </para></summary>
+    internal static FileStream? OpenContainedImage(string basePath, string imgSrc, out bool refused)
+    {
+        refused = true;
+        if (ContainedImagePath(basePath, imgSrc) is not { } candidate) return null;
+
+        FileStream stream;
+        try
+        {
+            stream = new FileStream(candidate, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                      or ArgumentException or NotSupportedException)
+        {
+            refused = false;
+            return null;
+        }
+
+        var root = FinalPathOfDirectory(Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath)));
+        var opened = FinalPathOfHandle(stream.SafeFileHandle);
+        if (root is null || opened is null || !IsUnder(opened, root))
+        {
+            stream.Dispose();
+            return null;
+        }
+
+        refused = false;
+        return stream;
+    }
+
+    // GetFinalPathNameByHandle resolves from the object a handle already holds, which no path-based
+    // resolver can do: every other route re-walks the path and answers about whatever it names now.
+    private const uint FileNameNormalized = 0x0;
+    private const uint FileReadAttributes = 0x80;
+    private const uint FileShareReadWriteDelete = 0x7;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle handle, [Out] char[] path, uint count, uint flags);
+
+    /// <summary>
+    /// A directory handle needs FILE_FLAG_BACKUP_SEMANTICS; without it CreateFile refuses a
+    /// directory outright. The share mode admits every other opener because the handle answers
+    /// one question and closes — blocking writers to the repository root is not its business.
+    /// </summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string path, uint access, uint share, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+
+    /// <summary>
+    /// The final path of the object <paramref name="handle"/> holds, or null when it cannot be
+    /// read. A zero return is failure; a return at or past the buffer length is the size the
+    /// path needs, terminator included, and the call is made again against it.
+    /// </summary>
+    private static string? FinalPathOfHandle(SafeFileHandle handle)
+    {
+        if (handle.IsInvalid) return null;
+
+        var buffer = new char[512];
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, FileNameNormalized);
+        if (length >= buffer.Length)
+        {
+            buffer = new char[length];
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, FileNameNormalized);
+            if (length >= buffer.Length) return null;
+        }
+        return length == 0 ? null : new string(buffer, 0, (int)length);
+    }
+
+    /// <summary>The final path of a directory, or null when it cannot be opened.</summary>
+    private static string? FinalPathOfDirectory(string path)
+    {
+        using var handle = CreateFileW(
+            ExtendedPath(path), FileReadAttributes, FileShareReadWriteDelete, IntPtr.Zero,
+            OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+        return handle.IsInvalid ? null : FinalPathOfHandle(handle);
+    }
+
+    /// <summary>
+    /// <paramref name="path"/> in the form that lifts the MAX_PATH limit CreateFile applies to a
+    /// plain path. The managed file APIs do this themselves; a direct CreateFile call does not,
+    /// and a repository deep enough to need it would otherwise fail every containment check.
+    /// </summary>
+    private static string ExtendedPath(string path) =>
+        path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
+        : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
+        : @"\\?\" + path;
 
     /// <summary>
     /// <paramref name="full"/> with every reparse point along it replaced by its target. The
