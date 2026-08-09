@@ -890,6 +890,16 @@ public partial class ProjectDetailViewModel
         $"{op} not started — another operation is running on this repository.";
 
     /// <summary>
+    /// The names a confirmation lists, indented one per line, with anything past the cap counted
+    /// rather than printed. A dialog longer than its buttons is one nobody reads to the end of.
+    /// </summary>
+    internal static string CappedList(IReadOnlyList<string> names, int cap = 12)
+    {
+        var listed = string.Join("\n", names.Take(cap).Select(n => $"  {n}"));
+        return names.Count > cap ? $"{listed}\n  …and {names.Count - cap} more" : listed;
+    }
+
+    /// <summary>
     /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.
     /// The op receives the repo path the CALLER captured and must run against it —
     /// reading the live RepoPath here would rebind any op that awaited something first

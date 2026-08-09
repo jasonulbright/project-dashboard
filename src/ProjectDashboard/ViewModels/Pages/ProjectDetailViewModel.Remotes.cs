@@ -431,13 +431,10 @@ public partial class ProjectDetailViewModel
     /// </summary>
     internal static string PruneMessage(string remote, IReadOnlyList<string> refs)
     {
-        const int shown = 12;
-        var named = string.Join("\n", refs.Take(shown).Select(r => $"  {r}"));
-        var rest = refs.Count > shown ? $"\n  …and {refs.Count - shown} more" : "";
         var one = refs.Count == 1;
         return $"Prune {remote}?\n\n" +
                $"{refs.Count} remote-tracking branch{(one ? "" : "es")} here {(one ? "is" : "are")} no longer on " +
-               $"{remote}:\n\n{named}{rest}\n\n" +
+               $"{remote}:\n\n{CappedList(refs)}\n\n" +
                "Only this repository's copies go. Nothing on the remote changes, and no local branch is deleted — " +
                "one that tracked a pruned ref is left tracking something the remote no longer has.";
     }

@@ -391,6 +391,65 @@ public class TagsSurfaceTests
         Assert.Contains("v2", onRemote);
         Assert.Contains("All 2 tags here are now on origin", vm.TagsStatusText);
         Assert.Equal("", vm.TagsErrorText);
+        // The whole set goes in one action, so the dialog names what it is about to publish.
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains("v1", vm.LastConfirmMessage);
+        Assert.Contains("v2", vm.LastConfirmMessage);
+    }
+
+    [Fact]
+    public async Task PushingAllTags_IsRefusedWithoutTheConfirmationAndLeavesTheRemoteWithNone()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-pushall-no-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-pushall-no-clone");
+        await clone.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(clone, confirm: false);
+        await vm.PushAllTagsCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Equal("", (await Git.RunAsync(bare.Path, "tag", "--list")).Trim());
+        Assert.Equal("", vm.TagsStatusText);
+        Assert.Equal("", vm.TagsErrorText);
+    }
+
+    /// <summary>
+    /// Pushing one tag is the same risk class as pushing commits and asks nothing. Pushing the
+    /// set is the action that publishes everything at once, and it is the one that asks.
+    /// </summary>
+    [Fact]
+    public async Task PushingASingleTag_AsksNothingWhilePushingTheWholeSetDoes()
+    {
+        using var seed = await TempRepo.CreateWithCommitAsync("tags-confirm-split-seed");
+        using var bare = await TempRepo.CreateBareFromAsync(seed);
+        using var clone = await TempRepo.CloneFromAsync(bare, "tags-confirm-split-clone");
+        await clone.GitAsync("tag", "v1");
+
+        var vm = await OpenedOn(clone);
+        vm.SelectedTag = vm.Tags.Single();
+        await vm.PushTagCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.Confirmations);
+        Assert.Contains("v1", await Git.RunAsync(bare.Path, "tag", "--list"));
+
+        await vm.PushAllTagsCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+    }
+
+    [Fact]
+    public void ThePushAllConfirmation_NamesTheTagsAndCountsTheRestWhenTheListRunsLong()
+    {
+        var many = Enumerable.Range(1, 15).Select(i => $"v{i}").ToList();
+
+        var message = ProjectDetailViewModel.PushAllTagsMessage("origin", many);
+
+        Assert.Contains("Push all 15 tags here to origin?", message);
+        Assert.Contains("v12", message);
+        Assert.DoesNotContain("v13", message);
+        Assert.Contains("…and 3 more", message);
+        Assert.Contains("takes a deletion on the remote itself", message);
     }
 
     /// <summary>

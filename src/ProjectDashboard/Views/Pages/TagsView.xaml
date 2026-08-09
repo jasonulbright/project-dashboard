@@ -201,7 +201,7 @@
                                        Margin="0,12,0,4"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                             <TextBlock Style="{StaticResource TagHint}"
-                                       Text="A push adds the tag to the remote and removes nothing there. With no remote configured there is nowhere to send one." />
+                                       Text="A push adds the tag to the remote and removes nothing there. Pushing all of them at once names them first and asks. With no remote configured there is nowhere to send one." />
                             <DockPanel>
                                 <ComboBox DockPanel.Dock="Left" Width="130" Margin="0,0,8,0"
                                           ItemsSource="{Binding TagRemoteNames}"
@@ -216,7 +216,7 @@
                                 <ui:Button Content="Push all tags" FontSize="12" Padding="12,4"
                                            HorizontalAlignment="Left"
                                            Command="{Binding PushAllTagsCommand}"
-                                           ToolTip="Send every tag in this repository to the chosen remote"
+                                           ToolTip="Send every tag in this repository to the chosen remote — lists them and confirms first"
                                            AutomationProperties.Name="Push every tag in this repository to the chosen remote" />
                             </DockPanel>
                         </StackPanel>

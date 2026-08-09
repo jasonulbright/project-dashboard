@@ -312,9 +312,11 @@ public partial class ProjectDetailViewModel
         SelectedTagRemote is not null && Tags.Count > 0 && !IsBusy && RepoPath.Length > 0;
 
     /// <summary>
-    /// Sends every tag this repository holds to the chosen remote. Refs are not pushed as one
-    /// unit, so a run the remote partly refused is reported as partial rather than as a failure
-    /// that changed nothing there.
+    /// Sends every tag this repository holds to the chosen remote. Confirmed, unlike the single
+    /// push: it publishes the whole set in one action, and no surface here can take a tag off a
+    /// remote again, so the names go in the dialog. Refs are not pushed as one unit, so a run the
+    /// remote partly refused is reported as partial rather than as a failure that changed
+    /// nothing there.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanPushAllTags))]
     private async Task PushAllTags()
@@ -325,8 +327,18 @@ public partial class ProjectDetailViewModel
         if (remote is null || repo.Length == 0) return;
         if (IsBusy) { TagsErrorText = BusyNotice("Push tags"); return; }
 
-        TagsErrorText = "";
         var count = Tags.Count;
+        var names = Tags.Select(t => t.Name).ToList();
+        var confirmed = await ConfirmPrompt("Push every tag to this remote?",
+            PushAllTagsMessage(remote, names), "Push all tags");
+        if (!confirmed) return;
+        if (!IsCurrent(gen))
+        {
+            TagsStatusText = ProjectSwitchedNotice("Tag push");
+            return;
+        }
+
+        TagsErrorText = "";
         var ok = await RunOp(r => _gitService.PushAllTagsAsync(r, remote), $"Push all tags to {remote}",
             repo, gen, TagPushRefusalAdvice);
         if (!IsCurrent(gen)) return;
@@ -344,6 +356,20 @@ public partial class ProjectDetailViewModel
         TagsStatusText =
             $"All {count} tag{(count == 1 ? "" : "s")} here {(count == 1 ? "is" : "are")} now on {remote}. " +
             $"A tag only on {remote} is untouched — this sends tags, it does not fetch or remove any.";
+    }
+
+    /// <summary>
+    /// The confirmation for pushing the whole set. It names the tags because this is the one
+    /// action here that publishes all of them at once, and because nothing on this surface can
+    /// remove a tag from a remote afterwards — the undo is on the remote, not here.
+    /// </summary>
+    internal static string PushAllTagsMessage(string remote, IReadOnlyList<string> tagNames)
+    {
+        var one = tagNames.Count == 1;
+        return $"Push all {tagNames.Count} tag{(one ? "" : "s")} here to {remote}?\n\n" +
+               $"{CappedList(tagNames)}\n\n" +
+               $"Every one of them becomes visible to anyone who fetches {remote}. Nothing on this surface " +
+               "removes a tag from a remote, so undoing it takes a deletion on the remote itself.";
     }
 
     /// <summary>
