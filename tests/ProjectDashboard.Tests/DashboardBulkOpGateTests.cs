@@ -108,6 +108,98 @@ public class DashboardBulkOpGateTests
         Assert.NotEqual(DashboardRescan.QueuedStatus, dashboard.RescanStatusDuringReport);
     }
 
+    /// <summary>
+    /// The candidate filter reads the busy registry once, before any repository task starts, so a
+    /// repository claimed after that read would otherwise be fetched into whatever claimed it.
+    /// Two cards on one path make the race exact: they are both candidates, exactly one wins the
+    /// lease, and the loser has to say so instead of running.
+    /// </summary>
+    [Fact]
+    public async Task SyncAll_TakesTheRepositoryLeasePerRepo_AndReportsTheOneItCouldNotClaim()
+    {
+        var root = TestEnv.NewDir("sync-lease");
+        var settings = NewSettings(root);
+        using var repo = await TempRepo.CreateWithCommitAsync("sync-lease-repo");
+        var moved = Path.Combine(root, "synced");
+        CopyTree(repo.Path, moved);
+        await Git.RunAsync(moved, "remote", "add", "origin", Path.Combine(root, "no-such-origin.git"));
+
+        var registry = new RepoBusyRegistry();
+        var git = new BlockingFetchGitService();
+        using var watcher = new ProjectWatcherService();
+        var dashboard = new LeaseProbeDashboard(settings, watcher, registry, git);
+
+        dashboard.Projects =
+        [
+            NewCard("alpha", moved),
+            NewCard("beta", moved),
+        ];
+
+        var sync = dashboard.SyncAllCommand.ExecuteAsync(null);
+        // The loser records its skip and increments the counter without running any git, so the
+        // winner can stay parked in its fetch until that has happened.
+        await WaitUntil(() => dashboard.OpProgressText == "1/2");
+        Assert.True(registry.IsBusy(moved), "the repository must be leased while its fetch runs");
+        git.ReleaseFetch();
+        await sync;
+
+        Assert.False(registry.IsBusy(moved), "the lease must be released before the aggregate refresh");
+        Assert.Contains("skipped — busy with another operation.", dashboard.LastReport, StringComparison.Ordinal);
+        // Exactly one card ran: the other never reached a git call.
+        Assert.Equal(1, git.FetchCount);
+    }
+
+    private static ProjectInfo NewCard(string name, string path) => new()
+    {
+        DirectoryName = name,
+        DisplayName = name,
+        FullPath = path,
+        GitStatus = new GitStatus { RemoteUrl = "https://example.invalid/o/r.git" },
+    };
+
+    /// <summary>Parks every fetch until released, so the window in which one repository holds its lease is under the test's control.</summary>
+    private sealed class BlockingFetchGitService : GitService
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _fetches;
+
+        public int FetchCount => Volatile.Read(ref _fetches);
+
+        public void ReleaseFetch() => _gate.TrySetResult();
+
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            if (!argv.Contains("fetch"))
+                return await base.RunAsync(repoPath, argv, environment, ct, timeout);
+            Interlocked.Increment(ref _fetches);
+            await _gate.Task;
+            return new ProcessResult(-1, "", "no such remote", TimedOut: false);
+        }
+    }
+
+    /// <summary>Captures the results body instead of putting a message box on a test host that has no Application.</summary>
+    private sealed class LeaseProbeDashboard : DashboardViewModel
+    {
+        public LeaseProbeDashboard(
+            SettingsService settings, ProjectWatcherService watcher, RepoBusyRegistry registry, GitService git)
+            : base(new ProjectDiscoveryService(git, new GitHubService(settings), settings, new ManifestStore()),
+                navigationService: null!, settings, new GitHubService(settings), git, watcher,
+                registry, uiPost: callback => callback())
+        {
+        }
+
+        public string LastReport { get; private set; } = "";
+
+        internal override Task ShowSyncAllResultsAsync(string body)
+        {
+            LastReport = body;
+            return Task.CompletedTask;
+        }
+    }
+
     /// <summary>Queues a re-scan from inside the results dialog and records what it did there.</summary>
     private sealed class ReportingDashboard : DashboardViewModel
     {

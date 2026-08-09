@@ -1136,31 +1136,43 @@ public partial class DashboardViewModel : ObservableObject
             try
             {
                 var name = p.DirectoryName;
-                var fetch = await _gitService.FetchAsync(p.FullPath);
-                if (!fetch.Success)
+                // The candidate filter read the registry before any of these tasks started; the
+                // lease is what actually keeps this fetch, pull, or push out of a rewrite's swap,
+                // and it is taken per repo so a repo claimed in the meantime is reported, not run.
+                if (!_busyRegistry.TryAcquire(p.FullPath, out var lease))
                 {
-                    outcomes.Add($"{name}: fetch failed — {fetch.FirstError}");
+                    outcomes.Add($"{name}: skipped — {DashboardCardActions.BusyReason}");
                     return;
                 }
 
-                var state = await _gitService.GetWorkingStateAsync(p.FullPath);
-                if (state is null || !state.HasUpstream) return; // fetched; nothing to reconcile
-
-                switch (ahead: state.Ahead, behind: state.Behind)
+                using (lease)
                 {
-                    case (0, 0):
-                        break;
-                    case (0, > 0):
-                        var pull = await _gitService.PullAsync(p.FullPath);
-                        outcomes.Add(pull.Success ? $"{name}: pulled {state.Behind}" : $"{name}: pull failed — {pull.FirstError}");
-                        break;
-                    case ( > 0, 0):
-                        var push = await _gitService.PushAsync(p.FullPath);
-                        outcomes.Add(push.Success ? $"{name}: pushed {state.Ahead}" : $"{name}: push failed — {push.FirstError}");
-                        break;
-                    default:
-                        outcomes.Add($"{name}: diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal");
-                        break;
+                    var fetch = await _gitService.FetchAsync(p.FullPath);
+                    if (!fetch.Success)
+                    {
+                        outcomes.Add($"{name}: fetch failed — {fetch.FirstError}");
+                        return;
+                    }
+
+                    var state = await _gitService.GetWorkingStateAsync(p.FullPath);
+                    if (state is null || !state.HasUpstream) return; // fetched; nothing to reconcile
+
+                    switch (ahead: state.Ahead, behind: state.Behind)
+                    {
+                        case (0, 0):
+                            break;
+                        case (0, > 0):
+                            var pull = await _gitService.PullAsync(p.FullPath);
+                            outcomes.Add(pull.Success ? $"{name}: pulled {state.Behind}" : $"{name}: pull failed — {pull.FirstError}");
+                            break;
+                        case ( > 0, 0):
+                            var push = await _gitService.PushAsync(p.FullPath);
+                            outcomes.Add(push.Success ? $"{name}: pushed {state.Ahead}" : $"{name}: push failed — {push.FirstError}");
+                            break;
+                        default:
+                            outcomes.Add($"{name}: diverged (↑{state.Ahead} ↓{state.Behind}) — resolve in a terminal");
+                            break;
+                    }
                 }
             }
             catch (Exception ex)
