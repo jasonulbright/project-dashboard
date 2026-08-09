@@ -81,6 +81,57 @@ public class ProjectMetadataEditorTests
         Assert.Equal("Tools", vm.SelectedCategory);
     }
 
+    /// <summary>
+    /// Descriptions arrive with legacy repo-root manifests, and nothing but this editor ever
+    /// writes one back. Built without it, the replacement manifest a Save persists carries the
+    /// type's default of "" and the imported text is gone — from a Save the reader made about
+    /// an unrelated field.
+    /// </summary>
+    [Fact]
+    public async Task Save_OfAnUnrelatedField_KeepsTheDescriptionTheProjectAlreadyHad()
+    {
+        var store = new ManifestStore();
+        store.Save(RepoPath, new ProjectManifest { Description = "imported description", Category = "Uncategorized" });
+        Assert.True(store.TryGet(RepoPath, out var seeded));
+
+        var vm = VmOn(RealDiscovery(), seeded!);
+        Assert.Equal("imported description", vm.ManifestDescription);
+
+        vm.SelectedCategory = "Tools";
+        await vm.SaveManifestCommand.ExecuteAsync(null);
+
+        Assert.True(new ManifestStore().TryGet(RepoPath, out var stored));
+        Assert.Equal("imported description", stored!.Description);
+        Assert.Equal("Tools", stored.Category);
+
+        // Reload the way discovery does — straight out of the store.
+        var reloaded = VmOn(RealDiscovery(), stored);
+        Assert.Equal("imported description", reloaded.ManifestDescription);
+        Assert.Equal("imported description", reloaded.Project!.Manifest.Description);
+    }
+
+    [Fact]
+    public async Task Save_WritesAnEditedDescription()
+    {
+        var vm = VmOn(RealDiscovery(), new ProjectManifest { Description = "old" });
+
+        vm.ManifestDescription = "what this repository is for";
+        await vm.SaveManifestCommand.ExecuteAsync(null);
+
+        Assert.True(new ManifestStore().TryGet(RepoPath, out var stored));
+        Assert.Equal("what this repository is for", stored!.Description);
+        Assert.Equal("what this repository is for", vm.Project!.Manifest.Description);
+        Assert.False(vm.Project.HasIncompleteMetadata);
+    }
+
+    [Fact]
+    public void TheDescriptionField_IsOnTheManifestCard()
+    {
+        var markup = RepoSource.Read("src/ProjectDashboard/Views/Pages/ProjectDetailPage.xaml");
+
+        Assert.Contains("{Binding ManifestDescription, UpdateSourceTrigger=PropertyChanged}", markup);
+    }
+
     [Fact]
     public async Task SwitchingProjects_ClearsTheSaveOutcomeOfThePreviousOne()
     {

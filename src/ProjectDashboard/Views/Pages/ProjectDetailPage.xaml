@@ -478,6 +478,15 @@
                                 <StackPanel>
                                     <TextBlock Text="Project Manifest" FontWeight="SemiBold" FontSize="14"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,12" />
+                                    <StackPanel Margin="0,0,0,12">
+                                        <TextBlock Text="Description" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBox Text="{Binding ManifestDescription, UpdateSourceTrigger=PropertyChanged}"
+                                                 FontSize="12" AcceptsReturn="True" TextWrapping="Wrap"
+                                                 MinHeight="46" MaxHeight="90"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 AutomationProperties.Name="Project description" />
+                                    </StackPanel>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />

@@ -19,6 +19,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     [ObservableProperty] private ObservableCollection<GitHubIssue> _issues = [];
 
     // Manifest editor properties
+    [ObservableProperty] private string _manifestDescription = "";
     [ObservableProperty] private string _selectedProjectType = "unknown";
     [ObservableProperty] private string _selectedStatus = "active";
     [ObservableProperty] private string _selectedCategory = "Uncategorized";
@@ -293,6 +294,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         Issues = new ObservableCollection<GitHubIssue>(p.Issues ?? []);
 
         ManifestStatusText = "";
+        ManifestDescription = p.Manifest.Description;
         SelectedProjectType = p.Manifest.ProjectType;
         SelectedStatus = p.Manifest.Status;
         SelectedCategory = p.Manifest.Category;
@@ -324,6 +326,7 @@ public partial class ProjectDetailViewModel : ObservableObject
 
     private ProjectManifest EditedManifest() => new()
     {
+        Description = ManifestDescription,
         ProjectType = SelectedProjectType,
         Status = SelectedStatus,
         Category = SelectedCategory,
