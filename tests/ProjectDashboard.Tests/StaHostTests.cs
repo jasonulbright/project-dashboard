@@ -19,7 +19,9 @@ public class StaHostTests
     public void ABodyThatOverrunsItsBudget_FailsItsOwnTestAndPoisonsTheHostForTheRest()
     {
         var release = new ManualResetEventSlim();
-        var host = StaHost.Isolated(Budget);
+        // Released before the host is disposed, so the worker returns and the join is not the
+        // abandonment path — that one is exercised by the wedge itself, above.
+        using var host = StaHost.Isolated(Budget);
         try
         {
             var wedge = Assert.Throws<TimeoutException>(() => host.Execute(release.Wait, "WedgingBody"));
@@ -47,7 +49,7 @@ public class StaHostTests
     [Fact]
     public void ABodyThatThrows_SurfacesItsOwnExceptionAndLeavesTheHostUsable()
     {
-        var host = StaHost.Isolated(Budget);
+        using var host = StaHost.Isolated(Budget);
 
         var thrown = Assert.Throws<InvalidOperationException>(
             () => host.Execute(() => throw new InvalidOperationException("body boom")));
@@ -58,10 +60,27 @@ public class StaHostTests
         Assert.Equal(1, ran);
     }
 
+    /// <summary>
+    /// An isolated host owns a thread of its own, and that thread parks on the queue rather than
+    /// ending when the test that asked for the host finishes. Left undisposed, one such thread
+    /// accumulates per test for the rest of the run.
+    /// </summary>
+    [Fact]
+    public void DisposingAnIsolatedHost_EndsItsThread()
+    {
+        var host = StaHost.Isolated(Budget);
+        host.Execute(() => { });
+        Assert.True(host.WorkerAlive);
+
+        host.Dispose();
+
+        Assert.False(host.WorkerAlive);
+    }
+
     [Fact]
     public void QueuedBodies_RunInTurnOnTheOneThread()
     {
-        var host = StaHost.Isolated(Budget);
+        using var host = StaHost.Isolated(Budget);
         var order = new List<int>();
         var threads = new HashSet<int>();
 

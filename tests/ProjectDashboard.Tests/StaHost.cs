@@ -18,9 +18,13 @@ namespace ProjectDashboard.Tests;
 /// A body that is merely slower than the budget poisons the host the same way; nothing on this
 /// side of the call can tell the two apart.
 /// </summary>
-internal sealed class StaHost
+internal sealed class StaHost : IDisposable
 {
-    /// <summary>The host every markup test queues onto, and the only one that owns an Application.</summary>
+    /// <summary>
+    /// The host every markup test queues onto, and the only one that owns an Application. Never
+    /// disposed: markup tests in many classes queue onto it and none of them can know it is the
+    /// last, so the thread is process-lifetime by design and ends with the test host.
+    /// </summary>
     private static readonly StaHost Shared = new(TimeSpan.FromSeconds(60), hostsApplication: true);
 
     public static void Run(Action body, [CallerMemberName] string caller = "") =>
@@ -30,8 +34,31 @@ internal sealed class StaHost
     /// A host of the caller's own, carrying no Application — WPF allows one per process and the
     /// shared host owns it. The poison is terminal, so a test that exercises it must not run on
     /// the host the markup tests share.
-    /// </summary>
+    /// <para>
+    /// Owned by its caller and disposed by it: an isolated host that is merely dropped leaves an
+    /// STA thread parked on the queue for the rest of the run, one per test that asked for one.
+    /// A body on it must not touch <see cref="Application"/> — there is no Application on this
+    /// thread, and the one the shared host built belongs to that thread. Nothing enforces that:
+    /// the check would have to wrap every body, and the wrapper would change what the host is
+    /// being asked to prove.
+    /// </para></summary>
     internal static StaHost Isolated(TimeSpan budget) => new(budget, hostsApplication: false);
+
+    /// <summary>How long a disposal waits for the worker to finish what it already holds.</summary>
+    private static readonly TimeSpan JoinBudget = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Stops the worker once the bodies already queued have run.
+    /// A wedged host has a thread that will never return, so the join is bounded and the thread
+    /// is abandoned — it is a background thread and the run ends without it. The queue is left
+    /// undisposed in that case on purpose: the abandoned worker is still inside the enumerator,
+    /// and disposing under it throws on a thread that has nothing to catch it.
+    /// </summary>
+    public void Dispose()
+    {
+        _queue.CompleteAdding();
+        if (!_worker.IsValueCreated || _worker.Value.Join(JoinBudget)) _queue.Dispose();
+    }
 
     internal static string WedgedMessage(string caller) =>
         $"STA host wedged by {caller} — that body never returned, so no later body can run on it.";
@@ -43,6 +70,13 @@ internal sealed class StaHost
 
     /// <summary>The first caller whose body overran, or null while the host still runs bodies.</summary>
     private string? _wedgedBy;
+
+    /// <summary>
+    /// Whether this host's thread is still alive. Read by the test that has to show a disposal
+    /// ended it: a thread parked on the queue is indistinguishable from a finished one by
+    /// anything the host does.
+    /// </summary>
+    internal bool WorkerAlive => _worker.IsValueCreated && _worker.Value.IsAlive;
 
     private StaHost(TimeSpan budget, bool hostsApplication)
     {
