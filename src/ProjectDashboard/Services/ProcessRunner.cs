@@ -187,7 +187,7 @@ public static class ProcessRunner
             // blocks exactly as the write did. On the timeout path the kill below breaks the
             // pipe first, so the close there fails fast instead.
             if (!timedOut)
-                await CloseStdInAsync(process);
+                await CloseStdInAsync(process, fileName);
         }
 
         if (!timedOut)
@@ -200,7 +200,7 @@ public static class ProcessRunner
         {
             try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
             if (standardInput is not null)
-                await CloseStdInAsync(process);
+                await CloseStdInAsync(process, fileName);
             try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* reaped or stuck */ }
         }
 
@@ -272,19 +272,39 @@ public static class ProcessRunner
     /// <summary>
     /// Closes the child's stdin under a bound. The close flushes, and a descendant that
     /// inherited the read handle can leave that flush blocked with no pipe left to drain it,
-    /// so the close never runs inline on the result path.
+    /// so the close never runs inline on the result path. The writer is read out here rather
+    /// than inside the task: past the bound the task outlives this method, and the caller
+    /// disposes the Process as soon as it returns.
     /// </summary>
-    private static async Task CloseStdInAsync(Process process)
+    private static async Task CloseStdInAsync(Process process, string fileName)
     {
+        var stdIn = process.StandardInput;
+        var close = Task.Run(stdIn.Close);
         try
         {
-            await Task.Run(() => process.StandardInput.Close()).WaitAsync(TimeSpan.FromSeconds(5));
+            await close.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            Log.Warn($"Abandoned the stdin close for {fileName} — a descendant process is holding the pipe open");
+            Observe(close, $"stdin close for {fileName}");
         }
         catch
         {
-            // Already closed, broken by the kill, or held open by an escaped descendant.
+            // Already closed, or broken by the kill that precedes this on the timeout path.
         }
     }
+
+    /// <summary>
+    /// Keeps an abandoned task's failure from going unobserved. Reading Exception is what marks
+    /// it observed; the log entry is what makes it something other than a silent disappearance.
+    /// </summary>
+    private static void Observe(Task task, string what) =>
+        _ = task.ContinueWith(
+            faulted => Log.Warn($"{what} faulted after it was abandoned", faulted.Exception),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     /// <summary>
     /// Starts draining one pipe. Without a callback the stream is only captured. With one, the
