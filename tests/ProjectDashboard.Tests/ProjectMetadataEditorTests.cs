@@ -20,37 +20,43 @@ public class ProjectMetadataEditorTests
     private static ProjectDiscoveryService RealDiscovery() =>
         new(null!, null!, null!, new ManifestStore());
 
+    /// <summary>Refuses every write, and records what it was asked to write it to.</summary>
     private sealed class RefusingDiscoveryService()
         : ProjectDiscoveryService(null!, null!, null!, new ManifestStore())
     {
-        public int Calls { get; private set; }
+        public List<(string RepoPath, ProjectManifest Manifest)> Attempts { get; } = [];
+
+        public int Calls => Attempts.Count;
 
         public override Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest,
             CancellationToken ct = default)
         {
-            Calls++;
+            Attempts.Add((repoPath, manifest));
             return Task.FromResult(false);
         }
     }
 
-    private static ProjectDetailViewModel VmOn(ProjectDiscoveryService discovery, ProjectManifest manifest)
+    private static ProjectInfo ProjectNamed(string folder, ProjectManifest manifest) => new()
+    {
+        DirectoryName = folder,
+        DisplayName = folder,
+        FullPath = $@"C:\projects\{folder}",
+        HasManifest = true,
+        Manifest = manifest
+    };
+
+    private static async Task<ProjectDetailViewModel> VmOnAsync(ProjectDiscoveryService discovery,
+        ProjectManifest manifest)
     {
         var vm = new ProjectDetailViewModel(discovery, new GitService(), null!);
-        vm.SetProjectAsync(new ProjectInfo
-        {
-            DirectoryName = "metadata-editor",
-            DisplayName = "metadata-editor",
-            FullPath = RepoPath,
-            HasManifest = true,
-            Manifest = manifest
-        }).GetAwaiter().GetResult();
+        await vm.SetProjectAsync(ProjectNamed("metadata-editor", manifest));
         return vm;
     }
 
     [Fact]
     public async Task Save_ThatLanded_AdoptsTheManifestAndSaysSo()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest { Category = "Uncategorized" });
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest { Category = "Uncategorized" });
         vm.SelectedCategory = "Tools";
 
         await vm.SaveManifestCommand.ExecuteAsync(null);
@@ -69,7 +75,7 @@ public class ProjectMetadataEditorTests
     public async Task Save_ThatDidNotReachDisk_SaysSoAndLeavesTheProjectUnchanged()
     {
         var discovery = new RefusingDiscoveryService();
-        var vm = VmOn(discovery, new ProjectManifest { Category = "Uncategorized" });
+        var vm = await VmOnAsync(discovery, new ProjectManifest { Category = "Uncategorized" });
         vm.SelectedCategory = "Tools";
 
         await vm.SaveManifestCommand.ExecuteAsync(null);
@@ -94,7 +100,7 @@ public class ProjectMetadataEditorTests
         store.Save(RepoPath, new ProjectManifest { Description = "imported description", Category = "Uncategorized" });
         Assert.True(store.TryGet(RepoPath, out var seeded));
 
-        var vm = VmOn(RealDiscovery(), seeded!);
+        var vm = await VmOnAsync(RealDiscovery(), seeded!);
         Assert.Equal("imported description", vm.ManifestDescription);
 
         vm.SelectedCategory = "Tools";
@@ -105,7 +111,7 @@ public class ProjectMetadataEditorTests
         Assert.Equal("Tools", stored.Category);
 
         // Reload the way discovery does — straight out of the store.
-        var reloaded = VmOn(RealDiscovery(), stored);
+        var reloaded = await VmOnAsync(RealDiscovery(), stored);
         Assert.Equal("imported description", reloaded.ManifestDescription);
         Assert.Equal("imported description", reloaded.Project!.Manifest.Description);
     }
@@ -113,7 +119,7 @@ public class ProjectMetadataEditorTests
     [Fact]
     public async Task Save_WritesAnEditedDescription()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest { Description = "old" });
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest { Description = "old" });
 
         vm.ManifestDescription = "what this repository is for";
         await vm.SaveManifestCommand.ExecuteAsync(null);
@@ -141,7 +147,7 @@ public class ProjectMetadataEditorTests
     [Fact]
     public async Task LeavingTheNotesEditor_WritesWhatWasTyped()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest());
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest());
 
         await vm.ToggleEditNotesCommand.ExecuteAsync(null);
         Assert.True(vm.IsEditingNotes);
@@ -163,7 +169,7 @@ public class ProjectMetadataEditorTests
     [Fact]
     public async Task LeavingTheNotesEditor_WhenTheWriteFails_StaysOpenOverTheTextAndSaysSo()
     {
-        var vm = VmOn(new RefusingDiscoveryService(), new ProjectManifest { Notes = "old\n" });
+        var vm = await VmOnAsync(new RefusingDiscoveryService(), new ProjectManifest { Notes = "old\n" });
 
         await vm.ToggleEditNotesCommand.ExecuteAsync(null);
         vm.Notes = "BUG: not saved yet\n";
@@ -183,7 +189,7 @@ public class ProjectMetadataEditorTests
     [Fact]
     public async Task LeavingTheNotesEditor_LeavesUnsavedMetadataEditsWhereTheyAre()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest { Category = "Uncategorized", Description = "kept" });
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest { Category = "Uncategorized", Description = "kept" });
 
         vm.SelectedCategory = "Tools";
         await vm.ToggleEditNotesCommand.ExecuteAsync(null);
@@ -225,30 +231,83 @@ public class ProjectMetadataEditorTests
         Assert.Equal("TASK: half typed\n", vm.Notes);
     }
 
-    /// <summary>Closing the editor first is what makes the incoming project re-read its own notes.</summary>
+    /// <summary>
+    /// Clicking another project card is the ordinary way out of the notes editor, and it used to
+    /// take the typed text with it — no write, no notice. The text belongs to the project being
+    /// left, so it is written there before the swap, and the incoming project still reads its own.
+    /// </summary>
     [Fact]
-    public async Task SwitchingProjectsWithTheEditorOpen_ReadsTheIncomingProjectsNotes()
+    public async Task SwitchingProjectsWithTheEditorOpen_SavesToTheOutgoingProjectFirst()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest { Notes = "first\n" });
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest { Notes = "first\n" });
+        var outgoing = vm.Project!;
         await vm.ToggleEditNotesCommand.ExecuteAsync(null);
-        vm.Notes = "abandoned\n";
+        vm.Notes = "TASK: typed just before the click\n";
 
-        await vm.SetProjectAsync(new ProjectInfo
-        {
-            DirectoryName = "other",
-            DisplayName = "other",
-            FullPath = @"C:\projects\metadata-editor-other",
-            Manifest = new ProjectManifest { Notes = "second\n" }
-        });
+        await vm.SetProjectAsync(ProjectNamed("metadata-editor-other",
+            new ProjectManifest { Notes = "second\n" }));
 
+        // Written to the repository it was typed against, not the one that took the screen.
+        Assert.True(new ManifestStore().TryGet(RepoPath, out var stored));
+        Assert.Equal("TASK: typed just before the click\n", stored!.Notes);
+        Assert.Equal("TASK: typed just before the click\n", outgoing.Manifest.Notes);
+        Assert.False(new ManifestStore().TryGet(@"C:\projects\metadata-editor-other", out _));
+
+        // The switch completed onto the incoming project, which reads its own notes.
         Assert.False(vm.IsEditingNotes);
+        Assert.Equal("second\n", vm.Notes);
+        Assert.Equal("", vm.NotesStatusText);
+    }
+
+    /// <summary>
+    /// A failed write must not trap the reader on the page — losing navigation is worse than
+    /// losing the text — but it must not be silent either. The notice names the project the
+    /// notes belonged to, since it is read on the page of the one switched to.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingProjects_WhenTheNotesWriteFails_StillSwitchesAndSaysWhichProject()
+    {
+        var discovery = new RefusingDiscoveryService();
+        var vm = await VmOnAsync(discovery, new ProjectManifest { Notes = "first\n" });
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "BUG: about to be lost\n";
+        discovery.Attempts.Clear();
+
+        await vm.SetProjectAsync(ProjectNamed("metadata-editor-other",
+            new ProjectManifest { Notes = "second\n" }));
+
+        // The write was attempted, against the outgoing repository and with the pending text.
+        var attempt = Assert.Single(discovery.Attempts);
+        Assert.Equal(RepoPath, attempt.RepoPath);
+        Assert.Equal("BUG: about to be lost\n", attempt.Manifest.Notes);
+
+        // The switch went through anyway, and the failure is on screen naming the project.
+        Assert.Equal("metadata-editor-other", vm.Project!.DirectoryName);
+        Assert.False(vm.IsEditingNotes);
+        Assert.Equal("second\n", vm.Notes);
+        Assert.Equal(ProjectDetailViewModel.NotesLeftUnsaved("metadata-editor"), vm.NotesStatusText);
+    }
+
+    /// <summary>A switch with the editor closed writes nothing — there is no pending text.</summary>
+    [Fact]
+    public async Task SwitchingProjectsWithTheEditorClosed_WritesNothing()
+    {
+        var discovery = new RefusingDiscoveryService();
+        var vm = await VmOnAsync(discovery, new ProjectManifest { Notes = "first\n" });
+        discovery.Attempts.Clear();
+
+        await vm.SetProjectAsync(ProjectNamed("metadata-editor-other",
+            new ProjectManifest { Notes = "second\n" }));
+
+        Assert.Empty(discovery.Attempts);
+        Assert.Equal("", vm.NotesStatusText);
         Assert.Equal("second\n", vm.Notes);
     }
 
     [Fact]
-    public void TheNotesButton_NamesWhatItDoesInEitherState()
+    public async Task TheNotesButton_NamesWhatItDoesInEitherState()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest());
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest());
 
         Assert.Equal("Edit", vm.NotesEditLabel);
         Assert.Equal("Edit the project notes", vm.NotesEditName);
@@ -271,7 +330,7 @@ public class ProjectMetadataEditorTests
     [Fact]
     public async Task SwitchingProjects_ClearsTheSaveOutcomeOfThePreviousOne()
     {
-        var vm = VmOn(RealDiscovery(), new ProjectManifest());
+        var vm = await VmOnAsync(RealDiscovery(), new ProjectManifest());
         await vm.SaveManifestCommand.ExecuteAsync(null);
         Assert.Equal("Metadata saved.", vm.ManifestStatusText);
 

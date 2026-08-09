@@ -114,6 +114,13 @@ public partial class ProjectDetailViewModel : ObservableObject
     internal const string NotesSaveFailed =
         "Notes not saved — the write failed, so this text is only in the editor. Try again.";
 
+    /// <summary>
+    /// Names the project the notes belonged to. The line is read on the page of the project
+    /// switched TO, where an unqualified "notes not saved" would describe the wrong repository.
+    /// </summary>
+    internal static string NotesLeftUnsaved(string projectName) =>
+        $"Notes for {projectName} were not saved — the write failed while leaving that project.";
+
     public string NotesEditLabel => IsEditingNotes ? "Save" : "Edit";
 
     public string NotesEditName =>
@@ -146,20 +153,7 @@ public partial class ProjectDetailViewModel : ObservableObject
             return;
         }
 
-        // Built from the manifest the project holds rather than from the metadata editor beside
-        // it: closing the notes editor writes notes, never a metadata edit nobody saved.
-        var stored = Project.Manifest;
-        var manifest = new ProjectManifest
-        {
-            Description = stored.Description,
-            ProjectType = stored.ProjectType,
-            Status = stored.Status,
-            Category = stored.Category,
-            ValidationSchedule = stored.ValidationSchedule,
-            Notes = Notes
-        };
-
-        if (!await PersistManifestAsync(manifest))
+        if (!await SaveNotesAsync(Project, Notes))
         {
             NotesStatusText = NotesSaveFailed;
             return;
@@ -169,14 +163,63 @@ public partial class ProjectDetailViewModel : ObservableObject
         IsEditingNotes = false;
     }
 
-    public Task SetProjectAsync(ProjectInfo project)
+    /// <summary>
+    /// Writes the editor's text onto a project's own manifest, carrying every metadata field
+    /// across as that project already had it: a notes write is never a metadata edit nobody saved.
+    /// </summary>
+    private Task<bool> SaveNotesAsync(ProjectInfo project, string notes)
     {
+        var stored = project.Manifest;
+        return PersistManifestAsync(project, new ProjectManifest
+        {
+            Description = stored.Description,
+            ProjectType = stored.ProjectType,
+            Status = stored.Status,
+            Category = stored.Category,
+            ValidationSchedule = stored.ValidationSchedule,
+            Notes = notes
+        });
+    }
+
+    /// <summary>
+    /// Writes the notes the editor still holds before the project they belong to leaves the page,
+    /// and returns the notice the switch owes when that write did not land, else null.
+    ///
+    /// The write is bound to the OUTGOING project and runs before the swap, so it cannot land on
+    /// the repository taking the screen. The switch proceeds either way: a page that refused to
+    /// navigate over a failed write would strand the reader on it, which is the worse outcome.
+    /// The unsaved text goes to the log, where it can still be read back.
+    /// </summary>
+    private async Task<string?> SaveNotesLeavingProjectAsync(ProjectInfo incoming)
+    {
+        if (!IsEditingNotes || Project is null || IsSameRepo(incoming)) return null;
+
+        var outgoing = Project;
+        var pending = Notes;
+        // Closed before the await: the editor is closing either way, and a second switch
+        // arriving mid-write would otherwise start the same write again.
+        IsEditingNotes = false;
+
+        if (await SaveNotesAsync(outgoing, pending)) return null;
+
+        Log.Error($"Notes for {outgoing.FullPath} were not saved before the project was left; " +
+                  $"the unsaved text follows.{Environment.NewLine}{pending}");
+        return NotesLeftUnsaved(outgoing.DisplayName);
+    }
+
+    public async Task SetProjectAsync(ProjectInfo project)
+    {
+        // Ahead of the swap, while Project still names the repository the text was typed against.
+        var unsavedNotes = await SaveNotesLeavingProjectAsync(project);
+
         // Local data renders instantly from what discovery already loaded. The issues
         // LIST is the one remote thing this page shows, and discovery no longer
         // prefetches it for every repo — refresh it lazily for just this project.
         ApplyProject(project);
+        // After the switch: ApplyProjectContent clears the notes line, so a notice written
+        // any earlier is wiped by the very switch that owes it.
+        if (unsavedNotes is not null) NotesStatusText = unsavedNotes;
         _ = LoadIssuesLazilyAsync(project);
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -397,16 +440,17 @@ public partial class ProjectDetailViewModel : ObservableObject
     };
 
     /// <summary>
-    /// Persists the editor's manifest, adopting it onto the project only once the store reports
-    /// the write durable. False leaves the editor holding the edit and says so.
+    /// Persists a manifest, adopting it onto the project only once the store reports the write
+    /// durable. The project is passed rather than read from <see cref="Project"/>: a write started
+    /// on the way out of a project outlives the swap, and reading the live one would adopt the
+    /// outgoing project's manifest onto the repository that took the screen.
     /// </summary>
-    private async Task<bool> PersistManifestAsync(ProjectManifest manifest)
+    private async Task<bool> PersistManifestAsync(ProjectInfo project, ProjectManifest manifest)
     {
-        if (Project is null) return false;
-        if (!await _discoveryService.SaveManifestAsync(Project.FullPath, manifest)) return false;
+        if (!await _discoveryService.SaveManifestAsync(project.FullPath, manifest)) return false;
 
-        Project.Manifest = manifest;
-        Project.HasManifest = true;
+        project.Manifest = manifest;
+        project.HasManifest = true;
         return true;
     }
 
@@ -414,7 +458,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     {
         if (Project is null) return;
 
-        ManifestStatusText = await PersistManifestAsync(EditedManifest())
+        ManifestStatusText = await PersistManifestAsync(Project, EditedManifest())
             ? "Metadata saved."
             : ManifestSaveFailed;
     }
