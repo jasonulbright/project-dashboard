@@ -13,22 +13,54 @@ namespace ProjectDashboard;
 
 public partial class App : Application
 {
+    /// <summary>
+    /// Which failures the process can survive. ShutdownMode is OnMainWindowClose and the main
+    /// window is shown by a hosted service, so a failure before that window exists leaves a live
+    /// process with no window: nothing to close, nothing to report into, and no exit path. Such a
+    /// failure ends the process; a failure after it is reported into the running window instead.
+    /// </summary>
+    internal sealed class StartupGuard
+    {
+        private bool _complete;
+        private bool _exiting;
+
+        public void MarkComplete() => _complete = true;
+
+        public bool IsFatal => !_complete;
+
+        /// <summary>True for the first caller only, so one failure does not start two exits.</summary>
+        public bool TryBeginExit()
+        {
+            if (_exiting) return false;
+            _exiting = true;
+            return true;
+        }
+    }
+
+    private const int StartupFailureExitCode = 1;
+
+    private readonly StartupGuard _startup = new();
     private IHost? _host;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        // Prevent unhandled exceptions from crashing the app
         DispatcherUnhandledException += (_, args) =>
         {
+            args.Handled = true;
+            if (_startup.IsFatal)
+            {
+                FailStartup(args.Exception);
+                return;
+            }
+
             ProjectDashboard.Services.Log.Error("Unhandled dispatcher exception", args.Exception);
             System.Windows.MessageBox.Show(
                 $"Error: {args.Exception.Message}\n\n{args.Exception.StackTrace?[..Math.Min(500, args.Exception.StackTrace?.Length ?? 0)]}",
                 "Project Dashboard Error",
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Warning);
-            args.Handled = true;
         };
 
         // Background-task and non-dispatcher failures never reach the handler above —
@@ -53,7 +85,41 @@ public partial class App : Application
                 System.Windows.MessageBoxImage.Warning);
         }
 
-        _host = Host.CreateDefaultBuilder()
+        try
+        {
+            _host = BuildHost();
+            // ApplicationHostService shows the window and navigates to the dashboard.
+            await _host.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            FailStartup(ex);
+            return;
+        }
+
+        _startup.MarkComplete();
+    }
+
+    /// <summary>
+    /// Reports a failure the process cannot run past and ends it with a non-zero exit code.
+    /// Handled-and-continue is not available here: the window that would carry the report does
+    /// not exist, and the shutdown mode that would end the process waits on that window.
+    /// </summary>
+    private void FailStartup(Exception ex)
+    {
+        if (!_startup.TryBeginExit()) return;
+
+        ProjectDashboard.Services.Log.Error("Startup failed", ex);
+        System.Windows.MessageBox.Show(
+            $"Project Dashboard could not start.\n\n{ex.Message}",
+            "Project Dashboard",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Error);
+        Shutdown(StartupFailureExitCode);
+    }
+
+    private static IHost BuildHost() =>
+        Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
                 // WPF-UI page provider (resolves pages from DI for NavigationView)
@@ -142,17 +208,16 @@ public partial class App : Application
             })
             .Build();
 
-        // ApplicationHostService shows the window and navigates to the dashboard.
-        await _host.StartAsync();
-    }
-
     protected override async void OnExit(ExitEventArgs e)
     {
         base.OnExit(e);
 
         if (_host is not null)
         {
-            await _host.StopAsync();
+            // A host that failed to start still holds whatever its earlier hosted services
+            // acquired, so the stop runs on that path too.
+            try { await _host.StopAsync(); }
+            catch (Exception ex) { ProjectDashboard.Services.Log.Warn("host stop failed", ex); }
             _host.Dispose();
         }
     }
