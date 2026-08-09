@@ -16,7 +16,12 @@ namespace ProjectDashboard.Tests;
 /// The keyboard needs its own path. The text editor owns the keyboard inside a
 /// RichTextBox and a Hyperlink there never takes focus, so Enter is routed off the
 /// caret's position instead; a visible read-only caret is what lets the reader steer it.
+///
+/// Collected with the other class that swaps <see cref="ProjectDetailPage.LaunchNavigable"/>:
+/// the launcher is one process-wide field, and two classes swapping it in parallel restore
+/// each other's substitute.
 /// </summary>
+[Collection("app-data-sandbox")]
 public class RenderedLinkActivationTests
 {
     [Fact]
