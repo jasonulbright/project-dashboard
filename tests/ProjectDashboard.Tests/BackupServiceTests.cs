@@ -43,6 +43,36 @@ public class BackupServiceTests
         Assert.Equal((await repo.GitAsync("rev-parse", "HEAD")).Trim(), snapshot.HeadObjectId);
     }
 
+    /// <summary>Truncates the bundle the moment `git bundle create` returns, so the file exists and the exit code is zero while its contents are unreadable.</summary>
+    private sealed class CorruptsBundleAfterCreateGitService : GitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            var result = await base.RunAsync(repoPath, argv, environment, ct, timeout);
+            if (argv.Count > 2 && argv[0] == "bundle" && argv[1] == "create")
+                await File.WriteAllTextAsync(argv[2], "not a valid git bundle", ct);
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task CreateBackup_BundleFailsVerification_ThrowsAndLeavesNoBackupBehind()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = new BackupService(new CorruptsBundleAfterCreateGitService(), new SettingsService());
+
+        var thrown = await Assert.ThrowsAsync<BackupException>(() => service.CreateBackupAsync(repo.Path, "History rewrite"));
+        Assert.Contains("verification", thrown.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Nothing on disk claims to be a usable backup of this repository.
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
+        var dir = SafetyPaths.BackupDirFor(RepoKey.For(repo.Path));
+        Assert.Empty(Directory.Exists(dir) ? Directory.GetFiles(dir, "*.bundle") : []);
+    }
+
     [Fact]
     public async Task Restore_AfterMutation_ReturnsRefsToSnapshotExactly()
     {

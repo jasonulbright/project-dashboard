@@ -44,10 +44,10 @@ public sealed class BackupService
     }
 
     /// <summary>
-    /// Bundles every ref and records the ref layout, then prunes older backups down to
-    /// BackupRetentionCount. Throws <see cref="BackupException"/> on any failure — a
-    /// caller must never proceed with a destructive op believing a backup exists when it
-    /// does not. <paramref name="operation"/> is recorded in the sidecar so a reader browsing
+    /// Bundles every ref, verifies the bundle reads back, and records the ref layout, then
+    /// prunes older backups down to BackupRetentionCount. Throws <see cref="BackupException"/>
+    /// on any failure — a caller must never proceed with a destructive op believing a backup
+    /// exists when it does not. <paramref name="operation"/> is recorded in the sidecar so a reader browsing
     /// backups months later can tell which one preceded which change.
     /// </summary>
     public async Task<BackupHandle> CreateBackupAsync(
@@ -74,6 +74,17 @@ public sealed class BackupService
         var bundle = await _git.RunAsync(repoPath, ["bundle", "create", bundlePath, "--all"], ct, BundleTimeout);
         if (!bundle.Success || !File.Exists(bundlePath))
             throw new BackupException($"git bundle create failed for '{repoPath}': {bundle.FirstError}");
+
+        // A zero exit and a file on disk say the write was attempted, not that the result can be
+        // read back. The restore verifies before it touches anything, so a bundle that fails
+        // verification is a backup that does not exist — and a caller told it exists proceeds
+        // with a destructive operation on that belief.
+        var verify = await _git.RunAsync(repoPath, ["bundle", "verify", bundlePath], ct, BundleTimeout);
+        if (!verify.Success)
+        {
+            TryDelete(bundlePath);
+            throw new BackupException($"Backup bundle for '{repoPath}' failed verification: {verify.FirstError}");
+        }
 
         try
         {
