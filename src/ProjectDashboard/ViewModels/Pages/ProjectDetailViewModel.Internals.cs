@@ -1,5 +1,6 @@
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.ViewModels.Pages;
 
@@ -196,7 +197,8 @@ public partial class ProjectDetailViewModel
         }
 
         WorktreesErrorText = "";
-        var ok = await RunOp(r => _gitService.AddWorktreeAsync(r, path, branch), "Add worktree", repo, gen);
+        var ok = await RunOp(r => _gitService.AddWorktreeAsync(r, path, branch), "Add worktree", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -274,7 +276,8 @@ public partial class ProjectDetailViewModel
         }
 
         WorktreesErrorText = "";
-        var ok = await RunOp(r => _gitService.RemoveWorktreeAsync(r, row.Path), "Remove worktree", repo, gen);
+        var ok = await RunOp(r => _gitService.RemoveWorktreeAsync(r, row.Path), "Remove worktree", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -318,7 +321,8 @@ public partial class ProjectDetailViewModel
         }
 
         WorktreesErrorText = "";
-        var ok = await RunOp(r => _gitService.PruneWorktreesAsync(r), "Prune worktrees", repo, gen);
+        var ok = await RunOp(r => _gitService.PruneWorktreesAsync(r), "Prune worktrees", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -425,7 +429,8 @@ public partial class ProjectDetailViewModel
         if (entry is null || service is null || repo.Length == 0 || IsBusy) return;
 
         SubmodulesErrorText = "";
-        var ok = await RunOp(r => service.InitAsync(r, entry.Path), $"Init {entry.Path}", repo, gen);
+        var ok = await RunOp(r => service.InitAsync(r, entry.Path), $"Init {entry.Path}", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -478,7 +483,8 @@ public partial class ProjectDetailViewModel
             Force = force,
             ConfirmDiscard = acknowledged
         };
-        var ok = await RunOp(r => service.UpdateAsync(r, request), $"Update {entry.Path}", repo, gen);
+        var ok = await RunOp(r => service.UpdateAsync(r, request), $"Update {entry.Path}", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -504,7 +510,8 @@ public partial class ProjectDetailViewModel
         if (entry is null || service is null || repo.Length == 0 || IsBusy) return;
 
         SubmodulesErrorText = "";
-        var ok = await RunOp(r => service.SyncAsync(r, entry.Path), $"Sync {entry.Path}", repo, gen);
+        var ok = await RunOp(r => service.SyncAsync(r, entry.Path), $"Sync {entry.Path}", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -545,7 +552,8 @@ public partial class ProjectDetailViewModel
         SubmodulesErrorText = "";
         // ConfirmDiscard carries the confirmation just given; the service refuses deinit without it.
         var request = new SubmoduleDeinitRequest { Path = entry.Path, Force = force, ConfirmDiscard = true };
-        var ok = await RunOp(r => service.DeinitAsync(r, request), $"Deinit {entry.Path}", repo, gen);
+        var ok = await RunOp(r => service.DeinitAsync(r, request), $"Deinit {entry.Path}", repo, gen,
+            category: OperationCategory.Maintenance);
         if (!IsCurrent(gen)) return;
 
         if (!ok)

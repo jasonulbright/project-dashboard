@@ -25,8 +25,13 @@ namespace ProjectDashboard.Services.Safety;
 public sealed class RewriteRecoveryService : IHostedService
 {
     private readonly RewriteJournal _journal;
+    private readonly OperationHistory _history;
 
-    public RewriteRecoveryService(RewriteJournal journal) => _journal = journal;
+    public RewriteRecoveryService(RewriteJournal journal, OperationHistory? history = null)
+    {
+        _journal = journal;
+        _history = history ?? new OperationHistory();
+    }
 
     /// <summary>The interrupted ops found at startup, one per repository. Empty when the last shutdown was clean.</summary>
     public IReadOnlyList<RewriteJournalEntry> Pending { get; private set; } = [];
@@ -60,6 +65,7 @@ public sealed class RewriteRecoveryService : IHostedService
         var entry = PendingFor(repoPath);
         await _journal.CompleteAsync(repoPath, ct);
         if (entry is null) return;
+        RecordMarkerCleared(entry);
         Pending = Pending.Where(e => !ReferenceEquals(e, entry)).ToList();
         try { PendingChanged?.Invoke(); }
         catch (Exception ex) { Log.Warn("Pending-rewrite change subscriber threw", ex); }
@@ -76,6 +82,7 @@ public sealed class RewriteRecoveryService : IHostedService
                 // and the backup it points at is intact until the reader rules on it.
                 Log.Warn($"Interrupted history rewrite detected for '{entry.RepoPath}' " +
                          $"(phase '{entry.Phase}', started {entry.UtcStamp}) — awaiting restore decision.");
+                RecordInterrupted(entry);
                 try { PendingDetected?.Invoke(entry); }
                 catch (Exception ex) { Log.Warn("Pending-rewrite subscriber threw", ex); }
             }
@@ -93,4 +100,78 @@ public sealed class RewriteRecoveryService : IHostedService
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>
+    /// Names an interrupted operation in the ledger from what the journal recorded.
+    /// The label carries the phase, so it is part of what identifies the entry across launches.
+    /// </summary>
+    internal static string InterruptedLabel(RewriteJournalEntry entry) =>
+        $"Interrupted history operation ({(entry.Phase.Length > 0 ? entry.Phase : "unrecorded phase")})";
+
+    /// <summary>
+    /// Writes the interrupted operation once, not once per launch. The journal entry survives
+    /// every launch until the reader rules on it, so an unconditional write would report the same
+    /// interruption again on each start and make the ledger count launches instead of operations.
+    /// </summary>
+    private void RecordInterrupted(RewriteJournalEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.RepoPath)) return;
+        var label = InterruptedLabel(entry);
+        var stamp = entry.BackupHandle?.UtcStamp;
+        var started = ParseStamp(entry.UtcStamp);
+
+        if (FindInterrupted(entry.RepoPath, label, stamp, started) is not null) return;
+
+        _history.Append(OperationRecord.For(
+            entry.RepoPath, OperationCategory.Rewrite, label, OperationOutcome.Interrupted,
+            stamp is null
+                ? "Found on disk at launch. No backup is named by the record, so what it would restore is unknown."
+                : "Found on disk at launch. Nothing has been restored; the backup it names is still on disk.",
+            started ?? DateTimeOffset.UtcNow,
+            backupStamp: stamp));
+    }
+
+    /// <summary>
+    /// Records that the marker was abandoned and the backup retained — the two halves of what
+    /// <see cref="ClearAsync"/> does, and the second is why the record is worth keeping.
+    /// </summary>
+    private void RecordMarkerCleared(RewriteJournalEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.RepoPath)) return;
+        var stamp = entry.BackupHandle?.UtcStamp;
+        var of = FindInterrupted(entry.RepoPath, InterruptedLabel(entry), stamp, ParseStamp(entry.UtcStamp));
+
+        _history.Append(OperationRecord.For(
+            entry.RepoPath, OperationCategory.Rewrite, "Interrupted-operation record discarded",
+            OperationOutcome.Succeeded,
+            stamp is null
+                ? "The marker was dropped. It named no backup."
+                : "The marker was dropped. The backup it named is still on disk.",
+            DateTimeOffset.UtcNow,
+            backupStamp: stamp,
+            recovery: new RecoveryNote
+            {
+                Kind = RecoveryKind.MarkerCleared,
+                AppliedUtc = DateTimeOffset.UtcNow,
+                OfId = of?.Id ?? ""
+            }));
+    }
+
+    private OperationRecord? FindInterrupted(
+        string repoPath, string label, string? backupStamp, DateTimeOffset? started) =>
+        _history.Tail(repoPath).Records.FirstOrDefault(r =>
+            r.Outcome == OperationOutcome.Interrupted
+            && string.Equals(r.Label, label, StringComparison.Ordinal)
+            && string.Equals(r.BackupStamp ?? "", backupStamp ?? "", StringComparison.Ordinal)
+            && (started is null || r.StartedUtc == started));
+
+    /// <summary>Null when the journal recorded no usable start stamp; the caller then falls back rather than inventing one.</summary>
+    private static DateTimeOffset? ParseStamp(string stamp) =>
+        DateTime.TryParseExact(
+            stamp.Length > 18 ? stamp[..18] : stamp, "yyyyMMdd-HHmmssfff",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? new DateTimeOffset(parsed, TimeSpan.Zero)
+            : null;
 }

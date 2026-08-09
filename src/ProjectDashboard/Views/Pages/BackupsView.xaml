@@ -180,6 +180,14 @@
 
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <!-- The sidecar names what a bundle was taken for; the record says how
+                                 that operation ended, which the sidecar was written before. -->
+                            <ui:Button Content="Operation for this backup" FontSize="13" Padding="14,5" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon History24}"
+                                       Command="{Binding OpenOperationHistoryForBackupCommand}"
+                                       CommandParameter="{Binding SelectedBackup}"
+                                       Visibility="{Binding BackupsHasEntries, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                       AutomationProperties.Name="Open the operation history at the operation that took this backup" />
                             <ui:Button Content="Refresh" FontSize="13" Padding="14,5" Margin="0,0,8,0"
                                        Command="{Binding LoadBackupsCommand}"
                                        AutomationProperties.Name="Reload the backup list" />

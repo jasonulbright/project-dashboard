@@ -146,9 +146,20 @@ public sealed class RewriteExecutionResult
 
     public UndoHandle? Undo { get; init; }
 
+    /// <summary>
+    /// True when a gate turned the run away before the engine ran, so nothing in the repository
+    /// was touched. False on every failure that reached the engine or the swap, whose effect on
+    /// the repository is what <see cref="Undo"/> exists for.
+    /// </summary>
+    public bool Refused { get; init; }
+
     internal static RewriteExecutionResult Failed(
         string reason, UndoHandle? undo = null, RewriteReport? report = null, SwapResult? swap = null) =>
         new() { Success = false, FailureReason = reason, Undo = undo, Report = report, Swap = swap };
+
+    /// <summary>A gate refusal: the run never started, so the repository is exactly as it was.</summary>
+    internal static RewriteExecutionResult RefusedByGate(string reason, UndoHandle? undo = null) =>
+        new() { Success = false, Refused = true, FailureReason = reason, Undo = undo };
 
     /// <summary>
     /// The cancelled outcome. No undo travels with it: a cancellation is only observed while the

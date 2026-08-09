@@ -16,4 +16,11 @@ internal static class SafetyPaths
 
     /// <summary>The single pending-rewrite journal; presence at startup means an interrupted op.</summary>
     public static string JournalFile => Path.Combine(AppPaths.LocalDir, "rewrite-journal.json");
+
+    /// <summary>
+    /// Root of the per-repo operation ledgers: &lt;LocalDir&gt;\history\&lt;repo-key&gt;. Separate
+    /// from <see cref="JournalFile"/>, which answers only what is pending now and is rewritten
+    /// whole on every change.
+    /// </summary>
+    public static string HistoryRoot => Path.Combine(AppPaths.LocalDir, "history");
 }

@@ -92,7 +92,7 @@ public partial class ProjectDetailViewModel
     /// </summary>
     public bool SafetyOverlayHidden =>
         !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible
-        && !TagsVisible && !FileHistoryVisible && !CommitGraphVisible;
+        && !TagsVisible && !FileHistoryVisible && !CommitGraphVisible && !OperationHistoryVisible;
 
     /// <summary>
     /// True when neither maintenance pane is up. The force-push pane opens from the rewrite
@@ -100,7 +100,13 @@ public partial class ProjectDetailViewModel
     /// only one-click undo — and this disables the wizard's controls underneath, because a scrim
     /// stops the mouse and no keystroke.
     /// </summary>
-    public bool MaintenanceOverlayHidden => !ForcePushVisible && !ReflogVisible && !TagsVisible;
+    /// <remarks>
+    /// The operation-history overlay is counted here because it opens over the Backups browser as
+    /// a cross-link: a scrim stops the mouse and no keystroke, and the restore behind it is gated
+    /// by a typed repository name that stays typeable otherwise.
+    /// </remarks>
+    public bool MaintenanceOverlayHidden =>
+        !ForcePushVisible && !ReflogVisible && !TagsVisible && !OperationHistoryVisible;
 
     [RelayCommand]
     private async Task OpenBackups()

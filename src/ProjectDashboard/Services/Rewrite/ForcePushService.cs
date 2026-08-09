@@ -77,11 +77,13 @@ public class ForcePushService
 
     private readonly GitService _git;
     private readonly RepoBusyRegistry _busy;
+    private readonly Safety.OperationHistory _history;
 
-    public ForcePushService(GitService git, RepoBusyRegistry busy)
+    public ForcePushService(GitService git, RepoBusyRegistry busy, Safety.OperationHistory? history = null)
     {
         _git = git;
         _busy = busy;
+        _history = history ?? new Safety.OperationHistory();
     }
 
     /// <summary>
@@ -188,6 +190,27 @@ public class ForcePushService
     /// </summary>
     public virtual async Task<ForcePushOutcome> PushAsync(
         string repoPath, IReadOnlyList<DivergedBranch> branches, CancellationToken ct = default)
+    {
+        var started = DateTimeOffset.UtcNow;
+        var outcome = await PushCoreAsync(repoPath, branches, ct);
+        _history.Append(Safety.OperationRecord.For(
+            repoPath, Safety.OperationCategory.ForcePush,
+            branches.Count == 1
+                ? $"Push rewritten history to {branches[0].RemoteDisplayName}"
+                : $"Push rewritten history ({branches.Count} branches)",
+            outcome.RefusalReason is not null ? Safety.OperationOutcome.Refused
+                : outcome.Success ? Safety.OperationOutcome.Succeeded
+                : Safety.OperationOutcome.Failed,
+            outcome.RefusalReason ?? DescribeRefs(outcome), started));
+        return outcome;
+    }
+
+    /// <summary>Every ref's own line, so a run that landed some and refused others is not flattened to one verdict.</summary>
+    private static string DescribeRefs(ForcePushOutcome outcome) =>
+        string.Join("\n", outcome.Refs.Select(r => $"{r.BranchName}: {r.Detail}"));
+
+    private async Task<ForcePushOutcome> PushCoreAsync(
+        string repoPath, IReadOnlyList<DivergedBranch> branches, CancellationToken ct)
     {
         if (branches.Count == 0)
             return ForcePushOutcome.Refused("Nothing to push — no branch here differs from its remote counterpart.");

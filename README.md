@@ -57,6 +57,7 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Backups, reflog, and force push** — browse and restore the backups taken before each history operation, inspect every position the refs have held, and push a rewritten branch only after reviewing exactly what diverged (`--force-with-lease`, at the object id the plan produced, behind a typed confirmation)
 - **Deep clean** — after a scrub, expire the reflogs and prune the object store so the replaced commits stop being reachable locally. Its own typed confirmation; the backup bundle is kept
 - **Recovery** — a history operation interrupted by a crash is detected on the next launch and offers the same one-click restore
+- **Operation history** — a per-repository record of what the app attempted and how each attempt ended: rewrites, commit surgery, force pushes, deep cleans, restores, and the everyday working, branch, remote, and tag operations, refusals included. Each entry keeps the verbatim message the operation reported, links to the backup it took while that bundle is still on disk, and says so when retention has pruned it. The list states its own limits — where the records begin, that older ones rotate out, and that operations run from a terminal were never recorded. Local only; nothing is transmitted
 
 ![Rewrite wizard dry run](docs/screenshots/history-rewrite.png)
 
@@ -135,6 +136,7 @@ All app state lives outside your repositories, so source trees stay source-only:
 | `%LOCALAPPDATA%\ProjectDashboard\settings.json` | User preferences and window state |
 | `%LOCALAPPDATA%\ProjectDashboard\discovery-cache.json` | Project scan cache (may include private repo names — never committed) |
 | `%LOCALAPPDATA%\ProjectDashboard\log.txt` | Diagnostic log |
+| `%LOCALAPPDATA%\ProjectDashboard\history\` | Per-repository operation records, one append-only JSONL file each (holds repository paths and verbatim git output — never committed, never transmitted) |
 | `%APPDATA%\ProjectDashboard\manifests.json` | Per-project metadata index (roams with the user profile) |
 
 Two things relocate all of the above under a single directory. In the portable build, the `portable.marker` file beside the executable puts them in `data\` next to it. Setting the `PD_DATA_DIR` environment variable points them anywhere you like, and takes precedence over the marker.

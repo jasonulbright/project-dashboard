@@ -1,0 +1,214 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.OperationHistoryView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:vm="clr-namespace:ProjectDashboard.ViewModels.Pages"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseOperationHistoryCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <Style x:Key="OperationHistoryHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <!-- Every navigation mode cycles inside the pane: the scrim stops the mouse but no
+             keystroke, and this pane can draw over the Backups browser's typed restore gate. -->
+        <Border MaxWidth="1040" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseOperationHistoryCommand}"
+                               ToolTip="Close the operation history (Esc)"
+                               AutomationProperties.Name="Close the operation history" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="History24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusInfoFg}" />
+                            <TextBlock Text="Operation history" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="What this app did to this repository, newest first" FontSize="12" Margin="0,2,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ FILTERS ═══ -->
+                <ItemsControl Grid.Row="1" ItemsSource="{Binding OperationHistoryFilters}" Margin="0,0,0,10"
+                              AutomationProperties.Name="Filter the operations by category">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:OperationHistoryFilter}">
+                            <ui:Button FontSize="12" Padding="10,3" Margin="0,0,6,6"
+                                       Command="{Binding DataContext.SelectOperationHistoryFilterCommand,
+                                                         RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                       CommandParameter="{Binding Key}"
+                                       Content="{Binding Chip}"
+                                       AutomationProperties.Name="{Binding AccessibleName}">
+                                <ui:Button.Style>
+                                    <Style TargetType="ui:Button">
+                                        <!-- Stated rather than left to the control's own default,
+                                             which is Primary: an unset inactive chip is drawn
+                                             exactly like the selected one. -->
+                                        <Setter Property="Appearance" Value="Secondary" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                <Setter Property="Appearance" Value="Primary" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ui:Button.Style>
+                            </ui:Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- ═══ BODY ═══ -->
+                <Grid Grid.Row="2">
+                    <!-- The empty state states the limit of what it can claim: nothing recorded is
+                         not the same fact as nothing having been done to this repository. -->
+                    <Border CornerRadius="6" Padding="12,10" VerticalAlignment="Top"
+                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            Visibility="{Binding OperationHistoryEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="{Binding OperationHistoryEmptyText}"
+                                   FontSize="13" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="OperationHistoryEmptyText" />
+                    </Border>
+
+                    <ListBox x:Name="OperationRows" ItemsSource="{Binding OperationHistoryRows}"
+                             SelectedItem="{Binding SelectedOperationHistoryRow}"
+                             Background="Transparent" HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
+                             AutomationProperties.Name="Recorded operations">
+                        <!-- Without an automation name the row is announced as its type's
+                             name: an item container falls back to the item's ToString. -->
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:OperationHistoryRow}">
+                                <StackPanel Margin="0,4,0,4">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left" Width="150" Text="{Binding When}"
+                                                   FontSize="12" FontFamily="Cascadia Code,Consolas"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding Outcome}" FontSize="12"
+                                                   Margin="12,0,0,0" HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource StatusInfoFg}" />
+                                        <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </DockPanel>
+
+                                    <StackPanel Orientation="Horizontal" Margin="150,3,0,0">
+                                        <TextBlock Text="{Binding Backup}" FontSize="12" Margin="0,0,12,0"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{Binding Recovery}" FontSize="12"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        <ui:Button Content="Open this backup" FontSize="11" Padding="8,2" Margin="12,0,0,0"
+                                                   Command="{Binding DataContext.OpenBackupForRecordCommand,
+                                                                     RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                   CommandParameter="{Binding}"
+                                                   Visibility="{Binding CanOpenBackup, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                   AutomationProperties.Name="Open the backups browser at this operation's backup" />
+                                    </StackPanel>
+
+                                    <Expander Margin="150,4,0,0" FontSize="12"
+                                              Header="What it reported"
+                                              Visibility="{Binding HasDetail, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                              AutomationProperties.Name="What this operation reported, verbatim">
+                                        <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap"
+                                                   FontFamily="Cascadia Code,Consolas" Margin="0,6,0,0"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </Expander>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- ═══ FOOTER ═══ -->
+                <StackPanel Grid.Row="3" Margin="0,12,0,0">
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding OperationHistoryErrorText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding OperationHistoryErrorText}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="OperationHistoryErrorText" />
+                    </Border>
+
+                    <TextBlock Style="{StaticResource OperationHistoryHint}"
+                               Text="{Binding OperationHistoryLimitsText}"
+                               AutomationProperties.AutomationId="OperationHistoryLimitsText" />
+
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <!-- The swallowed failures a one-line detail cannot carry are in the
+                                 log, and this is the only route to it from inside the app. -->
+                            <ui:Button Content="Reveal log file" FontSize="13" Padding="14,5" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon DocumentText24}"
+                                       Command="{Binding RevealOperationLogCommand}"
+                                       ToolTip="Show this app's diagnostic log in the shell"
+                                       AutomationProperties.Name="Reveal the diagnostic log file" />
+                            <ui:Button Content="Refresh" FontSize="13" Padding="14,5"
+                                       Icon="{ui:SymbolIcon ArrowSync24}"
+                                       Command="{Binding LoadOperationHistoryCommand}"
+                                       AutomationProperties.Name="Reload the operation history" />
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding OperationHistoryStatusText}" FontSize="12" TextWrapping="Wrap"
+                                   VerticalAlignment="Center" MaxWidth="620"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   AutomationProperties.AutomationId="OperationHistoryStatusText"
+                                   AutomationProperties.LiveSetting="Polite" />
+                    </DockPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

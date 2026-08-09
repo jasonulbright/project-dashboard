@@ -29,6 +29,7 @@ public sealed class RewriteCoordinator
     private readonly GitService _git;
     private readonly SwapService _swap;
     private readonly RewriteJournal _journal;
+    private readonly OperationHistory _history;
     private readonly string _gitExe;
     private readonly string _workRoot;
 
@@ -54,13 +55,15 @@ public sealed class RewriteCoordinator
         SwapService swap,
         RewriteJournal? journal = null,
         string? gitExecutable = null,
-        string? workRoot = null)
+        string? workRoot = null,
+        OperationHistory? history = null)
     {
         _backup = backup;
         _busy = busy;
         _git = git;
         _swap = swap;
         _journal = journal ?? new RewriteJournal();
+        _history = history ?? new OperationHistory();
         _gitExe = gitExecutable ?? HistoryPipeline.ResolveGitExecutable();
         _workRoot = workRoot ?? Path.Combine(AppPaths.LocalDir, "rewrite-work");
         ScratchSweep = Task.Run(SweepStaleScratch);
@@ -133,7 +136,30 @@ public sealed class RewriteCoordinator
         PreviewHandle preview, CancellationToken ct = default, IProgress<RewritePhase>? phase = null) =>
         ExecuteCoreAsync(preview.Request, preview, ct, phase);
 
+    /// <summary>
+    /// Runs the pipeline and records the attempt. The record is written whatever the outcome —
+    /// a refused run explains a button that appeared to do nothing — and a failed write never
+    /// changes what the run reports.
+    /// </summary>
     private async Task<RewriteExecutionResult> ExecuteCoreAsync(
+        RewriteRequest request, PreviewHandle? preview, CancellationToken ct, IProgress<RewritePhase>? phase)
+    {
+        var started = DateTimeOffset.UtcNow;
+        var result = await RunPipelineAsync(request, preview, ct, phase);
+        _history.Append(OperationRecord.For(
+            request.RepoPath, OperationCategory.Rewrite, "History rewrite",
+            result.Cancelled ? OperationOutcome.Cancelled
+                : result.Success ? OperationOutcome.Succeeded
+                : result.Refused ? OperationOutcome.Refused
+                : result.FailureReason is null ? OperationOutcome.Unknown
+                : OperationOutcome.Failed,
+            result.FailureReason ?? (result.Cancelled ? "Cancelled before the swap; nothing was changed." : ""),
+            started,
+            backupStamp: result.Undo?.Backup.UtcStamp));
+        return result;
+    }
+
+    private async Task<RewriteExecutionResult> RunPipelineAsync(
         RewriteRequest request, PreviewHandle? preview, CancellationToken ct, IProgress<RewritePhase>? phase)
     {
         request.Options.Validate();
@@ -141,7 +167,7 @@ public sealed class RewriteCoordinator
 
         // 1. Busy gate: a second op on the same repo is refused, not queued.
         if (!_busy.TryAcquire(repo, out var lease))
-            return RewriteExecutionResult.Failed($"repository is busy with another operation: {repo}");
+            return RewriteExecutionResult.RefusedByGate($"repository is busy with another operation: {repo}");
 
         string? ownedScratch = null;
         UndoHandle? undo = null;
@@ -158,9 +184,9 @@ public sealed class RewriteCoordinator
             {
                 var current = await ReadSourceStateAsync(repo, ct);
                 if (current is null)
-                    return RewriteExecutionResult.Failed($"repository '{repo}' could not be read by git");
+                    return RewriteExecutionResult.RefusedByGate($"repository '{repo}' could not be read by git");
                 if (!string.Equals(current, preview.SourceState, StringComparison.Ordinal))
-                    return RewriteExecutionResult.Failed(
+                    return RewriteExecutionResult.RefusedByGate(
                         $"'{repo}' changed after the dry run — the report describes history this repository no longer " +
                         "has, and applying it would discard whatever landed since. Run the dry run again.");
             }
@@ -169,9 +195,9 @@ public sealed class RewriteCoordinator
             // discards uncommitted work — the caller decides whether to stash.
             var state = await _git.GetWorkingStateAsync(repo, ct);
             if (state is null)
-                return RewriteExecutionResult.Failed($"repository '{repo}' could not be read by git");
+                return RewriteExecutionResult.RefusedByGate($"repository '{repo}' could not be read by git");
             if (state.IsDirty)
-                return RewriteExecutionResult.Failed(DirtyMessage(state));
+                return RewriteExecutionResult.RefusedByGate(DirtyMessage(state));
 
             // 3. Verified backup: no rewrite proceeds without one.
             BackupHandle backup;
@@ -181,7 +207,7 @@ public sealed class RewriteCoordinator
             }
             catch (BackupException ex)
             {
-                return RewriteExecutionResult.Failed($"backup failed — no rewrite attempted: {ex.Message}");
+                return RewriteExecutionResult.RefusedByGate($"backup failed — no rewrite attempted: {ex.Message}");
             }
             undo = new UndoHandle(_backup, _busy, backup);
 

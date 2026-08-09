@@ -51,8 +51,13 @@ public partial class ProjectDetailViewModel : ObservableObject
         Services.Safety.DeepCleanService? deepClean = null,
         SubmoduleService? submodules = null,
         ProjectWatcherService? watcher = null,
-        Action<Action>? uiPost = null)
+        Action<Action>? uiPost = null,
+        Services.Safety.OperationHistory? history = null)
     {
+        // Defaulted rather than left null: a page that recorded nothing would leave the ledger
+        // describing only what the coordinators did, and the overlay would report that gap as
+        // "no operations recorded" for a repository this page had just mutated.
+        _history = history ?? new Services.Safety.OperationHistory();
         _discoveryService = discoveryService;
         _gitService = gitService;
         _gitHubService = gitHubService;
@@ -310,6 +315,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         CloseForcePushOnProjectSwitch();
         CloseReflogOnProjectSwitch();
         CloseTagsOnProjectSwitch();
+        CloseOperationHistoryOnProjectSwitch();
 
         // Reads the OUTGOING repository, so it runs before the swap below.
         ParkRewriteSessionForThisRepo();

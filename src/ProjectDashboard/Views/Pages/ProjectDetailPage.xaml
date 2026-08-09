@@ -419,6 +419,14 @@
                                Visibility="{Binding UndoOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                Command="{Binding RunUndoOfferCommand}"
                                AutomationProperties.Name="{Binding UndoOfferLabel}" />
+                    <!-- A failure line says what went wrong; the record behind it says what was
+                         attempted, what it reported, and whether a backup stands behind it. -->
+                    <ui:Button Content="Why / what now" FontSize="12" Padding="10,4" Margin="10,0,0,0"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding OperationHistoryHintVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               Command="{Binding OpenOperationHistoryForFailureCommand}"
+                               ToolTip="Open the operation history at the record for this failure"
+                               AutomationProperties.Name="Open the operation history at this failure" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                     <ui:Button Content="Refresh" FontSize="12" Padding="10,4" Margin="0,0,6,0"
@@ -1037,6 +1045,14 @@
                                        Command="{Binding OpenBackupsCommand}"
                                        ToolTip="Browse the backups taken before this repository's history operations, and restore one"
                                        AutomationProperties.Name="Browse backups" />
+                            <!-- Beside Backups because it is the other durable record: the bundles
+                                 are what can be put back, and this is why each one was taken. -->
+                            <ui:Button DockPanel.Dock="Right" Content="History of operations…" FontSize="12" Padding="12,4"
+                                       Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon History24}"
+                                       Command="{Binding OpenOperationHistoryCommand}"
+                                       ToolTip="Every operation this app ran against this repository, with what each one reported"
+                                       AutomationProperties.Name="Open the operation history" />
                             <!-- Tags name commits in this list, and a new one lands on whichever
                                  commit is selected here. -->
                             <ui:Button DockPanel.Dock="Right" Content="Tags…" FontSize="12" Padding="12,4"
@@ -3952,5 +3968,12 @@
         <pages:CommitGraphView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                                Visibility="{Binding CommitGraphVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                AutomationProperties.Name="Commit graph" />
+
+        <!-- ═══ OPERATION HISTORY ═══
+             Last in the Grid: it is reached from the Backups browser as a cross-link and has to
+             draw over it, and the panes it covers are disabled rather than merely scrimmed. -->
+        <pages:OperationHistoryView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                                    Visibility="{Binding OperationHistoryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                    AutomationProperties.Name="Operation history" />
     </Grid>
 </Page>

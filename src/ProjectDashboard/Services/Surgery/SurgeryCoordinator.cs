@@ -32,6 +32,7 @@ public sealed class SurgeryCoordinator
     private readonly CommitSurgery _surgery;
     private readonly HistoryEdits _edits;
     private readonly RewriteJournal _journal;
+    private readonly OperationHistory _history;
 
     public SurgeryCoordinator(
         BackupService backup,
@@ -40,8 +41,10 @@ public sealed class SurgeryCoordinator
         RebaseDriver? driver = null,
         CommitSurgery? surgery = null,
         HistoryEdits? edits = null,
-        RewriteJournal? journal = null)
+        RewriteJournal? journal = null,
+        OperationHistory? history = null)
     {
+        _history = history ?? new OperationHistory();
         _backup = backup;
         _busy = busy;
         _git = git;
@@ -182,7 +185,34 @@ public sealed class SurgeryCoordinator
         return configured.Success && configured.StdOut.Trim() == "true";
     }
 
+    /// <summary>
+    /// Runs the gated operation and records the attempt, refusals included: a gate that turned the
+    /// operation away is exactly the outcome a reader later cannot reconstruct from the repository.
+    /// A failed record write never changes what the operation reports.
+    /// </summary>
     private async Task<SurgeryResult> RunGatedAsync(
+        string repoPath,
+        TreeRequirement requirement,
+        bool backup,
+        string phase,
+        SigningChoice? signing,
+        Func<bool, CancellationToken, Task<(bool Success, string? Reason, RebaseRunResult? Rebase, HistoryEditResult? Edit)>> operate,
+        CancellationToken ct)
+    {
+        var started = DateTimeOffset.UtcNow;
+        var result = await RunGatedCoreAsync(repoPath, requirement, backup, phase, signing, operate, ct);
+        _history.Append(OperationRecord.For(
+            repoPath, OperationCategory.Surgery, $"Commit surgery ({phase})",
+            result.Success ? OperationOutcome.Succeeded
+                : result.Refusal != SurgeryRefusal.None ? OperationOutcome.Refused
+                : result.FailureReason is null ? OperationOutcome.Unknown
+                : OperationOutcome.Failed,
+            result.FailureReason ?? result.Advisory ?? "", started,
+            backupStamp: result.Undo?.Backup.UtcStamp));
+        return result;
+    }
+
+    private async Task<SurgeryResult> RunGatedCoreAsync(
         string repoPath,
         TreeRequirement requirement,
         bool backup,

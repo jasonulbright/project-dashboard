@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.ViewModels.Pages;
 
@@ -45,6 +46,8 @@ public partial class ProjectDetailViewModel
     private Func<string, Task<ProcessResult>>? _staleLockRetryOp;
     private string _staleLockRetryRepo = "";
     private string _staleLockRetryLabel = "";
+    private OperationCategory _staleLockRetryCategory;
+    private string _staleLockRetryRecordId = "";
 
     // State banner
     [ObservableProperty] private bool _stateBannerVisible;
@@ -504,21 +507,24 @@ public partial class ProjectDetailViewModel
     private async Task Fetch()
     {
         if (IsBusy) { SyncStatusText = BusyNotice("Fetch"); return; }
-        await RunOp(repo => _gitService.FetchAsync(repo), "Fetch", RepoPath, _generation);
+        await RunOp(repo => _gitService.FetchAsync(repo), "Fetch", RepoPath, _generation,
+            category: OperationCategory.Remote);
     }
 
     [RelayCommand]
     private async Task Pull()
     {
         if (IsBusy) { SyncStatusText = BusyNotice("Pull"); return; }
-        await RunOp(repo => _gitService.PullAsync(repo), "Pull", RepoPath, _generation);
+        await RunOp(repo => _gitService.PullAsync(repo), "Pull", RepoPath, _generation,
+            category: OperationCategory.Remote);
     }
 
     [RelayCommand]
     private async Task Push()
     {
         if (IsBusy) { SyncStatusText = BusyNotice("Push"); return; }
-        var ok = await RunOp(repo => _gitService.PushAsync(repo), "Push", RepoPath, _generation);
+        var ok = await RunOp(repo => _gitService.PushAsync(repo), "Push", RepoPath, _generation,
+            category: OperationCategory.Remote);
         if (ok) await ReloadCommitsAsync();
     }
 
@@ -562,7 +568,7 @@ public partial class ProjectDetailViewModel
         if (IsBusy) { SyncStatusText = BusyNotice("Create branch"); return; }
         var gen = _generation;
         var ok = await RunOp(repo => _gitService.CreateBranchAsync(repo, name), "Create branch",
-            RepoPath, gen);
+            RepoPath, gen, category: OperationCategory.Branch);
         // A stale success must not blank a branch name typed on the project switched to.
         if (ok && IsCurrent(gen))
         {
@@ -578,7 +584,7 @@ public partial class ProjectDetailViewModel
         if (branch.IsCurrent) { SyncStatusText = $"Already on {branch.Name}."; return; }
         if (IsBusy) { SyncStatusText = BusyNotice("Switch branch"); return; }
         var ok = await RunOp(repo => _gitService.SwitchBranchAsync(repo, branch.Name), "Switch branch",
-            RepoPath, _generation);
+            RepoPath, _generation, category: OperationCategory.Branch);
         if (ok)
         {
             await LoadBranches();
@@ -611,7 +617,7 @@ public partial class ProjectDetailViewModel
         }
 
         var ok = await RunOp(repo => _gitService.DeleteBranchAsync(repo, branch.Name), "Delete branch",
-            confirmedRepo, gen);
+            confirmedRepo, gen, category: OperationCategory.Branch);
         if (ok) await LoadBranches();
     }
 
@@ -930,14 +936,49 @@ public partial class ProjectDetailViewModel
     /// only for an op that ran and failed — never for one refused or suppressed, which changed
     /// nothing and has nothing to recover from.
     /// </param>
+    /// <param name="category">Which surface the operation came from, for the ledger's filter.</param>
+    /// <param name="recovery">
+    /// Set when this run is itself a recovering action — an offered inverse, or a retry after a
+    /// stale lock was cleared — so the ledger links it to the record it answers.
+    /// </param>
     private async Task<bool> RunOp(Func<string, Task<ProcessResult>> op, string label, string repo, int gen,
-        Func<ProcessResult, string?>? advice = null)
+        Func<ProcessResult, string?>? advice = null,
+        OperationCategory category = OperationCategory.Working,
+        RecoveryNote? recovery = null)
     {
-        if (!IsCurrent(gen) || IsBusy) return false;
+        var started = DateTimeOffset.UtcNow;
+        var recorded = false;
+
+        // One attempt is one record. The refresh that follows a result runs inside the same try,
+        // so a throw from it would otherwise reach the catch and record the same attempt twice.
+        // A record needs a repository to belong to; without one there is nothing to key it under.
+        void Record(OperationOutcome outcome, string detail)
+        {
+            if (repo.Length == 0 || recorded) return;
+            recorded = true;
+            var written = _history.Append(OperationRecord.For(
+                repo, category, label, outcome, detail, started, recovery: recovery));
+            _lastOperationRecordId = written.Id;
+            var failed = outcome is OperationOutcome.Failed or OperationOutcome.Unknown;
+            if (failed) _failedOperationRecordId = written.Id;
+            // Raised and lowered by every outcome: an affordance left standing beside a later
+            // success would open the history at a failure that has since been dealt with.
+            if (IsCurrent(gen)) OperationHistoryHintVisible = failed;
+        }
+
+        if (!IsCurrent(gen) || IsBusy)
+        {
+            // A button that did nothing is exactly what a history has to explain, so the two
+            // invisible gates are recorded rather than returned silently.
+            Record(OperationOutcome.Refused,
+                IsBusy ? BusyNotice(label) : ProjectSwitchedNotice(label));
+            return false;
+        }
         if (repo.Length == 0) return false;
         if (!_busyRegistry.TryAcquire(repo, out var lease))
         {
             SyncStatusText = $"{label} refused: another operation is running on this repository.";
+            Record(OperationOutcome.Refused, SyncStatusText);
             return false;
         }
         var holder = new object();
@@ -952,6 +993,8 @@ public partial class ProjectDetailViewModel
         try
         {
             var result = await op(repo);
+            Record(result.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                result.Success ? "" : result.FirstError);
             if (!IsCurrent(gen))
             {
                 // A stale op still mutated its bound repo on disk. When that repo
@@ -966,13 +1009,15 @@ public partial class ProjectDetailViewModel
                 return false;
             }
             SyncStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
-            if (!result.Success && advice?.Invoke(result) is { Length: > 0 } recovery)
-                SyncStatusText += $" {recovery}";
+            if (!result.Success && advice?.Invoke(result) is { Length: > 0 } recoveryAdvice)
+                SyncStatusText += $" {recoveryAdvice}";
             if (GitService.IsIndexLockConflict(result))
             {
                 _staleLockRetryOp = op;
                 _staleLockRetryRepo = repo;
                 _staleLockRetryLabel = label;
+                _staleLockRetryCategory = category;
+                _staleLockRetryRecordId = _lastOperationRecordId;
                 StaleLockRetryVisible = true;
             }
             var shown = DiffTarget;
@@ -983,6 +1028,7 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn($"{label} failed for {repo}", ex);
+            Record(OperationOutcome.Failed, ex.Message);
             if (IsCurrent(gen)) SyncStatusText = $"{label} failed: {ex.Message}";
             return false;
         }
@@ -1003,6 +1049,8 @@ public partial class ProjectDetailViewModel
         var op = _staleLockRetryOp;
         var repo = _staleLockRetryRepo;
         var label = _staleLockRetryLabel;
+        var category = _staleLockRetryCategory;
+        var ofId = _staleLockRetryRecordId;
         _staleLockRetryOp = null;
         StaleLockRetryVisible = false;
         if (op is null || IsBusy) return;
@@ -1026,7 +1074,13 @@ public partial class ProjectDetailViewModel
             if (!removed)
                 return new ProcessResult(-1, "", "no stale lock found — a git process may still be running", TimedOut: false);
             return await op(repo);
-        }, label, repo, gen);
+        }, label, repo, gen, category: category,
+        recovery: new RecoveryNote
+        {
+            Kind = RecoveryKind.StaleLockCleared,
+            AppliedUtc = DateTimeOffset.UtcNow,
+            OfId = ofId
+        });
     }
 
     /// <summary>

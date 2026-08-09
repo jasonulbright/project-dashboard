@@ -36,11 +36,13 @@ public sealed class BackupService
 
     private readonly GitService _git;
     private readonly SettingsService _settings;
+    private readonly OperationHistory _history;
 
-    public BackupService(GitService git, SettingsService settings)
+    public BackupService(GitService git, SettingsService settings, OperationHistory? history = null)
     {
         _git = git;
         _settings = settings;
+        _history = history ?? new OperationHistory();
     }
 
     /// <summary>
@@ -203,6 +205,23 @@ public sealed class BackupService
     /// caller whose user confirmed that discard passes true.
     /// </summary>
     public async Task<RestoreResult> RestoreAsync(BackupHandle handle, bool allowDirty, CancellationToken ct = default)
+    {
+        var started = DateTimeOffset.UtcNow;
+        var result = await RestoreCoreAsync(handle, allowDirty, ct);
+        _history.Append(OperationRecord.For(
+            handle.RepoPath, OperationCategory.BackupRestore, $"Restore backup {handle.UtcStamp}",
+            result.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+            result.Message, started,
+            backupStamp: handle.UtcStamp,
+            recovery: new RecoveryNote
+            {
+                Kind = RecoveryKind.RestoreFromBackup,
+                AppliedUtc = DateTimeOffset.UtcNow
+            }));
+        return result;
+    }
+
+    private async Task<RestoreResult> RestoreCoreAsync(BackupHandle handle, bool allowDirty, CancellationToken ct)
     {
         if (!File.Exists(handle.BundlePath))
             return new RestoreResult(false, $"Bundle missing: {handle.BundlePath}");

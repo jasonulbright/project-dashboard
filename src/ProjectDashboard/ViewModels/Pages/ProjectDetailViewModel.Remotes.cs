@@ -1,5 +1,6 @@
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.ViewModels.Pages;
 
@@ -184,7 +185,8 @@ public partial class ProjectDetailViewModel
         }
 
         RemotesErrorText = "";
-        var ok = await RunOp(r => _gitService.AddRemoteAsync(r, name, url), $"Add remote {name}", repo, gen);
+        var ok = await RunOp(r => _gitService.AddRemoteAsync(r, name, url), $"Add remote {name}", repo, gen,
+            category: OperationCategory.Remote);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -225,7 +227,7 @@ public partial class ProjectDetailViewModel
 
         RemotesErrorText = "";
         var ok = await RunOp(r => _gitService.RemoveRemoteAsync(r, remote.Name), $"Remove remote {remote.Name}",
-            repo, gen);
+            repo, gen, category: OperationCategory.Remote);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -265,7 +267,7 @@ public partial class ProjectDetailViewModel
 
         RemotesErrorText = "";
         var ok = await RunOp(r => _gitService.RenameRemoteAsync(r, remote.Name, name),
-            $"Rename remote {remote.Name} to {name}", repo, gen);
+            $"Rename remote {remote.Name} to {name}", repo, gen, category: OperationCategory.Remote);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -299,7 +301,7 @@ public partial class ProjectDetailViewModel
 
         RemotesErrorText = "";
         var ok = await RunOp(r => _gitService.SetRemoteUrlAsync(r, remote.Name, url),
-            $"Change {remote.Name} URL", repo, gen);
+            $"Change {remote.Name} URL", repo, gen, category: OperationCategory.Remote);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -527,7 +529,7 @@ public partial class ProjectDetailViewModel
 
         RemotesErrorText = "";
         var ok = await RunOp(r => _gitService.DeleteRemoteBranchAsync(r, remote, branch),
-            $"Delete {branch} on {remote}", repo, gen);
+            $"Delete {branch} on {remote}", repo, gen, category: OperationCategory.Remote);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -637,7 +639,7 @@ public partial class ProjectDetailViewModel
 
         BranchExtrasErrorText = "";
         var ok = await RunOp(r => _gitService.RenameBranchAsync(r, branch.Name, name),
-            $"Rename {branch.Name} to {name}", repo, gen);
+            $"Rename {branch.Name} to {name}", repo, gen, category: OperationCategory.Branch);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -661,7 +663,7 @@ public partial class ProjectDetailViewModel
 
         BranchExtrasErrorText = "";
         var ok = await RunOp(r => _gitService.SetUpstreamAsync(r, branch.Name, upstream),
-            $"Track {upstream} from {branch.Name}", repo, gen);
+            $"Track {upstream} from {branch.Name}", repo, gen, category: OperationCategory.Branch);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -690,7 +692,7 @@ public partial class ProjectDetailViewModel
 
         BranchExtrasErrorText = "";
         var ok = await RunOp(r => _gitService.UnsetUpstreamAsync(r, branch.Name),
-            $"Clear the upstream of {branch.Name}", repo, gen);
+            $"Clear the upstream of {branch.Name}", repo, gen, category: OperationCategory.Branch);
         if (!IsCurrent(gen)) return;
 
         if (!ok)

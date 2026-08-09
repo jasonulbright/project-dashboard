@@ -198,7 +198,7 @@ public partial class ProjectDetailViewModel
         // Bound to the object id, not to the @{n} selector the row shows: the selector is a
         // position, and the reflog can gain entries between the read and this click.
         var ok = await RunOp(r => _gitService.CreateBranchAtAsync(r, name, entry.Sha),
-            $"Create {name} at {entry.ShortSha}", repo, gen);
+            $"Create {name} at {entry.ShortSha}", repo, gen, category: OperationCategory.Branch);
         if (!IsCurrent(gen)) return;
 
         if (!ok)

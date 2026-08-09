@@ -1,5 +1,6 @@
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.ViewModels.Pages;
 
@@ -204,7 +205,7 @@ public partial class ProjectDetailViewModel
 
         TagsErrorText = "";
         var ok = await RunOp(r => _gitService.CreateTagAsync(r, name, message.Length > 0 ? message : null, target),
-            $"Create tag {name}", repo, gen);
+            $"Create tag {name}", repo, gen, category: OperationCategory.Tag);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -249,7 +250,8 @@ public partial class ProjectDetailViewModel
         }
 
         TagsErrorText = "";
-        var ok = await RunOp(r => _gitService.DeleteTagAsync(r, tag.Name), $"Delete tag {tag.Name}", repo, gen);
+        var ok = await RunOp(r => _gitService.DeleteTagAsync(r, tag.Name), $"Delete tag {tag.Name}", repo, gen,
+            category: OperationCategory.Tag);
         if (!IsCurrent(gen)) return;
 
         if (!ok)
@@ -435,7 +437,7 @@ public partial class ProjectDetailViewModel
         // Bound to the tag's commit rather than its name: a tag can be moved between the read
         // and this click, and the row named a commit.
         var ok = await RunOp(r => _gitService.CreateBranchAtAsync(r, name, tag.TargetSha),
-            $"Create {name} at {tag.Name}", repo, gen);
+            $"Create {name} at {tag.Name}", repo, gen, category: OperationCategory.Branch);
         if (!IsCurrent(gen)) return;
 
         if (!ok)

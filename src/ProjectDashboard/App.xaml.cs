@@ -141,6 +141,10 @@ public partial class App : Application
                 // Safety rails: shared singletons for the destructive stages.
                 services.AddSingleton<Services.Safety.RepoBusyRegistry>();
                 services.AddSingleton<Services.Safety.RewriteJournal>();
+                // The durable record of what was attempted, separate from the journal's
+                // "what is pending now". Every writer shares one instance so appends against
+                // one repository serialize on one lock.
+                services.AddSingleton<Services.Safety.OperationHistory>();
                 services.AddSingleton<Services.Safety.BackupService>();
                 services.AddSingleton<Services.Safety.RewriteRecoveryService>();
 
@@ -158,7 +162,8 @@ public partial class App : Application
                     sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
                     sp.GetRequiredService<GitService>(),
                     sp.GetRequiredService<Services.Rewrite.SwapService>(),
-                    sp.GetRequiredService<Services.Safety.RewriteJournal>()));
+                    sp.GetRequiredService<Services.Safety.RewriteJournal>(),
+                    history: sp.GetRequiredService<Services.Safety.OperationHistory>()));
                 services.AddSingleton<IRewriteSessionFactory>(sp =>
                     new CoordinatorRewriteSessionFactory(sp.GetRequiredService<Services.Rewrite.RewriteCoordinator>()));
 
@@ -166,11 +171,13 @@ public partial class App : Application
                 // repository lease as the rewrite itself, so both take the container's registry.
                 services.AddSingleton(sp => new Services.Rewrite.ForcePushService(
                     sp.GetRequiredService<GitService>(),
-                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>()));
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
+                    sp.GetRequiredService<Services.Safety.OperationHistory>()));
                 services.AddSingleton(sp => new Services.Safety.DeepCleanService(
                     sp.GetRequiredService<GitService>(),
                     sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
-                    sp.GetRequiredService<Services.Safety.RewriteJournal>()));
+                    sp.GetRequiredService<Services.Safety.RewriteJournal>(),
+                    sp.GetRequiredService<Services.Safety.OperationHistory>()));
 
                 // Commit surgery, over the rails registered above.
                 services.AddCommitSurgery();
@@ -198,7 +205,8 @@ public partial class App : Application
                     sp.GetRequiredService<Services.Rewrite.ForcePushService>(),
                     sp.GetRequiredService<Services.Safety.DeepCleanService>(),
                     sp.GetRequiredService<SubmoduleService>(),
-                    sp.GetRequiredService<ProjectWatcherService>())
+                    sp.GetRequiredService<ProjectWatcherService>(),
+                    history: sp.GetRequiredService<Services.Safety.OperationHistory>())
                 {
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });

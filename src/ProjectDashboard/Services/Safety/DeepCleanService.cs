@@ -13,7 +13,10 @@ public sealed record DeepCleanResult(
     RepoObjectCounts? Before,
     RepoObjectCounts? After)
 {
-    public static DeepCleanResult Refused(string reason) => new(false, reason, null, null);
+    public static DeepCleanResult Refused(string reason) => new(false, reason, null, null) { Gated = true };
+
+    /// <summary>True when a gate turned the operation away, so no reflog was expired and nothing was pruned.</summary>
+    public bool Gated { get; init; }
 
     /// <summary>Kibibytes the object store shrank by. Negative when repacking cost more than pruning saved.</summary>
     public long ReclaimedKiB => Before is null || After is null ? 0 : Before.TotalKiB - After.TotalKiB;
@@ -43,12 +46,15 @@ public sealed class DeepCleanService
     private readonly GitService _git;
     private readonly RepoBusyRegistry _busy;
     private readonly RewriteJournal _journal;
+    private readonly OperationHistory _history;
 
-    public DeepCleanService(GitService git, RepoBusyRegistry busy, RewriteJournal journal)
+    public DeepCleanService(GitService git, RepoBusyRegistry busy, RewriteJournal journal,
+        OperationHistory? history = null)
     {
         _git = git;
         _busy = busy;
         _journal = journal;
+        _history = history ?? new OperationHistory();
     }
 
     /// <summary>
@@ -115,6 +121,25 @@ public sealed class DeepCleanService
     /// </summary>
     public async Task<DeepCleanResult> RunAsync(string repoPath, CancellationToken ct = default)
     {
+        var started = DateTimeOffset.UtcNow;
+        var result = await RunCoreAsync(repoPath, ct);
+        _history.Append(OperationRecord.For(
+            repoPath, OperationCategory.DeepClean, "Deep clean",
+            result.Success ? OperationOutcome.Succeeded
+                : result.Gated ? OperationOutcome.Refused
+                : OperationOutcome.Failed,
+            result.RefusalReason ?? DescribeReclaim(result), started));
+        return result;
+    }
+
+    /// <summary>What a successful run has to say for itself, since it carries no reason text.</summary>
+    private static string DescribeReclaim(DeepCleanResult result) =>
+        result.Measured
+            ? $"Reclaimed {result.ReclaimedKiB:N0} KB; {result.Before!.TotalObjects:N0} objects down to {result.After!.TotalObjects:N0}."
+            : "The object store could not be measured, so how much was reclaimed is unknown.";
+
+    private async Task<DeepCleanResult> RunCoreAsync(string repoPath, CancellationToken ct)
+    {
         if (!_busy.TryAcquire(repoPath, out var lease))
             return DeepCleanResult.Refused($"Repository is busy with another operation: {repoPath}");
 
@@ -127,7 +152,10 @@ public sealed class DeepCleanService
 
             var expire = await _git.ExpireReflogsAsync(repoPath, ct);
             if (!expire.Success)
-                return DeepCleanResult.Refused($"Expiring the reflogs failed, so nothing was pruned: {expire.FirstError}");
+                // Not a gate refusal: every gate passed and git ran. The reflogs are as they were,
+                // so nothing was pruned, but the operation was attempted.
+                return new DeepCleanResult(false,
+                    $"Expiring the reflogs failed, so nothing was pruned: {expire.FirstError}", before, null);
 
             var gc = await _git.GarbageCollectAsync(repoPath, ct);
             if (!gc.Success)

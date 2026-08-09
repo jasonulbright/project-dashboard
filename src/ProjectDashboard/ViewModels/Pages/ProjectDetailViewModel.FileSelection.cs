@@ -161,12 +161,16 @@ public partial class ProjectDetailViewModel
     private string _undoOfferRepo = "";
     private string _undoOfferOpLabel = "";
 
+    /// <summary>The record of the operation this offer inverts, so a taken offer links back to it.</summary>
+    private string _undoOfferRecordId = "";
+
     private void OfferUndo(string buttonLabel, string opLabel, string repo,
         Func<string, Task<ProcessResult>> op)
     {
         _undoOfferOp = op;
         _undoOfferRepo = repo;
         _undoOfferOpLabel = opLabel;
+        _undoOfferRecordId = _lastOperationRecordId;
         UndoOfferLabel = buttonLabel;
         UndoOfferVisible = true;
     }
@@ -176,6 +180,7 @@ public partial class ProjectDetailViewModel
         _undoOfferOp = null;
         _undoOfferRepo = "";
         _undoOfferOpLabel = "";
+        _undoOfferRecordId = "";
         UndoOfferLabel = "";
         UndoOfferVisible = false;
     }
@@ -194,6 +199,7 @@ public partial class ProjectDetailViewModel
         var op = _undoOfferOp;
         var repo = _undoOfferRepo;
         var label = _undoOfferOpLabel;
+        var ofId = _undoOfferRecordId;
         ClearUndoOffer();
 
         if (op is null) return;
@@ -204,6 +210,12 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        await RunOp(op, label, repo, _generation);
+        await RunOp(op, label, repo, _generation,
+            recovery: new Services.Safety.RecoveryNote
+            {
+                Kind = Services.Safety.RecoveryKind.UndoOffered,
+                AppliedUtc = DateTimeOffset.UtcNow,
+                OfId = ofId
+            });
     }
 }
