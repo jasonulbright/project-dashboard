@@ -68,10 +68,21 @@ public sealed class BackupService
         // state, and a bundle with no matching snapshot is useless for a targeted restore.
         var snapshot = await CaptureRefsAsync(repoPath, stamp, operation, ct);
 
-        // `git bundle --all` captures every ref plus the top refs/stash entry, but no reflogs
-        // and no deeper stash-stack entries; those older stash states and reflog-only commits
-        // are unreachable in the bundle and are lost on restore.
-        var bundle = await _git.RunAsync(repoPath, ["bundle", "create", bundlePath, "--all"], ct, BundleTimeout);
+        // The snapshot's own object ids are fed in as explicit revisions, so a ref moved or
+        // deleted between the capture above and this call still has its recorded object in the
+        // bundle — the restore reads its refs from the sidecar and would otherwise name an object
+        // the bundle never received. `--all` rides along because git refuses a bundle that names
+        // no ref, and it keeps the capture a superset: every ref plus the top refs/stash entry,
+        // but no reflogs and no deeper stash-stack entries, so those older stash states and
+        // reflog-only commits are unreachable in the bundle and are lost on restore.
+        var pinned = snapshot.Refs.Select(r => r.ObjectId)
+            .Append(snapshot.HeadObjectId)
+            .Where(oid => oid.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var bundle = await _git.RunWithInputAsync(repoPath,
+            ["bundle", "create", bundlePath, "--all", "--stdin"],
+            string.Concat(pinned.Select(oid => oid + "\n")), ct, BundleTimeout);
         if (!bundle.Success || !File.Exists(bundlePath))
             throw new BackupException($"git bundle create failed for '{repoPath}': {bundle.FirstError}");
 

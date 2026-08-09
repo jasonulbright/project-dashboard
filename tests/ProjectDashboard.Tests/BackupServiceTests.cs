@@ -52,10 +52,24 @@ public class BackupServiceTests
         {
             var argv = args.ToList();
             var result = await base.RunAsync(repoPath, argv, environment, ct, timeout);
-            if (argv.Count > 2 && argv[0] == "bundle" && argv[1] == "create")
-                await File.WriteAllTextAsync(argv[2], "not a valid git bundle", ct);
+            await CorruptOnBundleCreate(argv, ct);
             return result;
         }
+
+        public override async Task<ProcessResult> RunWithInputAsync(
+            string repoPath, IEnumerable<string> args, string standardInput,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            var result = await base.RunWithInputAsync(repoPath, argv, standardInput, ct, timeout);
+            await CorruptOnBundleCreate(argv, ct);
+            return result;
+        }
+
+        private static Task CorruptOnBundleCreate(List<string> argv, CancellationToken ct) =>
+            argv is ["bundle", "create", var path, ..]
+                ? File.WriteAllTextAsync(path, "not a valid git bundle", ct)
+                : Task.CompletedTask;
     }
 
     [Fact]
@@ -71,6 +85,60 @@ public class BackupServiceTests
         Assert.Empty(await service.ListBackupsAsync(repo.Path));
         var dir = SafetyPaths.BackupDirFor(RepoKey.For(repo.Path));
         Assert.Empty(Directory.Exists(dir) ? Directory.GetFiles(dir, "*.bundle") : []);
+    }
+
+    /// <summary>Deletes a branch in the window between the refs capture and the bundle write, whichever of the two run shapes carries the bundle command.</summary>
+    private sealed class DeletesRefBeforeBundleCreateGitService(string repoPath, string branch) : GitService
+    {
+        private int _fired;
+
+        public override Task<ProcessResult> RunAsync(
+            string repo, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            DeleteOnBundleCreate(argv);
+            return base.RunAsync(repo, argv, environment, ct, timeout);
+        }
+
+        public override Task<ProcessResult> RunWithInputAsync(
+            string repo, IEnumerable<string> args, string standardInput,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            DeleteOnBundleCreate(argv);
+            return base.RunWithInputAsync(repo, argv, standardInput, ct, timeout);
+        }
+
+        private void DeleteOnBundleCreate(List<string> argv)
+        {
+            if (argv is ["bundle", "create", ..] && Interlocked.Exchange(ref _fired, 1) == 0)
+                Git.RunAsync(repoPath, ["branch", "-D", branch]).GetAwaiter().GetResult();
+        }
+    }
+
+    [Fact]
+    public async Task CreateBackup_RefDeletedWhileBundling_StillBundlesTheObjectTheSidecarRecords()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        await repo.GitAsync("switch", "-q", "-c", "doomed");
+        repo.Write("doomed.txt", "only reachable from this branch\n");
+        await repo.CommitAllAsync("doomed tip");
+        var doomedOid = (await repo.GitAsync("rev-parse", "refs/heads/doomed")).Trim();
+        await repo.GitAsync("switch", "-q", "main");
+
+        // refs/heads/doomed is gone by the time the bundle is written, so its tip is reachable
+        // from no ref — yet the sidecar still names it and the restore would set a ref to it.
+        var service = new BackupService(new DeletesRefBeforeBundleCreateGitService(repo.Path, "doomed"), new SettingsService());
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        var snapshot = System.Text.Json.JsonSerializer.Deserialize<RefsSnapshot>(File.ReadAllText(handle.RefsSnapshotPath))!;
+        Assert.Contains(snapshot.Refs, r => r.Name == "refs/heads/doomed" && r.ObjectId == doomedOid);
+
+        // The bundle carries that object, so what the sidecar names can actually be restored.
+        using var target = await RailsRepo.CreateAsync("bundle-read");
+        await target.GitAsync("bundle", "unbundle", handle.BundlePath);
+        Assert.Equal(0, (await Git.TryRunAsync(target.Path, "cat-file", "-e", doomedOid)).ExitCode);
     }
 
     [Fact]
