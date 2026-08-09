@@ -159,6 +159,19 @@ public sealed class RewriteCoordinator
         return result;
     }
 
+    /// <summary>
+    /// Clears the recovery marker after the swap has already landed. A throw from this write is
+    /// logged and swallowed: the history is rewritten either way, so letting it escape would
+    /// report a completed rewrite as an exception and skip the record of it. The cost of the
+    /// failed clear is a stale marker, which the next launch offers as an interrupted operation
+    /// whose backup is intact.
+    /// </summary>
+    private async Task ClearJournalAfterSuccessAsync(string repo, CancellationToken ct)
+    {
+        try { await _journal.CompleteAsync(repo, ct); }
+        catch (Exception ex) { Log.Warn($"could not clear the rewrite journal for {repo} after a successful swap", ex); }
+    }
+
     private async Task<RewriteExecutionResult> RunPipelineAsync(
         RewriteRequest request, PreviewHandle? preview, CancellationToken ct, IProgress<RewritePhase>? phase)
     {
@@ -270,7 +283,7 @@ public sealed class RewriteCoordinator
                 };
 
             // 7. Success: clear the journal, hand back the report and a one-click undo.
-            await _journal.CompleteAsync(repo, ct);
+            await ClearJournalAfterSuccessAsync(repo, ct);
             return new RewriteExecutionResult { Success = true, Report = report, Swap = swap, Undo = undo };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -311,7 +311,11 @@ public sealed class SurgeryCoordinator
             // or cherry-pick. A success that concluded, and any refusal that proves nothing
             // moved, clear it — the backup stays either way.
             if (journalled && (success ? edit?.LeftMidOperation != true : ProvesNothingMoved(rebase, edit)))
-                await _journal.CompleteAsync(repoPath, ct);
+                // Swallowed: the operation has already run, so letting a bookkeeping write escape
+                // would report a concluded operation as an exception and skip the record of it.
+                // The cost of a failed clear is a stale marker the next launch offers, backup intact.
+                try { await _journal.CompleteAsync(repoPath, ct); }
+                catch (Exception ex) { Log.Warn($"could not clear the rewrite journal for {repoPath} after a {phase}", ex); }
 
             return new SurgeryResult
             {
