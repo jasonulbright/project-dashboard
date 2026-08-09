@@ -29,6 +29,25 @@ public class TruncatedReadSurfaceTests
         }
     }
 
+    /// <summary>
+    /// Whole on the read that fills the pane, truncated on every read after it — the file
+    /// crossing the budget between the diff a reader saw and the click they made on it.
+    /// </summary>
+    private sealed class TruncatingAfterTheFirstDiffGitService : GitService
+    {
+        private int _diffReads;
+
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            var result = await base.RunAsync(repoPath, list, environment, ct, timeout);
+            if (!list.Contains("diff")) return result;
+            return Interlocked.Increment(ref _diffReads) > 1 ? result with { Truncated = true } : result;
+        }
+    }
+
     private static ProjectInfo ProjectFor(TempRepo repo)
     {
         var name = Path.GetFileName(repo.Path);
@@ -105,6 +124,37 @@ public class TruncatedReadSurfaceTests
 
         Assert.True(vm.StageHunkCommand.CanExecute(null));
         Assert.Null(vm.StageHunkBlockedReason);
+    }
+
+    /// <summary>
+    /// The gate reads the diff on display; the patch is sliced from a fresh read taken at the
+    /// click. A file that crosses the budget in between passes the gate and would be sliced out
+    /// of a prefix, so the fresh read is checked again and the operation refused, exactly as a
+    /// diff that moved underneath is refused.
+    /// </summary>
+    [Fact]
+    public async Task ADiffTruncatedBetweenTheDisplayAndTheClick_IsRefusedAndReloaded()
+    {
+        using var repo = await TwoHunkRepoAsync("hunk-truncated-fresh");
+        var vm = await OpenOnFileAsync(repo, new TruncatingAfterTheFirstDiffGitService());
+
+        // The pane showed a whole diff, so nothing stops the reader from choosing a hunk.
+        Assert.False(vm.DiffIsTruncated);
+        vm.SelectedDiffLine = vm.DiffLines.First(l => l.HunkIndex >= 0);
+        Assert.True(vm.StageHunkCommand.CanExecute(null));
+
+        await vm.StageHunkCommand.ExecuteAsync(null);
+
+        Assert.Contains("too large to read in full", vm.SyncStatusText);
+
+        // Nothing was staged: the index is still empty.
+        var staged = await new GitService().RunAsync(repo.Path, ["diff", "--cached", "--name-only"]);
+        Assert.True(staged.Success, staged.FirstError);
+        Assert.Equal("", staged.StdOut.Trim());
+
+        // The reload put the truncated state on the pane, so the buttons are down now.
+        Assert.True(vm.DiffIsTruncated);
+        Assert.False(vm.StageHunkCommand.CanExecute(null));
     }
 
     [Fact]

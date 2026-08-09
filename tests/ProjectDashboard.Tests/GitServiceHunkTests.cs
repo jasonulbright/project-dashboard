@@ -36,7 +36,7 @@ public class GitServiceHunkTests
     {
         var raw = await _git.GetFileDiffRawAsync(repo.Path, "file.txt", staged);
         Assert.NotNull(raw);
-        var patch = GitService.ExtractHunkPatch(raw, "file.txt", hunkIndex);
+        var patch = GitService.ExtractHunkPatch(raw.Text, "file.txt", hunkIndex);
         Assert.NotNull(patch);
         return patch;
     }
@@ -134,11 +134,11 @@ public class GitServiceHunkTests
 
         var raw = await _git.GetFileDiffRawAsync(repo.Path, "file.txt", staged: false);
         Assert.NotNull(raw);
-        Assert.Contains("\r", raw);
+        Assert.Contains("\r", raw.Text);
         // FileDiff.ParseUnified drops these CRs, which is why it is not the staging path.
         Assert.DoesNotContain("\r", string.Concat((await FileDiffAsync(repo, false)).Lines.Select(l => l.Text)));
 
-        var patch = GitService.ExtractHunkPatch(raw, "file.txt", 0);
+        var patch = GitService.ExtractHunkPatch(raw.Text, "file.txt", 0);
         Assert.NotNull(patch);
         Assert.True((await _git.StageHunkAsync(repo.Path, patch)).Success);
 

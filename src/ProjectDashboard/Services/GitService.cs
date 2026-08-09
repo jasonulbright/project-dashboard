@@ -1350,7 +1350,7 @@ public class GitService
     }
 
     /// <summary>Raw `git diff` for one file, bytes untouched (CRLF preserved) so a hunk can be sliced out faithfully. Null on failure.</summary>
-    public async Task<string?> GetFileDiffRawAsync(string repoPath, string filePath, bool staged, CancellationToken ct = default)
+    public async Task<RawFileDiff?> GetFileDiffRawAsync(string repoPath, string filePath, bool staged, CancellationToken ct = default)
     {
         var args = new List<string> { "diff", "--no-color" };
         if (staged) args.Add("--cached");
@@ -1362,7 +1362,7 @@ public class GitService
             Log.Warn($"git diff (raw) failed for {filePath} in {repoPath}: {result.FirstError}");
             return null;
         }
-        return result.StdOut;
+        return new RawFileDiff(result.StdOut, result.Truncated);
     }
 
     /// <summary>

@@ -192,7 +192,19 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var patch = GitService.ExtractHunkPatch(raw, hunk.File.Path, hunk.Hunk);
+        // The gate that let this operation start read the diff on display; this read is a fresh
+        // one, and a file that grew past the budget in between hands back a prefix whose slice
+        // ends mid-hunk. Refused and reloaded, the same as a diff that moved underneath.
+        if (raw.Truncated)
+        {
+            SyncStatusText = $"{label} refused: the diff for {hunk.File.Path} is too large to read in full, " +
+                             "so a hunk cannot be sliced out of it. It has been reloaded — " +
+                             "stage or discard the whole file instead.";
+            await ReloadDiffForCurrentSelectionAsync();
+            return;
+        }
+
+        var patch = GitService.ExtractHunkPatch(raw.Text, hunk.File.Path, hunk.Hunk);
         if (patch is null || !HeaderMatches(patch, hunk.Header))
         {
             SyncStatusText = $"{label} refused: {hunk.File.Path} changed since this diff was shown. " +

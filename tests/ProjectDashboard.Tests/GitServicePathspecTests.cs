@@ -47,9 +47,9 @@ public class GitServicePathspecTests
         var raw = await _git.GetFileDiffRawAsync(repo.Path, BracketPath, staged: false);
 
         Assert.NotNull(raw);
-        Assert.Contains("bracket TWO", raw);
-        Assert.DoesNotContain("sibling TWO", raw);
-        Assert.Single(raw.Split("diff --git ").Skip(1));
+        Assert.Contains("bracket TWO", raw.Text);
+        Assert.DoesNotContain("sibling TWO", raw.Text);
+        Assert.Single(raw.Text.Split("diff --git ").Skip(1));
     }
 
     [Fact]

@@ -32,6 +32,13 @@ public sealed class DiffLine
     public bool IsHunkStart => Kind == DiffLineKind.HunkHeader && HunkIndex >= 0;
 }
 
+/// <summary>
+/// Raw `git diff` bytes for one file, with whether the capture budget cut them short. A hunk is
+/// sliced out of these bytes, so a reader of them has to know the same thing the diff pane does:
+/// a prefix ends mid-hunk, and the slice taken from it is not the hunk it names.
+/// </summary>
+public sealed record RawFileDiff(string Text, bool Truncated);
+
 /// <summary>Parsed diff for one file (hunk headers flattened in as rows).</summary>
 public sealed class FileDiff
 {
