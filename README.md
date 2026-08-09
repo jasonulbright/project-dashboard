@@ -88,6 +88,16 @@ Download `ProjectDashboard-Setup-*.exe` from [Releases](https://github.com/jason
 
 `ProjectDashboard-Portable-*.zip` needs no installation: extract it anywhere and run `ProjectDashboard.exe`. The `portable.marker` file in the extracted folder keeps all app state in a `data` folder beside the executable, so the whole thing moves with a USB stick and leaves no Project Dashboard state in your user profile. Delete the marker to use the standard per-user locations instead. If the extracted folder is not writable, the app says so at startup and stores its state in the standard per-user locations for that session. The .NET 10 Desktop Runtime is still required.
 
+### Verifying a download
+
+Every release carries a `checksums.txt` listing the SHA-256 of both assets, in `sha256sum` layout:
+
+```powershell
+(Get-FileHash .\ProjectDashboard-Setup-1.0.0.exe -Algorithm SHA256).Hash.ToLower()
+```
+
+Compare the result with the matching line in `checksums.txt`.
+
 ## Build and Run
 
 ```bash

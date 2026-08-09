@@ -21,9 +21,9 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
 
@@ -113,7 +113,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $makensis)) {
             $onPath = Get-Command makensis -ErrorAction SilentlyContinue
             if (-not $onPath) {
-              choco install nsis --no-progress --yes
+              choco install nsis --version=3.12.0 --no-progress --yes
               if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed with exit code $LASTEXITCODE." }
               # The installer edits the machine PATH; this process keeps the one it started with.
               $env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + $env:PATH
@@ -130,6 +130,25 @@ jobs:
           & $env:MAKENSIS project-dashboard.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
 
+      # Written outside the checkout for the same reason the notes are, and generated on the
+      # dry run too so the step that publishes is never the first one to run.
+      - name: Checksum the assets
+        run: |
+          $installer = "installer/ProjectDashboard-Setup-$env:VERSION.exe"
+          $portable  = "installer/ProjectDashboard-Portable-$env:VERSION.zip"
+          $checksums = "$env:RUNNER_TEMP/checksums.txt"
+
+          # Two spaces and the bare asset name: the layout sha256sum -c reads.
+          $lines = foreach ($asset in @($installer, $portable)) {
+            if (-not (Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset." }
+            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path -Leaf $asset)"
+          }
+          Set-Content -LiteralPath $checksums -Value $lines -Encoding ascii
+          Get-Content -LiteralPath $checksums | Write-Host
+
+          "CHECKSUMS=$checksums" >> $env:GITHUB_ENV
+
       # Assets are named explicitly: a wildcard would attach any stale artifact left in
       # the tree by an earlier step.
       - name: Publish release
@@ -139,12 +158,13 @@ jobs:
         run: |
           $installer = "installer/ProjectDashboard-Setup-$env:VERSION.exe"
           $portable  = "installer/ProjectDashboard-Portable-$env:VERSION.zip"
-          foreach ($asset in @($installer, $portable)) {
+          $checksums = $env:CHECKSUMS
+          foreach ($asset in @($installer, $portable, $checksums)) {
             if (-not (Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset." }
           }
           gh release create '${{ github.ref_name }}' `
             --verify-tag `
             --title "Project Dashboard $env:VERSION" `
             --notes-file $env:RELEASE_NOTES `
-            $installer $portable
+            $installer $portable $checksums
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
