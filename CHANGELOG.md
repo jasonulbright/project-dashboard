@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.0.1] - 2026-08-09
+
+A defect release -- the 2.0.0 bugs a user could actually hit, the safety machinery under backups and restores hardened, and a download you can verify before you install it.
+
+### Fixed
+- Restore and undo refused to run on any repository that was cloned. A clone carries `refs/remotes/origin/HEAD`, and a ref transaction that names a symbolic ref alongside its target is rejected whole by git. Remote-tracking and symbolic refs are now left out of the reconciliation -- they describe the remote, not this repository's history, and a fetch repopulates them -- and the result reports how many were left as they are
+- The Stashes tab now offers what the 2.0.0 notes described: stash the working tree from the tab itself, with a message and an optional sweep of untracked files, and read what a selected stash holds -- per file, in either diff layout -- before applying it
+- Editing a project's notes could silently discard the text. Closing the editor saves; switching projects writes the pending text to the project being left, before the swap; an editor stays open across a reload of the project it belongs to; and a switch that a later switch overtook no longer puts the earlier project back on screen
+- Saving a project's metadata erased its Description. The description is editable in the metadata editor and round-trips through the manifest
+- A failed metadata or notes save looked like it had succeeded and reverted on the next launch. A write that fails is now reported where it happened, and no un-persisted edit is adopted -- for notes left unsaved by a project switch, the text also goes to the log, where it can be read back
+- A local folder that happened to share a repository's bare name hid that repository's cloud card. A local project is matched to an account repository by the `owner/name` its remote carries and nothing else, so a clone under a renamed folder is still recognized and an unrelated folder no longer stands in for one
+- A markdown image in a cloned README or CHANGELOG could read a file outside the repository through a rooted path, a `..` path, or a junction. Containment is decided on the opened file handle rather than on the path text, so a link swapped between the check and the read cannot escape either
+
+### Changed
+- **Ref safety** -- every ref a rewrite, swap, or restore writes carries the value it expects to replace. A ref another process moved in the window since it was read aborts the whole transaction instead of being silently overwritten
+- **Backups** -- a bundle is verified with `git bundle verify` before the backup is reported taken, and is written from the exact object ids the snapshot recorded, so a ref that moved between the snapshot and the bundle cannot put a different history in the backup
+- **Restore** -- a restore refuses a dirty working tree unless the caller sanctioned discarding it, at the last point where refusing is still safe, and the count of discarded changes is taken before any ref moves and covers only genuine user edits
+- **Repository lease** -- Sync All holds each repository's lease for the repository it is touching, and a pull request checkout holds it too, so the watcher, refresh timer, and discovery scan stay out of a repository mid-operation
+- **Process timeouts** -- writing to a child process's stdin runs inside the same timeout as the rest of the run, so a child that stops reading can no longer hang an operation past its budget
+- **Bounded output** -- process output is captured under a size budget; a read that hit the ceiling is disclosed on the pane showing it -- diffs, file history, blame, commit files, and stash previews -- and a hunk operation is refused rather than applied from a truncated diff
+- **Diff pane follows the working tree** -- an external edit to the file already on screen re-renders that file's diff, keeping the reader on their hunk, and overlapping refreshes collapse onto the read already in flight
+- **Startup** -- a failure during startup exits with a non-zero code and a message instead of leaving a running process with no window
+- **Diagnostics** -- the log records exception type, message, and stack trace, and rolls to a previous file once it passes a size ceiling, so a long-lived install neither loses detail nor grows without bound
+- **Verifiable release** -- workflow actions and the installer toolchain are pinned, and each release publishes a `checksums.txt` with the SHA-256 of both assets; the README documents how to check a download against it
+
 ## [2.0.0] - 2026-08-08
 
 Full repository management -- deliberate, guarded history rewriting and commit surgery, GitHub administration in-app, and the local git depth earlier releases left to the terminal.
