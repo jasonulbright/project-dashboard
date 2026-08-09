@@ -296,14 +296,6 @@ public partial class ProjectDetailViewModel
     }
 
     [RelayCommand]
-    private Task StageFile(WorkingFile? file) =>
-        file is null ? NoFileSelected("stage") : StageFilesAsync([file]);
-
-    [RelayCommand]
-    private Task UnstageFile(WorkingFile? file) =>
-        file is null ? NoFileSelected("unstage") : UnstageFilesAsync([file]);
-
-    [RelayCommand]
     private async Task StageAll()
     {
         if (IsBusy) { SyncStatusText = BusyNotice("Stage all"); return; }
@@ -329,10 +321,6 @@ public partial class ProjectDetailViewModel
         if (await RunOp(r => _gitService.UnstageAllAsync(r), "Unstage all", repo, gen) && IsCurrent(gen))
             OfferUndo("Stage all again", "Stage all", repo, r => _gitService.StageAllAsync(r));
     }
-
-    [RelayCommand]
-    private Task DiscardFile(WorkingFile? file) =>
-        file is null ? NoFileSelected("discard") : DiscardFilesAsync([file]);
 
     [RelayCommand]
     private async Task Commit()
@@ -750,12 +738,6 @@ public partial class ProjectDetailViewModel
     /// </summary>
     internal static string BusyNotice(string op) =>
         $"{op} not started — another operation is running on this repository.";
-
-    private Task NoFileSelected(string verb)
-    {
-        SyncStatusText = $"Select a file to {verb} first.";
-        return Task.CompletedTask;
-    }
 
     /// <summary>
     /// Runs a mutating git op with the busy guard, surfaces the outcome, refreshes state.

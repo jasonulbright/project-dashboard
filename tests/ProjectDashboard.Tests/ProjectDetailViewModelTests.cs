@@ -450,8 +450,8 @@ public class ProjectDetailViewModelTests
         var vm = ProbeSwitchingTo(repoB);
         await vm.SetProjectAsync(ProjectFor(repoA));
 
-        await vm.DiscardFileCommand.ExecuteAsync(
-            new WorkingFile { Path = "shared.txt", WorktreeStatus = 'M' });
+        vm.SelectedUnstagedFiles = [new WorkingFile { Path = "shared.txt", WorktreeStatus = 'M' }];
+        await vm.DiscardSelectedCommand.ExecuteAsync(null);
 
         // The confirmation was given for A and the generation moved, so the op is
         // suppressed: B keeps the edit it never offered up, and A keeps its own.
@@ -505,8 +505,8 @@ public class ProjectDetailViewModelTests
         var vm = new ConfirmProbeViewModel(new GitService());
         await vm.SetProjectAsync(ProjectFor(repo));
 
-        await vm.DiscardFileCommand.ExecuteAsync(
-            new WorkingFile { Path = "shared.txt", WorktreeStatus = 'M' });
+        vm.SelectedUnstagedFiles = [new WorkingFile { Path = "shared.txt", WorktreeStatus = 'M' }];
+        await vm.DiscardSelectedCommand.ExecuteAsync(null);
 
         Assert.Equal("a\n", repo.ReadFile("shared.txt"));
         Assert.Equal("Discard done.", vm.SyncStatusText);
