@@ -316,6 +316,37 @@ public class OperationHistorySurfaceTests
     }
 
     /// <summary>
+    /// The ledger read is a bounded tail over a rotating file. Once the interrupted record scrolls
+    /// out of that window, a dedup that consulted only the tail starts writing a fresh record at
+    /// every launch — the ledger would then count launches for as long as the marker stands.
+    /// </summary>
+    [Fact]
+    public async Task AnInterruptedRecordPastTheTailWindow_IsStillNotWrittenTwice()
+    {
+        using var repo = await RailsRepo.CreateAsync("ops-interrupted-scrolled");
+        var history = NewHistory();
+        var journal = new RewriteJournal(
+            Path.Combine(TestEnv.NewDir("ops-interrupted-journal"), "rewrite-journal.json"));
+        await journal.BeginAsync(new RewriteJournalEntry
+        {
+            RepoPath = repo.Path, Phase = "swap", UtcStamp = "20260809-121314151"
+        });
+
+        await new RewriteRecoveryService(journal, history).StartAsync(CancellationToken.None);
+
+        // Push the interruption past the read window the dedup used to depend on.
+        for (var i = 0; i <= OperationHistory.DefaultTailCount; i++)
+            history.Append(OperationRecord.For(repo.Path, OperationCategory.Working, $"filler {i}",
+                OperationOutcome.Succeeded, "", DateTimeOffset.UtcNow));
+        Assert.DoesNotContain(history.Tail(repo.Path).Records, r => r.Outcome == OperationOutcome.Interrupted);
+
+        await new RewriteRecoveryService(journal, history).StartAsync(CancellationToken.None);
+
+        var all = history.Tail(repo.Path, OperationHistory.DefaultTailCount * 4).Records;
+        Assert.Single(all, r => r.Outcome == OperationOutcome.Interrupted);
+    }
+
+    /// <summary>
     /// Abandoning the marker is not abandoning the backup, and the record says which of the two
     /// happened — linked to the interruption it answers.
     /// </summary>

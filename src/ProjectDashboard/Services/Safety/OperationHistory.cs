@@ -58,6 +58,8 @@ public sealed class OperationHistory
 
     internal const string RotatedFileName = "ops.jsonl.1";
 
+    internal const string InterruptedMarkFileName = "interrupted.txt";
+
     private const int AppendAttempts = 5;
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
@@ -176,6 +178,62 @@ public sealed class OperationHistory
         var records = newest.Reverse().ToList();
         return new OperationHistoryPage(records, total > records.Count, hasRotated, skipped, error, oldest);
     }
+
+    /// <summary>
+    /// Which interruption a repository already has a record for, and the id of that record.
+    /// Held beside the ledger rather than found by reading it: the ledger is a bounded tail over a
+    /// rotating file, so a record old enough to scroll out would let the same interruption be
+    /// reported again at every later launch.
+    /// </summary>
+    public sealed record InterruptedMark(string Key, string RecordId);
+
+    public InterruptedMark? ReadInterruptedMark(string repoPath)
+    {
+        try
+        {
+            var path = InterruptedMarkPath(repoPath);
+            if (!File.Exists(path)) return null;
+            var lines = File.ReadAllLines(path);
+            return lines.Length >= 2 ? new InterruptedMark(lines[0], lines[1]) : null;
+        }
+        catch (Exception ex)
+        {
+            // An unreadable mark reads as no mark: the ledger's own tail is then consulted, and
+            // the worst outcome is one repeated record rather than a lost one.
+            Log.Warn($"could not read the interrupted-operation mark for '{repoPath}'", ex);
+            return null;
+        }
+    }
+
+    public void WriteInterruptedMark(string repoPath, InterruptedMark mark)
+    {
+        try
+        {
+            var path = InterruptedMarkPath(repoPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            DurableJsonFile.Write(path, mark.Key + "\n" + mark.RecordId, keepBackup: false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not record the interrupted-operation mark for '{repoPath}'", ex);
+        }
+    }
+
+    public void ClearInterruptedMark(string repoPath)
+    {
+        try
+        {
+            var path = InterruptedMarkPath(repoPath);
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not clear the interrupted-operation mark for '{repoPath}'", ex);
+        }
+    }
+
+    private string InterruptedMarkPath(string repoPath) =>
+        Path.Combine(DirectoryFor(RepoKey.For(repoPath)), InterruptedMarkFileName);
 
     private static OperationRecord? TryParse(string line)
     {

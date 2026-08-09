@@ -109,37 +109,64 @@ public sealed class RewriteRecoveryService : IHostedService
         $"Interrupted history operation ({(entry.Phase.Length > 0 ? entry.Phase : "unrecorded phase")})";
 
     /// <summary>
+    /// Identifies one interruption across launches, out of the fields the journal entry actually
+    /// carries. The journal holds one entry per repository, so these three separate any two
+    /// interruptions a repository can have had.
+    /// </summary>
+    internal static string InterruptedKey(RewriteJournalEntry entry) =>
+        $"{entry.Phase}|{entry.UtcStamp}|{entry.BackupHandle?.UtcStamp}";
+
+    /// <summary>
     /// Writes the interrupted operation once, not once per launch. The journal entry survives
     /// every launch until the reader rules on it, so an unconditional write would report the same
     /// interruption again on each start and make the ledger count launches instead of operations.
+    ///
+    /// The mark beside the ledger is what makes that hold: the ledger read is a bounded tail over
+    /// a rotating file, so once the record scrolls out of the window a tail-only check would start
+    /// writing a fresh record at every launch. The tail is still consulted as the fallback for a
+    /// mark that could not be read.
     /// </summary>
     private void RecordInterrupted(RewriteJournalEntry entry)
     {
         if (string.IsNullOrWhiteSpace(entry.RepoPath)) return;
+        var key = InterruptedKey(entry);
+        if (_history.ReadInterruptedMark(entry.RepoPath) is { } mark && mark.Key == key) return;
+
         var label = InterruptedLabel(entry);
         var stamp = entry.BackupHandle?.UtcStamp;
         var started = ParseStamp(entry.UtcStamp);
+        if (FindInterrupted(entry.RepoPath, label, stamp, started) is { } existing)
+        {
+            _history.WriteInterruptedMark(entry.RepoPath, new OperationHistory.InterruptedMark(key, existing.Id));
+            return;
+        }
 
-        if (FindInterrupted(entry.RepoPath, label, stamp, started) is not null) return;
-
-        _history.Append(OperationRecord.For(
+        var written = _history.Append(OperationRecord.For(
             entry.RepoPath, OperationCategory.Rewrite, label, OperationOutcome.Interrupted,
             stamp is null
                 ? "Found on disk at launch. No backup is named by the record, so what it would restore is unknown."
                 : "Found on disk at launch. Nothing has been restored; the backup it names is still on disk.",
             started ?? DateTimeOffset.UtcNow,
             backupStamp: stamp));
+        _history.WriteInterruptedMark(entry.RepoPath, new OperationHistory.InterruptedMark(key, written.Id));
     }
 
     /// <summary>
     /// Records that the marker was abandoned and the backup retained — the two halves of what
     /// <see cref="ClearAsync"/> does, and the second is why the record is worth keeping.
+    ///
+    /// The link to the interruption comes from the mark, so it survives the interrupted record
+    /// scrolling out of the ledger's tail; the tail is the fallback when there is no mark.
     /// </summary>
     private void RecordMarkerCleared(RewriteJournalEntry entry)
     {
         if (string.IsNullOrWhiteSpace(entry.RepoPath)) return;
         var stamp = entry.BackupHandle?.UtcStamp;
-        var of = FindInterrupted(entry.RepoPath, InterruptedLabel(entry), stamp, ParseStamp(entry.UtcStamp));
+        var key = InterruptedKey(entry);
+        var mark = _history.ReadInterruptedMark(entry.RepoPath);
+        var ofId = mark is not null && mark.Key == key
+            ? mark.RecordId
+            : FindInterrupted(entry.RepoPath, InterruptedLabel(entry), stamp, ParseStamp(entry.UtcStamp))?.Id ?? "";
 
         _history.Append(OperationRecord.For(
             entry.RepoPath, OperationCategory.Rewrite, "Interrupted-operation record discarded",
@@ -153,8 +180,12 @@ public sealed class RewriteRecoveryService : IHostedService
             {
                 Kind = RecoveryKind.MarkerCleared,
                 AppliedUtc = DateTimeOffset.UtcNow,
-                OfId = of?.Id ?? ""
+                OfId = ofId
             }));
+
+        // The interruption is no longer outstanding, so the mark must not suppress the record of a
+        // later one that happens to reuse the same phase and stamp.
+        _history.ClearInterruptedMark(entry.RepoPath);
     }
 
     private OperationRecord? FindInterrupted(
