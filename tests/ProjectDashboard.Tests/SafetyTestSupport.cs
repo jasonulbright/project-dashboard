@@ -26,6 +26,41 @@ internal sealed class RailsRepo : IDisposable
         return repo;
     }
 
+    /// <summary>
+    /// A clone of a bare origin, with refs/remotes/origin/HEAD set the way `git clone` sets it.
+    /// That symref and its target are what a ref transaction naming both is rejected over, so a
+    /// rail exercised only against <see cref="CreateAsync"/> — which configures no remote — never
+    /// meets the layout almost every real repository has.
+    /// </summary>
+    public static async Task<RailsRepo> CreateClonedAsync(string prefix = "rails-clone")
+    {
+        var stem = System.IO.Path.Combine(TestEnv.Root, prefix + "-" + Guid.NewGuid().ToString("N")[..8]);
+        var origin = stem + "-origin.git";
+        var seed = stem + "-seed";
+        Directory.CreateDirectory(origin);
+        Directory.CreateDirectory(seed);
+        await Git.RunAsync(origin, "init", "--bare", "-b", "main");
+
+        var seedRepo = new RailsRepo(seed);
+        await seedRepo.GitAsync("init", "-b", "main");
+        seedRepo.Write("file.txt", "one\n");
+        await seedRepo.GitAsync("add", "-A");
+        await seedRepo.GitAsync("commit", "-m", "initial");
+        await seedRepo.GitAsync("push", origin.Replace('\\', '/'), "main");
+        TestEnv.TryDeleteTree(seed);
+
+        var clone = stem;
+        await Git.RunAsync(TestEnv.Root, "clone", origin.Replace('\\', '/'), clone);
+        var repo = new RailsRepo(clone) { _origin = origin };
+        // The rail this fixture exists for only exists when the symref does.
+        var refs = await repo.GitAsync("for-each-ref", "--format=%(refname) %(symref)");
+        if (!refs.Contains("refs/remotes/origin/HEAD refs/remotes/origin/main", StringComparison.Ordinal))
+            throw new InvalidOperationException($"clone fixture has no origin/HEAD symref:\n{refs}");
+        return repo;
+    }
+
+    private string? _origin;
+
     public void Write(string relativePath, string content)
     {
         var full = System.IO.Path.Combine(Path, relativePath);
@@ -51,5 +86,9 @@ internal sealed class RailsRepo : IDisposable
         return head + "\n" + refs;
     }
 
-    public void Dispose() => TestEnv.TryDeleteTree(Path);
+    public void Dispose()
+    {
+        TestEnv.TryDeleteTree(Path);
+        if (_origin is not null) TestEnv.TryDeleteTree(_origin);
+    }
 }

@@ -166,6 +166,60 @@ public class BackupServiceTests
         Assert.Equal("one\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "file.txt")));
     }
 
+    /// <summary>
+    /// A default clone carries refs/remotes/origin/HEAD as a symref onto refs/remotes/origin/main.
+    /// A reconciliation naming both is rejected whole by `git update-ref --stdin`, so a restore
+    /// that reconciled every ref for-each-ref returns refused on essentially every cloned
+    /// repository — the layout almost every real one has.
+    /// </summary>
+    [Fact]
+    public async Task Restore_InAClonedRepoWithOriginHead_RestoresLocalRefsAndLeavesTheRemoteOnesAlone()
+    {
+        using var repo = await RailsRepo.CreateClonedAsync();
+        var service = NewService();
+
+        var beforeLocal = (await repo.GitAsync("rev-parse", "refs/heads/main")).Trim();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        repo.Write("file.txt", "two\n");
+        await repo.CommitAllAsync("second");
+        await repo.GitAsync("branch", "stray");
+        Assert.NotEqual(beforeLocal, (await repo.GitAsync("rev-parse", "refs/heads/main")).Trim());
+
+        var result = await service.RestoreAsync(handle, allowDirty: false);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(beforeLocal, (await repo.GitAsync("rev-parse", "refs/heads/main")).Trim());
+        Assert.DoesNotContain("refs/heads/stray", await repo.RefStateAsync(), StringComparison.Ordinal);
+
+        // The remote-tracking pair is untouched: the symref still resolves, and the restore says
+        // what it left alone rather than implying it put those refs back.
+        Assert.Equal("refs/remotes/origin/main",
+            (await repo.GitAsync("symbolic-ref", "refs/remotes/origin/HEAD")).Trim());
+        Assert.Equal(beforeLocal, (await repo.GitAsync("rev-parse", "refs/remotes/origin/main")).Trim());
+        Assert.Contains("left as they are", result.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A symbolic ref outside refs/remotes/ reaches the same rejection, so the exclusion is the symref itself, not the namespace.</summary>
+    [Fact]
+    public async Task Restore_WithASymbolicBranchAlias_ReconcilesTheRestWithoutTouchingIt()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        await repo.GitAsync("symbolic-ref", "refs/heads/alias", "refs/heads/main");
+        var service = NewService();
+        var before = (await repo.GitAsync("rev-parse", "refs/heads/main")).Trim();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        repo.Write("file.txt", "two\n");
+        await repo.CommitAllAsync("second");
+
+        var result = await service.RestoreAsync(handle, allowDirty: false);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(before, (await repo.GitAsync("rev-parse", "refs/heads/main")).Trim());
+        Assert.Equal("refs/heads/main", (await repo.GitAsync("symbolic-ref", "refs/heads/alias")).Trim());
+    }
+
     [Fact]
     public async Task Restore_BundleFailsVerification_RefusesWithoutMutating()
     {

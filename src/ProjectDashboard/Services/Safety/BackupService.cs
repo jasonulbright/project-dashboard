@@ -180,6 +180,12 @@ public sealed class BackupService
     /// the snapshot in one transaction — refs the backup lacks are deleted, refs it has are
     /// set — after which HEAD is repositioned and the working tree is reset.
     ///
+    /// Two kinds of ref are recorded in the sidecar and in the bundle but never reconciled:
+    /// remote-tracking refs, which describe the remote rather than this repository's history and
+    /// come back on the next fetch, and symbolic refs, whose update writes through to a target the
+    /// same script already names. Neither is deleted, rewound, or recreated by a restore, and the
+    /// result message counts what was left alone.
+    ///
     /// A failure in either step after that transaction returns <see cref="RestoreResult.Success"/>
     /// false with <see cref="RestoreResult.RefsRestored"/> true: the pre-rewrite content is
     /// back in the repository even though the restore did not finish. A caller MUST NOT report
@@ -249,18 +255,24 @@ public sealed class BackupService
         // another process moved in the window since that read aborts the whole transaction
         // instead of being silently overwritten by the snapshot's value.
         var desired = snapshot.Refs.ToDictionary(r => r.Name, r => r.ObjectId, StringComparer.Ordinal);
-        var current = await ReadCurrentRefsAsync(handle.RepoPath, ct);
-        if (current is null)
+        var layout = await ReadCurrentRefsAsync(handle.RepoPath, ct);
+        if (layout is null)
             return new RestoreResult(false,
                 $"The current ref layout of '{handle.RepoPath}' could not be read — refusing to restore.");
 
         var script = new StringBuilder();
-        foreach (var (name, oid) in current)
+        var restoredCount = 0;
+        foreach (var (name, oid) in layout.Reconcilable)
             if (!desired.ContainsKey(name))
                 script.Append("delete ").Append(name).Append(' ').Append(oid).Append('\n');
         foreach (var (name, oid) in desired)
+        {
+            if (IsRemoteTracking(name) || layout.Symbolic.Contains(name))
+                continue;
+            restoredCount++;
             script.Append("update ").Append(name).Append(' ').Append(oid).Append(' ')
-                .Append(current.TryGetValue(name, out var old) ? old : MustNotExist).Append('\n');
+                .Append(layout.Reconcilable.TryGetValue(name, out var old) ? old : MustNotExist).Append('\n');
+        }
 
         if (script.Length > 0)
         {
@@ -305,7 +317,11 @@ public sealed class BackupService
                     wasDirty, discardedCount, RefsRestored: true);
         }
 
-        return new RestoreResult(true, $"Restored {desired.Count} refs from {handle.UtcStamp}.",
+        var untouched = desired.Count - restoredCount;
+        var untouchedNote = untouched > 0
+            ? $" {untouched} remote-tracking or symbolic ref(s) were left as they are."
+            : "";
+        return new RestoreResult(true, $"Restored {restoredCount} refs from {handle.UtcStamp}.{untouchedNote}",
             wasDirty, discardedCount, RefsRestored: true);
     }
 
@@ -355,20 +371,56 @@ public sealed class BackupService
     }
 
     /// <summary>
-    /// Every ref and its object id, or null when git could not read the layout. An unreadable
-    /// layout is never an empty one: reconciling against it would skip every delete the snapshot
-    /// calls for and report a full restore over refs the backup never held.
+    /// The refs a reconciliation may move, and the symbolic ones it must not.
+    /// <see cref="Reconcilable"/> holds name → object id for the rest.
     /// </summary>
-    private async Task<Dictionary<string, string>?> ReadCurrentRefsAsync(string repoPath, CancellationToken ct)
+    private sealed record RefLayout(Dictionary<string, string> Reconcilable, HashSet<string> Symbolic);
+
+    /// <summary>
+    /// A remote-tracking ref describes the remote, which no restore changes, and `git fetch`
+    /// repopulates it — the same rule the swap applies to the same repository.
+    /// </summary>
+    private static bool IsRemoteTracking(string name) =>
+        name.StartsWith("refs/remotes/", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The current ref layout, or null when git could not read it. An unreadable layout is never
+    /// an empty one: reconciling against it would skip every delete the snapshot calls for and
+    /// report a full restore over refs the backup never held.
+    ///
+    /// Remote-tracking and symbolic refs are separated out because a reconciliation must not name
+    /// them. An update to a symbolic ref writes through to its target, so a script naming both is
+    /// rejected whole — "multiple updates for '&lt;target&gt;' (including one via symref)" — and a
+    /// default clone carries exactly that pair in refs/remotes/origin/HEAD.
+    /// </summary>
+    private async Task<RefLayout?> ReadCurrentRefsAsync(string repoPath, CancellationToken ct)
     {
         var refs = await _git.RunAsync(repoPath,
-            ["for-each-ref", "--format=%(objectname) %(refname)"], ct, RefTimeout);
+            ["for-each-ref", "--format=%(objectname) %(refname) %(symref)"], ct, RefTimeout);
         if (!refs.Success)
             return null;
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (name, oid) in ParseRefLines(refs.StdOut))
-            map[name] = oid;
-        return map;
+        var symbolic = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in refs.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // A ref name can hold no space, so the first field is the object id, the second the
+            // name, and whatever follows is the symbolic target when there is one.
+            var line = raw.TrimEnd('\r');
+            var oidEnd = line.IndexOf(' ');
+            if (oidEnd <= 0) continue;
+            var rest = line[(oidEnd + 1)..];
+            var nameEnd = rest.IndexOf(' ');
+            var name = nameEnd < 0 ? rest : rest[..nameEnd];
+            if (name.Length == 0) continue;
+            if (nameEnd >= 0 && rest[(nameEnd + 1)..].Trim().Length > 0)
+            {
+                symbolic.Add(name);
+                continue;
+            }
+            if (IsRemoteTracking(name)) continue;
+            map[name] = line[..oidEnd];
+        }
+        return new RefLayout(map, symbolic);
     }
 
     private static IEnumerable<(string Name, string ObjectId)> ParseRefLines(string stdout)
