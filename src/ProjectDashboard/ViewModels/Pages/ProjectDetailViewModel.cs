@@ -292,6 +292,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         HistoryHasMore = Commits.Count > 0;
         Issues = new ObservableCollection<GitHubIssue>(p.Issues ?? []);
 
+        ManifestStatusText = "";
         SelectedProjectType = p.Manifest.ProjectType;
         SelectedStatus = p.Manifest.Status;
         SelectedCategory = p.Manifest.Category;
@@ -315,20 +316,41 @@ public partial class ProjectDetailViewModel : ObservableObject
         await SetProjectAsync(Project);
     }
 
+    /// <summary>Shown beside the manifest editor; a failed write must not read as a saved one.</summary>
+    [ObservableProperty] private string _manifestStatusText = "";
+
+    internal const string ManifestSaveFailed =
+        "Metadata not saved — the write failed, so this edit is only in the editor. Try again.";
+
+    private ProjectManifest EditedManifest() => new()
+    {
+        ProjectType = SelectedProjectType,
+        Status = SelectedStatus,
+        Category = SelectedCategory,
+        ValidationSchedule = ValidationSchedule,
+        Notes = Notes
+    };
+
+    /// <summary>
+    /// Persists the editor's manifest, adopting it onto the project only once the store reports
+    /// the write durable. False leaves the editor holding the edit and says so.
+    /// </summary>
+    private async Task<bool> PersistManifestAsync(ProjectManifest manifest)
+    {
+        if (Project is null) return false;
+        if (!await _discoveryService.SaveManifestAsync(Project.FullPath, manifest)) return false;
+
+        Project.Manifest = manifest;
+        Project.HasManifest = true;
+        return true;
+    }
+
     private async Task SaveManifestAsync()
     {
         if (Project is null) return;
 
-        var manifest = new ProjectManifest
-        {
-            ProjectType = SelectedProjectType,
-            Status = SelectedStatus,
-            Category = SelectedCategory,
-            ValidationSchedule = ValidationSchedule,
-            Notes = Notes
-        };
-
-        await _discoveryService.SaveManifestAsync(Project.FullPath, manifest);
-        Project.Manifest = manifest;
+        ManifestStatusText = await PersistManifestAsync(EditedManifest())
+            ? "Metadata saved."
+            : ManifestSaveFailed;
     }
 }

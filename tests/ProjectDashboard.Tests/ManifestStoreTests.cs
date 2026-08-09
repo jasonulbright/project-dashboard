@@ -6,14 +6,35 @@ using Xunit;
 namespace ProjectDashboard.Tests;
 
 [Collection("app-data-sandbox")]
-public class ManifestStoreTests
+public class ManifestStoreTests : IDisposable
 {
     private static readonly string IndexPath = AppPaths.ManifestIndexFile;
 
     private static readonly string AlphaPath = @"C:\projects\alpha";
     private static readonly string BetaPath = @"C:\projects\beta";
 
-    public ManifestStoreTests() => TestSandbox.ResetDataDir();
+    /// <summary>
+    /// A directory where the atomic write's .tmp has to go: the write fails before anything is
+    /// swapped in, which is the shape every unwritable data dir takes here. ResetDataDir clears
+    /// files only, so it is removed either side of every test rather than left to poison the
+    /// next one in this serialized collection.
+    /// </summary>
+    private static readonly string BlockedTmpPath = IndexPath + ".tmp";
+
+    public ManifestStoreTests()
+    {
+        UnblockTheWritePath();
+        TestSandbox.ResetDataDir();
+    }
+
+    public void Dispose() => UnblockTheWritePath();
+
+    private static void BlockTheWritePath() => Directory.CreateDirectory(BlockedTmpPath);
+
+    private static void UnblockTheWritePath()
+    {
+        if (Directory.Exists(BlockedTmpPath)) Directory.Delete(BlockedTmpPath, recursive: true);
+    }
 
     [Fact]
     public void SaveThenReload_RoundTrips()
@@ -102,11 +123,56 @@ public class ManifestStoreTests
         var store = new ManifestStore();
         store.Save(AlphaPath, new ProjectManifest { Description = "alpha desc" });
 
-        store.Save(repoPath!, new ProjectManifest { Description = "orphan" });
+        Assert.False(store.Save(repoPath!, new ProjectManifest { Description = "orphan" }));
 
         var reloaded = new ManifestStore();
         Assert.True(reloaded.TryGet(AlphaPath, out _));
         Assert.DoesNotContain("orphan", File.ReadAllText(IndexPath));
+    }
+
+    [Fact]
+    public void Save_ReportsTrueOnlyWhenTheWriteReachedDisk()
+    {
+        var store = new ManifestStore();
+
+        Assert.True(store.Save(AlphaPath, new ProjectManifest { Description = "v1" }));
+
+        BlockTheWritePath();
+        Assert.False(store.Save(AlphaPath, new ProjectManifest { Description = "v2" }));
+    }
+
+    /// <summary>
+    /// Adopted in memory, a failed write reads as saved for the rest of the session and is gone
+    /// at the next launch — the reader is told nothing at either moment.
+    /// </summary>
+    [Fact]
+    public void Save_ThatFailedToWrite_LeavesTheLiveIndexDescribingWhatIsOnDisk()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "v1", Category = "Tools" });
+
+        BlockTheWritePath();
+        Assert.False(store.Save(AlphaPath, new ProjectManifest { Description = "v2", Category = "Web" }));
+
+        Assert.True(store.TryGet(AlphaPath, out var live));
+        Assert.Equal("v1", live!.Description);
+        Assert.Equal("Tools", live.Category);
+
+        Assert.Contains("v1", File.ReadAllText(IndexPath));
+        Assert.DoesNotContain("v2", File.ReadAllText(IndexPath));
+    }
+
+    [Fact]
+    public void Save_ThatFailedToWrite_DoesNotStrandOtherProjectsEntries()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "alpha desc" });
+
+        BlockTheWritePath();
+        Assert.False(store.Save(BetaPath, new ProjectManifest { Description = "beta desc" }));
+
+        Assert.True(store.TryGet(AlphaPath, out _));
+        Assert.False(store.TryGet(BetaPath, out _));
     }
 
     [Fact]

@@ -514,7 +514,22 @@
                                     </Grid>
                                     <ui:Button Content="Save" Appearance="Primary" Margin="0,12,0,0"
                                                HorizontalAlignment="Left"
-                                               Command="{Binding SaveManifestCommand}" />
+                                               Command="{Binding SaveManifestCommand}"
+                                               AutomationProperties.Name="Save the project metadata" />
+                                    <TextBlock Text="{Binding ManifestStatusText}" FontSize="12" Margin="0,8,0,0"
+                                               TextWrapping="Wrap"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ManifestStatusText}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                 </StackPanel>
                             </Border>
 

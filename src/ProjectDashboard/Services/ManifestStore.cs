@@ -87,22 +87,35 @@ public class ManifestStore
         }
     }
 
-    /// <summary>Upserts the manifest for a repo path and persists the whole index.</summary>
-    public void Save(string repoPath, ProjectManifest manifest)
+    /// <summary>
+    /// Upserts the manifest for a repo path and persists the whole index. False means the value
+    /// did not reach disk, and the in-memory index is left as it was: adopted in memory only, an
+    /// edit would read as saved for the rest of the session and be gone at the next launch.
+    /// </summary>
+    public bool Save(string repoPath, ProjectManifest manifest)
     {
         // An empty path cannot key the index; dropping the write beats poisoning
         // the store with an unreachable "" entry, but it must not be silent.
         if (string.IsNullOrWhiteSpace(repoPath))
         {
             Log.Warn("Manifest save ignored: empty repo path");
-            return;
+            return false;
         }
 
         var index = Index();
         lock (_lock)
         {
-            index[NormalizeKey(repoPath)] = Clone(manifest);
-            Persist(index);
+            var key = NormalizeKey(repoPath);
+            var stored = Clone(manifest);
+            // The candidate is written before it is adopted, so a failed write leaves the live
+            // index exactly as the file on disk still describes it.
+            var candidate = new Dictionary<string, ProjectManifest>(index, StringComparer.OrdinalIgnoreCase)
+            {
+                [key] = stored
+            };
+            if (!Persist(candidate)) return false;
+            index[key] = stored;
+            return true;
         }
     }
 
@@ -116,17 +129,18 @@ public class ManifestStore
         Notes = m.Notes
     };
 
-    private static void Persist(Dictionary<string, ProjectManifest> index)
+    private static bool Persist(Dictionary<string, ProjectManifest> index)
     {
         try
         {
             Directory.CreateDirectory(StoreDir);
             DurableJsonFile.Write(IndexPath, JsonSerializer.Serialize(index, JsonOptions));
+            return true;
         }
         catch (Exception ex)
         {
-            // Save failure = silent data loss on next launch. At least make it diagnosable.
             Log.Error($"Failed to persist manifest index to {IndexPath}", ex);
+            return false;
         }
     }
 }

@@ -66,12 +66,13 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     public Task<ProjectInfo?> RefreshProjectLocalAsync(string repoPath, CancellationToken ct = default)
         => BuildProjectInfoAsync(repoPath, ct);
 
-    public Task SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
-    {
+    /// <summary>
+    /// Persists a project's manifest. False when the write did not reach disk — the caller still
+    /// holds the only copy of the edit and must not present it as stored.
+    /// </summary>
+    public virtual Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
         // Manifests live out-of-source under AppPaths.RoamingDir, not in the repo root.
-        manifestStore.Save(repoPath, manifest);
-        return Task.CompletedTask;
-    }
+        => Task.FromResult(manifestStore.Save(repoPath, manifest));
 
     private async Task<List<ProjectInfo>> DiscoverFromDiskAsync(AppSettings settings, CancellationToken ct)
     {
