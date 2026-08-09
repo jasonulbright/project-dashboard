@@ -310,7 +310,9 @@ public partial class ProjectDetailViewModel
         BackupsStatusText = "Restoring…";
         try
         {
-            var restore = await service.RestoreAsync(entry.Handle);
+            // The browser refuses a dirty tree above and offers no confirmed discard, so the
+            // service re-check stays a refusal for a tree dirtied since that read.
+            var restore = await service.RestoreAsync(entry.Handle, allowDirty: false);
             var landed = restore.Success || restore.RefsRestored;
 
             // The marker exists to say an operation was interrupted; the repository is now back

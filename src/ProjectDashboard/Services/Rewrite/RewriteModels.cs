@@ -105,13 +105,16 @@ public sealed class UndoHandle
     /// Restores under the repository lease. The restore unbundles, reconciles every ref,
     /// repositions HEAD and resets the working tree; unleased, a background sync reads the
     /// repository as idle and its fetch or pull lands part-way through that sequence.
+    ///
+    /// The restore runs over a dirty tree: every surface offering this undo confirms the hard
+    /// reset's discard by name first, and the discarded count comes back in the result.
     /// </summary>
     public async Task<RestoreResult> RestoreAsync(CancellationToken ct = default)
     {
         if (!_busy.TryAcquire(Backup.RepoPath, out var lease))
             return new RestoreResult(false, $"Repository is busy with another operation: {Backup.RepoPath}");
         using (lease)
-            return await _backup.RestoreAsync(Backup, ct);
+            return await _backup.RestoreAsync(Backup, allowDirty: true, ct);
     }
 }
 

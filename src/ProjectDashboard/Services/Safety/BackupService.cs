@@ -164,13 +164,14 @@ public sealed class BackupService
     /// an unsuccessful restore as an unchanged repository without reading that flag.
     ///
     /// The final reset is --hard, so it discards every uncommitted change in the worktree,
-    /// including edits made after the backup was captured, which the bundle never held. A
-    /// caller MUST confirm with the user before invoking this against a dirty tree, and MUST
-    /// surface <see cref="RestoreResult.WorktreeWasDirty"/> and
-    /// <see cref="RestoreResult.DiscardedChangeCount"/> from the result, which report what the
-    /// reset threw away. Silently restoring is data loss the backup does not cover.
+    /// including edits made after the backup was captured, which the bundle never held.
+    /// <paramref name="allowDirty"/> is that discard, spelled by the caller: false refuses the
+    /// restore outright while the tree is dirty, true proceeds and reports what the reset threw
+    /// away in <see cref="RestoreResult.WorktreeWasDirty"/> and
+    /// <see cref="RestoreResult.DiscardedChangeCount"/>, which a caller MUST surface. Only a
+    /// caller whose user confirmed that discard passes true.
     /// </summary>
-    public async Task<RestoreResult> RestoreAsync(BackupHandle handle, CancellationToken ct = default)
+    public async Task<RestoreResult> RestoreAsync(BackupHandle handle, bool allowDirty, CancellationToken ct = default)
     {
         if (!File.Exists(handle.BundlePath))
             return new RestoreResult(false, $"Bundle missing: {handle.BundlePath}");
@@ -192,6 +193,29 @@ public sealed class BackupService
             ["bundle", "unbundle", handle.BundlePath], ct, BundleTimeout);
         if (!unbundle.Success)
             return new RestoreResult(false, $"Unbundle failed: {unbundle.FirstError}");
+
+        // Read the working tree here rather than trusting a caller's earlier reading: that one is
+        // as old as the bundle verify and the unbundle together, and the closing `reset --hard`
+        // discards whatever was written since — which the bundle, holding committed history only,
+        // cannot put back. This is the last point at which a refusal still changes nothing. An
+        // unreadable tree is a refusal too, never a proceed on an assumed-clean one.
+        var bare = await IsBareAsync(handle.RepoPath, ct);
+        var resetsWorktree = snapshot.HeadObjectId.Length > 0 && !bare;
+        var wasDirty = false;
+        var discardedCount = 0;
+        if (resetsWorktree)
+        {
+            var dirty = await _git.RunAsync(handle.RepoPath, ["status", "--porcelain"], ct, RefTimeout);
+            if (!dirty.Success)
+                return new RestoreResult(false,
+                    $"The working tree of '{handle.RepoPath}' could not be read — refusing to restore: {dirty.FirstError}");
+            discardedCount = dirty.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+            wasDirty = discardedCount > 0;
+            if (wasDirty && !allowDirty)
+                return new RestoreResult(false,
+                    $"The working tree has {discardedCount} uncommitted change(s) that this restore's hard reset " +
+                    "would discard, and the backup holds committed history only — refusing to restore.");
+        }
 
         // Reconcile to EXACTLY the snapshot as ONE transaction: delete every current ref the
         // snapshot lacks, then point each snapshot ref at its recorded object. `git update-ref
@@ -241,19 +265,8 @@ public sealed class BackupService
                 $"Refs restored but HEAD could not be repositioned: {head.FirstError}",
                 RefsRestored: true);
 
-        var wasDirty = false;
-        var discardedCount = 0;
-        if (snapshot.HeadObjectId.Length > 0 && !await IsBareAsync(handle.RepoPath, ct))
+        if (resetsWorktree)
         {
-            // The reset is an explicit, backup-preceded recovery, but it silently discards any
-            // uncommitted work; count that first so a confirm UI can warn before it happens.
-            var dirty = await _git.RunAsync(handle.RepoPath, ["status", "--porcelain"], ct, RefTimeout);
-            if (dirty.Success)
-            {
-                discardedCount = dirty.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-                wasDirty = discardedCount > 0;
-            }
-
             var reset = await _git.RunAsync(handle.RepoPath, ["reset", "--hard", snapshot.HeadObjectId], ct, BundleTimeout);
             if (!reset.Success)
                 return new RestoreResult(false, $"Refs restored but working-tree reset failed: {reset.FirstError}",

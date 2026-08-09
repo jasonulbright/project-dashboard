@@ -60,7 +60,7 @@ public class BackupServiceTests
         await repo.GitAsync("branch", "stray");
         Assert.NotEqual(before, await repo.RefStateAsync());
 
-        var result = await service.RestoreAsync(handle);
+        var result = await service.RestoreAsync(handle, allowDirty: false);
         Assert.True(result.Success, result.Message);
 
         Assert.Equal(before, await repo.RefStateAsync());
@@ -83,7 +83,7 @@ public class BackupServiceTests
 
         File.WriteAllText(handle.BundlePath, "not a valid git bundle");
 
-        var result = await service.RestoreAsync(handle);
+        var result = await service.RestoreAsync(handle, allowDirty: false);
         Assert.False(result.Success);
         Assert.Contains("verification", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(mutated, await repo.RefStateAsync());
@@ -116,7 +116,7 @@ public class BackupServiceTests
             System.Text.Json.JsonSerializer.Serialize(snapshot,
                 new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
-        var result = await service.RestoreAsync(handle);
+        var result = await service.RestoreAsync(handle, allowDirty: false);
 
         Assert.False(result.Success);
         Assert.Contains("reconciliation", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -156,7 +156,7 @@ public class BackupServiceTests
         // refs/heads/feature moves to main's tip after the restore read the current layout, so
         // the value its reconciliation was built against is stale by the time it commits.
         var racing = new BackupService(new MovesRefBeforeRefTransaction(repo.Path, "feature", "main"), new SettingsService());
-        var result = await racing.RestoreAsync(handle);
+        var result = await racing.RestoreAsync(handle, allowDirty: false);
 
         Assert.False(result.Success);
         Assert.Contains("reconciliation", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -196,7 +196,7 @@ public class BackupServiceTests
         var mutated = await repo.RefStateAsync();
 
         var blind = new BackupService(new UnreadableRefLayoutGitService(), new SettingsService());
-        var result = await blind.RestoreAsync(handle);
+        var result = await blind.RestoreAsync(handle, allowDirty: false);
 
         Assert.False(result.Success);
         Assert.False(result.RefsRestored);
@@ -216,13 +216,36 @@ public class BackupServiceTests
         repo.Write("file.txt", "dirty\n");
         repo.Write("scratch.txt", "unstaged\n");
 
-        var result = await service.RestoreAsync(handle);
+        var result = await service.RestoreAsync(handle, allowDirty: true);
 
         Assert.True(result.Success, result.Message);
         Assert.True(result.WorktreeWasDirty);
         Assert.Equal(2, result.DiscardedChangeCount);
         // The reset actually ran — the dirty edit is gone.
         Assert.Equal("one\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "file.txt")));
+    }
+
+    [Fact]
+    public async Task Restore_DirtyWorktreeWithoutAllowDirty_RefusesAndKeepsTheUncommittedWork()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        repo.Write("file.txt", "dirty\n");
+        repo.Write("scratch.txt", "unstaged\n");
+        await repo.GitAsync("branch", "stray");
+        var mutated = await repo.RefStateAsync();
+
+        var result = await service.RestoreAsync(handle, allowDirty: false);
+
+        Assert.False(result.Success);
+        Assert.False(result.RefsRestored);
+        Assert.Contains("uncommitted change(s)", result.Message, StringComparison.Ordinal);
+        // Neither the edits nor the refs were touched.
+        Assert.Equal("dirty\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "file.txt")));
+        Assert.True(File.Exists(System.IO.Path.Combine(repo.Path, "scratch.txt")));
+        Assert.Equal(mutated, await repo.RefStateAsync());
     }
 
     [Fact]
