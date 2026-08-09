@@ -54,7 +54,9 @@ public static class ProcessRunner
     /// all-or-nothing `git update-ref --stdin` transaction — where argument passing cannot
     /// express the payload. The input is drained concurrently with stdout/stderr so a child
     /// that echoes while reading cannot deadlock; a write failure is logged, stdin is still
-    /// closed, and the child's own exit code reports the outcome.
+    /// closed, and the child's own exit code reports the outcome. The write is inside the
+    /// timeout: a child that never reads stdin blocks the write once the pipe buffer fills,
+    /// and that ends as TimedOut with the process tree killed, not as an unbounded wait.
     /// </summary>
     public static Task<ProcessResult> RunWithInputAsync(
         string fileName,
@@ -142,28 +144,40 @@ public static class ProcessRunner
         var (stdOutTask, stdOutDelivery) = BeginDrain(process.StandardOutput, onStdOutLine, fileName, "stdout");
         var (stdErrTask, stdErrDelivery) = BeginDrain(process.StandardError, onStdErrLine, fileName, "stderr");
 
-        // Feed stdin while the pipes drain, then close it so the child sees EOF. A write that
-        // faults (child already exited) is logged, not thrown: the exit code is the outcome.
-        if (standardInput is not null)
-        {
-            try { await process.StandardInput.WriteAsync(standardInput.AsMemory(), ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            { Log.Warn($"stdin write failed for {fileName}", ex); }
-            finally { try { process.StandardInput.Close(); } catch { /* already closed */ } }
-        }
-
+        // One budget covers the whole run. It is armed before stdin because a child that never
+        // reads fills the pipe buffer and blocks the write: on the caller's token alone that
+        // write outlives every timeout the caller set.
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(effectiveTimeout);
 
         var timedOut = false;
-        try
+
+        // Feed stdin while the pipes drain, then close it so the child sees EOF. A write that
+        // faults (child already exited) is logged, not thrown: the exit code is the outcome.
+        if (standardInput is not null)
         {
-            await process.WaitForExitAsync(timeoutCts.Token);
+            try { await process.StandardInput.WriteAsync(standardInput.AsMemory(), timeoutCts.Token); }
+            catch (OperationCanceledException) { timedOut = true; }
+            catch (Exception ex) { Log.Warn($"stdin write failed for {fileName}", ex); }
+
+            // Closing flushes what the writer still holds, and a flush into a pipe nobody reads
+            // blocks exactly as the write did. On the timeout path the kill below breaks the
+            // pipe first, so the close there fails fast instead.
+            if (!timedOut)
+                await CloseStdInAsync(process);
         }
-        catch (OperationCanceledException)
+
+        if (!timedOut)
         {
-            timedOut = true;
+            try { await process.WaitForExitAsync(timeoutCts.Token); }
+            catch (OperationCanceledException) { timedOut = true; }
+        }
+
+        if (timedOut)
+        {
             try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            if (standardInput is not null)
+                await CloseStdInAsync(process);
             try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* reaped or stuck */ }
         }
 
@@ -213,6 +227,23 @@ public static class ProcessRunner
         ct.ThrowIfCancellationRequested();
 
         return new ProcessResult(timedOut ? -1 : process.ExitCode, stdOut, stdErr, timedOut);
+    }
+
+    /// <summary>
+    /// Closes the child's stdin under a bound. The close flushes, and a descendant that
+    /// inherited the read handle can leave that flush blocked with no pipe left to drain it,
+    /// so the close never runs inline on the result path.
+    /// </summary>
+    private static async Task CloseStdInAsync(Process process)
+    {
+        try
+        {
+            await Task.Run(() => process.StandardInput.Close()).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch
+        {
+            // Already closed, broken by the kill, or held open by an escaped descendant.
+        }
     }
 
     /// <summary>

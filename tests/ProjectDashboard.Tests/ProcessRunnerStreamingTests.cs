@@ -149,6 +149,43 @@ public sealed class ProcessRunnerStreamingTests
     }
 
     [Fact]
+    public async Task StdInWriteToAChildThatNeverReads_TimesOutInsteadOfBlockingForever()
+    {
+        // The payload exceeds any pipe buffer, so the write cannot complete until the child
+        // reads — and this child never does. Without the timeout covering the write phase the
+        // call blocks past every budget the caller set.
+        var payload = new string('x', 4 * 1024 * 1024);
+        var sw = Stopwatch.StartNew();
+
+        var result = await ProcessRunner.RunWithInputAsync(
+            Pwsh,
+            Ps("Start-Sleep -Seconds 120"),
+            payload,
+            workingDirectory: null,
+            timeout: TimeSpan.FromSeconds(10));
+
+        sw.Stop();
+        Assert.True(result.TimedOut);
+        Assert.False(result.Success);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(60), $"took {sw.Elapsed}; the stdin write outlived the budget");
+    }
+
+    [Fact]
+    public async Task StdInWriteToAChildThatReads_StillDeliversEveryByteAndExitsClean()
+    {
+        var result = await ProcessRunner.RunWithInputAsync(
+            Pwsh,
+            Ps("$in = [Console]::In.ReadToEnd(); [Console]::Out.Write($in.Length)"),
+            new string('y', 256 * 1024),
+            workingDirectory: null,
+            timeout: TimeSpan.FromSeconds(60));
+
+        Assert.True(result.Success, result.FirstError);
+        Assert.False(result.TimedOut);
+        Assert.Equal((256 * 1024).ToString(), result.StdOut.Trim());
+    }
+
+    [Fact]
     public async Task MissingExecutable_ReturnsFailedResultWithoutThrowingOrStreaming()
     {
         var callbackFired = false;
