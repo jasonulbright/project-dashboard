@@ -374,8 +374,10 @@ public partial class ProjectDetailViewModel
         }
 
         // The prune measures staleness again for itself, so the preview is what was offered and
-        // not what runs. The count reported is the difference the list actually shows afterwards.
-        var before = RemoteBranches.ToList();
+        // not what runs. The count reported is the difference between the refs on disk either
+        // side of it: the pane's list was read when the tab loaded, and anything removed outside
+        // this app since then would be counted here as a removal this prune performed.
+        var before = await RefsToCountPruneAgainstAsync(repo, gen);
         var ok = await RunOp(r => _gitService.PruneRemoteAsync(r, remote.Name), $"Prune {remote.Name}", repo, gen);
         if (!IsCurrent(gen)) return;
 
@@ -389,10 +391,37 @@ public partial class ProjectDetailViewModel
         await LoadBranches();
         if (!IsCurrent(gen)) return;
 
+        // A count that could not be measured is left unstated rather than guessed at from the
+        // pane, which is the list the fresh read exists to avoid.
+        if (before is null)
+        {
+            RemotesStatusText =
+                $"Pruned {remote.Name}. How many refs went could not be counted — the list to measure it " +
+                "against could not be read. Nothing on the remote changed, and no local branch was deleted.";
+            return;
+        }
         var dropped = before.Count(r => !RemoteBranches.Contains(r));
         RemotesStatusText =
             $"Pruned {dropped} remote-tracking branch{(dropped == 1 ? "" : "es")} under {remote.Name}. " +
             "Nothing on the remote changed, and no local branch was deleted.";
+    }
+
+    /// <summary>
+    /// The remote-tracking refs on disk right now, or null when that could not be read. Null and
+    /// an empty list are different answers: the second says the prune had nothing to drop.
+    /// </summary>
+    private async Task<List<string>?> RefsToCountPruneAgainstAsync(string repo, int gen)
+    {
+        try
+        {
+            var read = await _gitService.GetRemoteBranchesAsync(repo);
+            return IsCurrent(gen) && !read.HasError ? read.Branches : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not read the remote-tracking refs of {repo} before pruning", ex);
+            return null;
+        }
     }
 
     /// <summary>

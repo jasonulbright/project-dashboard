@@ -402,6 +402,61 @@ public class RemotesSurfaceTests
         Assert.Contains("main", await Git.RunAsync(bare.Path, "branch", "--list"));
     }
 
+    /// <summary>
+    /// The count names what this prune dropped. Measured against the list the pane was holding,
+    /// a ref something outside the app removed since the tab loaded is counted as this prune's
+    /// work — a removal it is reporting but never performed.
+    /// </summary>
+    [Fact]
+    public async Task PruningARemote_CountsWhatItDropped_NotWhatWentBeforeItRan()
+    {
+        var (seed, bare, clone) = await StaleTrackingRefsAsync("prune-stale-count");
+        using var _ = seed;
+        using var __ = bare;
+        using var ___ = clone;
+
+        var vm = await OpenedOn(clone);
+        Assert.Contains("origin/gone", vm.RemoteBranches);
+        Assert.Contains("origin/also-gone", vm.RemoteBranches);
+
+        // Something outside the app drops one of the two between the tab's read and the click.
+        await clone.GitAsync("update-ref", "-d", "refs/remotes/origin/also-gone");
+
+        await vm.PruneRemoteCommand.ExecuteAsync(null);
+
+        Assert.Contains("Pruned 1 remote-tracking branch under origin", vm.RemotesStatusText);
+        Assert.DoesNotContain("origin/gone", vm.RemoteBranches);
+    }
+
+    /// <summary>
+    /// Without the list to measure against there is no count to report. Falling back to the
+    /// pane's own list is what produces a number naming removals this prune never made, so the
+    /// prune is reported as done and the count is left unstated.
+    /// </summary>
+    [Fact]
+    public async Task PruningARemote_WhenTheRefsCannotBeCounted_ReportsThePruneWithoutANumber()
+    {
+        var (seed, bare, clone) = await StaleTrackingRefsAsync("prune-uncountable");
+        using var _ = seed;
+        using var __ = bare;
+        using var ___ = clone;
+
+        var vm = new RemotesViewModel(git: new RemoteReadRefusingGit("remote-branches"));
+        vm.ConfirmPrompt = vm.ConfirmAsync;
+        await vm.SetProjectAsync(ProjectFor(clone));
+        await vm.LoadBranchesTabCommand.ExecuteAsync(null);
+
+        await vm.PruneRemoteCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains("Pruned origin", vm.RemotesStatusText);
+        Assert.Contains("could not be counted", vm.RemotesStatusText);
+        Assert.DoesNotContain("Pruned 0", vm.RemotesStatusText);
+        // The prune itself ran: the stale refs are gone from disk.
+        Assert.DoesNotContain("origin/gone",
+            await clone.GitAsync("for-each-ref", "--format=%(refname:short)", "refs/remotes"));
+    }
+
     [Fact]
     public async Task PruningARemote_CancelledAtTheConfirmation_LeavesTheStaleRefsInPlace()
     {
