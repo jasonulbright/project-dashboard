@@ -40,6 +40,20 @@ public sealed class AppSettings
     public string LastUpdateCheckStatus { get; set; } = "";
 
     /// <summary>
+    /// The release tag the last answer found newer than the build that recorded it, or empty
+    /// when the last answer found none. A found release is a fact about the repository, not
+    /// about the process that read it, so the notice survives a relaunch inside the cooldown.
+    /// </summary>
+    public string LastUpdateTagName { get; set; } = "";
+
+    /// <summary>
+    /// The link recorded alongside <see cref="LastUpdateTagName"/>. Editable text on disk that
+    /// would reach the shell, so it is re-validated against the pinned releases path every time
+    /// it is read back — never trusted because this app wrote it.
+    /// </summary>
+    public string LastUpdateReleaseUrl { get; set; } = "";
+
+    /// <summary>
     /// Full paths of repos pinned to the front of the card grid. Paths, not folder
     /// names: two roots can hold folders of the same name.
     /// </summary>

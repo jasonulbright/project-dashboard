@@ -75,6 +75,9 @@ public class UpdateCheckServiceTests
         await checker.CheckAsync(manual: true);
 
         Assert.Null(checker.Available);
+        // Cleared on disk too, or the next launch's cooldown would replay it.
+        Assert.Equal("", settings.Load().LastUpdateTagName);
+        Assert.Equal("", settings.Load().LastUpdateReleaseUrl);
     }
 
     /// <summary>
@@ -111,6 +114,145 @@ public class UpdateCheckServiceTests
         Assert.Equal(0, checker.Reads);
         Assert.Equal(UpdateOutcome.Cooldown, result.Outcome);
         Assert.Equal("Up to date (v2.0.1.0).", result.Status);
+        // The last answer found nothing, so there is nothing for the cooldown to bring back.
+        Assert.Null(checker.Available);
+    }
+
+    /// <summary>
+    /// The offer has to outlive the process that found it. The cooldown suppresses the read,
+    /// so a relaunch inside it has only the record to go on — and a notice that vanished for
+    /// the next 24 hours after a confirmed sighting is the surface this feature is.
+    /// </summary>
+    [Fact]
+    public async Task ARelaunchInsideTheCooldown_StillOffersTheUpdateTheLastCheckFound()
+    {
+        var settings = Persisted(new AppSettings());
+        var found = new StubbedUpdateCheck(settings, Ok(Release("v9.0.0")));
+        await found.CheckAsync(manual: false);
+        Assert.NotNull(found.Available);
+
+        // A second process over the same settings file: nothing is carried between them.
+        var relaunched = new StubbedUpdateCheck(settings, Ok(Release("v9.0.0")));
+        var announced = 0;
+        relaunched.AvailableChanged += () => announced++;
+
+        var result = await relaunched.CheckAsync(manual: false);
+
+        Assert.Equal(0, relaunched.Reads);
+        Assert.Equal(UpdateOutcome.Cooldown, result.Outcome);
+        Assert.Equal("v9.0.0", relaunched.Available!.TagName);
+        Assert.Equal(
+            "https://github.com/jasonulbright/project-dashboard/releases/tag/v9.0.0",
+            relaunched.Available.ReleaseUrl);
+        Assert.Equal(result.Update, relaunched.Available);
+        // The dashboard is built before the check runs, so the restore has to announce itself.
+        Assert.Equal(1, announced);
+    }
+
+    /// <summary>
+    /// The record is on disk in a file a user can edit, and its link would reach the shell.
+    /// Writing it does not make it trusted: it is measured against the pinned releases path
+    /// again on the way back in.
+    /// </summary>
+    [Theory]
+    [InlineData("https://evil.example/jasonulbright/project-dashboard/releases/tag/v9.0.0")]
+    [InlineData("https://github.com@evil.example/jasonulbright/project-dashboard/releases")]
+    [InlineData("file:///C:/Windows/System32/cmd.exe")]
+    [InlineData("")]
+    public async Task AHandEditedReleaseLinkInTheRecord_IsRefusedOnTheWayBack(string hostile)
+    {
+        var settings = Persisted(Recorded("v9.0.0", hostile));
+        var checker = new StubbedUpdateCheck(settings, Ok(Release("v9.0.0")));
+
+        var result = await checker.CheckAsync(manual: false);
+
+        Assert.Equal(UpdateOutcome.Cooldown, result.Outcome);
+        Assert.Null(checker.Available);
+        Assert.Null(result.Update);
+    }
+
+    /// <summary>
+    /// The reader may have installed the release between two sessions. The recorded tag is
+    /// re-compared against the running build rather than replayed, so an offer the build has
+    /// caught up with clears instead of standing.
+    /// </summary>
+    [Fact]
+    public async Task ARecordedUpdateTheBuildHasCaughtUpWith_DoesNotComeBack()
+    {
+        string[] stale =
+        [
+            AppVersionInfo.Current.ToString(),
+            $"{AppVersionInfo.Current.Major}.{AppVersionInfo.Current.Minor}.0",
+            "0.0.1",
+            "not-a-version"
+        ];
+
+        foreach (var tag in stale)
+        {
+            var settings = Persisted(Recorded(tag, ReleaseUrlFor(tag)));
+            var checker = new StubbedUpdateCheck(settings, Ok(Release("v9.0.0")));
+
+            await checker.CheckAsync(manual: false);
+
+            Assert.True(checker.Available is null, $"a recorded '{tag}' came back against {AppVersionInfo.Display}");
+        }
+    }
+
+    /// <summary>
+    /// A check that could not read anything is the case a recorded offer exists for: the
+    /// cooldown has passed, GitHub is unreachable, and the last answer is still the best one.
+    /// </summary>
+    [Fact]
+    public async Task AFailedCheckPastTheCooldown_StillOffersTheRecordedUpdate()
+    {
+        var settings = Persisted(Recorded("v9.0.0", ReleaseUrlFor("v9.0.0"), aged: true));
+        var checker = new StubbedUpdateCheck(settings, ReleaseFetch.Unreachable("The check timed out."));
+
+        var result = await checker.CheckAsync(manual: false);
+
+        Assert.Equal(1, checker.Reads);
+        Assert.Equal(UpdateOutcome.Failed, result.Outcome);
+        Assert.Equal("v9.0.0", checker.Available!.TagName);
+    }
+
+    /// <summary>
+    /// With the toggle off nothing is read, and nothing is replayed either — an offer the
+    /// record still holds is not a reason to show a notice the reader turned off.
+    /// </summary>
+    [Fact]
+    public async Task WithTheToggleOff_ARecordedUpdateIsNotReplayed()
+    {
+        var recorded = Recorded("v9.0.0", ReleaseUrlFor("v9.0.0"));
+        recorded.EnableUpdateCheck = false;
+        var settings = Persisted(recorded);
+        var checker = new StubbedUpdateCheck(settings, Ok(Release("v9.0.0")));
+
+        await checker.CheckAsync(manual: false);
+
+        Assert.Equal(0, checker.Reads);
+        Assert.Null(checker.Available);
+    }
+
+    /// <summary>
+    /// A relaunch inside the cooldown is where the notice has to reappear, so it is asserted
+    /// on the dashboard and not only on the checker.
+    /// </summary>
+    [Fact]
+    public async Task ARelaunchInsideTheCooldown_StillShowsTheNoticeOnTheDashboard()
+    {
+        var (dashboard, _) = await NewDashboardAsync(
+            "update-relaunch",
+            Ok(Release("v9.0.0")),
+            seed: settings =>
+            {
+                settings.LastUpdateCheckUtc = DateTimeOffset.UtcNow.AddHours(-1);
+                settings.LastUpdateCheckStatus = "Version v9.0.0 is available.";
+                settings.LastUpdateTagName = "v9.0.0";
+                settings.LastUpdateReleaseUrl = ReleaseUrlFor("v9.0.0");
+            });
+
+        Assert.True(dashboard.UpdateBannerVisible);
+        Assert.Contains("v9.0.0", dashboard.UpdateBannerText);
     }
 
     [Fact]
@@ -377,6 +519,23 @@ public class UpdateCheckServiceTests
 
     private static ReleaseFetch Ok(string body) => new(200, body, null, null);
 
+    private static string ReleaseUrlFor(string tag) =>
+        $"https://github.com/jasonulbright/project-dashboard/releases/tag/{tag}";
+
+    /// <summary>
+    /// The record a previous session's check left behind. <paramref name="aged"/> puts the
+    /// stamp past the cooldown, which is where a check runs and can fail.
+    /// </summary>
+    private static AppSettings Recorded(string tag, string url, bool aged = false) => new()
+    {
+        LastUpdateCheckUtc = aged
+            ? DateTimeOffset.UtcNow - UpdateCheckService.LaunchCooldown - TimeSpan.FromMinutes(1)
+            : DateTimeOffset.UtcNow.AddHours(-1),
+        LastUpdateCheckStatus = $"Version {tag} is available.",
+        LastUpdateTagName = tag,
+        LastUpdateReleaseUrl = url
+    };
+
     private static string Release(
         string tag,
         string? url = null,
@@ -391,11 +550,11 @@ public class UpdateCheckServiceTests
     }
 
     private static async Task<(DashboardViewModel Dashboard, StubbedUpdateCheck Checker)> NewDashboardAsync(
-        string prefix, ReleaseFetch response)
+        string prefix, ReleaseFetch response, Action<AppSettings>? seed = null)
     {
         var root = TestEnv.NewDir(prefix);
         var settings = new SettingsService();
-        settings.Save(new AppSettings
+        var persisted = new AppSettings
         {
             ProjectsRootPath = root,
             // gh pointed at a nonexistent executable: discovery stays local and spawns no network.
@@ -403,7 +562,9 @@ public class UpdateCheckServiceTests
             EnableGitHubDiscovery = false,
             ExcludedDirectories = [],
             RefreshIntervalSeconds = 7200,
-        });
+        };
+        seed?.Invoke(persisted);
+        settings.Save(persisted);
 
         var checker = new StubbedUpdateCheck(settings, response);
         // Run before the dashboard exists: the launch check can finish first, and the

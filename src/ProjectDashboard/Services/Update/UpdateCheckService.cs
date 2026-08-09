@@ -94,9 +94,16 @@ public class UpdateCheckService : IHostedService
         if (!settings.EnableUpdateCheck)
             return new UpdateCheckResult(UpdateOutcome.Disabled, DisabledStatus);
 
+        // A found release is a fact about the repository, not about the process that read it.
+        // Publishing the record before anything else is read is what carries the notice across
+        // a relaunch inside the cooldown and across a check that cannot reach GitHub; an answer
+        // this run gets replaces it below.
+        var recorded = Hydrate(settings, AppVersionInfo.Current);
+        PublishAvailable(recorded);
+
         var now = DateTimeOffset.UtcNow;
         if (!manual && WithinCooldown(settings, now))
-            return new UpdateCheckResult(UpdateOutcome.Cooldown, LastOutcomeStatus(settings));
+            return new UpdateCheckResult(UpdateOutcome.Cooldown, LastOutcomeStatus(settings), recorded);
 
         ReleaseFetch fetch;
         try
@@ -128,6 +135,38 @@ public class UpdateCheckService : IHostedService
         // it as inside the cooldown would suppress checks until the clock caught up.
         if (last > now) return false;
         return now - last < LaunchCooldown;
+    }
+
+    /// <summary>
+    /// The offer a previous answer recorded, re-derived rather than replayed. Two things are
+    /// checked again because neither holds by having once held:
+    /// the link is editable text on disk that would reach the shell, so it is measured against
+    /// the pinned releases path again; and the reader may have installed the release between
+    /// sessions, so the tag is ordered against the build that is running now. Either failing
+    /// yields no offer, which is the same state as never having found one.
+    /// </summary>
+    internal static AvailableUpdate? Hydrate(AppSettings settings, Version current)
+    {
+        var tag = settings.LastUpdateTagName;
+        if (tag.Length == 0) return null;
+        if (ReleaseVersion.Compare(tag, current) != VersionComparison.Newer) return null;
+
+        if (!ReleaseLink.TryNormalize(settings.LastUpdateReleaseUrl, out var target))
+        {
+            Log.Warn("Refused a recorded update link that is not under this project's releases page.");
+            return null;
+        }
+
+        return new AvailableUpdate(tag, target);
+    }
+
+    private void PublishAvailable(AvailableUpdate? update)
+    {
+        if (Equals(Available, update)) return;
+
+        Available = update;
+        try { AvailableChanged?.Invoke(); }
+        catch (Exception ex) { Log.Warn("Update-available subscriber threw", ex); }
     }
 
     private static string LastOutcomeStatus(AppSettings settings) =>
@@ -208,23 +247,26 @@ public class UpdateCheckService : IHostedService
                 break;
         }
 
-        // Only an outcome that read an answer republishes: a refused or unreachable check
-        // knows nothing, and clearing an offer on it would drop a real one. An answer that
-        // names no newer version clears the offer, so a release withdrawn between two checks
-        // does not leave a notice pointing at a page that no longer describes it.
-        if (result.Outcome is UpdateOutcome.UpdateAvailable or UpdateOutcome.UpToDate or UpdateOutcome.Unknown
-            && !Equals(Available, result.Update))
-        {
-            Available = result.Update;
-            try { AvailableChanged?.Invoke(); }
-            catch (Exception ex) { Log.Warn("Update-available subscriber threw", ex); }
-        }
+        // Only an outcome that read an answer supersedes the previous one: a refused or
+        // unreachable check knows nothing, and clearing an offer on it would drop a real one.
+        // An answer that names no newer version does clear it, so a release withdrawn between
+        // two checks leaves no notice pointing at a page that no longer describes it.
+        var answered = result.Outcome
+            is UpdateOutcome.UpdateAvailable or UpdateOutcome.UpToDate or UpdateOutcome.Unknown;
+        if (answered) PublishAvailable(result.Update);
 
         try
         {
             var settings = _settings.Load();
             settings.LastUpdateCheckUtc = now;
             settings.LastUpdateCheckStatus = result.Status;
+            if (answered)
+            {
+                // Written together: a tag with a stale link, or a link with a stale tag, is a
+                // record that would offer one release under another's address.
+                settings.LastUpdateTagName = result.Update?.TagName ?? "";
+                settings.LastUpdateReleaseUrl = result.Update?.ReleaseUrl ?? "";
+            }
             if (!_settings.Save(settings))
                 Log.Warn("Update check could not record its outcome; the cooldown will not hold.");
         }
