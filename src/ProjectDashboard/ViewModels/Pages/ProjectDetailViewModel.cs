@@ -108,8 +108,66 @@ public partial class ProjectDetailViewModel : ObservableObject
         NoteLines = new ObservableCollection<NoteLine>(lines);
     }
 
+    /// <summary>Shown under the notes card; nothing else on the page reports a notes write.</summary>
+    [ObservableProperty] private string _notesStatusText = "";
+
+    internal const string NotesSaveFailed =
+        "Notes not saved — the write failed, so this text is only in the editor. Try again.";
+
+    public string NotesEditLabel => IsEditingNotes ? "Save" : "Edit";
+
+    public string NotesEditName =>
+        IsEditingNotes ? "Save the project notes" : "Edit the project notes";
+
+    partial void OnIsEditingNotesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(NotesEditLabel));
+        OnPropertyChanged(nameof(NotesEditName));
+    }
+
+    /// <summary>
+    /// Opens the notes editor, and on the way out writes what was typed. The editor is the only
+    /// place notes exist until this runs, so a close that skipped the write would drop them.
+    /// A write that did not land keeps the editor open over the text it holds.
+    /// </summary>
     [RelayCommand]
-    private void ToggleEditNotes() => IsEditingNotes = !IsEditingNotes;
+    private async Task ToggleEditNotes()
+    {
+        if (!IsEditingNotes)
+        {
+            NotesStatusText = "";
+            IsEditingNotes = true;
+            return;
+        }
+
+        if (Project is null)
+        {
+            IsEditingNotes = false;
+            return;
+        }
+
+        // Built from the manifest the project holds rather than from the metadata editor beside
+        // it: closing the notes editor writes notes, never a metadata edit nobody saved.
+        var stored = Project.Manifest;
+        var manifest = new ProjectManifest
+        {
+            Description = stored.Description,
+            ProjectType = stored.ProjectType,
+            Status = stored.Status,
+            Category = stored.Category,
+            ValidationSchedule = stored.ValidationSchedule,
+            Notes = Notes
+        };
+
+        if (!await PersistManifestAsync(manifest))
+        {
+            NotesStatusText = NotesSaveFailed;
+            return;
+        }
+
+        NotesStatusText = "Notes saved.";
+        IsEditingNotes = false;
+    }
 
     public Task SetProjectAsync(ProjectInfo project)
     {
@@ -294,6 +352,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         Issues = new ObservableCollection<GitHubIssue>(p.Issues ?? []);
 
         ManifestStatusText = "";
+        NotesStatusText = "";
         ManifestDescription = p.Manifest.Description;
         SelectedProjectType = p.Manifest.ProjectType;
         SelectedStatus = p.Manifest.Status;

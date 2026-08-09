@@ -132,6 +132,95 @@ public class ProjectMetadataEditorTests
         Assert.Contains("{Binding ManifestDescription, UpdateSourceTrigger=PropertyChanged}", markup);
     }
 
+    // ── Notes ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Nothing else on the page persists notes: before the write moved onto the close, the text
+    /// lived in the editor until the next project load overwrote it from the stored manifest.
+    /// </summary>
+    [Fact]
+    public async Task LeavingTheNotesEditor_WritesWhatWasTyped()
+    {
+        var vm = VmOn(RealDiscovery(), new ProjectManifest());
+
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        Assert.True(vm.IsEditingNotes);
+        vm.Notes = "TASK: wire the stash preview\n";
+
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsEditingNotes);
+        Assert.Equal("Notes saved.", vm.NotesStatusText);
+        Assert.True(new ManifestStore().TryGet(RepoPath, out var stored));
+        Assert.Equal("TASK: wire the stash preview\n", stored!.Notes);
+        Assert.Equal(1, vm.Project!.TaskCount);
+    }
+
+    /// <summary>
+    /// A close that swallowed the failure would drop the typed text with the editor, and the
+    /// reader would find the old notes back on the next load with nothing having said why.
+    /// </summary>
+    [Fact]
+    public async Task LeavingTheNotesEditor_WhenTheWriteFails_StaysOpenOverTheTextAndSaysSo()
+    {
+        var vm = VmOn(new RefusingDiscoveryService(), new ProjectManifest { Notes = "old\n" });
+
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "BUG: not saved yet\n";
+
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsEditingNotes);
+        Assert.Equal("BUG: not saved yet\n", vm.Notes);
+        Assert.Equal(ProjectDetailViewModel.NotesSaveFailed, vm.NotesStatusText);
+        Assert.Equal("old\n", vm.Project!.Manifest.Notes);
+    }
+
+    /// <summary>
+    /// The metadata card has its own Save. Closing the notes editor must not carry a metadata
+    /// edit nobody sanctioned into the store with it.
+    /// </summary>
+    [Fact]
+    public async Task LeavingTheNotesEditor_LeavesUnsavedMetadataEditsWhereTheyAre()
+    {
+        var vm = VmOn(RealDiscovery(), new ProjectManifest { Category = "Uncategorized", Description = "kept" });
+
+        vm.SelectedCategory = "Tools";
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+        vm.Notes = "PLAN: something\n";
+        await vm.ToggleEditNotesCommand.ExecuteAsync(null);
+
+        Assert.True(new ManifestStore().TryGet(RepoPath, out var stored));
+        Assert.Equal("PLAN: something\n", stored!.Notes);
+        Assert.Equal("Uncategorized", stored.Category);
+        Assert.Equal("kept", stored.Description);
+        // The pending metadata edit is still in the editor for its own Save.
+        Assert.Equal("Tools", vm.SelectedCategory);
+    }
+
+    [Fact]
+    public void TheNotesButton_NamesWhatItDoesInEitherState()
+    {
+        var vm = VmOn(RealDiscovery(), new ProjectManifest());
+
+        Assert.Equal("Edit", vm.NotesEditLabel);
+        Assert.Equal("Edit the project notes", vm.NotesEditName);
+
+        vm.IsEditingNotes = true;
+
+        Assert.Equal("Save", vm.NotesEditLabel);
+        Assert.Equal("Save the project notes", vm.NotesEditName);
+    }
+
+    [Fact]
+    public void TheNotesOutcome_IsRenderedBesideTheEditor()
+    {
+        var markup = RepoSource.Read("src/ProjectDashboard/Views/Pages/ProjectDetailPage.xaml");
+
+        Assert.Contains("{Binding NotesStatusText}", markup);
+        Assert.Contains(@"Content=""{Binding NotesEditLabel}""", markup);
+    }
+
     [Fact]
     public async Task SwitchingProjects_ClearsTheSaveOutcomeOfThePreviousOne()
     {

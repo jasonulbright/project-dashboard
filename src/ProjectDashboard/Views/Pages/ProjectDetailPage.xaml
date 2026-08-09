@@ -548,6 +548,7 @@
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
                                     <DockPanel Grid.Row="0" Margin="0,0,0,8">
                                         <TextBlock DockPanel.Dock="Left" Text="Notes" FontWeight="SemiBold" FontSize="14"
@@ -555,23 +556,10 @@
                                         <ui:Button DockPanel.Dock="Right" HorizontalAlignment="Right"
                                                    Padding="6,2" FontSize="12"
                                                    Icon="{ui:SymbolIcon Edit24}"
+                                                   Content="{Binding NotesEditLabel}"
                                                    Command="{Binding ToggleEditNotesCommand}"
-                                                   AutomationProperties.Name="Edit the project notes">
-                                            <ui:Button.Content>
-                                                <TextBlock>
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Text" Value="Edit" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsEditingNotes}" Value="True">
-                                                                    <Setter Property="Text" Value="Done" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                            </ui:Button.Content>
-                                        </ui:Button>
+                                                   ToolTip="Notes are saved when the editor closes"
+                                                   AutomationProperties.Name="{Binding NotesEditName}" />
                                     </DockPanel>
                                     <ItemsControl Grid.Row="1" ItemsSource="{Binding NoteLines}">
                                         <ItemsControl.Style>
@@ -620,6 +608,20 @@
                                             </Style>
                                         </TextBox.Style>
                                     </TextBox>
+                                    <TextBlock Grid.Row="2" Text="{Binding NotesStatusText}" FontSize="12"
+                                               Margin="0,8,0,0" TextWrapping="Wrap"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding NotesStatusText}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                 </Grid>
                             </Border>
                         </Grid>
