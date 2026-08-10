@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.1.0] - 2026-08-10
+
+Deeper repository management -- on-demand and deep-tier backups, an update check, richer GitHub depth, multi-root discovery, and a safety rollup.
+
+### Added
+- **Update check** -- on launch (24h cooldown, off switch in Settings) the app checks the latest GitHub release and shows a dismissible notice linking to the releases page; nothing downloads or installs itself
+- **Backups** -- take a backup on demand, verify a bundle without restoring, delete one (sizes and state named), a deep capture tier that also bundles reflog-only commits and every stash entry, and a retention control with storage total and Prune now
+- **Operation history** -- a per-repository local record of every operation the app ran (rewrites, surgery, force pushes, deep cleans, restores, working/branch/remote/tag ops, card and Sync All runs), with links to the backups they took
+- **Safety page** -- a portfolio rollup of interrupted operations, unreadable repositories, backups, reflog-only commits, diverged branches, missing remotes and uncommitted work, in explicit cost tiers that never run expensive checks unasked
+- **Health tab** -- per-repository checks: git version, lock files, store size, signing and hooks config, LFS, remotes; on demand: fsck (connectivity and strict, separately), remote reachability, backup verification, largest objects with a purge hand-off
+- **Multiple project roots and nested discovery** -- ordered roots with per-root exclusions, depth and status; repositories found below the top level; unreadable folders reported, never read as empty
+- **Metadata follows a moved repository** -- saved type/status/category/notes re-key by repository identity when a folder moves or renames; ambiguous matches never adopt; orphaned records listed in Settings for explicit deletion
+- **Search scopes** -- palette and new Ctrl+F in-repo search over tracked, tracked+untracked, or all files, with per-row scope labels and honest budgets
+- **GitHub list depth** -- state and search filters with load-more paging on Issues and Pull Requests; milestone filter and milestone on issue creation; workflow run filters, full run logs (search, copy, save), job-count disclosure; every capped list now pages or names its cap
+- **Repository administration** -- rename (with a local remote-URL update offer), archive/unarchive, fork sync with divergence shown; remote branch checkout, remote prune with preview, tag push (single or all, protected-tag refusals named)
+- **Signing choice** -- a repository that signs commits or tags asks once per session: sign (with a longer budget and honest pinentry advice) or proceed unsigned; the app never strips a signature on its own
+- **Account identity** -- the active GitHub CLI account and host shown per repository, mismatches flagged, sign-in commands shown as text and never run
+- **Ignore from Changes** -- ignore a file or its extension from the working list, glob-safe, with honest refusals for tracked files
+- **Diff pane follows the working tree** -- an external edit to the shown file re-renders it, keeping the reader's hunk
+
+### Changed
+- Ref reconciliation, backup capture, and restore hardened further; every list, picker, and footer states what was read, what was cut short, and what failed, rather than presenting partial answers as complete
+
 ## [2.0.1] - 2026-08-09
 
 A defect release -- the 2.0.0 bugs a user could actually hit, the safety machinery under backups and restores hardened, and a download you can verify before you install it.
