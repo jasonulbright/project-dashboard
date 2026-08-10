@@ -492,6 +492,36 @@ public class GitHubListArgBuilderTests
     public void AStateQualifierOutsideThePhrase_StillNamesTheState(string search)
         => Assert.True(GitHubService.SearchSetsState(search));
 
+    /// <summary>
+    /// What a failed read can tell its reader. gh answers a malformed search with an empty result
+    /// rather than an error, so the failures that do reach here are the ones only gh can explain —
+    /// a connection, a repository, a sign-in — and its own first line is what says which.
+    /// </summary>
+    [Fact]
+    public void AFailure_CarriesGhsFirstLine()
+        => Assert.Equal("error connecting to nonexistent.invalid",
+            GitHubService.FailureText(new ProcessResult(1,
+                "", "\nerror connecting to nonexistent.invalid\ncheck your internet connection\n", TimedOut: false)));
+
+    [Fact]
+    public void ATimeout_SaysSoRatherThanCarryingASilentStderr()
+        => Assert.Equal("The GitHub CLI did not answer in time.",
+            GitHubService.FailureText(new ProcessResult(1, "", "", TimedOut: true)));
+
+    [Fact]
+    public void AFailureThatSaidNothing_CarriesNothing()
+        => Assert.Equal("", GitHubService.FailureText(new ProcessResult(1, "", "   ", TimedOut: false)));
+
+    /// <summary>The line lands in a status row beside the app's own sentence, so it is capped.</summary>
+    [Fact]
+    public void AVeryLongFailureLine_IsCut()
+    {
+        var text = GitHubService.FailureText(new ProcessResult(1, "", new string('x', 500), TimedOut: false));
+
+        Assert.Equal(201, text.Length);
+        Assert.EndsWith("…", text);
+    }
+
     [Fact]
     public void AQuotedPhrase_IsOneTerm()
         => Assert.Equal(["title:\"a state:closed b\"", "label:bug"],

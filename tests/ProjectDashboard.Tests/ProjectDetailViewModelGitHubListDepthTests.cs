@@ -35,6 +35,10 @@ public class ProjectDetailViewModelGitHubListDepthTests
     private static GitHubService.IssuePage IssuePage(int count, int limit) =>
         new(IssueRows(count), count >= limit, limit);
 
+    /// <summary>A successful read of one page — the shape the seam hands back.</summary>
+    private static GitHubService.ListRead<GitHubService.IssuePage> Read(GitHubService.IssuePage page) =>
+        new(page, "");
+
     private static GitHubService.PullRequestPage PullRequestPage(int count, int limit) =>
         new([.. Enumerable.Range(1, count).Select(n => new GitHubPullRequest { Number = n, Title = $"pr {n}" })],
             count >= limit, limit);
@@ -56,26 +60,32 @@ public class ProjectDetailViewModelGitHubListDepthTests
         public Func<GitHubService.GitHubListQuery, int, GitHubService.PullRequestPage?> PullRequestAnswer { get; set; } =
             (query, _) => PullRequestPage(0, query.Limit);
 
+        /// <summary>What gh said about a failed read; "" is a failure that said nothing.</summary>
+        public string ReadError { get; set; } = "";
+
         /// <summary>
         /// Hand-completed reads, in call order, for the cases that need a read left in flight while
         /// the test does something else.
         /// </summary>
-        public Queue<TaskCompletionSource<GitHubService.IssuePage?>> IssueGates { get; } = [];
+        public Queue<TaskCompletionSource<GitHubService.ListRead<GitHubService.IssuePage>>> IssueGates { get; } = [];
 
-        internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+        internal override Task<GitHubService.ListRead<GitHubService.IssuePage>> FetchIssuePageAsync(
             string slug, GitHubService.GitHubListQuery query)
         {
             IssueReads.Add(query);
-            return IssueGates.Count > 0
-                ? IssueGates.Dequeue().Task
-                : Task.FromResult(IssueAnswer(query, IssueReads.Count - 1));
+            if (IssueGates.Count > 0) return IssueGates.Dequeue().Task;
+            var page = IssueAnswer(query, IssueReads.Count - 1);
+            return Task.FromResult(new GitHubService.ListRead<GitHubService.IssuePage>(
+                page, page is null ? ReadError : ""));
         }
 
-        internal override Task<GitHubService.PullRequestPage?> FetchPullRequestPageAsync(
+        internal override Task<GitHubService.ListRead<GitHubService.PullRequestPage>> FetchPullRequestPageAsync(
             string slug, GitHubService.GitHubListQuery query)
         {
             PullRequestReads.Add(query);
-            return Task.FromResult(PullRequestAnswer(query, PullRequestReads.Count - 1));
+            var page = PullRequestAnswer(query, PullRequestReads.Count - 1);
+            return Task.FromResult(new GitHubService.ListRead<GitHubService.PullRequestPage>(
+                page, page is null ? ReadError : ""));
         }
     }
 
@@ -256,11 +266,11 @@ public class ProjectDetailViewModelGitHubListDepthTests
         await vm.SetProjectAsync(RemoteProject());
         await vm.IssuesPageLoad;
 
-        var gate = new TaskCompletionSource<GitHubService.IssuePage?>();
+        var gate = new TaskCompletionSource<GitHubService.ListRead<GitHubService.IssuePage>>();
         vm.IssueGates.Enqueue(gate);
         vm.LoadMoreIssuesCommand.Execute(null);
         vm.LoadMoreIssuesCommand.Execute(null);
-        gate.SetResult(IssuePage(200, 200));
+        gate.SetResult(Read(IssuePage(200, 200)));
         await vm.IssuesPageLoad;
 
         Assert.Equal([100, 200], vm.IssueReads.Select(q => q.Limit));
@@ -340,28 +350,61 @@ public class ProjectDetailViewModelGitHubListDepthTests
     {
         private int _reads;
 
-        internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+        internal override Task<GitHubService.ListRead<GitHubService.IssuePage>> FetchIssuePageAsync(
             string slug, GitHubService.GitHubListQuery query)
             => _reads++ == 0
-                ? Task.FromResult<GitHubService.IssuePage?>(IssuePage(query.Limit, query.Limit))
+                ? Task.FromResult(Read(IssuePage(query.Limit, query.Limit)))
                 : throw new InvalidOperationException("gh vanished mid-read");
     }
 
     /// <summary>
-    /// A read whose search GitHub rejected fails for a reason the CLI's sign-in state has nothing
-    /// to do with, and a message naming only the CLI sends the reader after the wrong thing.
+    /// gh answers a query it cannot make sense of with an empty result, not a failure, so a read
+    /// that failed while a search was set establishes nothing about that search. What it does have
+    /// is gh's own account of the failure, which names the cause the app cannot infer.
     /// </summary>
     [Fact]
-    public async Task AFailedSearch_NamesTheSearchRatherThanOnlyTheCli()
+    public async Task AFailedReadWithASearchSet_ReportsWhatFailedRatherThanBlamingTheSearch()
     {
-        var vm = new ListViewModel { IssueAnswer = (_, _) => null };
+        var vm = new ListViewModel
+        {
+            IssueAnswer = (_, _) => null,
+            ReadError = "error connecting to github.com"
+        };
         await vm.SetProjectAsync(RemoteProject());
         await vm.IssuesPageLoad;
 
-        vm.IssuesSearchText = "label:\"unclosed";
+        vm.IssuesSearchText = "crash in:title";
         await vm.ApplyIssueFiltersCommand.ExecuteAsync(null);
 
-        Assert.Contains("GitHub search syntax", vm.IssuesError);
+        Assert.Contains("error connecting to github.com", vm.IssuesError);
+        Assert.DoesNotContain("search", vm.IssuesError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A failure that said nothing is reported as the app's own line and nothing more.</summary>
+    [Fact]
+    public async Task AFailedReadThatSaidNothing_CarriesNoInventedCause()
+    {
+        var vm = new ListViewModel { IssueAnswer = (_, _) => null };
+
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.IssuesPageLoad;
+
+        Assert.Equal("Couldn't load issues. Check that the GitHub CLI is installed and signed in.", vm.IssuesError);
+    }
+
+    [Fact]
+    public async Task AFailedPullRequestRead_CarriesTheSameAccount()
+    {
+        var vm = new ListViewModel
+        {
+            PullRequestAnswer = (_, _) => null,
+            ReadError = "GraphQL: Could not resolve to a Repository with the name 'o/r'."
+        };
+        await vm.SetProjectAsync(RemoteProject());
+
+        await vm.LoadPullRequestsCommand.ExecuteAsync(null);
+
+        Assert.Contains("Could not resolve to a Repository", vm.PullRequestsError);
     }
 
     // ── Facets ──────────────────────────────────────────────────────────────────
@@ -426,12 +469,12 @@ public class ProjectDetailViewModelGitHubListDepthTests
         await vm.SetProjectAsync(RemoteProject());
         await vm.IssuesPageLoad;
 
-        var gate = new TaskCompletionSource<GitHubService.IssuePage?>();
+        var gate = new TaskCompletionSource<GitHubService.ListRead<GitHubService.IssuePage>>();
         vm.IssueGates.Enqueue(gate);
         vm.RefreshIssuesCommand.Execute(null);   // left in flight, not awaited
         vm.IssuesState = GitHubListState.Closed;
         var applied = vm.IssuesPageLoad;
-        gate.SetResult(IssuePage(2, 100));
+        gate.SetResult(Read(IssuePage(2, 100)));
         await applied;
 
         Assert.Equal(["open", "open", "closed"], vm.IssueReads.Select(q => q.State));
@@ -450,21 +493,21 @@ public class ProjectDetailViewModelGitHubListDepthTests
         await vm.SetProjectAsync(RemoteProject());
         await vm.IssuesPageLoad;
 
-        var openRead = new TaskCompletionSource<GitHubService.IssuePage?>();
-        var closedRead = new TaskCompletionSource<GitHubService.IssuePage?>();
+        var openRead = new TaskCompletionSource<GitHubService.ListRead<GitHubService.IssuePage>>();
+        var closedRead = new TaskCompletionSource<GitHubService.ListRead<GitHubService.IssuePage>>();
         vm.IssueGates.Enqueue(openRead);
         vm.IssueGates.Enqueue(closedRead);
         vm.RefreshIssuesCommand.Execute(null);       // open read, left in flight
         vm.IssuesState = GitHubListState.Closed;     // queued behind it
         var applied = vm.IssuesPageLoad;
 
-        openRead.SetResult(new GitHubService.IssuePage(NumberedIssues(1, 2, 3), false, 100));
+        openRead.SetResult(Read(new GitHubService.IssuePage(NumberedIssues(1, 2, 3), false, 100)));
 
         // The frame between the two reads: three open issues, and nothing on screen calls them closed.
         Assert.Equal("All 3 open issues shown.", vm.IssuesFooterText);
         Assert.Equal("No open issues.", vm.IssuesEmptyText);
 
-        closedRead.SetResult(new GitHubService.IssuePage([], false, 100));
+        closedRead.SetResult(Read(new GitHubService.IssuePage([], false, 100)));
         await applied;
 
         Assert.Equal("", vm.IssuesFooterText);
@@ -556,13 +599,13 @@ public class ProjectDetailViewModelGitHubListDepthTests
     public async Task APageLandingAfterAProjectSwitch_IsDropped()
     {
         var vm = new ListViewModel();
-        var gate = new TaskCompletionSource<GitHubService.IssuePage?>();
+        var gate = new TaskCompletionSource<GitHubService.ListRead<GitHubService.IssuePage>>();
         vm.IssueGates.Enqueue(gate);
         await vm.SetProjectAsync(RemoteProject("gh-depth-stale"));
 
         await vm.SetProjectAsync(RemoteProject("gh-depth-fresh"));
         await vm.IssuesPageLoad;
-        gate.SetResult(new GitHubService.IssuePage(NumberedIssues(41), false, 100));
+        gate.SetResult(Read(new GitHubService.IssuePage(NumberedIssues(41), false, 100)));
 
         Assert.Empty(vm.Issues);
         Assert.Equal("", vm.IssuesFooterText);

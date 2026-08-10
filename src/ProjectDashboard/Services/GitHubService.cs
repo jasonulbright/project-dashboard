@@ -166,6 +166,14 @@ public class GitHubService(SettingsService settingsService)
     public sealed record PullRequestPage(IReadOnlyList<GitHubPullRequest> Items, bool MayHaveMore, int Limit);
 
     /// <summary>
+    /// The outcome of one list read. A null page is a failed read and an empty page is an answer,
+    /// so the two are never the same value. Error carries what gh said about the failure — the
+    /// cause is the reader's to act on and nothing in the app can infer it — and is "" for a read
+    /// that succeeded or one that failed without saying anything.
+    /// </summary>
+    public sealed record ListRead<TPage>(TPage? Page, string Error) where TPage : class;
+
+    /// <summary>
     /// Whether a page of <paramref name="loaded"/> rows read at <paramref name="limit"/> may have
     /// rows behind it.
     /// </summary>
@@ -177,34 +185,56 @@ public class GitHubService(SettingsService settingsService)
     /// gh call establishes no such thing, so the two are never the same value. gh prints a JSON
     /// array whenever it succeeds, so blank output is a failure too.
     /// </summary>
-    public async Task<IssuePage?> GetIssuePageAsync(string repoSlug, GitHubListQuery query,
+    public async Task<ListRead<IssuePage>> GetIssuePageAsync(string repoSlug, GitHubListQuery query,
         CancellationToken ct = default)
     {
         var run = await RunAsync(BuildIssueListArgs(repoSlug, query), ct, ReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh issue list failed for {repoSlug}: {run.FirstError}");
-            return null;
+            return new ListRead<IssuePage>(null, FailureText(run));
         }
         var issues = ParseIssues(run.StdOut);
-        return issues is null ? null : new IssuePage(issues, PageMayHaveMore(issues.Count, query.Limit), query.Limit);
+        return new ListRead<IssuePage>(
+            issues is null ? null : new IssuePage(issues, PageMayHaveMore(issues.Count, query.Limit), query.Limit),
+            issues is null ? UnreadableResponse : "");
     }
 
     /// <summary>
     /// The repository's pull requests under <paramref name="query"/>. Same terms as
     /// <see cref="GetIssuePageAsync"/>: an empty page is an answer and a failure is not one.
     /// </summary>
-    public async Task<PullRequestPage?> GetPullRequestPageAsync(string repoSlug, GitHubListQuery query,
+    public async Task<ListRead<PullRequestPage>> GetPullRequestPageAsync(string repoSlug, GitHubListQuery query,
         CancellationToken ct = default)
     {
         var run = await RunAsync(BuildPullRequestListArgs(repoSlug, query), ct, ReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh pr list failed for {repoSlug}: {run.FirstError}");
-            return null;
+            return new ListRead<PullRequestPage>(null, FailureText(run));
         }
         var prs = ParsePullRequests(run.StdOut);
-        return prs is null ? null : new PullRequestPage(prs, PageMayHaveMore(prs.Count, query.Limit), query.Limit);
+        return new ListRead<PullRequestPage>(
+            prs is null ? null : new PullRequestPage(prs, PageMayHaveMore(prs.Count, query.Limit), query.Limit),
+            prs is null ? UnreadableResponse : "");
+    }
+
+    internal const string UnreadableResponse = "The response could not be read.";
+
+    /// <summary>
+    /// What a failed read can say about itself: gh's own first line, capped, because it lands in a
+    /// status line beside the app's own sentence. Read from the streams rather than from
+    /// <see cref="ProcessResult.FirstError"/>, whose "exit code N" fallback names no cause — gh
+    /// exits non-zero with nothing on either stream often enough that the fallback would be shown
+    /// as though it were an explanation.
+    /// </summary>
+    internal static string FailureText(ProcessResult run)
+    {
+        if (run.TimedOut) return "The GitHub CLI did not answer in time.";
+        var said = string.IsNullOrWhiteSpace(run.StdErr) ? run.StdOut : run.StdErr;
+        var line = said.ReplaceLineEndings("\n").Split('\n')
+            .Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
+        return line.Length > 200 ? line[..200] + "…" : line;
     }
 
     internal static List<string> BuildIssueListArgs(string repoSlug, GitHubListQuery query) =>

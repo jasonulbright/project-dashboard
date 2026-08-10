@@ -319,10 +319,10 @@ public partial class ProjectDetailViewModel
             {
                 _issuesFacetsPending = false;
                 var query = IssuesQuery(window);
-                GitHubService.IssuePage? page = null;
+                var read = new GitHubService.ListRead<GitHubService.IssuePage>(null, "");
                 try
                 {
-                    page = await FetchIssuePageAsync(slug, query);
+                    read = await FetchIssuePageAsync(slug, query);
                 }
                 catch (Exception ex)
                 {
@@ -331,9 +331,9 @@ public partial class ProjectDetailViewModel
                     Log.Warn($"issue list read failed for {slug}", ex);
                 }
                 if (!IsCurrent(gen)) return;
-                if (page is null)
+                if (read.Page is not { } page)
                 {
-                    IssuesError = ListFetchFailed(IssuesFetchFailed, query.Search);
+                    IssuesError = ListFetchFailed(IssuesFetchFailed, read.Error);
                 }
                 else
                 {
@@ -401,19 +401,19 @@ public partial class ProjectDetailViewModel
             {
                 _pullRequestsFacetsPending = false;
                 var query = PullRequestsQuery(window);
-                GitHubService.PullRequestPage? page = null;
+                var read = new GitHubService.ListRead<GitHubService.PullRequestPage>(null, "");
                 try
                 {
-                    page = await FetchPullRequestPageAsync(slug, query);
+                    read = await FetchPullRequestPageAsync(slug, query);
                 }
                 catch (Exception ex)
                 {
                     Log.Warn($"pull request list read failed for {slug}", ex);
                 }
                 if (!IsCurrent(gen)) return;
-                if (page is null)
+                if (read.Page is not { } page)
                 {
-                    PullRequestsError = ListFetchFailed(PullRequestsFetchFailed, query.Search);
+                    PullRequestsError = ListFetchFailed(PullRequestsFetchFailed, read.Error);
                 }
                 else
                 {
@@ -447,10 +447,12 @@ public partial class ProjectDetailViewModel
     }
 
     /// <summary>
-    /// A failed list read names the search when one was in force. GitHub rejects a query it cannot
-    /// parse, and a message about the CLI's sign-in state would send the reader after the wrong
-    /// thing entirely.
+    /// A failed list read, carrying what gh said about it. The search is never blamed: gh answers a
+    /// query it cannot make sense of with an empty result rather than a failure, so a read that
+    /// failed while a search was in force establishes nothing about that search — and a message
+    /// pointing at the reader's query would send them after the wrong thing while the connection,
+    /// the repository or the sign-in is what actually broke.
     /// </summary>
-    internal static string ListFetchFailed(string baseMessage, string? search) =>
-        search is null ? baseMessage : $"{baseMessage} The search text must be valid GitHub search syntax.";
+    internal static string ListFetchFailed(string baseMessage, string error) =>
+        error.Length == 0 ? baseMessage : $"{baseMessage} The GitHub CLI reported: {error}";
 }

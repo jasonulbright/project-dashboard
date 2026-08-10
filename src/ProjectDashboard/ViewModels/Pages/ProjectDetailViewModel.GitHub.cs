@@ -249,11 +249,11 @@ public partial class ProjectDetailViewModel
     /// may have rows behind it. Overridable on the same terms as the other remote reads, so both
     /// outcomes and every facet are reachable without gh.
     /// </summary>
-    internal virtual Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+    internal virtual Task<GitHubService.ListRead<GitHubService.IssuePage>> FetchIssuePageAsync(
         string slug, GitHubService.GitHubListQuery query)
         => _gitHubService.GetIssuePageAsync(slug, query);
 
-    internal virtual Task<GitHubService.PullRequestPage?> FetchPullRequestPageAsync(
+    internal virtual Task<GitHubService.ListRead<GitHubService.PullRequestPage>> FetchPullRequestPageAsync(
         string slug, GitHubService.GitHubListQuery query)
         => _gitHubService.GetPullRequestPageAsync(slug, query);
 

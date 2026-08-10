@@ -1112,12 +1112,13 @@ public class ProjectDetailViewModelGitHubTabsTests
     {
         private int _fetches;
 
-        internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+        internal override Task<GitHubService.ListRead<GitHubService.IssuePage>> FetchIssuePageAsync(
             string slug, GitHubService.GitHubListQuery query) =>
-            Task.FromResult<GitHubService.IssuePage?>(
+            Task.FromResult(new GitHubService.ListRead<GitHubService.IssuePage>(
                 _fetches++ == 0
                     ? new GitHubService.IssuePage([new GitHubIssue { Number = 1, Title = "still open" }], false, query.Limit)
-                    : null);
+                    : null,
+                ""));
     }
 
     [Theory]
@@ -1193,15 +1194,16 @@ public class ProjectDetailViewModelGitHubTabsTests
 
         internal override Task<List<Release>?> FetchReleasesAsync(string slug) => Task.FromResult(SeedReleases);
 
-        internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+        internal override Task<GitHubService.ListRead<GitHubService.IssuePage>> FetchIssuePageAsync(
             string slug, GitHubService.GitHubListQuery query)
-            => Task.FromResult<GitHubService.IssuePage?>(
-                SeedIssues is null ? null : new GitHubService.IssuePage(SeedIssues, false, query.Limit));
+            => Task.FromResult(new GitHubService.ListRead<GitHubService.IssuePage>(
+                SeedIssues is null ? null : new GitHubService.IssuePage(SeedIssues, false, query.Limit), ""));
 
-        internal override Task<GitHubService.PullRequestPage?> FetchPullRequestPageAsync(
+        internal override Task<GitHubService.ListRead<GitHubService.PullRequestPage>> FetchPullRequestPageAsync(
             string slug, GitHubService.GitHubListQuery query)
-            => Task.FromResult<GitHubService.PullRequestPage?>(
-                SeedPullRequests is null ? null : new GitHubService.PullRequestPage(SeedPullRequests, false, query.Limit));
+            => Task.FromResult(new GitHubService.ListRead<GitHubService.PullRequestPage>(
+                SeedPullRequests is null ? null : new GitHubService.PullRequestPage(SeedPullRequests, false, query.Limit),
+                ""));
 
         internal override Task<RepoSettings?> FetchRepoSettingsAsync(string slug)
             => SettingsGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Settings);
