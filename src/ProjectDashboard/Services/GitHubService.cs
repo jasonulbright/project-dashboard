@@ -15,6 +15,13 @@ public class GitHubService(SettingsService settingsService)
     private static readonly TimeSpan MutationTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan LogFetchTimeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// The allowance for a read that follows GitHub's pages to the end. One request per hundred
+    /// rows is spent inside a single gh call, so the single-page allowance would turn a large but
+    /// healthy repository into a read that reports a failure.
+    /// </summary>
+    private static readonly TimeSpan PagedReadTimeout = TimeSpan.FromSeconds(60);
+
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         try
@@ -182,6 +189,19 @@ public class GitHubService(SettingsService settingsService)
     /// rows behind it.
     /// </summary>
     internal static bool PageMayHaveMore(int loaded, int limit) => limit > 0 && loaded >= limit;
+
+    /// <summary>
+    /// The argument vector for a REST list read that follows GitHub's pages to the end.
+    ///
+    /// gh merges the pages of an array endpoint into one array, so the parsers read a complete
+    /// answer through the same shape a single page has. A run that stops part-way exits non-zero
+    /// with the pages it did read on stdout; every caller tests the exit code before parsing, so
+    /// that output is a failed read rather than a list that quietly stops short.
+    ///
+    /// The page size is the endpoint maximum, which decides how many requests the run spends
+    /// rather than how much it returns.
+    /// </summary>
+    internal static List<string> BuildPagedApiArgs(string path) => ["api", path, "--paginate"];
 
     /// <summary>
     /// The repository's issues under <paramref name="query"/>, or null when the read failed. An
@@ -549,12 +569,13 @@ public class GitHubService(SettingsService settingsService)
     }
 
     /// <summary>
-    /// All releases incl. drafts, newest first. REST endpoint rather than `gh release list`:
-    /// the list command's --json field set carries no assets. Null = fetch failed.
+    /// Every release incl. drafts, newest first. REST endpoint rather than `gh release list`:
+    /// the list command's --json field set carries no assets. Paged to the end, so the list is
+    /// the repository's own rather than its first hundred. Null = fetch failed.
     /// </summary>
     public async Task<List<Release>?> GetReleasesAsync(string repoSlug, CancellationToken ct = default)
     {
-        var run = await RunAsync(["api", $"repos/{repoSlug}/releases?per_page=100"], ct, ReadTimeout);
+        var run = await RunAsync(BuildReleasesArgs(repoSlug), ct, PagedReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh api releases failed for {repoSlug}: {run.FirstError}");
@@ -562,6 +583,9 @@ public class GitHubService(SettingsService settingsService)
         }
         return ParseReleases(run.StdOut);
     }
+
+    internal static List<string> BuildReleasesArgs(string repoSlug) =>
+        BuildPagedApiArgs($"repos/{repoSlug}/releases?per_page=100");
 
     internal static List<Release>? ParseReleases(string json)
     {
@@ -718,13 +742,14 @@ public class GitHubService(SettingsService settingsService)
     }
 
     /// <summary>
-    /// Notification threads for one repo, unread only unless <paramref name="includeRead"/>.
-    /// Null = fetch failed, never an empty inbox.
+    /// Every notification thread for one repo, unread only unless <paramref name="includeRead"/>.
+    /// Paged to the end: the threads beyond a first page are the older ones, which are exactly the
+    /// ones a reader would never otherwise meet. Null = fetch failed, never an empty inbox.
     /// </summary>
     public async Task<List<GitHubNotification>?> GetNotificationsAsync(string repoSlug,
         bool includeRead = false, CancellationToken ct = default)
     {
-        var run = await RunAsync(BuildNotificationsArgs(repoSlug, includeRead), ct, ReadTimeout);
+        var run = await RunAsync(BuildNotificationsArgs(repoSlug, includeRead), ct, PagedReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh api notifications failed for {repoSlug}: {run.FirstError}");
@@ -734,7 +759,7 @@ public class GitHubService(SettingsService settingsService)
     }
 
     internal static List<string> BuildNotificationsArgs(string repoSlug, bool includeRead) =>
-        ["api", $"repos/{repoSlug}/notifications?all={(includeRead ? "true" : "false")}&per_page=50"];
+        BuildPagedApiArgs($"repos/{repoSlug}/notifications?all={(includeRead ? "true" : "false")}&per_page=100");
 
     internal static List<GitHubNotification>? ParseNotifications(string json)
     {
@@ -898,19 +923,24 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
-    /// <summary>Labels defined on the repo. Null = fetch failed.</summary>
+    /// <summary>
+    /// Every label defined on the repo. REST rather than `gh label list`, whose --limit is the
+    /// only depth control it has: the labels feed a picker, and a picker missing the label a
+    /// reader is looking for reads as a label the repository does not define. Null = fetch failed.
+    /// </summary>
     public async Task<List<Label>?> GetLabelsAsync(string repoSlug, CancellationToken ct = default)
     {
-        var run = await RunAsync(
-            ["label", "list", "--repo", repoSlug, "--json", "name,color,description", "--limit", "100"],
-            ct, ReadTimeout);
+        var run = await RunAsync(BuildLabelsArgs(repoSlug), ct, PagedReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
-            Log.Warn($"gh label list failed for {repoSlug}: {run.FirstError}");
+            Log.Warn($"gh api labels failed for {repoSlug}: {run.FirstError}");
             return null;
         }
         return ParseLabels(run.StdOut);
     }
+
+    internal static List<string> BuildLabelsArgs(string repoSlug) =>
+        BuildPagedApiArgs($"repos/{repoSlug}/labels?per_page=100");
 
     internal static List<Label>? ParseLabels(string json)
     {
@@ -938,10 +968,14 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
-    /// <summary>Milestones (open and closed). REST — gh has no milestone list command. Null = fetch failed.</summary>
+    /// <summary>
+    /// Every milestone (open and closed). REST — gh has no milestone list command. Paged to the
+    /// end on the same terms as the labels: these fill pickers, and a picker that stops short
+    /// offers no sign that it did. Null = fetch failed.
+    /// </summary>
     public async Task<List<Milestone>?> GetMilestonesAsync(string repoSlug, CancellationToken ct = default)
     {
-        var run = await RunAsync(["api", $"repos/{repoSlug}/milestones?state=all&per_page=100"], ct, ReadTimeout);
+        var run = await RunAsync(BuildMilestonesArgs(repoSlug), ct, PagedReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh api milestones failed for {repoSlug}: {run.FirstError}");
@@ -949,6 +983,9 @@ public class GitHubService(SettingsService settingsService)
         }
         return ParseMilestones(run.StdOut);
     }
+
+    internal static List<string> BuildMilestonesArgs(string repoSlug) =>
+        BuildPagedApiArgs($"repos/{repoSlug}/milestones?state=all&per_page=100");
 
     internal static List<Milestone>? ParseMilestones(string json)
     {

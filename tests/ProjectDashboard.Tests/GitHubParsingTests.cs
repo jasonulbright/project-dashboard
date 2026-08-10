@@ -276,6 +276,78 @@ public class GitHubReleaseParsingTests
         => Assert.Null(GitHubService.ParseReleases(json));
 }
 
+/// <summary>
+/// What the parsers make of a read that followed GitHub's pages to the end. gh merges an array
+/// endpoint's pages into one array, so a complete answer arrives through the same shape one page
+/// has and carries no cap of its own.
+/// </summary>
+public class GitHubPagedReadParsingTests
+{
+    private const int PageSize = 100;
+    private const int Rows = PageSize * 2 + 37;
+
+    private static string Array(Func<int, string> row) =>
+        "[" + string.Join(",", Enumerable.Range(1, Rows).Select(row)) + "]";
+
+    [Fact]
+    public void Releases_BeyondOnePage_AreAllRead()
+    {
+        var releases = GitHubService.ParseReleases(
+            Array(i => $$"""{"tag_name":"v{{i}}","name":"r{{i}}","draft":false,"prerelease":false}"""));
+
+        Assert.NotNull(releases);
+        Assert.Equal(Rows, releases.Count);
+        Assert.Equal($"v{Rows}", releases[^1].TagName);
+    }
+
+    [Fact]
+    public void Labels_BeyondOnePage_AreAllRead()
+    {
+        var labels = GitHubService.ParseLabels(Array(i => $$"""{"name":"l{{i}}","color":"ededed"}"""));
+
+        Assert.NotNull(labels);
+        Assert.Equal(Rows, labels.Count);
+        Assert.Equal($"l{Rows}", labels[^1].Name);
+    }
+
+    [Fact]
+    public void Milestones_BeyondOnePage_AreAllRead()
+    {
+        var milestones = GitHubService.ParseMilestones(
+            Array(i => $$"""{"number":{{i}},"title":"m{{i}}","state":"open"}"""));
+
+        Assert.NotNull(milestones);
+        Assert.Equal(Rows, milestones.Count);
+        Assert.Equal(Rows, milestones[^1].Number);
+    }
+
+    [Fact]
+    public void Notifications_BeyondOnePage_AreAllRead()
+    {
+        var notifications = GitHubService.ParseNotifications(
+            Array(i => $$$"""
+                {"id":"{{{i}}}","unread":true,"reason":"subscribed",
+                 "subject":{"title":"n{{{i}}}","type":"Issue"}}
+                """));
+
+        Assert.NotNull(notifications);
+        Assert.Equal(Rows, notifications.Count);
+    }
+
+    /// <summary>
+    /// The shape a merge does not produce: pages written one after another rather than joined.
+    /// Read as the first of them, a run whose later pages were never merged would report a
+    /// truncated list as the whole answer, so it reads as a failure instead.
+    /// </summary>
+    [Fact]
+    public void PagesWrittenBackToBack_AreNotReadAsTheFirstOfThem()
+    {
+        const string concatenated = """[{"tag_name":"v1"}][{"tag_name":"v2"}]""";
+
+        Assert.Null(GitHubService.ParseReleases(concatenated));
+    }
+}
+
 public class GitHubWorkflowRunParsingTests
 {
     [Fact]

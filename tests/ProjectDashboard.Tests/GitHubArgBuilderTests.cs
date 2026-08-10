@@ -248,8 +248,45 @@ public class GitHubArgBuilderTests
     public void Notifications_UnreadOnlyUnlessAllRequested(bool includeRead, string all)
     {
         Assert.Equal(
-            ["api", $"repos/o/r/notifications?all={all}&per_page=50"],
+            ["api", $"repos/o/r/notifications?all={all}&per_page=100", "--paginate"],
             GitHubService.BuildNotificationsArgs("o/r", includeRead));
+    }
+
+    /// <summary>
+    /// Each of these reads fills a list or a picker that the reader takes for the repository's
+    /// own contents, and none of them carries a control for reaching what a cap left behind.
+    /// Following the pages to the end is what makes that reading true.
+    /// </summary>
+    [Theory]
+    [InlineData("repos/o/r/releases?per_page=100")]
+    [InlineData("repos/o/r/labels?per_page=100")]
+    [InlineData("repos/o/r/milestones?state=all&per_page=100")]
+    [InlineData("repos/o/r/notifications?all=false&per_page=100")]
+    public void EveryRestListRead_FollowsThePagesToTheEnd(string path)
+    {
+        List<List<string>> reads =
+        [
+            GitHubService.BuildReleasesArgs("o/r"),
+            GitHubService.BuildLabelsArgs("o/r"),
+            GitHubService.BuildMilestonesArgs("o/r"),
+            GitHubService.BuildNotificationsArgs("o/r", includeRead: false),
+        ];
+
+        var read = Assert.Single(reads, r => r.Contains(path));
+        Assert.Equal(["api", path, "--paginate"], read);
+    }
+
+    /// <summary>
+    /// The label read moved off `gh label list`, whose --limit is the only depth it has. A read
+    /// still spending that flag would cap the picker again while the endpoint pages past it.
+    /// </summary>
+    [Fact]
+    public void Labels_AreReadFromTheEndpointThatPages_NotTheCappedCommand()
+    {
+        var args = GitHubService.BuildLabelsArgs("o/r");
+
+        Assert.DoesNotContain("label", args);
+        Assert.DoesNotContain("--limit", args);
     }
 
     [Fact]
