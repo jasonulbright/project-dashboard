@@ -105,6 +105,53 @@ public class ProjectRootMigrationTests
         Assert.Equal(@"D:\two", loaded.ProjectsRootPath);
     }
 
+    /// <summary>
+    /// Both surfaces edited in one write is the three-way case, and the precedence has to be
+    /// decided rather than left to whichever assignment runs last: the list is the richer
+    /// expression of the same intent, so it wins and the singular edit is discarded.
+    /// </summary>
+    [Fact]
+    public void WhenBothTheListAndTheSingularRootAreEdited_TheListWins()
+    {
+        var service = new SettingsService();
+        service.Save(new AppSettings { ProjectsRootPath = @"C:\one", ExcludedDirectories = ["alpha"] });
+
+        var edited = service.Load();
+        edited.ProjectRoots = [new ProjectRoot { Path = @"D:\list", ExcludedDirectories = ["from-list"] }];
+        edited.ProjectsRootPath = @"E:\singular";
+        edited.ExcludedDirectories = ["from-singular"];
+        service.Save(edited);
+
+        var loaded = service.Load();
+        var root = Assert.Single(loaded.ProjectRoots);
+        Assert.Equal(@"D:\list", root.Path);
+        Assert.Equal(["from-list"], root.ExcludedDirectories);
+
+        // The mirror is re-derived from the winner, so nothing on disk still names the loser.
+        Assert.Equal(@"D:\list", loaded.ProjectsRootPath);
+        Assert.Equal(["from-list"], loaded.ExcludedDirectories);
+    }
+
+    /// <summary>
+    /// The same precedence one level down: the list untouched, only the singular exclusions
+    /// edited, is the arm where the singular edit is the one carrying the intent.
+    /// </summary>
+    [Fact]
+    public void WhenOnlyTheSingularExclusionsAreEdited_TheyAreTheIntentAndSurvive()
+    {
+        var service = new SettingsService();
+        service.Save(new AppSettings
+        {
+            ProjectRoots = [new ProjectRoot { Path = @"C:\one", ExcludedDirectories = ["alpha"] }],
+        });
+
+        var edited = service.Load();
+        edited.ExcludedDirectories = ["alpha", "beta"];
+        service.Save(edited);
+
+        Assert.Equal(["alpha", "beta"], Assert.Single(service.Load().ProjectRoots).ExcludedDirectories);
+    }
+
     [Fact]
     public void DepthIsClampedOnLoad_SoNoFileCanAskForAnUnboundedWalk()
     {
