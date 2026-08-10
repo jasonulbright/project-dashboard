@@ -34,6 +34,41 @@ public class RepoHealthScannerTests
     private static HealthCheck Check(IReadOnlyList<HealthCheck> checks, string id) =>
         Assert.Single(checks, c => c.Id == id);
 
+    /// <summary>
+    /// Cancels once the hooks-path configuration has been read, putting the cancellation exactly
+    /// where a page-leave lands between a check's git call and its directory walk.
+    /// </summary>
+    private sealed class CancelAfterConfigGitService(CancellationTokenSource cts) : GitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            var result = await base.RunAsync(repoPath, list, environment, ct, timeout);
+            if (list.Contains("core.hooksPath")) await cts.CancelAsync();
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Answers the object-store walk as a run the budget killed: no line delivered, and a result
+    /// carrying the timeout. A large repository on slow storage produces exactly this, and no
+    /// fixture can be made big enough to produce it on demand.
+    /// </summary>
+    private sealed class TimedOutWalkGitService : GitService
+    {
+        public override Task<ProcessResult> RunStreamingAsync(
+            string repoPath, IEnumerable<string> args, Action<string> onStdOutLine,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list.Contains("cat-file")
+                ? Task.FromResult(new ProcessResult(-1, "", "", TimedOut: true))
+                : base.RunStreamingAsync(repoPath, list, onStdOutLine, ct, timeout);
+        }
+    }
+
     // ── git version ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -413,6 +448,153 @@ public class RepoHealthScannerTests
         Assert.Equal("big.bin", largest.Path);
         Assert.Equal(300_000, largest.Bytes);
         Assert.True(scan.Objects.Count <= 10, "the ranking holds a fixed number of entries, never the store");
+    }
+
+    /// <summary>
+    /// An empty ranking means two different things and they must not be worded alike. A complete
+    /// pass over a repository with no blob establishes that it has none; a pass the budget killed
+    /// before it reached one establishes nothing, and reporting it as "holds no blob" would be a
+    /// confident verdict about a walk that never finished.
+    ///
+    /// Proved in both directions against one repository: the complete pass is shown first, so a
+    /// build that reported Unknown for everything would fail here.
+    /// </summary>
+    [Fact]
+    public async Task AWalkThatWasCutShort_IsUnknownWhereACompletePassSaysThereIsNoBlob()
+    {
+        using var repo = TempRepo.CreateEmptyDir("health-blobless");
+        await repo.GitAsync("init", "-b", "main");
+
+        var (complete, completeScan) = await NewScanner().CheckLargeObjectsAsync(repo.Path);
+        Assert.False(completeScan.Partial);
+        Assert.Empty(completeScan.Objects);
+        Assert.Equal(HealthState.Ok, complete.State);
+        Assert.Equal("This repository holds no blob.", complete.Summary);
+
+        var scanner = new RepoHealthScanner(new TimedOutWalkGitService(), null, NewHistory());
+        var (cutShort, cutShortScan) = await scanner.CheckLargeObjectsAsync(repo.Path);
+
+        Assert.True(cutShortScan.Partial);
+        Assert.Empty(cutShortScan.Objects);
+        Assert.Equal(HealthState.Unknown, cutShort.State);
+        Assert.DoesNotContain("holds no blob", cutShort.Summary, StringComparison.Ordinal);
+        Assert.Contains(HealthCopy.LargeObjectsPartial, cutShort.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>A walk nothing finished is recorded as an unknown outcome, not a successful one.</summary>
+    [Fact]
+    public async Task AWalkThatWasCutShort_IsRecordedAsUnknown()
+    {
+        using var repo = TempRepo.CreateEmptyDir("health-blobless-record");
+        await repo.GitAsync("init", "-b", "main");
+        var history = NewHistory();
+
+        await new RepoHealthScanner(new TimedOutWalkGitService(), null, history)
+            .CheckLargeObjectsAsync(repo.Path);
+
+        Assert.Equal(OperationOutcome.Unknown, Assert.Single(history.Tail(repo.Path).Records).Outcome);
+    }
+
+    // ── Bounded filesystem walks ────────────────────────────────────────────
+
+    /// <summary>
+    /// A directory enumeration answers to no token of its own. Both bounds are proved on the shared
+    /// helper the two walks run through, because a walk that outlives the page contradicts the
+    /// cancellation every other check on this surface honours.
+    /// </summary>
+    [Fact]
+    public async Task ABoundedWalk_StopsOnItsBudget()
+    {
+        using var blocked = new ManualResetEventSlim(false);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => RepoHealthScanner.Bounded(
+            () => { blocked.Wait(TimeSpan.FromSeconds(30)); return 0; },
+            TimeSpan.FromMilliseconds(50), CancellationToken.None));
+
+        blocked.Set();
+    }
+
+    [Fact]
+    public async Task ABoundedWalk_StopsOnCancellation()
+    {
+        using var blocked = new ManualResetEventSlim(false);
+        using var cts = new CancellationTokenSource();
+
+        var running = RepoHealthScanner.Bounded(
+            () => { blocked.Wait(TimeSpan.FromSeconds(30)); return 0; },
+            TimeSpan.FromSeconds(30), cts.Token);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
+        blocked.Set();
+    }
+
+    /// <summary>
+    /// A cancelled scan is Not run, never "no lock file is present": it looked at part of a
+    /// directory, and neither an absence nor a count is a fact about the repository.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledLockScan_IsNotRunRatherThanClean()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("health-locks-cancel");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var check = await NewScanner().LocksAsync(Path.Combine(repo.Path, ".git"), DateTime.UtcNow, cts.Token);
+
+        Assert.Equal(HealthState.NotRun, check.State);
+        Assert.DoesNotContain("No lock file", check.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>A scan the budget stopped is unknown, and the row names the bound it hit.</summary>
+    [Fact]
+    public async Task ALockScanThatOutranItsBudget_IsUnknownAndNamesTheBound()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("health-locks-budget");
+        var refs = Path.Combine(repo.Path, ".git", "refs", "heads");
+        Directory.CreateDirectory(refs);
+        for (var i = 0; i < 200; i++)
+            await File.WriteAllTextAsync(Path.Combine(refs, $"branch{i}.lock"), "");
+
+        var check = await NewScanner().LocksAsync(
+            Path.Combine(repo.Path, ".git"), DateTime.UtcNow, CancellationToken.None, TimeSpan.Zero);
+
+        Assert.Equal(HealthState.Unknown, check.State);
+        Assert.Contains("still being read after", check.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Cancelled between the configuration read and the directory walk, which is the only moment
+    /// that exercises the walk's own arm: a token already cancelled stops the config read first,
+    /// and that cancellation propagates rather than producing a row at all.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledHookScan_IsNotRunRatherThanNoHooks()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("health-hooks-cancel");
+        using var cts = new CancellationTokenSource();
+        var scanner = new RepoHealthScanner(new CancelAfterConfigGitService(cts), null, NewHistory());
+
+        var check = await scanner.HooksAsync(repo.Path, Path.Combine(repo.Path, ".git"), cts.Token);
+
+        Assert.Equal(HealthState.NotRun, check.State);
+        Assert.DoesNotContain("No hook is installed", check.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AHookScanThatOutranItsBudget_IsUnknownAndNamesTheBound()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("health-hooks-budget");
+        var hooks = Path.Combine(repo.Path, ".git", "hooks");
+        Directory.CreateDirectory(hooks);
+        for (var i = 0; i < 200; i++)
+            await File.WriteAllTextAsync(Path.Combine(hooks, $"hook{i}"), "#!/bin/sh\n");
+
+        var check = await NewScanner().HooksAsync(
+            repo.Path, Path.Combine(repo.Path, ".git"), CancellationToken.None, TimeSpan.Zero);
+
+        Assert.Equal(HealthState.Unknown, check.State);
+        Assert.Contains("still being read after", check.Summary, StringComparison.Ordinal);
     }
 
     /// <summary>The ranking names blobs; a commit or a tree is not a file a purge could remove.</summary>

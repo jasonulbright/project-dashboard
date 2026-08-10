@@ -76,7 +76,7 @@ public sealed class RepoHealthScanner
         return
         [
             await GitVersionAsync(repoPath, ct),
-            await LocksAsync(gitDir, DateTime.UtcNow),
+            await LocksAsync(gitDir, DateTime.UtcNow, ct),
             await ObjectStoreAsync(repoPath, ct),
             await SigningAsync(repoPath, ct),
             await HooksAsync(repoPath, gitDir, ct),
@@ -106,7 +106,8 @@ public sealed class RepoHealthScanner
     /// packed-refs.lock blocks ref writes exactly as an index.lock blocks index writes, and
     /// nothing in this application looked for either before.
     /// </summary>
-    internal async Task<HealthCheck> LocksAsync(string? gitDir, DateTime nowUtc)
+    internal async Task<HealthCheck> LocksAsync(
+        string? gitDir, DateTime nowUtc, CancellationToken ct = default, TimeSpan? budget = null)
     {
         if (gitDir is null)
             return new HealthCheck(HealthCheckId.Locks, "Lock files", HealthState.Unknown,
@@ -116,7 +117,17 @@ public sealed class RepoHealthScanner
         List<LockFile> locks;
         try
         {
-            locks = await Task.Run(() => ScanLocks(gitDir, nowUtc));
+            locks = await Bounded(() => ScanLocks(gitDir, nowUtc, ct), budget ?? QuickReadTimeout, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return NotRunLocks;
+        }
+        catch (TimeoutException)
+        {
+            return new HealthCheck(HealthCheckId.Locks, "Lock files", HealthState.Unknown,
+                $"The git directory was still being read after {(budget ?? QuickReadTimeout).TotalSeconds:0} seconds, "
+                + "so no lock file was looked for.", gitDir, HealthTier.Quick);
         }
         catch (Exception ex)
         {
@@ -143,14 +154,38 @@ public sealed class RepoHealthScanner
     }
 
     /// <summary>
+    /// The row a cancelled scan leaves behind. Not run rather than a verdict: a walk that was
+    /// stopped looked at part of a directory, and neither "no lock file" nor a count of what it
+    /// happened to reach is a fact about the repository.
+    /// </summary>
+    private static HealthCheck NotRunLocks =>
+        new(HealthCheckId.Locks, "Lock files", HealthState.NotRun,
+            "The scan was stopped before it finished, so no lock file was looked for.", "",
+            HealthTier.Quick);
+
+    /// <summary>
+    /// Runs a filesystem walk off the calling thread under a budget and the caller's token. A
+    /// directory enumeration answers to neither on its own: a walk over a network path or a
+    /// directory with hundreds of thousands of entries outlives the page that asked for it, which
+    /// is the one thing every check on this surface is cancellable to prevent.
+    /// <paramref name="budget"/> is a parameter for the same reason the stale-lock cleanup's ages
+    /// are: a test cannot wait out the shipped one.
+    /// </summary>
+    internal static Task<T> Bounded<T>(Func<T> walk, TimeSpan budget, CancellationToken ct) =>
+        Task.Run(walk, ct).WaitAsync(budget, ct);
+
+    /// <summary>
     /// The lock files under a git directory: the top level, where index.lock, HEAD.lock,
     /// config.lock, packed-refs.lock and FETCH_HEAD.lock live, and every ref lock under refs/.
     /// </summary>
-    private static List<LockFile> ScanLocks(string gitDir, DateTime nowUtc)
+    private static List<LockFile> ScanLocks(string gitDir, DateTime nowUtc, CancellationToken ct)
     {
         var found = new List<LockFile>();
         foreach (var path in LockPaths(gitDir))
         {
+            // Per entry, because the enumeration is lazy: the walk itself is the work, and a
+            // token read only at the end would stop nothing.
+            ct.ThrowIfCancellationRequested();
             if (found.Count >= LockScanCeiling) break;
             var info = new FileInfo(path);
             if (!info.Exists) continue;
@@ -254,7 +289,8 @@ public sealed class RepoHealthScanner
     /// repository is reported with the path: it is a legitimate setup and also the shape a
     /// repository carries when something else has redirected its hooks.
     /// </summary>
-    private async Task<HealthCheck> HooksAsync(string repoPath, string? gitDir, CancellationToken ct)
+    internal async Task<HealthCheck> HooksAsync(
+        string repoPath, string? gitDir, CancellationToken ct, TimeSpan? budget = null)
     {
         var configured = await ConfigAsync(repoPath, "core.hooksPath", boolean: false, ct);
         if (configured.Unreadable)
@@ -287,14 +323,18 @@ public sealed class RepoHealthScanner
         List<string> hooks;
         try
         {
-            hooks = await Task.Run(() => Directory.Exists(directory)
-                ? Directory.EnumerateFiles(directory)
-                    .Where(f => !f.EndsWith(".sample", StringComparison.OrdinalIgnoreCase))
-                    .Select(Path.GetFileName)
-                    .OfType<string>()
-                    .Order(StringComparer.Ordinal)
-                    .ToList()
-                : []);
+            hooks = await Bounded(() => ListHooks(directory, ct), budget ?? QuickReadTimeout, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return new HealthCheck(HealthCheckId.Hooks, "Hooks", HealthState.NotRun,
+                "The scan was stopped before it finished, so no hook was looked for.", "", HealthTier.Quick);
+        }
+        catch (TimeoutException)
+        {
+            return new HealthCheck(HealthCheckId.Hooks, "Hooks", HealthState.Unknown,
+                $"The hook directory was still being read after {(budget ?? QuickReadTimeout).TotalSeconds:0} seconds, "
+                + "so no hook was looked for.", directory, HealthTier.Quick);
         }
         catch (Exception ex)
         {
@@ -316,6 +356,25 @@ public sealed class RepoHealthScanner
                 where + " A hook directory outside the repository is not carried by a clone and is not "
                 + "described by anything under version control here.", HealthTier.Quick)
             : new HealthCheck(HealthCheckId.Hooks, "Hooks", HealthState.Ok, installed, where, HealthTier.Quick);
+    }
+
+    /// <summary>
+    /// The hooks installed in a directory, samples excluded. The token is read per entry for the
+    /// same reason the lock walk reads it per entry: the enumeration is the work.
+    /// </summary>
+    private static List<string> ListHooks(string directory, CancellationToken ct)
+    {
+        if (!Directory.Exists(directory)) return [];
+
+        var names = new List<string>();
+        foreach (var path in Directory.EnumerateFiles(directory))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (path.EndsWith(".sample", StringComparison.OrdinalIgnoreCase)) continue;
+            if (Path.GetFileName(path) is { Length: > 0 } name) names.Add(name);
+        }
+        names.Sort(StringComparer.Ordinal);
+        return names;
     }
 
     /// <summary>Whether <paramref name="candidate"/> is the repository directory or sits under it.</summary>
@@ -606,9 +665,16 @@ public sealed class RepoHealthScanner
             return new HealthCheck(HealthCheckId.LargeObjects, "Largest objects", HealthState.Unknown,
                 "The object store could not be walked.", scan.Error, HealthTier.Deep);
 
+        // An empty ranking off a walk that was cut short is not a repository with no blob: the walk
+        // may have been stopped before it reached one. "Holds no blob" is a claim only a complete
+        // pass can make.
         if (scan.Objects.Count == 0)
-            return new HealthCheck(HealthCheckId.LargeObjects, "Largest objects", HealthState.Ok,
-                "This repository holds no blob.", HealthCopy.LargeObjectsScope, HealthTier.Deep);
+            return scan.Partial
+                ? new HealthCheck(HealthCheckId.LargeObjects, "Largest objects", HealthState.Unknown,
+                    "The walk did not finish, so nothing was established about this repository's objects.",
+                    HealthCopy.LargeObjectsPartial, HealthTier.Deep)
+                : new HealthCheck(HealthCheckId.LargeObjects, "Largest objects", HealthState.Ok,
+                    "This repository holds no blob.", HealthCopy.LargeObjectsScope, HealthTier.Deep);
 
         var largest = scan.Objects[0];
         return new HealthCheck(HealthCheckId.LargeObjects, "Largest objects", HealthState.Ok,
