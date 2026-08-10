@@ -177,6 +177,17 @@ public sealed class RepoSettings
     public string TopicsText => string.Join(", ", Topics);
 }
 
+/// <summary>
+/// How a fork's branch stands against the same branch on its parent. Callers hold this as a
+/// nullable: null is "the comparison did not answer", which (0, 0) — an identical branch — must
+/// never stand in for, because a sync offered on the strength of it names a count nothing read.
+/// </summary>
+public sealed record ForkDivergence(int Ahead, int Behind)
+{
+    /// <summary>True when neither side carries a commit the other lacks.</summary>
+    public bool InSync => Ahead == 0 && Behind == 0;
+}
+
 /// <summary>One issue/PR label defined on a repo.</summary>
 public sealed class Label
 {

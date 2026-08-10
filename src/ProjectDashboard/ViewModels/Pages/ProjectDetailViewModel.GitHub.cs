@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
+using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.ViewModels.Pages;
 
@@ -783,15 +784,46 @@ public partial class ProjectDetailViewModel
     /// because nothing they touch is on disk.
     /// </summary>
     private async Task<bool> RunGitHubRepoOp(Func<Task<ProcessResult>> op, string label, string repo)
+        => await RunGitHubRepoOpResult(op, label, repo) is { Success: true };
+
+    /// <summary>
+    /// <see cref="RunGitHubRepoOp"/> for callers that must read the failure itself. Null means no
+    /// result belongs to this caller: the lease was held, the page was busy, the op threw, or the
+    /// project changed while it ran.
+    /// </summary>
+    private async Task<ProcessResult?> RunGitHubRepoOpResult(Func<Task<ProcessResult>> op, string label, string repo)
     {
-        if (IsBusy || repo.Length == 0) return false;
+        if (IsBusy || repo.Length == 0) return null;
         if (!_busyRegistry.TryAcquire(repo, out var lease))
         {
             GitHubStatusText = $"{label} refused: another operation is running on this repository.";
-            return false;
+            // A button that did nothing is exactly what a history has to explain, so the
+            // invisible gate is recorded rather than returned silently.
+            RecordGitHubOp(repo, label, OperationOutcome.Refused, GitHubStatusText,
+                DateTimeOffset.UtcNow, _generation);
+            return null;
         }
         using (lease)
-            return await RunGitHubOpResult(op, label) is { Success: true };
+            return await RunGitHubOpResult(op, label, repo);
+    }
+
+    /// <summary>
+    /// One ledger row for a gh mutation, under the repository it acted on. A row needs a
+    /// repository to be keyed under, so a caller with no local clone records nothing rather than
+    /// filing the operation against an empty path.
+    /// </summary>
+    private void RecordGitHubOp(string repo, string label, OperationOutcome outcome, string detail,
+        DateTimeOffset started, int gen)
+    {
+        if (repo.Length == 0) return;
+        var written = _history.Append(OperationRecord.For(
+            repo, OperationCategory.GitHub, label, outcome, detail, started));
+        _lastOperationRecordId = written.Id;
+        var failed = outcome is OperationOutcome.Failed or OperationOutcome.Unknown;
+        if (failed) _failedOperationRecordId = written.Id;
+        // Raised and lowered by every outcome: an affordance left standing beside a later success
+        // would open the history at a failure that has since been dealt with.
+        if (IsCurrent(gen)) OperationHistoryHintVisible = failed;
     }
 
     /// <summary>
@@ -800,10 +832,17 @@ public partial class ProjectDetailViewModel
     /// Null means no result belongs to this caller: the gate was already held, the op
     /// threw, or the project changed while it ran.
     /// </summary>
-    private async Task<ProcessResult?> RunGitHubOpResult(Func<Task<ProcessResult>> op, string label)
+    /// <param name="recordRepo">
+    /// The repository a ledger row for this op belongs under, or "" to record nothing. Repo-admin
+    /// and repo-touching gh mutations are recorded; the read-adjacent issue and pull-request
+    /// mutations are not, because the surfaces they change are re-read in front of the reader.
+    /// </param>
+    private async Task<ProcessResult?> RunGitHubOpResult(Func<Task<ProcessResult>> op, string label,
+        string recordRepo = "")
     {
         if (IsBusy) return null;
         var gen = _generation;
+        var started = DateTimeOffset.UtcNow;
         var holder = new object();
         IsBusy = true;
         _busyGateHolder = holder;
@@ -811,6 +850,9 @@ public partial class ProjectDetailViewModel
         try
         {
             var result = await op();
+            RecordGitHubOp(recordRepo, label,
+                result.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                result.Success ? "" : result.FirstError, started, gen);
             if (!IsCurrent(gen)) return null; // switched projects mid-op — drop the UI write
             GitHubStatusText = result.Success ? $"{label} done." : $"{label} failed: {result.FirstError}";
             return result;
@@ -818,6 +860,7 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn($"{label} failed", ex);
+            RecordGitHubOp(recordRepo, label, OperationOutcome.Failed, ex.Message, started, gen);
             if (IsCurrent(gen)) GitHubStatusText = $"{label} failed: {ex.Message}";
             return null;
         }

@@ -430,3 +430,42 @@ public class GitHubNotificationUrlTests
     public void AnythingElse_MapsToNothing(string apiUrl)
         => Assert.Equal("", GitHubService.NotificationWebUrl(apiUrl));
 }
+
+/// <summary>
+/// The two gh calls Set 2's fork surface spawns. Both are asserted as exact argument lists
+/// because each carries a flag or a path segment whose absence changes what the command does
+/// rather than making it fail.
+/// </summary>
+public class GitHubForkArgBuilderTests
+{
+    [Fact]
+    public void SyncWithoutForce_AsksForNoHardReset()
+        => Assert.Equal(["repo", "sync"], GitHubService.BuildSyncForkArgs(force: false));
+
+    [Fact]
+    public void SyncWithForce_CarriesTheFlagThatDiscardsLocalCommits()
+        => Assert.Equal(["repo", "sync", "--force"], GitHubService.BuildSyncForkArgs(force: true));
+
+    /// <summary>
+    /// Both sides carry an owner: an unqualified head resolves inside the base repository, which
+    /// compares the parent with itself and answers zero ahead, zero behind for every fork.
+    /// </summary>
+    [Fact]
+    public void Compare_QualifiesBothSidesWithTheirOwner()
+        => Assert.Equal(["api", "repos/upstream/tool/compare/upstream:main...me:main"],
+            GitHubService.BuildForkCompareArgs("upstream/tool", "upstream", "me", "main"));
+
+    [Fact]
+    public void Compare_KeepsASlashedBranchNameWhole()
+        => Assert.Equal(["api", "repos/upstream/tool/compare/upstream:release/2.x...me:release/2.x"],
+            GitHubService.BuildForkCompareArgs("upstream/tool", "upstream", "me", "release/2.x"));
+
+    [Theory]
+    [InlineData("", "upstream", "me", "main")]
+    [InlineData("upstream/tool", "", "me", "main")]
+    [InlineData("upstream/tool", "upstream", "", "main")]
+    [InlineData("upstream/tool", "upstream", "me", "")]
+    public void Compare_BuildsNothingFromAnIncompletelyNamedComparison(
+        string parentSlug, string parentOwner, string forkOwner, string branch)
+        => Assert.Null(GitHubService.BuildForkCompareArgs(parentSlug, parentOwner, forkOwner, branch));
+}

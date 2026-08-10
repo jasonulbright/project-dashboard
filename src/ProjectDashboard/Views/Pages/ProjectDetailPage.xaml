@@ -3347,21 +3347,105 @@
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                                     <ui:TextBox Text="{Binding RepoDescriptionDraft, UpdateSourceTrigger=PropertyChanged}"
                                                 PlaceholderText="What this repository is" Margin="0,0,0,8"
+                                                IsEnabled="{Binding RepoEditsEnabled}"
                                                 AutomationProperties.Name="Repository description" />
                                     <TextBlock Text="Homepage" FontSize="12" Margin="0,0,0,2"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                                     <ui:TextBox Text="{Binding RepoHomepageDraft, UpdateSourceTrigger=PropertyChanged}"
                                                 PlaceholderText="https://example.com" Margin="0,0,0,8"
+                                                IsEnabled="{Binding RepoEditsEnabled}"
                                                 AutomationProperties.Name="Repository homepage" />
                                     <TextBlock Text="Topics (comma-separated)" FontSize="12" Margin="0,0,0,2"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                                     <ui:TextBox Text="{Binding RepoTopicsDraft, UpdateSourceTrigger=PropertyChanged}"
                                                 PlaceholderText="wpf, dotnet" Margin="0,0,0,10"
+                                                IsEnabled="{Binding RepoEditsEnabled}"
                                                 AutomationProperties.Name="Repository topics" />
                                     <ui:Button Content="Save details" Appearance="Primary" FontSize="12" Padding="14,4"
                                                HorizontalAlignment="Left"
+                                               IsEnabled="{Binding RepoEditsEnabled}"
                                                Command="{Binding SaveRepoDetailsCommand}"
                                                AutomationProperties.Name="Save repository description, homepage and topics" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Name and archive state -->
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
+                                    Padding="16,12" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Name and archive state" Style="{StaticResource PaneHeader}" />
+                                    <TextBlock Text="Renaming keeps the owner. GitHub redirects the old address, but anything pointed at the literal old URL — CI, webhooks, package references — does not follow it. The change takes a typed repository name."
+                                               FontSize="12" Margin="0,0,0,6" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <WrapPanel Margin="0,0,0,10">
+                                        <ui:TextBox Text="{Binding RepoRenameDraft, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="new-name" Width="220" Margin="0,0,8,0"
+                                                    IsEnabled="{Binding RepoEditsEnabled}"
+                                                    AutomationProperties.Name="New repository name" />
+                                        <ui:Button Content="Rename" FontSize="12" Padding="12,4"
+                                                   IsEnabled="{Binding RepoEditsEnabled}"
+                                                   Command="{Binding RenameRepoCommand}"
+                                                   AutomationProperties.Name="Rename this repository on GitHub" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding RepoRenameNotice}" FontSize="12" TextWrapping="Wrap"
+                                               Margin="0,0,0,10"
+                                               AutomationProperties.AutomationId="RepoRenameNotice"
+                                               AutomationProperties.LiveSetting="Assertive"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding RepoRenameNotice}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="This repository is archived on GitHub: it is read-only, every editor on this tab is switched off, and pushes are refused until it is unarchived."
+                                               FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                                               AutomationProperties.AutomationId="RepoArchivedNotice"
+                                               Visibility="{Binding RepoIsArchived, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                               Foreground="{DynamicResource StatusWarnFg}" />
+                                    <ui:Button Content="{Binding RepoArchiveActionLabel}" FontSize="12" Padding="12,4"
+                                               HorizontalAlignment="Left"
+                                               Command="{Binding ToggleRepoArchiveCommand}"
+                                               AutomationProperties.Name="{Binding RepoArchiveActionLabel}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Fork -->
+                            <Border Background="{DynamicResource ControlFillColorDefaultBrush}" CornerRadius="8"
+                                    Padding="16,12" Margin="0,0,0,12"
+                                    AutomationProperties.AutomationId="ForkSyncCard"
+                                    Visibility="{Binding RepoIsFork, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel>
+                                    <TextBlock Text="Fork" Style="{StaticResource PaneHeader}" />
+                                    <TextBlock FontSize="11" Margin="0,0,0,6" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                        <Run Text="Forked from " /><Run Text="{Binding RepoParentSlug, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <ui:ProgressRing IsIndeterminate="True" Width="14" Height="14"
+                                                         Margin="0,0,8,0" VerticalAlignment="Center"
+                                                         Visibility="{Binding ForkDivergenceLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBlock Text="{Binding ForkDivergenceText}" FontSize="12" TextWrapping="Wrap"
+                                                   MaxWidth="640" VerticalAlignment="Center"
+                                                   AutomationProperties.AutomationId="ForkDivergenceText"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </StackPanel>
+                                    <WrapPanel>
+                                        <ui:Button Content="Sync fork" FontSize="12" Padding="12,4" Margin="0,0,8,0"
+                                                   IsEnabled="{Binding ForkSyncOfferable}"
+                                                   Command="{Binding SyncForkCommand}"
+                                                   AutomationProperties.Name="Sync this fork from its parent repository" />
+                                        <ui:Button Content="Check again" FontSize="12" Padding="12,4"
+                                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                                   Command="{Binding LoadForkDivergenceCommand}"
+                                                   AutomationProperties.Name="Re-read how far this fork stands from its parent" />
+                                    </WrapPanel>
                                 </StackPanel>
                             </Border>
 
@@ -3372,15 +3456,19 @@
                                     <TextBlock Text="Features" Style="{StaticResource PaneHeader}" />
                                     <CheckBox Content="Issues" FontSize="12" Margin="0,0,0,4"
                                               IsChecked="{Binding RepoIssuesEnabled}"
+                                              IsEnabled="{Binding RepoEditsEnabled}"
                                               AutomationProperties.Name="Enable issues" />
                                     <CheckBox Content="Wiki" FontSize="12" Margin="0,0,0,4"
                                               IsChecked="{Binding RepoWikiEnabled}"
+                                              IsEnabled="{Binding RepoEditsEnabled}"
                                               AutomationProperties.Name="Enable wiki" />
                                     <CheckBox Content="Projects" FontSize="12" Margin="0,0,0,10"
                                               IsChecked="{Binding RepoProjectsEnabled}"
+                                              IsEnabled="{Binding RepoEditsEnabled}"
                                               AutomationProperties.Name="Enable projects" />
                                     <ui:Button Content="Save features" FontSize="12" Padding="14,4"
                                                HorizontalAlignment="Left"
+                                               IsEnabled="{Binding RepoEditsEnabled}"
                                                Command="{Binding SaveRepoFeaturesCommand}"
                                                AutomationProperties.Name="Save repository feature toggles" />
                                 </StackPanel>
@@ -3396,8 +3484,10 @@
                                     <WrapPanel Margin="0,0,0,10">
                                         <ui:TextBox Text="{Binding RepoDefaultBranchDraft, UpdateSourceTrigger=PropertyChanged}"
                                                     Width="220" Margin="0,0,8,0"
+                                                    IsEnabled="{Binding RepoEditsEnabled}"
                                                     AutomationProperties.Name="Default branch" />
                                         <ui:Button Content="Change default branch" FontSize="12" Padding="12,4"
+                                                   IsEnabled="{Binding RepoEditsEnabled}"
                                                    Command="{Binding ChangeDefaultBranchCommand}"
                                                    AutomationProperties.Name="Change the default branch" />
                                     </WrapPanel>
@@ -3408,8 +3498,10 @@
                                         <ComboBox ItemsSource="{x:Static local:ProjectDetailViewModel.RepoVisibilities}"
                                                   SelectedItem="{Binding SelectedRepoVisibility}"
                                                   Width="140" FontSize="12" Margin="0,0,8,0"
+                                                  IsEnabled="{Binding RepoEditsEnabled}"
                                                   AutomationProperties.Name="Repository visibility" />
                                         <ui:Button Content="Change visibility" FontSize="12" Padding="12,4"
+                                                   IsEnabled="{Binding RepoEditsEnabled}"
                                                    Command="{Binding ChangeRepoVisibilityCommand}"
                                                    AutomationProperties.Name="Change repository visibility" />
                                     </WrapPanel>

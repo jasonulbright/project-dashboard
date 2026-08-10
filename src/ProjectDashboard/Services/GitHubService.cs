@@ -1316,9 +1316,22 @@ public class GitHubService(SettingsService settingsService)
         return args;
     }
 
+    /// <summary>
+    /// Renames the repository on GitHub. The --repo form leaves every local remote alone: gh
+    /// rewrites a clone's remote URL only when it renames the repository it was invoked inside.
+    /// </summary>
     public Task<ProcessResult> RenameRepoAsync(string repoSlug, string newName, CancellationToken ct = default)
         => RunMutationAsync($"gh repo rename ({repoSlug} -> {newName})",
             ["repo", "rename", newName, "--repo", repoSlug, "--yes"], ct: ct);
+
+    /// <summary>
+    /// True when a rename failed because the owner already holds a repository under the new
+    /// name. GitHub answers that with a field error naming the collision, which gh passes
+    /// through verbatim; every other failure keeps the server's own text, the only sentence
+    /// that says what to do about it.
+    /// </summary>
+    internal static bool IsRepoNameTaken(string error) =>
+        error.Contains("already exists", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Older gh has no --accept-visibility-change-consequences flag; there the call comes
@@ -1429,9 +1442,88 @@ public class GitHubService(SettingsService settingsService)
     public Task<ProcessResult> UnarchiveRepoAsync(string repoSlug, CancellationToken ct = default)
         => RunMutationAsync($"gh repo unarchive ({repoSlug})", ["repo", "unarchive", repoSlug, "--yes"], ct: ct);
 
-    /// <summary>Syncs the local clone's default branch from the fork's parent repo.</summary>
-    public Task<ProcessResult> SyncForkAsync(string repoPath, CancellationToken ct = default)
-        => RunMutationAsync("gh repo sync", ["repo", "sync"], repoPath, ct: ct);
+    /// <summary>
+    /// Syncs this clone's copy of the parent's default branch. gh runs the destination side
+    /// against the working copy — a fast-forward moves the local branch and, when it is checked
+    /// out, the working tree with it — so callers hold the repository lease for the call.
+    /// With <paramref name="force"/> the branch is hard-reset onto the parent, discarding every
+    /// commit the fork has and the parent does not; without it gh refuses a diverged branch.
+    /// </summary>
+    public Task<ProcessResult> SyncForkAsync(string repoPath, bool force = false, CancellationToken ct = default)
+        => RunMutationAsync($"gh repo sync{(force ? " --force" : "")}", BuildSyncForkArgs(force), repoPath, ct: ct);
+
+    internal static List<string> BuildSyncForkArgs(bool force) =>
+        force ? ["repo", "sync", "--force"] : ["repo", "sync"];
+
+    /// <summary>
+    /// True when a sync refused because the local branch carries commits the parent does not.
+    /// gh names the diverging changes and the --force flag in that refusal and in no other, and
+    /// a generic failure line would read as an outage rather than as work a retry would discard.
+    /// </summary>
+    internal static bool IsForkSyncDiverged(string error) =>
+        error.Contains("diverging changes", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when a sync refused over the working tree rather than over history: gh will not
+    /// move a checked-out branch under uncommitted or untracked changes.
+    /// </summary>
+    internal static bool IsForkSyncDirtyWorkingTree(string error) =>
+        error.Contains("uncommitted", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Ahead/behind of a fork's branch against the same branch on its parent. Null when the
+    /// comparison did not answer — an unresolvable branch, a repository outside the parent's
+    /// network, an unparseable body, or any gh failure.
+    /// </summary>
+    public async Task<ForkDivergence?> GetForkDivergenceAsync(string parentSlug, string parentOwner,
+        string forkOwner, string branch, CancellationToken ct = default)
+    {
+        if (BuildForkCompareArgs(parentSlug, parentOwner, forkOwner, branch) is not { } args)
+        {
+            Log.Warn($"fork divergence not read: {forkOwner}:{branch} against {parentSlug} is incompletely named");
+            return null;
+        }
+        var run = await RunAsync(args, ct, ReadTimeout);
+        if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
+        {
+            Log.Warn($"gh api compare failed for {parentSlug}: {run.FirstError}");
+            return null;
+        }
+        return ParseForkDivergence(run.StdOut);
+    }
+
+    /// <summary>
+    /// Null when any part of the comparison is missing. Both sides carry an owner prefix: an
+    /// unqualified head resolves inside the base repository, which compares the parent with
+    /// itself and answers zero for every fork.
+    /// </summary>
+    internal static List<string>? BuildForkCompareArgs(string parentSlug, string parentOwner,
+        string forkOwner, string branch) =>
+        parentSlug.Length == 0 || parentOwner.Length == 0 || forkOwner.Length == 0 || branch.Length == 0
+            ? null
+            : ["api", $"repos/{parentSlug}/compare/{parentOwner}:{branch}...{forkOwner}:{branch}"];
+
+    /// <summary>
+    /// ahead_by counts commits the fork's branch has and the parent's does not; behind_by counts
+    /// the reverse. A response missing either field is not a zero — nothing was measured.
+    /// </summary>
+    internal static ForkDivergence? ParseForkDivergence(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var el = doc.RootElement;
+            if (el.ValueKind != JsonValueKind.Object) return null;
+            return Int(el, "ahead_by") is { } ahead && Int(el, "behind_by") is { } behind
+                ? new ForkDivergence(ahead, behind)
+                : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh api compare response unparseable", ex);
+            return null;
+        }
+    }
 
     /// <summary>Mutation runner: never throws on failure — callers toast ProcessResult.FirstError.</summary>
     private async Task<ProcessResult> RunMutationAsync(string what, IReadOnlyList<string> args,

@@ -40,7 +40,13 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private bool _newReleasePrerelease;
 
     // ── Repo tab: settings ──────────────────────────────────────────────────────
-    [ObservableProperty] private RepoSettings? _repoSettings;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RepoIsArchived))]
+    [NotifyPropertyChangedFor(nameof(RepoEditsEnabled))]
+    [NotifyPropertyChangedFor(nameof(RepoArchiveActionLabel))]
+    [NotifyPropertyChangedFor(nameof(RepoIsFork))]
+    [NotifyPropertyChangedFor(nameof(RepoParentSlug))]
+    private RepoSettings? _repoSettings;
     [ObservableProperty] private bool _repoSettingsLoading;
     [ObservableProperty] private string _repoSettingsError = "";
     [ObservableProperty] private string _repoDescriptionDraft = "";
@@ -124,6 +130,7 @@ public partial class ProjectDetailViewModel
 
         RepoDeleteNotice = "";
         DeleteScopeHintVisible = false;
+        ResetRepoAdminState();
         RefreshDangerZoneGate();
     }
 
@@ -506,6 +513,9 @@ public partial class ProjectDetailViewModel
     {
         await LoadRepoSettings();
         await LoadNotifications();
+        // Last, and only here: the comparison costs two more reads and nothing else on the tab
+        // changes it, so the saves that re-read the settings do not re-run it.
+        await LoadForkDivergence();
     }
 
     [RelayCommand]
@@ -565,6 +575,7 @@ public partial class ProjectDetailViewModel
         var loaded = RepoSettings;
         if (!HasGitHubRemote(slug)) return;
         if (!HasRepoSettings(loaded)) return;
+        if (!RepoWritable(loaded, "Save repository details")) return;
 
         var description = RepoDescriptionDraft.Trim();
         var homepage = RepoHomepageDraft.Trim();
@@ -615,6 +626,7 @@ public partial class ProjectDetailViewModel
         var loaded = RepoSettings;
         if (!HasGitHubRemote(slug)) return;
         if (!HasRepoSettings(loaded)) return;
+        if (!RepoWritable(loaded, "Save repository features")) return;
 
         var issues = FeatureChange(loaded.HasIssues, RepoIssuesEnabled);
         var wiki = FeatureChange(loaded.HasWiki, RepoWikiEnabled);
@@ -648,6 +660,7 @@ public partial class ProjectDetailViewModel
         var branch = RepoDefaultBranchDraft.Trim();
         if (!HasGitHubRemote(slug)) return;
         if (!HasRepoSettings(loaded)) return;
+        if (!RepoWritable(loaded, "Change default branch")) return;
         if (branch.Length == 0)
         {
             GitHubStatusText = "Enter the branch to make default.";
@@ -682,6 +695,7 @@ public partial class ProjectDetailViewModel
         var loaded = RepoSettings;
         if (!HasGitHubRemote(slug)) return;
         if (!HasRepoSettings(loaded)) return;
+        if (!RepoWritable(loaded, "Change visibility")) return;
 
         var visibility = SelectedRepoVisibility;
         var token = visibility.Token(); // enum → exact gh token; BuildVisibilityArgs can't see a bad value

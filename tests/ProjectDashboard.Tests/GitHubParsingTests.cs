@@ -724,3 +724,41 @@ public class GitHubNotificationParsingTests
     public void ErrorPayloadOrMalformed_ReturnsNull(string json)
         => Assert.Null(GitHubService.ParseNotifications(json));
 }
+
+public class GitHubForkDivergenceParsingTests
+{
+    [Fact]
+    public void AForkBothAheadAndBehind_ReadsBothCounts()
+    {
+        var divergence = GitHubService.ParseForkDivergence(
+            """{"status":"diverged","ahead_by":3,"behind_by":12,"total_commits":3}""");
+
+        Assert.NotNull(divergence);
+        Assert.Equal(3, divergence.Ahead);
+        Assert.Equal(12, divergence.Behind);
+        Assert.False(divergence.InSync);
+    }
+
+    [Fact]
+    public void AnIdenticalBranch_ReadsZeroAndSaysSo()
+    {
+        var divergence = GitHubService.ParseForkDivergence("""{"status":"identical","ahead_by":0,"behind_by":0}""");
+
+        Assert.NotNull(divergence);
+        Assert.True(divergence.InSync);
+    }
+
+    /// <summary>
+    /// A body missing either count is not a fork that matches its parent; the caller renders
+    /// "unknown" from the null and offers no sync on it.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"status":"identical","ahead_by":0}""")]
+    [InlineData("""{"status":"behind","behind_by":4}""")]
+    [InlineData("""{"message":"Not Found","status":"404"}""")]
+    [InlineData("[]")]
+    [InlineData("{ bad")]
+    [InlineData("")]
+    public void AnIncompleteOrFailedComparison_ReadsNullRatherThanZero(string json)
+        => Assert.Null(GitHubService.ParseForkDivergence(json));
+}
