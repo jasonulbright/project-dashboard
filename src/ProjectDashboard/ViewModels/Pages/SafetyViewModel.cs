@@ -123,10 +123,10 @@ public partial class SafetyViewModel : ObservableObject
     private bool _cheapRunning;
 
     /// <summary>
-    /// Raised to open a project's detail view at one work-area tab. The rollup routes through its
-    /// own events rather than the dashboard's navigation so that reaching a surface from here never
-    /// writes the shell's pending-project state on this page's behalf: the shell sets it as it
-    /// navigates, and a second writer makes the two disagree about which project is being opened.
+    /// Raised to open a project's detail view at one work-area tab. The rollup carries its own
+    /// events rather than routing through the dashboard's navigation: the two surfaces reach the
+    /// detail page for different reasons, and a shared entry point would tie this page's links to
+    /// the card grid's own pre-navigation bookkeeping.
     /// </summary>
     public event Action<ProjectInfo, DetailTab>? NavigateToProjectTabRequested;
 
