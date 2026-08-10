@@ -488,4 +488,133 @@ public class BackupServiceTests
         Assert.False(File.Exists(first.RefsSnapshotPath));
         Assert.Single(await service.ListBackupsAsync(repo.Path));
     }
+
+    // ── Verify, standalone ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// A backup this service just wrote verified once as it was written; the standalone check has
+    /// to reach the same verdict later, since it is the precondition a restore acts on.
+    /// </summary>
+    [Fact]
+    public async Task VerifyBackup_AnIntactBundle_Verifies()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path, "History rewrite");
+
+        var result = await service.VerifyBackupAsync(handle);
+
+        Assert.Equal(BundleVerifyState.Verified, result.State);
+        Assert.True(result.Verified);
+    }
+
+    /// <summary>Verifying reads; it must not unbundle, move a ref, or touch the working tree.</summary>
+    [Fact]
+    public async Task VerifyBackup_ChangesNothingInTheRepository()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        repo.Write("file.txt", "two\n");
+        await repo.CommitAllAsync("second");
+        var before = await repo.RefStateAsync();
+
+        Assert.True((await service.VerifyBackupAsync(handle)).Verified);
+
+        Assert.Equal(before, await repo.RefStateAsync());
+    }
+
+    [Fact]
+    public async Task VerifyBackup_ACorruptBundle_Fails()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        File.WriteAllText(handle.BundlePath, "not a valid git bundle");
+
+        var result = await service.VerifyBackupAsync(handle);
+
+        Assert.Equal(BundleVerifyState.Failed, result.State);
+        Assert.NotEqual("", result.Detail);
+    }
+
+    [Fact]
+    public async Task VerifyBackup_AMissingBundle_Fails()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        File.Delete(handle.BundlePath);
+
+        var result = await service.VerifyBackupAsync(handle);
+
+        Assert.Equal(BundleVerifyState.Failed, result.State);
+        Assert.Contains("missing", result.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Reports whatever `git bundle verify` was going to report as a timeout instead.</summary>
+    private sealed class TimesOutOnBundleVerifyGitService : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var argv = args.ToList();
+            return argv is ["bundle", "verify", ..]
+                ? Task.FromResult(new ProcessResult(-1, "", "timed out", TimedOut: true))
+                : base.RunAsync(repoPath, argv, environment, ct, timeout);
+        }
+    }
+
+    /// <summary>
+    /// A killed check answered nothing. Calling that a corrupt bundle would send a reader to
+    /// delete a backup that is intact, so the state stays unknown and the restore still refuses.
+    /// </summary>
+    [Fact]
+    public async Task VerifyBackup_AVerifyThatTimesOut_IsUnknownRatherThanFailed()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var handle = await NewService().CreateBackupAsync(repo.Path);
+        var service = new BackupService(new TimesOutOnBundleVerifyGitService(), new SettingsService());
+
+        var result = await service.VerifyBackupAsync(handle);
+
+        Assert.Equal(BundleVerifyState.Unknown, result.State);
+        Assert.False(result.Verified);
+
+        var before = await repo.RefStateAsync();
+        var restore = await service.RestoreAsync(handle, allowDirty: false);
+        Assert.False(restore.Success);
+        Assert.False(restore.RefsRestored);
+        Assert.Equal(before, await repo.RefStateAsync());
+    }
+
+    // ── Size ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MeasureBackupBytes_CountsTheBundleAndItsSidecar()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+
+        var measured = service.MeasureBackupBytes(handle);
+
+        Assert.NotNull(measured);
+        Assert.Equal(
+            new FileInfo(handle.BundlePath).Length + new FileInfo(handle.RefsSnapshotPath).Length,
+            measured!.Value);
+    }
+
+    /// <summary>A deleted backup occupies nothing, which is a total rather than an unreadable one.</summary>
+    [Fact]
+    public async Task MeasureBackupBytes_AfterDelete_IsZeroNotNull()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        await service.DeleteBackupAsync(handle);
+
+        Assert.Equal(0L, service.MeasureBackupBytes(handle));
+    }
 }

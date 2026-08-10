@@ -92,11 +92,11 @@ public sealed class BackupService
         // read back. The restore verifies before it touches anything, so a bundle that fails
         // verification is a backup that does not exist — and a caller told it exists proceeds
         // with a destructive operation on that belief.
-        var verify = await _git.RunAsync(repoPath, ["bundle", "verify", bundlePath], ct, BundleTimeout);
-        if (!verify.Success)
+        var verify = await VerifyBundleAsync(repoPath, bundlePath, ct);
+        if (!verify.Verified)
         {
             TryDelete(bundlePath);
-            throw new BackupException($"Backup bundle for '{repoPath}' failed verification: {verify.FirstError}");
+            throw new BackupException($"Backup bundle for '{repoPath}' failed verification: {verify.Detail}");
         }
 
         try
@@ -177,6 +177,57 @@ public sealed class BackupService
     }
 
     /// <summary>
+    /// Whether a backup's bundle still reads back, without restoring anything. The same check
+    /// <see cref="RestoreAsync"/> makes as its precondition, so an answer here is the answer that
+    /// restore would act on. It runs against the repository the backup was taken from, because a
+    /// bundle whose prerequisite objects that repository no longer holds does not verify there
+    /// however intact the file itself is.
+    /// </summary>
+    public async Task<BundleVerifyResult> VerifyBackupAsync(BackupHandle handle, CancellationToken ct = default)
+    {
+        if (!File.Exists(handle.BundlePath))
+            return new BundleVerifyResult(BundleVerifyState.Failed, $"Bundle missing: {handle.BundlePath}");
+        return await VerifyBundleAsync(handle.RepoPath, handle.BundlePath, ct);
+    }
+
+    /// <summary>
+    /// A timeout is <see cref="BundleVerifyState.Unknown"/> rather than a failure: the kill says
+    /// the question went unanswered, and a bundle called corrupt on that basis would send a reader
+    /// to delete a backup that is intact.
+    /// </summary>
+    private async Task<BundleVerifyResult> VerifyBundleAsync(string repoPath, string bundlePath, CancellationToken ct)
+    {
+        var verify = await _git.RunAsync(repoPath, ["bundle", "verify", bundlePath], ct, BundleTimeout);
+        if (verify.Success) return new BundleVerifyResult(BundleVerifyState.Verified, verify.StdOut.Trim());
+        return new BundleVerifyResult(
+            verify.TimedOut ? BundleVerifyState.Unknown : BundleVerifyState.Failed, verify.FirstError);
+    }
+
+    /// <summary>
+    /// Bytes a backup occupies — bundle, refs sidecar, and the sidecar's .bak. Null when a file
+    /// that exists could not be sized, so a caller reports the size as unknown rather than as a
+    /// total silently missing whatever the read failed on.
+    /// </summary>
+    public long? MeasureBackupBytes(BackupHandle handle)
+    {
+        long total = 0;
+        foreach (var path in new[] { handle.BundlePath, handle.RefsSnapshotPath, handle.RefsSnapshotPath + ".bak" })
+        {
+            try
+            {
+                var info = new FileInfo(path);
+                if (info.Exists) total += info.Length;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"could not size backup file {path}", ex);
+                return null;
+            }
+        }
+        return total;
+    }
+
+    /// <summary>
     /// Restores the repo to the backup's ref state. The bundle is verified first; a
     /// failed verification aborts before any ref changes. Every ref is then reconciled to
     /// the snapshot in one transaction — refs the backup lacks are deleted, refs it has are
@@ -232,9 +283,9 @@ public sealed class BackupService
 
         // Verify against the target repo (prerequisite objects, if any, must be present)
         // BEFORE mutating anything. A corrupt or truncated bundle stops here.
-        var verify = await _git.RunAsync(handle.RepoPath, ["bundle", "verify", handle.BundlePath], ct, BundleTimeout);
-        if (!verify.Success)
-            return new RestoreResult(false, $"Bundle failed verification — refusing to restore: {verify.FirstError}");
+        var verify = await VerifyBundleAsync(handle.RepoPath, handle.BundlePath, ct);
+        if (!verify.Verified)
+            return new RestoreResult(false, $"Bundle failed verification — refusing to restore: {verify.Detail}");
 
         // Unpack the bundle's objects into the store WITHOUT moving refs: a plain fetch
         // refuses to update a branch that is checked out, so refs are set explicitly below

@@ -59,6 +59,27 @@ public sealed record BackupDetails(
     long BundleBytes);
 
 /// <summary>
+/// Whether a bundle reads back. <see cref="Unknown"/> is git failing to answer — a kill on
+/// timeout, a launch that produced no verdict — and is never a pass: every caller treats
+/// anything other than <see cref="Verified"/> as a bundle it may not restore from.
+/// </summary>
+public enum BundleVerifyState
+{
+    Verified,
+    Failed,
+    Unknown
+}
+
+/// <summary>
+/// One <c>git bundle verify</c> answer. <paramref name="Detail"/> is git's verbatim output for a
+/// pass and its verbatim failure text otherwise.
+/// </summary>
+public sealed record BundleVerifyResult(BundleVerifyState State, string Detail)
+{
+    public bool Verified => State == BundleVerifyState.Verified;
+}
+
+/// <summary>
 /// Outcome of a restore. The ref reconciliation is all-or-nothing, but the steps after it —
 /// the HEAD reposition and the working-tree reset — can fail with the refs already back, so
 /// <see cref="Success"/> false does not mean the repository is untouched.
