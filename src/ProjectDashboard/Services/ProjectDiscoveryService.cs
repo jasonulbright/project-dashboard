@@ -155,8 +155,7 @@ public class ProjectDiscoveryService(
     /// <summary>
     /// Persists a project's manifest. False when the write did not reach disk — the caller still
     /// holds the only copy of the edit and must not present it as stored.
-    /// </summary>
-    /// <summary>
+    ///
     /// <paramref name="identity"/> is what the caller believes it is editing, carried from the
     /// project it opened. A surface that opened a project before a scan re-keyed its record still
     /// holds the old path, and without the identity the write lands at a folder nobody is looking
@@ -586,7 +585,7 @@ public class ProjectDiscoveryService(
     /// bumps this. The cost of a bump is one extra scan on the first launch after an update; the
     /// cost of forgetting is a cache served with fields nothing filled in.
     /// </summary>
-    internal const int CacheSchemaVersion = 4;
+    internal const int CacheSchemaVersion = 5;
 
     private sealed class DiscoveryCache
     {

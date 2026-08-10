@@ -49,6 +49,37 @@ public class ProjectDiscoveryCacheTests
     }
 
     /// <summary>
+    /// Version 4 is a shape that shipped: it carries whether the account read stopped short, and
+    /// nothing about what each repository is. Read as the current shape, every card comes back
+    /// with no identity — which leaves a repository that moved unrecognisable and a metadata write
+    /// falling back to the folder it was opened on. A published version number is never reused for
+    /// a different shape, so a cache still wearing it is a miss.
+    /// </summary>
+    [Fact]
+    public async Task ACacheFromTheShapeThatShipped_IsAMissRatherThanCardsWithNoIdentity()
+    {
+        Assert.True(ProjectDiscoveryService.CacheSchemaVersion > 4,
+            "a published cache version must not be reused for a different shape");
+
+        var shipped = new
+        {
+            SchemaVersion = 4,
+            CachedAt = DateTimeOffset.Now,
+            Projects = new object[]
+            {
+                new { DirectoryName = "shipped-shape", DisplayName = "shipped-shape", FullPath = "", IsRemoteOnly = true, RemoteSlug = "someone/shipped-shape" }
+            },
+            RemoteListStoppedShort = true
+        };
+        File.WriteAllText(AppPaths.DiscoveryCacheFile,
+            JsonSerializer.Serialize(shipped, new JsonSerializerOptions { WriteIndented = true }));
+
+        var results = await NewService(new ManifestStore()).DiscoverAllAsync();
+
+        Assert.DoesNotContain(results, p => p.DirectoryName == "shipped-shape");
+    }
+
+    /// <summary>
     /// The Cloud cards a cache serves came from a read that may have stopped short, and the fact
     /// travels with them: served without it, the count reads as the whole account for as long as
     /// the cache lasts.
