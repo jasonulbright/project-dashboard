@@ -42,7 +42,7 @@ public class DashboardHiddenCountTests
 
         // A settings write is one of the two things that recounts it.
         var unhidden = settings.Load();
-        unhidden.ExcludedDirectories = ["alpha"];
+        unhidden.ProjectRoots[0].ExcludedDirectories = ["alpha"];
         settings.Save(unhidden);
 
         await WaitUntil(() => dashboard.HiddenCount == 1);

@@ -19,9 +19,14 @@ public static class SettingsDelta
     public static int EffectiveRefreshSeconds(AppSettings settings) =>
         EffectiveRefreshSeconds(settings.RefreshIntervalSeconds);
 
-    /// <summary>The path the file watcher should be pointed at; empty when auto-refresh is off.</summary>
-    public static string WatcherRoot(AppSettings settings) =>
-        settings.EnableAutoRefresh ? settings.ProjectsRootPath : "";
+    /// <summary>
+    /// The paths the file watcher should be pointed at; empty when auto-refresh is off. One
+    /// watcher cannot cover disjoint roots, so this is a set rather than a path.
+    /// </summary>
+    public static IReadOnlyList<string> WatcherRoots(AppSettings settings) =>
+        settings.EnableAutoRefresh
+            ? [.. ProjectRootSettings.Scannable(settings).Select(r => r.Path)]
+            : [];
 
     public static bool ThemeChanged(SettingsChange change) =>
         !string.Equals(change.Previous.Theme, change.Current.Theme, StringComparison.OrdinalIgnoreCase);
@@ -30,18 +35,35 @@ public static class SettingsDelta
         EffectiveRefreshSeconds(change.Previous) != EffectiveRefreshSeconds(change.Current);
 
     public static bool WatcherTargetChanged(SettingsChange change) =>
-        !PathsEqual(WatcherRoot(change.Previous), WatcherRoot(change.Current));
+        !NamesEqual(WatcherRoots(change.Previous), WatcherRoots(change.Current));
 
     /// <summary>
     /// True when the discovered set itself can differ, so the cached scan is stale and a
     /// full re-scan is the only thing that can show it. The discovery cache is keyed on age
     /// alone, so a plain reload would re-serve the previous root's projects until it expires.
+    ///
+    /// The roots are compared as an ordered sequence, whole: a reorder changes which root wins
+    /// a same-named repository, and a depth, exclusion, or enabled edit changes the set outright.
+    /// A comparison that missed any of them would leave a settings write that silently does not
+    /// rescan.
     /// </summary>
     public static bool RediscoveryRequired(SettingsChange change) =>
-        !PathsEqual(change.Previous.ProjectsRootPath, change.Current.ProjectsRootPath)
-        || !NamesEqual(change.Previous.ExcludedDirectories, change.Current.ExcludedDirectories)
+        !RootsEqual(change.Previous.ProjectRoots, change.Current.ProjectRoots)
         || change.Previous.EnableGitHubDiscovery != change.Current.EnableGitHubDiscovery
         || !PathsEqual(change.Previous.GhPath.Trim(), change.Current.GhPath.Trim());
+
+    private static bool RootsEqual(IReadOnlyList<ProjectRoot> left, IReadOnlyList<ProjectRoot> right)
+    {
+        if (left.Count != right.Count) return false;
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!PathsEqual(left[i].Path, right[i].Path)) return false;
+            if (left[i].Enabled != right[i].Enabled) return false;
+            if (left[i].MaxDepth != right[i].MaxDepth) return false;
+            if (!NamesEqual(left[i].ExcludedDirectories, right[i].ExcludedDirectories)) return false;
+        }
+        return true;
+    }
 
     /// <summary>
     /// The diff pane's layout. The pane caches the rendering it is showing, so a write from

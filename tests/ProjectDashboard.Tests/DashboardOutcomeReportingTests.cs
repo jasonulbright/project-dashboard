@@ -56,7 +56,7 @@ public class DashboardOutcomeReportingTests
     public async Task APinWhoseWriteFails_LeavesTheProjectUnpinnedAndSaysSo()
     {
         var (dashboard, settings) = await NewDashboardAsync("pin-fail");
-        var project = NewProject("alpha");
+        var project = NewProject("pin-fail", "alpha");
         dashboard.Projects.Add(project);
 
         using (new BlockedSettingsWrites())
@@ -77,7 +77,7 @@ public class DashboardOutcomeReportingTests
     public async Task AnUnpinWhoseWriteFails_LeavesTheProjectPinnedAndSaysSo()
     {
         var (dashboard, settings) = await NewDashboardAsync("unpin-fail");
-        var project = NewProject("bravo");
+        var project = NewProject("unpin-fail", "bravo");
         dashboard.Projects.Add(project);
 
         dashboard.TogglePinCommand.Execute(project);
@@ -100,7 +100,7 @@ public class DashboardOutcomeReportingTests
     public async Task AHideWhoseWriteFails_KeepsTheProjectVisibleAndSaysSo()
     {
         var (dashboard, settings) = await NewDashboardAsync("hide-fail");
-        var project = NewProject("charlie");
+        var project = NewProject("hide-fail", "charlie");
 
         using (new BlockedSettingsWrites())
             await dashboard.HideProjectCommand.ExecuteAsync(project);
@@ -113,7 +113,7 @@ public class DashboardOutcomeReportingTests
     public async Task AHideThatIsSaved_ReportsThatTheProjectIsHidden()
     {
         var (dashboard, settings) = await NewDashboardAsync("hide-ok");
-        var project = NewProject("delta");
+        var project = NewProject("hide-ok", "delta");
 
         await dashboard.HideProjectCommand.ExecuteAsync(project);
 
@@ -125,7 +125,7 @@ public class DashboardOutcomeReportingTests
     public async Task AnUnhideWhoseWriteFails_KeepsTheProjectHiddenAndSaysSo()
     {
         var (dashboard, settings) = await NewDashboardAsync("unhide-fail");
-        var project = NewProject("echo");
+        var project = NewProject("unhide-fail", "echo");
 
         await dashboard.HideProjectCommand.ExecuteAsync(project);
         Assert.Contains("echo", settings.Load().ExcludedDirectories);
@@ -141,7 +141,7 @@ public class DashboardOutcomeReportingTests
     public async Task AnUnhideThatIsSaved_ReportsThatTheProjectIsBack()
     {
         var (dashboard, settings) = await NewDashboardAsync("unhide-ok");
-        var project = NewProject("foxtrot");
+        var project = NewProject("unhide-ok", "foxtrot");
 
         await dashboard.HideProjectCommand.ExecuteAsync(project);
         await dashboard.UnhideProjectCommand.ExecuteAsync(project);
@@ -154,7 +154,7 @@ public class DashboardOutcomeReportingTests
     public async Task AShellHandOffThatCannotStart_ReportsInsteadOfThrowing()
     {
         var (dashboard, _) = await NewDashboardAsync("launch-fail");
-        var project = NewProject("golf");
+        var project = NewProject("launch-fail", "golf");
         // Removed since the scan: the shell has nothing to open and Process.Start throws.
         project.FullPath = Path.Combine(TestEnv.Root, "gone-" + Guid.NewGuid().ToString("N")[..8]);
 
@@ -163,16 +163,22 @@ public class DashboardOutcomeReportingTests
         Assert.StartsWith("Open folder for golf failed — ", dashboard.OpStatusText);
     }
 
-    private static ProjectInfo NewProject(string name) => new()
+    /// <summary>The root <see cref="NewDashboardAsync"/> configures for that test.</summary>
+    private static string RootFor(string prefix) => Path.Combine(TestEnv.Root, "outcome-" + prefix);
+
+    /// <summary>A card as a scan would have produced it: under the root that was configured.</summary>
+    private static ProjectInfo NewProject(string prefix, string name) => new()
     {
         DirectoryName = name,
         DisplayName = name,
-        FullPath = Path.Combine(TestEnv.Root, "outcome-projects", name),
+        FullPath = Path.Combine(RootFor(prefix), name),
+        RootPath = RootFor(prefix),
     };
 
     private static async Task<(DashboardViewModel Dashboard, SettingsService Settings)> NewDashboardAsync(string prefix)
     {
-        var root = TestEnv.NewDir(prefix);
+        var root = RootFor(prefix);
+        Directory.CreateDirectory(root);
         var settings = new SettingsService();
         settings.Save(new AppSettings
         {

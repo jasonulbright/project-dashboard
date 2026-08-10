@@ -4,6 +4,14 @@ public partial class ProjectInfo : ObservableObject
 {
     public string DirectoryName { get; set; } = "";
     public string FullPath { get; set; } = "";
+
+    /// <summary>
+    /// The configured root this repository was found under; empty for a remote-only card, which
+    /// was found under none. Two roots can hold folders of the same name, so the surfaces that
+    /// group, hide, or report per root need the root as well as the path.
+    /// </summary>
+    public string RootPath { get; set; } = "";
+
     public string DisplayName { get; set; } = "";
     public string Description { get; set; } = "";
     public string LatestVersion { get; set; } = "";

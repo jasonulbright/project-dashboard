@@ -57,6 +57,28 @@
             </StackPanel>
         </Border>
 
+        <!-- Unreadable or truncated roots: named beside a grid that still has cards in it, so a
+             partial scan is never presented as a complete one. -->
+        <Border DockPanel.Dock="Top"
+                Visibility="{Binding RootIssueVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource StatusWarnFg}" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <ui:SymbolIcon Symbol="Warning24" Foreground="{DynamicResource StatusWarnFg}" FontSize="16"
+                               Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding RootIssueText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           MaxWidth="760"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
+                           AutomationProperties.AutomationId="DashboardRootIssueText"
+                           AutomationProperties.LiveSetting="Polite" />
+                <ui:Button Content="Scan again" FontSize="12" Padding="10,4" Margin="14,0,0,0"
+                           Command="{Binding ForceRefreshCommand}" />
+                <ui:Button Content="Open Settings" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                           Command="{Binding OpenSettingsCommand}" />
+            </StackPanel>
+        </Border>
+
         <!-- Interrupted-history banner: a repository whose last history operation died mid-flight
              is only offered a restore on its own page, so the dashboard is where a reader who
              never opens that page finds out. No action here — every gate lives on that page. -->
@@ -328,23 +350,40 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- Configured root does not exist: a different fault from an empty one -->
+        <!-- No projects folder configured at all: a first run, not a fault -->
         <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520"
-                    Visibility="{Binding ShowRootMissing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    Visibility="{Binding ShowNoRootsConfigured, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ui:SymbolIcon Symbol="FolderAdd24" FontSize="34" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="No projects folder yet" FontSize="17" FontWeight="SemiBold"
+                       Margin="0,12,0,0" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="Add the folder your repositories live in, and the dashboard will scan it."
+                       FontSize="13" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center"
+                       TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
+                <ui:Button Content="Add a projects folder" Appearance="Primary" FontSize="12" Padding="12,6"
+                           Command="{Binding OpenSettingsCommand}" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Every configured folder unreadable: a different fault from an empty one -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520"
+                    Visibility="{Binding ShowRootsUnavailable, Converter={StaticResource BooleanToVisibilityConverter}}">
             <ui:SymbolIcon Symbol="FolderProhibited24" FontSize="34" HorizontalAlignment="Center"
                            Foreground="{DynamicResource StatusBadFg}" />
-            <TextBlock Text="That projects folder isn't there" FontSize="17" FontWeight="SemiBold"
+            <TextBlock Text="No projects folder could be read" FontSize="17" FontWeight="SemiBold"
                        Margin="0,12,0,0" HorizontalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
             <TextBlock Text="{Binding ConfiguredRootPath}" FontSize="12" Margin="0,6,0,0"
                        FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"
                        HorizontalAlignment="Center" TextAlignment="Center"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-            <TextBlock Text="The drive may be disconnected, or the folder moved."
+            <TextBlock Text="A drive may be disconnected, or a folder moved."
                        FontSize="13" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center"
                        TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
-                <ui:Button Content="Change projects folder" Appearance="Primary" FontSize="12" Padding="12,6"
+                <ui:Button Content="Change projects folders" Appearance="Primary" FontSize="12" Padding="12,6"
                            Command="{Binding OpenSettingsCommand}" Margin="0,0,8,0" />
                 <ui:Button Content="Scan again" FontSize="12" Padding="12,6"
                            Command="{Binding ForceRefreshCommand}" />

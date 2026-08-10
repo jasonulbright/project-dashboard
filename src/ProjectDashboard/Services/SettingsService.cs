@@ -43,14 +43,25 @@ public class SettingsService
             lock (FileLock)
             {
                 // Corrupt-file handling (quarantine + .bak recovery) lives in DurableJsonFile.Read.
-                return DurableJsonFile.Read<AppSettings>(SettingsPath, JsonOptions) ?? new AppSettings();
+                return Migrated(DurableJsonFile.Read<AppSettings>(SettingsPath, JsonOptions) ?? new AppSettings());
             }
         }
         catch (Exception ex)
         {
             Log.Warn($"Failed to read settings at {SettingsPath} — using defaults", ex);
-            return new AppSettings();
+            return Migrated(new AppSettings());
         }
+    }
+
+    /// <summary>
+    /// Brings a file written before the root list up to it, in memory only. A load that wrote
+    /// back would turn every read into a disk write and race the writer's own lock; the next
+    /// save persists the shape.
+    /// </summary>
+    private static AppSettings Migrated(AppSettings settings)
+    {
+        ProjectRootSettings.Migrate(settings);
+        return settings;
     }
 
     /// <summary>
@@ -70,6 +81,10 @@ public class SettingsService
                 // Read under the same lock as the write: a baseline taken outside it can
                 // miss a racing writer, and the delta would then report no change.
                 previous = Load();
+                // Settled against what is on disk: a caller that built an AppSettings by hand
+                // carries no root list, and one that load-mutated the singular root or its
+                // exclusions means that edit.
+                ProjectRootSettings.Reconcile(settings, previous);
                 Directory.CreateDirectory(SettingsDir);
                 DurableJsonFile.Write(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
                 // Numbered under the lock that orders the writes, so the number and the file

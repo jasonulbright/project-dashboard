@@ -22,6 +22,16 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     public DateTimeOffset? LastDiscoveryAt { get; private set; }
 
     /// <summary>
+    /// What each configured root was, the last time a list was handed out — served from the
+    /// cache alongside the projects it describes. Empty until a list has been handed out, which
+    /// is not the same fact as no roots being configured.
+    /// </summary>
+    public IReadOnlyList<RootStatus> LastRootStatuses { get; private set; } = [];
+
+    /// <summary>A discovered repository and the configured root the walk found it under.</summary>
+    private readonly record struct RepoCandidate(string Path, string RootPath);
+
+    /// <summary>
     /// Loads from cache if fresh, otherwise runs full discovery and updates cache.
     /// </summary>
     public async Task<List<ProjectInfo>> DiscoverAllAsync(CancellationToken ct = default)
@@ -83,28 +93,23 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
     private async Task<List<ProjectInfo>> DiscoverFromDiskAsync(AppSettings settings, CancellationToken ct)
     {
-        var rootPath = settings.ProjectsRootPath;
-        var excluded = new HashSet<string>(settings.ExcludedDirectories, StringComparer.OrdinalIgnoreCase);
+        // Off the calling thread before anything touches the disk: probing a disconnected UNC
+        // root blocks for the SMB timeout, and this is awaited from the dispatcher.
+        var (candidates, statuses) = await Task.Run(() => WalkRoots(settings, ct), ct);
+        LastRootStatuses = statuses;
 
-        if (!Directory.Exists(rootPath))
-            return [];
-
-        var dirs = Directory.GetDirectories(rootPath)
-            .Where(d =>
-            {
-                var name = Path.GetFileName(d);
-                return !excluded.Contains(name) && GitService.IsGitRepo(d);
-            })
-            .ToList();
-
-        // Phase A: local git/file facts, parallel with a small concurrency cap.
+        // Phase A: local git/file facts, parallel with a small concurrency cap. One semaphore
+        // over the COMBINED candidate list — one per root would multiply the cap, and the git
+        // process count with it, by the number of roots.
         var semaphore = new SemaphoreSlim(6);
-        var tasks = dirs.Select(async dir =>
+        var tasks = candidates.Select(async candidate =>
         {
             await semaphore.WaitAsync(ct);
             try
             {
-                return await BuildProjectInfoAsync(dir, ct);
+                var project = await BuildProjectInfoAsync(candidate.Path, ct);
+                if (project is not null) project.RootPath = candidate.RootPath;
+                return project;
             }
             finally
             {
@@ -130,6 +135,47 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         return results
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// Walks every configured root in order and collects both the candidates and what each root
+    /// turned out to be. A root that is missing or unreadable contributes no candidates and does
+    /// not fault the scan: the union of what succeeded is still a better answer than a blank
+    /// grid, provided the failures travel with it.
+    ///
+    /// Candidates are deduplicated by normalized path, so a root nested inside another — or the
+    /// same path listed twice — produces one card rather than two.
+    /// </summary>
+    private static (List<RepoCandidate> Candidates, List<RootStatus> Statuses) WalkRoots(
+        AppSettings settings, CancellationToken ct)
+    {
+        var candidates = new List<RepoCandidate>();
+        var statuses = new List<RootStatus>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var root in ProjectRootSettings.Clean(ProjectRootSettings.Effective(settings)))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!root.Enabled)
+            {
+                statuses.Add(RootStatus.For(root, RootAvailability.Disabled));
+                continue;
+            }
+
+            var walk = RepositoryWalk.Run(root, ct);
+            var added = 0;
+            foreach (var repo in walk.Repositories)
+                if (seen.Add(repo))
+                {
+                    candidates.Add(new RepoCandidate(repo, root.Path));
+                    added++;
+                }
+
+            statuses.Add(RootStatus.For(root, walk.Availability, added, walk.Truncated, walk.Detail));
+        }
+
+        return (candidates, statuses);
     }
 
     /// <summary>
@@ -307,6 +353,12 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         public int SchemaVersion { get; set; }
         public DateTimeOffset CachedAt { get; set; }
         public List<ProjectInfo> Projects { get; set; } = [];
+
+        /// <summary>
+        /// What each root was when this list was produced. Served with it, or an unreachable root
+        /// reads as an empty one for as long as the cache lasts.
+        /// </summary>
+        public List<RootStatus> Roots { get; set; } = [];
     }
 
     /// <summary>
@@ -346,6 +398,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             }
 
             LastDiscoveryAt = cache.CachedAt;
+            LastRootStatuses = cache.Roots;
             return cache.Projects;
         }
         catch (Exception ex)
@@ -367,7 +420,8 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             {
                 SchemaVersion = CacheSchemaVersion,
                 CachedAt = DateTimeOffset.Now,
-                Projects = projects
+                Projects = projects,
+                Roots = [.. LastRootStatuses]
             };
             LastDiscoveryAt = cache.CachedAt;
 

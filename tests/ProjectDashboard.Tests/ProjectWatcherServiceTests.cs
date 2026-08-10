@@ -23,6 +23,11 @@ public class ProjectWatcherServiceTests
         private readonly SemaphoreSlim _arrived = new(0);
 
         public WatchHarness(string root, params string[] knownRepos)
+            : this([root], knownRepos)
+        {
+        }
+
+        public WatchHarness(string[] roots, params string[] knownRepos)
         {
             _service.Changed += batch =>
             {
@@ -30,7 +35,7 @@ public class ProjectWatcherServiceTests
                 _arrived.Release();
             };
             if (knownRepos.Length > 0) _service.SetKnownRepos(knownRepos);
-            _service.Start(root);
+            _service.Start(roots);
             // FileSystemWatcher arms asynchronously relative to file writes issued
             // immediately after Start; a short pause avoids missing the first event.
             Thread.Sleep(250);
@@ -244,6 +249,27 @@ public class ProjectWatcherServiceTests
 
         Assert.False(await harness.SignalArrivedWithinAsync(QuietWindow),
             "a path under no repository must not signal");
+    }
+
+    /// <summary>
+    /// The other reason the payload is a path. Two roots each holding a "tabkit" produce one
+    /// name, and a card in the root nobody touched would refresh alongside — or instead of — the
+    /// one that changed.
+    /// </summary>
+    [Fact]
+    public async Task AnEditUnderOneRoot_NamesOnlyThatRootsCopyOfASharedName()
+    {
+        var first = TestEnv.NewDir("watch-multi-first");
+        var second = TestEnv.NewDir("watch-multi-second");
+        var inFirst = NewRepo(first, "tabkit");
+        var inSecond = NewRepo(second, "tabkit");
+        using var harness = new WatchHarness([first, second], inFirst, inSecond);
+
+        Touch(second, @"tabkit\notes.txt");
+
+        var batch = await harness.WaitForSignalAsync();
+        Assert.Equal([inSecond], batch.Order());
+        Assert.DoesNotContain(inFirst, batch);
     }
 
     /// <summary>

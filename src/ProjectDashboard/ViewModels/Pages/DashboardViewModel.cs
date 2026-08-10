@@ -94,16 +94,31 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Excluded directories that are really repositories on disk. An excluded name with
-    /// no repository behind it is not a hidden project — the Hidden view would have
-    /// nothing to show for it.
+    /// Excluded entries that are really repositories on disk, across every scanned root. An
+    /// excluded name with no repository behind it is not a hidden project — the Hidden view
+    /// would have nothing to show for it.
     /// </summary>
-    internal static int CountHiddenRepos(AppSettings settings)
+    internal static int CountHiddenRepos(AppSettings settings) => HiddenRepoPaths(settings).Count;
+
+    /// <summary>
+    /// Where the hidden repositories are, root by root. Exclusions are per root, so the same
+    /// name excluded under one root says nothing about a folder of that name under another.
+    /// </summary>
+    internal static List<(string Path, string RootPath)> HiddenRepoPaths(AppSettings settings)
     {
-        var root = settings.ProjectsRootPath;
-        return settings.ExcludedDirectories.Count(d =>
-            Directory.Exists(Path.Combine(root, d)) &&
-            GitService.IsGitRepo(Path.Combine(root, d)));
+        var hidden = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in ProjectRootSettings.Scannable(settings))
+        {
+            foreach (var entry in root.ExcludedDirectories)
+            {
+                var candidate = Path.Combine(root.Path, entry.Replace('/', '\\'));
+                if (!Directory.Exists(candidate) || !GitService.IsGitRepo(candidate)) continue;
+                var normalized = RepoPaths.Normalize(candidate);
+                if (seen.Add(normalized)) hidden.Add((normalized, root.Path));
+            }
+        }
+        return hidden;
     }
 
     public int MismatchCount => Projects.Count(p => !p.IsRemoteOnly && p.HasRemoteMismatch);
@@ -460,25 +475,46 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Probed once per load: two bindings read the root and every dashboard-search
-    /// keystroke re-raises them, so reading settings per property would mean a
-    /// synchronous file read and deserialize per character on the UI thread.
+    /// What the last scan found each configured root to be. Read from the scan rather than
+    /// probed here: two bindings read it and every dashboard-search keystroke re-raises them,
+    /// and probing a disconnected share on the UI thread freezes the window for the share's
+    /// own timeout.
     /// </summary>
-    private bool _rootExists = true;
-    private string _configuredRoot = "";
+    private IReadOnlyList<RootStatus> _rootStatuses = [];
 
-    private void ProbeConfiguredRoot()
+    /// <summary>
+    /// The configured roots, whether or not a scan has reported on them yet. Held so the empty
+    /// state can tell "no roots configured" from "every root is unreachable" before the first
+    /// scan lands.
+    /// </summary>
+    private IReadOnlyList<string> _configuredRoots = [];
+
+    private void AdoptRootStatuses()
     {
-        _configuredRoot = _settingsService.Load().ProjectsRootPath;
-        _rootExists = Directory.Exists(_configuredRoot);
+        _configuredRoots = [.. ProjectRootSettings.Effective(_settingsService.Load()).Select(r => r.Path)];
+        _rootStatuses = _discoveryService.LastRootStatuses;
+        UpdateRootIssueBanner();
     }
 
+    /// <summary>
+    /// Roots a scan could read. Before the first scan reports, a configured root counts as
+    /// usable: the alternative is a "that folder isn't there" panel for a root nothing has
+    /// looked at yet.
+    /// </summary>
+    private int UsableRootCount =>
+        _rootStatuses.Count == 0 ? _configuredRoots.Count : _rootStatuses.Count(s => s.IsUsable);
+
+    private int ConfiguredRootCount =>
+        _rootStatuses.Count > 0 ? _rootStatuses.Count : _configuredRoots.Count;
+
     public DashboardContent Content => DashboardEmptyState.Select(
-        LoadProjectsCommand.IsRunning, DiscoveryErrorVisible, _rootExists, Projects.Count, FilteredProjects.Count);
+        LoadProjectsCommand.IsRunning, DiscoveryErrorVisible,
+        ConfiguredRootCount, UsableRootCount, Projects.Count, FilteredProjects.Count);
 
     public bool ShowLoading => Content == DashboardContent.Loading;
     public bool ShowScanFailed => Content == DashboardContent.ScanFailed;
-    public bool ShowRootMissing => Content == DashboardContent.RootMissing;
+    public bool ShowNoRootsConfigured => Content == DashboardContent.NoRootsConfigured;
+    public bool ShowRootsUnavailable => Content == DashboardContent.RootsUnavailable;
     public bool ShowEmptyRoot => Content == DashboardContent.EmptyRoot;
     public bool ShowNoMatches => Content == DashboardContent.NoMatches;
     public bool ShowCards => Content == DashboardContent.Cards;
@@ -486,14 +522,34 @@ public partial class DashboardViewModel : ObservableObject
     /// <summary>Inline progress for a reload that keeps the rendered grid in place.</summary>
     public bool ShowRefreshing => LoadProjectsCommand.IsRunning && Content == DashboardContent.Cards;
 
-    public string ConfiguredRootPath => _configuredRoot;
+    /// <summary>The configured roots, one per line, for the panels that name where it looked.</summary>
+    public string ConfiguredRootPath => string.Join(Environment.NewLine, _configuredRoots);
+
+    /// <summary>
+    /// Named unavailable roots, shown BESIDE a grid that still has cards in it. A partial scan
+    /// presented as a complete one is the failure this exists to prevent.
+    /// </summary>
+    [ObservableProperty] private bool _rootIssueVisible;
+    [ObservableProperty] private string _rootIssueText = "";
+
+    private void UpdateRootIssueBanner()
+    {
+        // The dedicated panel already says it when NOTHING is readable; a banner as well would
+        // report the same fact twice.
+        var unavailable = UsableRootCount > 0 ? DashboardEmptyState.DescribeUnavailableRoots(_rootStatuses) : null;
+        var truncated = DashboardEmptyState.DescribeTruncatedRoots(_rootStatuses);
+
+        RootIssueText = string.Join(" ", new[] { unavailable, truncated }.Where(t => t is not null));
+        RootIssueVisible = RootIssueText.Length > 0;
+    }
 
     private void NotifyContentState()
     {
         OnPropertyChanged(nameof(Content));
         OnPropertyChanged(nameof(ShowLoading));
         OnPropertyChanged(nameof(ShowScanFailed));
-        OnPropertyChanged(nameof(ShowRootMissing));
+        OnPropertyChanged(nameof(ShowNoRootsConfigured));
+        OnPropertyChanged(nameof(ShowRootsUnavailable));
         OnPropertyChanged(nameof(ShowEmptyRoot));
         OnPropertyChanged(nameof(ShowNoMatches));
         OnPropertyChanged(nameof(ShowCards));
@@ -864,7 +920,13 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         var settings = _settingsService.Load();
-        var projectPath = Path.Combine(settings.ProjectsRootPath, projectName);
+        var destination = ProjectRootSettings.WriteTarget(settings);
+        if (destination.Length == 0)
+        {
+            OpStatusText = $"New project: {ProjectRootSettings.WriteTargetRefusal(settings)}";
+            return;
+        }
+        var projectPath = Path.Combine(destination, projectName);
 
         if (Directory.Exists(projectPath))
         {
@@ -1148,10 +1210,16 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         var settings = _settingsService.Load();
-        var target = Path.Combine(settings.ProjectsRootPath, repoName);
+        var destination = ProjectRootSettings.WriteTarget(settings);
+        if (destination.Length == 0)
+        {
+            OpStatusText = $"Clone: {ProjectRootSettings.WriteTargetRefusal(settings)}";
+            return;
+        }
+        var target = Path.Combine(destination, repoName);
         if (Directory.Exists(target))
         {
-            OpStatusText = $"Clone: {repoName} already exists in the projects root.";
+            OpStatusText = $"Clone: {repoName} already exists in {destination}.";
             return;
         }
 
@@ -1159,7 +1227,7 @@ public partial class DashboardViewModel : ObservableObject
         try
         {
             OpStatusText = $"Cloning {repoName}…";
-            var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
+            var error = await _gitService.CloneAsync(url, destination);
             OpStatusText = error is null ? $"Cloned {repoName}." : $"Clone failed: {error}";
             if (error is null)
                 await ForceRefreshAsync();
@@ -1353,17 +1421,23 @@ public partial class DashboardViewModel : ObservableObject
             _navigationService.Navigate(typeof(ProjectDetailPage));
     }
 
-    /// <summary>Clones a Cloud card's repo into the projects root, then refreshes.</summary>
+    /// <summary>Clones a Cloud card's repo into the default projects root, then refreshes.</summary>
     [RelayCommand]
     private async Task CloneRemoteOnly(ProjectInfo? project)
     {
         if (project is null || !project.IsRemoteOnly || project.RemoteSlug.Length == 0) return;
 
         var settings = _settingsService.Load();
-        var target = Path.Combine(settings.ProjectsRootPath, project.DirectoryName);
+        var destination = ProjectRootSettings.WriteTarget(settings);
+        if (destination.Length == 0)
+        {
+            OpStatusText = $"Clone: {ProjectRootSettings.WriteTargetRefusal(settings)}";
+            return;
+        }
+        var target = Path.Combine(destination, project.DirectoryName);
         if (Directory.Exists(target))
         {
-            OpStatusText = $"Clone: {project.DirectoryName} already exists in the projects root.";
+            OpStatusText = $"Clone: {project.DirectoryName} already exists in {destination}.";
             return;
         }
 
@@ -1374,7 +1448,7 @@ public partial class DashboardViewModel : ObservableObject
         {
             OpStatusText = $"Cloning {project.DirectoryName}…";
             var url = $"https://github.com/{project.RemoteSlug}.git";
-            var error = await _gitService.CloneAsync(url, settings.ProjectsRootPath);
+            var error = await _gitService.CloneAsync(url, destination);
             OpStatusText = error is null ? $"Cloned {project.DirectoryName}." : $"Clone failed: {error}";
             if (error is null)
                 await ForceRefreshAsync();
@@ -1495,8 +1569,15 @@ public partial class DashboardViewModel : ObservableObject
         if (project is null) return;
 
         var settings = _settingsService.Load();
-        var excluded = new List<string>(settings.ExcludedDirectories) { project.DirectoryName };
-        settings.ExcludedDirectories = excluded.Distinct().ToArray();
+        var root = OwningRoot(settings, project);
+        if (root is null)
+        {
+            OpStatusText = $"Hide {project.DisplayName}: it is not under any configured projects folder.";
+            return;
+        }
+
+        root.ExcludedDirectories = ProjectRootSettings.CleanExclusions(
+            [.. root.ExcludedDirectories, ExclusionEntryFor(root, project)]);
         // The exclusion change is what schedules the re-scan; a second direct scan here
         // would run concurrently with it over the same grid.
         if (!_settingsService.Save(settings))
@@ -1517,9 +1598,20 @@ public partial class DashboardViewModel : ObservableObject
         if (project is null) return;
 
         var settings = _settingsService.Load();
-        var excluded = new List<string>(settings.ExcludedDirectories);
-        excluded.Remove(project.DirectoryName);
-        settings.ExcludedDirectories = excluded.ToArray();
+        var root = OwningRoot(settings, project);
+        if (root is null)
+        {
+            OpStatusText = $"Unhide {project.DisplayName}: it is not under any configured projects folder.";
+            return;
+        }
+
+        var entry = ExclusionEntryFor(root, project);
+        root.ExcludedDirectories =
+        [
+            .. root.ExcludedDirectories.Where(e =>
+                !string.Equals(e, entry, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(e, project.DirectoryName, StringComparison.OrdinalIgnoreCase))
+        ];
         if (!_settingsService.Save(settings))
         {
             OpStatusText = $"Unhide {project.DisplayName}: {SettingsWriteFailure}";
@@ -1536,30 +1628,53 @@ public partial class DashboardViewModel : ObservableObject
         await ShowHiddenProjectsAsync();
     }
 
+    /// <summary>
+    /// The configured root a card belongs to. Its recorded root first, so a repository that sits
+    /// under two nested roots stays with the one the scan attributed it to; the deepest
+    /// containing root otherwise, which is the one whose exclusions can actually hide it.
+    /// </summary>
+    private static ProjectRoot? OwningRoot(AppSettings settings, ProjectInfo project)
+    {
+        if (project.IsRemoteOnly || project.FullPath.Length == 0) return null;
+        if (ProjectRootSettings.Find(ProjectRootSettings.Effective(settings), project.RootPath) is { } recorded) return recorded;
+
+        return ProjectRootSettings.Effective(settings)
+            .Where(r => RepoPaths.IsAtOrUnder(project.FullPath, r.Path))
+            .OrderByDescending(r => RepoPaths.Normalize(r.Path).Length)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The exclusion entry that hides exactly this repository under its root: the folder name at
+    /// the top level, and the root-relative path below it, where a bare name would hide every
+    /// folder of that name at every depth.
+    /// </summary>
+    private static string ExclusionEntryFor(ProjectRoot root, ProjectInfo project)
+    {
+        var rootPath = RepoPaths.Normalize(root.Path);
+        var full = RepoPaths.Normalize(project.FullPath);
+        if (full.Length <= rootPath.Length + 1) return project.DirectoryName;
+        var relative = full[(rootPath.Length + 1)..];
+        return relative;
+    }
+
     public async Task ShowHiddenProjectsAsync()
     {
         ActiveFilter = "hidden";
 
         var settings = _settingsService.Load();
-        var rootPath = settings.ProjectsRootPath;
-        if (!Directory.Exists(rootPath))
-        {
-            FilteredProjects = [];
-            return;
-        }
-        var excluded = new HashSet<string>(settings.ExcludedDirectories, StringComparer.OrdinalIgnoreCase);
-
-        var hiddenDirs = Directory.GetDirectories(rootPath)
-            .Where(d => excluded.Contains(Path.GetFileName(d)) && GitService.IsGitRepo(d))
-            .ToList();
+        // Probing every root is disk work, and a disconnected one blocks for the share's own
+        // timeout; the dispatcher is what draws the list it produces.
+        var hiddenDirs = await Task.Run(() => HiddenRepoPaths(settings));
 
         var hiddenList = new List<ProjectInfo>();
-        foreach (var dir in hiddenDirs)
+        foreach (var (dir, rootPath) in hiddenDirs)
         {
             var dirName = Path.GetFileName(dir);
             var stub = new ProjectInfo { DirectoryName = dirName, FullPath = dir, DisplayName = dirName };
             var full = await _discoveryService.RefreshProjectAsync(stub);
             if (full is null) continue;
+            full.RootPath = rootPath;
             // Flag, don't mutate the manifest — Status must never be overwritten by view state.
             full.IsHidden = true;
             full.IsPinned = DashboardOrdering.IsPinned(full, _pinnedKeys);
@@ -1613,18 +1728,17 @@ public partial class DashboardViewModel : ObservableObject
         Launch("wt.exe", $"-d \"{project.FullPath}\"", $"Open terminal in {project.DisplayName}");
     }
 
-    private string _watchedRoot = "";
+    private IReadOnlyList<string> _watchedRoots = [];
 
-    /// <summary>Re-point the watcher if the root path or the toggle changed since last time.</summary>
+    /// <summary>Re-point the watcher if the root set or the toggle changed since last time.</summary>
     private void SyncWatcherToSettings()
     {
-        var settings = _settingsService.Load();
-        var root = settings.EnableAutoRefresh ? settings.ProjectsRootPath : "";
-        if (string.Equals(root, _watchedRoot, StringComparison.OrdinalIgnoreCase)) return;
+        var roots = SettingsDelta.WatcherRoots(_settingsService.Load());
+        if (roots.SequenceEqual(_watchedRoots, StringComparer.OrdinalIgnoreCase)) return;
 
-        _watchedRoot = root;
-        if (root.Length == 0) _watcher.Stop();
-        else _watcher.Start(root);
+        _watchedRoots = roots;
+        if (roots.Count == 0) _watcher.Stop();
+        else _watcher.Start(roots);
     }
 
     /// <summary>What a queued or running settings-driven re-scan is doing; empty when idle.</summary>
@@ -1736,8 +1850,8 @@ public partial class DashboardViewModel : ObservableObject
         SyncWatcherToSettings();
         try
         {
-            ProbeConfiguredRoot();
             var results = await _discoveryService.DiscoverAllAsync();
+            AdoptRootStatuses();
             UpdateProjectList(results);
             DiscoveryErrorVisible = false;
         }
@@ -1786,8 +1900,8 @@ public partial class DashboardViewModel : ObservableObject
             _forceRefreshAgain = false;
             try
             {
-                ProbeConfiguredRoot();
                 var results = await _discoveryService.ForceRefreshAllAsync();
+                AdoptRootStatuses();
                 UpdateProjectList(results);
                 DiscoveryErrorVisible = false;
             }
@@ -1803,8 +1917,23 @@ public partial class DashboardViewModel : ObservableObject
     private void ReportDiscoveryFailure(Exception ex)
     {
         Log.Error("Project discovery failed", ex);
-        var root = _settingsService.Load().ProjectsRootPath;
-        DiscoveryErrorText = $"Couldn't scan {root} — {ex.Message}";
+        // Named, because with several configured folders "the scan failed" leaves the reader
+        // unable to tell which one to reconnect. A root that was read is not implicated.
+        var settings = _settingsService.Load();
+        _configuredRoots = [.. ProjectRootSettings.Effective(settings).Select(r => r.Path)];
+        var unread = _discoveryService.LastRootStatuses.Count == 0
+            ? _configuredRoots
+            : [.. _configuredRoots
+                .Where(p => !_discoveryService.LastRootStatuses.Any(s =>
+                    string.Equals(s.Path, p, StringComparison.OrdinalIgnoreCase)))];
+
+        var where = unread.Count switch
+        {
+            0 => "the projects folders",
+            1 => unread[0],
+            _ => string.Join(", ", unread),
+        };
+        DiscoveryErrorText = $"Couldn't scan {where} — {ex.Message}";
         DiscoveryErrorVisible = true;
         NotifyContentState();
     }
@@ -2059,17 +2188,18 @@ public enum DashboardContent
 {
     Loading,
     ScanFailed,
-    RootMissing,
+    NoRootsConfigured,
+    RootsUnavailable,
     EmptyRoot,
     NoMatches,
     Cards,
 }
 
 /// <summary>
-/// Chooses the dashboard body from load state alone. An empty grid has four distinct
-/// causes — a scan still running, a scan that faulted, a root that isn't there, and a
-/// root with no repositories — and rendering one blank panel for all of them tells the
-/// user nothing about which.
+/// Chooses the dashboard body from load state alone. An empty grid has five distinct
+/// causes — a scan still running, a scan that faulted, no folder configured to scan, every
+/// configured folder unreachable, and folders that hold no repositories — and rendering one
+/// blank panel for all of them tells the user nothing about which.
 /// </summary>
 public static class DashboardEmptyState
 {
@@ -2081,16 +2211,53 @@ public static class DashboardEmptyState
     /// the grid instead. Below that, a load in flight wins over a stale failure so a
     /// retry doesn't keep showing the error it is retrying, and filter-emptiness is last
     /// because it only means anything once a scan has produced projects.
+    ///
+    /// A root count of zero is a first run, not a fault; usable-but-zero is a fault the user
+    /// can fix by reconnecting something, and the two get different panels.
     /// </summary>
     public static DashboardContent Select(
-        bool loading, bool scanFailed, bool rootExists, int discoveredCount, int filteredCount)
+        bool loading, bool scanFailed, int configuredRoots, int usableRoots, int discoveredCount, int filteredCount)
     {
         if (filteredCount > 0) return DashboardContent.Cards;
         if (loading) return DashboardContent.Loading;
         if (scanFailed) return DashboardContent.ScanFailed;
-        if (!rootExists) return DashboardContent.RootMissing;
+        if (configuredRoots == 0) return DashboardContent.NoRootsConfigured;
+        if (usableRoots == 0) return DashboardContent.RootsUnavailable;
         if (discoveredCount == 0) return DashboardContent.EmptyRoot;
         return DashboardContent.NoMatches;
+    }
+
+    /// <summary>
+    /// What to say about roots the scan could not read, or null when it read every one of them.
+    /// Names them: "some folders are unavailable" leaves the reader unable to tell which
+    /// repositories are missing from the grid. A disabled root is a choice, not a failure, and
+    /// is not reported as one.
+    /// </summary>
+    public static string? DescribeUnavailableRoots(IReadOnlyList<RootStatus> statuses)
+    {
+        var considered = statuses.Where(s => s.Availability != RootAvailability.Disabled).ToList();
+        var failed = considered.Where(s => !s.IsUsable).ToList();
+        if (failed.Count == 0) return null;
+
+        var named = string.Join(", ", failed.Select(s =>
+            $"{s.Path} ({(s.Availability == RootAvailability.Missing ? "not there" : "could not be read")})"));
+
+        return considered.Count == failed.Count
+            ? $"None of the configured project folders could be read — {named}."
+            : $"Scanned {considered.Count - failed.Count} of {considered.Count} project folders — {named}.";
+    }
+
+    /// <summary>
+    /// What to say about roots whose walk stopped early, or null when none did. A truncated walk
+    /// found a floor, not a total, and presenting it as a total hides repositories.
+    /// </summary>
+    public static string? DescribeTruncatedRoots(IReadOnlyList<RootStatus> statuses)
+    {
+        var truncated = statuses.Where(s => s.Truncated).ToList();
+        if (truncated.Count == 0) return null;
+
+        return $"{string.Join(", ", truncated.Select(s => s.Path))}: the scan stopped early, so some " +
+               "repositories may be missing. Lower the scan depth or add exclusions.";
     }
 }
 

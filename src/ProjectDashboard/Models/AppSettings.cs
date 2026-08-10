@@ -4,9 +4,23 @@ namespace ProjectDashboard.Models;
 
 public sealed class AppSettings
 {
+    /// <summary>
+    /// The first enabled root, mirrored for a build that predates <see cref="ProjectRoots"/>.
+    /// Written on every save and read only to synthesize a root list from a settings file that
+    /// has none; <see cref="ProjectRoots"/> is what a scan reads.
+    /// </summary>
     public string ProjectsRootPath { get; set; } = @"C:\projects";
+
+    /// <summary>The places repositories are looked for, in order. Empty only before migration runs.</summary>
+    public ProjectRoot[] ProjectRoots { get; set; } = [];
+
+    /// <summary>Which root a new project or a clone lands in. Empty until a root exists.</summary>
+    public string DefaultRootPath { get; set; } = "";
+
     public int RefreshIntervalSeconds { get; set; } = 7200;
     public string Theme { get; set; } = "Dark";
+
+    /// <summary>The first enabled root's exclusions, mirrored alongside <see cref="ProjectsRootPath"/>.</summary>
     public string[] ExcludedDirectories { get; set; } = ["Internal", "games"];
 
     /// <summary>Optional explicit path to gh.exe (file or its folder). Empty = resolve via PATH / known locations.</summary>

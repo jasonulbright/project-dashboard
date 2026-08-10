@@ -4,16 +4,18 @@ using System.IO;
 namespace ProjectDashboard.Services;
 
 /// <summary>
-/// Watches the projects root for working-tree changes and coalesces them into a
+/// Watches the configured roots for working-tree changes and coalesces them into a
 /// debounced "these repos changed" signal, so cards reflect edits without waiting
-/// for the periodic timer. One recursive watcher, heavily filtered (git internals
-/// and build-output churn ignored) and debounced; a buffer overflow falls back to
-/// a full-refresh signal rather than losing events silently.
+/// for the periodic timer. Heavily filtered (git internals and build-output churn
+/// ignored) and debounced; a buffer overflow falls back to a full-refresh signal
+/// rather than losing events silently.
 ///
 /// The signal names repository PATHS, normalized. A bare directory name is ambiguous
 /// once more than one root is configured — two roots can each hold a "tabkit" — and is
 /// wrong for anything below the first level, where the name of the root's immediate
 /// child is not a repository at all.
+///
+/// One recursive watcher per configured root; all of them coalesce into one debounce buffer.
 /// </summary>
 public sealed class ProjectWatcherService : IDisposable
 {
@@ -25,7 +27,7 @@ public sealed class ProjectWatcherService : IDisposable
 
     private readonly object _gate = new();
     private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
-    private RootWatch? _watch;
+    private readonly List<RootWatch> _watches = [];
     private System.Threading.Timer? _debounceTimer;
     private bool _disposed;
 
@@ -39,10 +41,10 @@ public sealed class ProjectWatcherService : IDisposable
     /// <summary>Normalized paths of the repos that changed. Empty set = do a full refresh (overflow / repo add-remove).</summary>
     public event Action<IReadOnlyCollection<string>>? Changed;
 
-    /// <summary>The root currently being watched; empty while stopped.</summary>
-    public string WatchedRoot
+    /// <summary>The roots currently being watched, in the order they were started; empty while stopped.</summary>
+    public IReadOnlyList<string> WatchedRoots
     {
-        get { lock (_gate) return _watch?.Root ?? ""; }
+        get { lock (_gate) return [.. _watches.Select(w => w.Root)]; }
     }
 
     /// <summary>
@@ -59,34 +61,52 @@ public sealed class ProjectWatcherService : IDisposable
             if (normalized.Length > 0) known.Add(normalized);
         }
         _knownRepos = known;
-        lock (_gate) _watch?.ForgetResolutions();
+        lock (_gate)
+            foreach (var watch in _watches) watch.ForgetResolutions();
     }
 
-    public void Start(string rootPath)
+    /// <summary>
+    /// Points the service at every root that should be followed. One watcher per root — a single
+    /// recursive watcher cannot cover disjoint trees. A root that cannot be watched is logged
+    /// and the rest still start; the periodic reconcile is what still covers it.
+    /// </summary>
+    public void Start(IEnumerable<string> rootPaths)
     {
         Stop();
-        if (!Directory.Exists(rootPath)) return;
 
-        var watch = new RootWatch(RepoPaths.Normalize(rootPath), Queue, OnError);
+        var started = new List<RootWatch>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rootPath in rootPaths)
+        {
+            var root = RepoPaths.Normalize(rootPath);
+            if (root.Length == 0 || !seen.Add(root)) continue;
+            if (!Directory.Exists(root)) continue;
+            started.Add(new RootWatch(root, Queue, OnError));
+        }
+
         lock (_gate)
         {
-            if (_disposed) { watch.Dispose(); return; }
-            _watch = watch;
+            if (_disposed)
+            {
+                foreach (var watch in started) watch.Dispose();
+                return;
+            }
+            _watches.AddRange(started);
         }
     }
 
     public void Stop()
     {
-        RootWatch? watch;
+        List<RootWatch> watches;
         lock (_gate)
         {
-            watch = _watch;
-            _watch = null;
+            watches = [.. _watches];
+            _watches.Clear();
             _debounceTimer?.Dispose();
             _debounceTimer = null;
             _pending.Clear();
         }
-        watch?.Dispose();
+        foreach (var watch in watches) watch.Dispose();
     }
 
     private void Queue(RootWatch watch, string fullPath)

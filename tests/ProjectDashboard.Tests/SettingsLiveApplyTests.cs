@@ -18,9 +18,20 @@ public class SettingsDeltaTests
 {
     private static SettingsChange Change(Action<AppSettings> mutate)
     {
-        var previous = new AppSettings();
         var current = new AppSettings();
         mutate(current);
+        return Pair(new AppSettings(), current);
+    }
+
+    /// <summary>
+    /// Both sides migrated, because both sides of a real change came from
+    /// <see cref="SettingsService.Load"/>, which migrates. A delta computed over unmigrated
+    /// settings compares two empty root lists and reports every root edit as no change.
+    /// </summary>
+    private static SettingsChange Pair(AppSettings previous, AppSettings current)
+    {
+        ProjectRootSettings.Migrate(previous);
+        ProjectRootSettings.Migrate(current);
         return new SettingsChange(previous, current);
     }
 
@@ -73,7 +84,7 @@ public class SettingsDeltaTests
     [Fact]
     public void TwoIntervalsBelowTheFloor_AreNotAnIntervalChange()
     {
-        var change = new SettingsChange(
+        var change = Pair(
             new AppSettings { RefreshIntervalSeconds = 1 },
             new AppSettings { RefreshIntervalSeconds = 5 });
 
@@ -94,13 +105,13 @@ public class SettingsDeltaTests
         var change = Change(s => s.EnableAutoRefresh = false);
 
         Assert.True(SettingsDelta.WatcherTargetChanged(change));
-        Assert.Equal("", SettingsDelta.WatcherRoot(change.Current));
+        Assert.Empty(SettingsDelta.WatcherRoots(change.Current));
     }
 
     [Fact]
     public void RootChange_WhileAutoRefreshIsOff_LeavesTheWatcherTargetEmpty()
     {
-        var change = new SettingsChange(
+        var change = Pair(
             new AppSettings { EnableAutoRefresh = false, ProjectsRootPath = @"C:\one" },
             new AppSettings { EnableAutoRefresh = false, ProjectsRootPath = @"C:\two" });
 
@@ -120,7 +131,7 @@ public class SettingsDeltaTests
     [Fact]
     public void ARootSpelledDifferently_IsNotAChange()
     {
-        var change = new SettingsChange(
+        var change = Pair(
             new AppSettings { ProjectsRootPath = @"C:\Projects" },
             new AppSettings { ProjectsRootPath = @"c:\projects" });
 
@@ -135,6 +146,84 @@ public class SettingsDeltaTests
         Assert.True(SettingsDelta.RediscoveryRequired(Change(s => s.ExcludedDirectories = ["Internal", "games", "extra"])));
         Assert.False(SettingsDelta.RediscoveryRequired(Change(s => s.ExcludedDirectories = ["internal", "GAMES"])));
     }
+
+    /// <summary>
+    /// Order is the tie-break between two roots holding the same repository name, so a reorder
+    /// changes which one the grid shows. A delta that missed it would leave the write applied on
+    /// the page and nowhere else.
+    /// </summary>
+    [Fact]
+    public void ReorderingTheRoots_ForcesARescan()
+    {
+        var change = Pair(
+            RootedSettings(@"C:\one", @"D:\two"),
+            RootedSettings(@"D:\two", @"C:\one"));
+
+        Assert.True(SettingsDelta.RediscoveryRequired(change));
+        Assert.True(SettingsDelta.WatcherTargetChanged(change));
+    }
+
+    [Fact]
+    public void SwitchingARootOff_ForcesARescanAndDropsItFromTheWatcher()
+    {
+        var previous = RootedSettings(@"C:\one", @"D:\two");
+        var current = RootedSettings(@"C:\one", @"D:\two");
+        current.ProjectRoots[1].Enabled = false;
+
+        var change = Pair(previous, current);
+
+        Assert.True(SettingsDelta.RediscoveryRequired(change));
+        Assert.True(SettingsDelta.WatcherTargetChanged(change));
+        Assert.Equal([@"C:\one"], SettingsDelta.WatcherRoots(change.Current));
+    }
+
+    [Fact]
+    public void EditingOneRootsExclusions_ForcesARescan_ButNotAWatcherRepoint()
+    {
+        var previous = RootedSettings(@"C:\one", @"D:\two");
+        var current = RootedSettings(@"C:\one", @"D:\two");
+        current.ProjectRoots[1].ExcludedDirectories = ["vendor"];
+
+        var change = Pair(previous, current);
+
+        Assert.True(SettingsDelta.RediscoveryRequired(change));
+        Assert.False(SettingsDelta.WatcherTargetChanged(change));
+    }
+
+    [Fact]
+    public void ChangingOneRootsScanDepth_ForcesARescan()
+    {
+        var previous = RootedSettings(@"C:\one");
+        var current = RootedSettings(@"C:\one");
+        current.ProjectRoots[0].MaxDepth = 3;
+
+        Assert.True(SettingsDelta.RediscoveryRequired(Pair(previous, current)));
+    }
+
+    /// <summary>A label is what the row is called, not what the scan reads.</summary>
+    [Fact]
+    public void RenamingARootsLabel_ForcesNoRescan()
+    {
+        var previous = RootedSettings(@"C:\one");
+        var current = RootedSettings(@"C:\one");
+        current.ProjectRoots[0].Label = "Work";
+
+        Assert.False(SettingsDelta.RediscoveryRequired(Pair(previous, current)));
+    }
+
+    [Fact]
+    public void AddingARoot_ForcesARescanAndAddsAWatcher()
+    {
+        var change = Pair(RootedSettings(@"C:\one"), RootedSettings(@"C:\one", @"D:\two"));
+
+        Assert.True(SettingsDelta.RediscoveryRequired(change));
+        Assert.Equal([@"C:\one", @"D:\two"], SettingsDelta.WatcherRoots(change.Current));
+    }
+
+    private static AppSettings RootedSettings(params string[] paths) => new()
+    {
+        ProjectRoots = [.. paths.Select(p => new ProjectRoot { Path = p })],
+    };
 
     [Fact]
     public void GitHubDiscoveryToggle_ForcesARescan()
@@ -545,17 +634,17 @@ public class DashboardLiveApplyTests
         using var watcher = new ProjectWatcherService();
         var dashboard = NewDashboard(settings, watcher, new RepoBusyRegistry());
         await dashboard.LoadProjectsCommand.ExecutionTask!;
-        Assert.Equal(root, watcher.WatchedRoot, ignoreCase: true);
+        Assert.Equal([root], watcher.WatchedRoots);
 
         var off = settings.Load();
         off.EnableAutoRefresh = false;
         settings.Save(off);
-        Assert.Equal("", watcher.WatchedRoot);
+        Assert.Empty(watcher.WatchedRoots);
 
         var on = settings.Load();
         on.EnableAutoRefresh = true;
         settings.Save(on);
-        Assert.Equal(root, watcher.WatchedRoot, ignoreCase: true);
+        Assert.Equal([root], watcher.WatchedRoots);
     }
 
     [Fact]
@@ -572,14 +661,14 @@ public class DashboardLiveApplyTests
         Assert.Equal(first, dashboard.ConfiguredRootPath);
 
         var moved = settings.Load();
-        moved.ProjectsRootPath = second;
+        moved.ProjectRoots = [new ProjectRoot { Path = second }];
         settings.Save(moved);
         await dashboard.PendingRescan;
 
         // The re-scan is what re-probes the root; the discovery cache is keyed on age
         // alone, so a plain reload would keep serving the first root's projects.
         Assert.Equal(second, dashboard.ConfiguredRootPath);
-        Assert.Equal(second, watcher.WatchedRoot, ignoreCase: true);
+        Assert.Equal([second], watcher.WatchedRoots);
         Assert.Equal("", dashboard.RescanStatus);
     }
 
@@ -600,14 +689,14 @@ public class DashboardLiveApplyTests
         var lease = busy.Acquire(TestEnv.NewDir("live-busy-repo"));
 
         var moved = settings.Load();
-        moved.ProjectsRootPath = second;
+        moved.ProjectRoots = [new ProjectRoot { Path = second }];
         settings.Save(moved);
         await dashboard.PendingRescan;
 
         Assert.Equal(DashboardRescan.QueuedStatus, dashboard.RescanStatus);
         Assert.Equal(first, dashboard.ConfiguredRootPath);
         // The watcher is not a repository reader; it re-points immediately.
-        Assert.Equal(second, watcher.WatchedRoot, ignoreCase: true);
+        Assert.Equal([second], watcher.WatchedRoots);
 
         // Releasing the last lease is the only signal left — no further settings write is
         // coming — so the queued scan has to start from the registry notification alone.
@@ -632,7 +721,7 @@ public class DashboardLiveApplyTests
         await dashboard.LoadProjectsCommand.ExecutionTask!;
 
         var moved = settings.Load();
-        moved.ProjectsRootPath = second;
+        moved.ProjectRoots = [new ProjectRoot { Path = second }];
         settings.Save(moved);
 
         // The drain is parked inside the gated scan, and the command says so — the toolbar
@@ -679,7 +768,7 @@ public class DashboardLiveApplyTests
         await WaitUntil(() => discovery.Started == 1);
 
         var moved = settings.Load();
-        moved.ProjectsRootPath = second;
+        moved.ProjectRoots = [new ProjectRoot { Path = second }];
         settings.Save(moved);
 
         // Coalescing onto the parked scan would hand the root change a scan that read the
