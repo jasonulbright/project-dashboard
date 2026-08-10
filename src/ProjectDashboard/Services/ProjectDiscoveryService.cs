@@ -37,6 +37,14 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     public IReadOnlyList<HiddenRepository> LastHiddenRepositories { get; private set; } = [];
 
     /// <summary>
+    /// Whether the account's repository list came back full the last time Cloud cards were built.
+    /// The read is capped, so a full one establishes only that the account may own repositories
+    /// the scan never saw — and every one of those is a card the grid does not hold. False also
+    /// covers a scan that never reached the read: the cap cannot have hidden anything there.
+    /// </summary>
+    public bool RemoteListStoppedShort { get; protected set; }
+
+    /// <summary>
     /// The walk, as one overridable call. The seam exists so a test can count walks and show that
     /// the watcher path causes none.
     /// </summary>
@@ -113,6 +121,9 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         var (candidates, statuses, hidden) = await Task.Run(() => WalkRoots(settings, ct), ct);
         LastRootStatuses = statuses;
         LastHiddenRepositories = hidden;
+        // Cleared before the read that sets it: a scan that never reaches the remote list must not
+        // keep reporting a cap from the scan before it.
+        RemoteListStoppedShort = false;
 
         // Phase A: local git/file facts, parallel with a small concurrency cap. One semaphore
         // over the COMBINED candidate list — one per root would multiply the cap, and the git
@@ -254,11 +265,22 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// Adds the signed-in user's repositories that have no local clone as remote-only
     /// ("Cloud") entries.
     /// </summary>
-    private async Task AppendRemoteOnlyAsync(List<ProjectInfo> local, CancellationToken ct)
+    /// <summary>
+    /// The account's repository read, as one overridable call. The seam exists so the Cloud cards a
+    /// scan produces — and what a capped read leaves out of them — are reachable without gh.
+    /// </summary>
+    protected virtual Task<GitHubService.ListRead<GitHubService.RemoteRepoPage>> ReadAccountReposAsync(
+        CancellationToken ct) => gitHubService.GetUserRepoPageAsync(ct: ct);
+
+    internal async Task AppendRemoteOnlyAsync(List<ProjectInfo> local, CancellationToken ct)
     {
-        List<RemoteRepo> remotes;
-        try { remotes = await gitHubService.GetUserReposAsync(ct); }
+        GitHubService.RemoteRepoPage? page;
+        try { page = (await ReadAccountReposAsync(ct)).Page; }
         catch (Exception ex) { Log.Warn("remote-only discovery skipped", ex); return; }
+        if (page is null) return;
+
+        RemoteListStoppedShort = page.MayHaveMore;
+        var remotes = page.Items;
         if (remotes.Count == 0) return;
 
         foreach (var repo in RemotesWithoutALocalClone(local, remotes))
@@ -406,7 +428,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// bumps this. The cost of a bump is one extra scan on the first launch after an update; the
     /// cost of forgetting is a cache served with fields nothing filled in.
     /// </summary>
-    internal const int CacheSchemaVersion = 3;
+    internal const int CacheSchemaVersion = 4;
 
     private sealed class DiscoveryCache
     {
@@ -425,6 +447,12 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         /// next full scan and the summary badge disagrees with it.
         /// </summary>
         public List<HiddenRepository> Hidden { get; set; } = [];
+
+        /// <summary>
+        /// Whether the account's repository list came back full. Served with the cards it produced,
+        /// or the Cloud count reads as the whole account for as long as the cache lasts.
+        /// </summary>
+        public bool RemoteListStoppedShort { get; set; }
     }
 
     /// <summary>
@@ -466,6 +494,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             LastDiscoveryAt = cache.CachedAt;
             LastRootStatuses = cache.Roots;
             LastHiddenRepositories = cache.Hidden;
+            RemoteListStoppedShort = cache.RemoteListStoppedShort;
             return cache.Projects;
         }
         catch (Exception ex)
@@ -489,7 +518,8 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 CachedAt = DateTimeOffset.Now,
                 Projects = projects,
                 Roots = [.. LastRootStatuses],
-                Hidden = [.. LastHiddenRepositories]
+                Hidden = [.. LastHiddenRepositories],
+                RemoteListStoppedShort = RemoteListStoppedShort
             };
             LastDiscoveryAt = cache.CachedAt;
 

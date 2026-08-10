@@ -508,6 +508,15 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private bool _rootIssueVisible;
     [ObservableProperty] private string _rootIssueText = "";
 
+    /// <summary>
+    /// Said when the account's repository list came back full. Cloud cards are built from that one
+    /// read, so an account owning more than it returns has repositories with no card and nothing
+    /// on screen saying so.
+    /// </summary>
+    internal static string CloudListCappedNotice =>
+        $"Your GitHub repository list stopped at {GitHubService.UserRepoLimit}, so repositories " +
+        "beyond it have no Cloud card. Clone one by URL to bring it in.";
+
     private void UpdateRootIssueBanner()
     {
         // The dedicated panel already says it when NOTHING is readable; a banner as well would
@@ -515,8 +524,11 @@ public partial class DashboardViewModel : ObservableObject
         var unavailable = UsableRootCount > 0 ? DashboardEmptyState.DescribeUnavailableRoots(_rootStatuses) : null;
         var truncated = DashboardEmptyState.DescribeTruncatedRoots(_rootStatuses);
         var refused = DashboardEmptyState.DescribeUnreadableFolders(_rootStatuses);
+        // The same banner: a Cloud count read from a capped list is a partial scan presented as a
+        // complete one, which is what this line exists to prevent.
+        var cloud = _discoveryService.RemoteListStoppedShort ? CloudListCappedNotice : null;
 
-        RootIssueText = string.Join(" ", new[] { unavailable, truncated, refused }.Where(t => t is not null));
+        RootIssueText = string.Join(" ", new[] { unavailable, truncated, refused, cloud }.Where(t => t is not null));
         RootIssueVisible = RootIssueText.Length > 0;
     }
 
@@ -1112,6 +1124,24 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// What the clone picker says about the list beneath it, or "" when that list is the whole
+    /// account. The picker is a picker rather than a browser — a repository it does not list is
+    /// still reachable by URL — so the disclosure is a line above it rather than a way to page
+    /// deeper. A failed read is named as one: an empty picker would otherwise read as an account
+    /// that owns nothing.
+    /// </summary>
+    internal static string ClonePickerNotice(GitHubService.ListRead<GitHubService.RemoteRepoPage> read)
+    {
+        if (read.Page is not { } page)
+            return "Your repositories couldn't be read" +
+                   (read.Error.Length == 0 ? ". " : $" — the GitHub CLI reported: {read.Error} ") +
+                   "Paste a repository URL or owner/repo above.";
+        if (!page.MayHaveMore) return "";
+        return $"Showing your {page.Items.Count} most recently updated repositories. " +
+               "Paste a URL or owner/repo above to clone one that isn't listed.";
+    }
+
+    /// <summary>
     /// Clone dialog: paste a URL or pick from the signed-in user's repositories
     /// (type-to-filter). Clones into the configured projects root, then refreshes.
     /// </summary>
@@ -1122,9 +1152,10 @@ public partial class DashboardViewModel : ObservableObject
         // the gate is claimed once the target is known. The early read only spares the
         // reader a dialog that would be refused.
         if (_bulkOpRunning) { OpStatusText = BulkOpBusyNotice; return; }
-        List<RemoteRepo> repos = [];
-        try { repos = await _gitHubService.GetUserReposAsync(); }
+        var read = new GitHubService.ListRead<GitHubService.RemoteRepoPage>(null, "");
+        try { read = await _gitHubService.GetUserRepoPageAsync(); }
         catch (Exception ex) { Log.Warn("repo list for clone unavailable", ex); }
+        List<RemoteRepo> repos = [.. read.Page?.Items ?? []];
 
         var urlBox = new Wpf.Ui.Controls.TextBox
         {
@@ -1161,10 +1192,23 @@ public partial class DashboardViewModel : ObservableObject
             }
         };
 
+        var noticeText = ClonePickerNotice(read);
+        var notice = new System.Windows.Controls.TextBlock
+        {
+            Text = noticeText,
+            FontSize = 11,
+            TextWrapping = System.Windows.TextWrapping.Wrap,
+            Margin = new System.Windows.Thickness(0, 8, 0, 0),
+            Visibility = noticeText.Length == 0
+                ? System.Windows.Visibility.Collapsed
+                : System.Windows.Visibility.Visible
+        };
+        System.Windows.Automation.AutomationProperties.SetName(notice, "About this repository list");
+
         var dialog = new Wpf.Ui.Controls.MessageBox
         {
             Title = "Clone repository",
-            Content = new System.Windows.Controls.StackPanel { Children = { urlBox, list } },
+            Content = new System.Windows.Controls.StackPanel { Children = { urlBox, notice, list } },
             PrimaryButtonText = "Clone",
             CloseButtonText = "Cancel"
         };

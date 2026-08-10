@@ -48,6 +48,32 @@ public class ProjectDiscoveryCacheTests
             JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    /// <summary>
+    /// The Cloud cards a cache serves came from a read that may have stopped short, and the fact
+    /// travels with them: served without it, the count reads as the whole account for as long as
+    /// the cache lasts.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ACappedAccountRead_IsServedWithTheCardsItProduced(bool stoppedShort)
+    {
+        var cache = new
+        {
+            SchemaVersion = ProjectDiscoveryService.CacheSchemaVersion,
+            CachedAt = DateTimeOffset.Now,
+            Projects = Array.Empty<object>(),
+            RemoteListStoppedShort = stoppedShort
+        };
+        File.WriteAllText(AppPaths.DiscoveryCacheFile,
+            JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
+        var service = NewService(new ManifestStore());
+
+        await service.DiscoverAllAsync();
+
+        Assert.Equal(stoppedShort, service.RemoteListStoppedShort);
+    }
+
     /// <summary>Counts git processes, which is what tells a served cache from a re-scan that found nothing.</summary>
     private sealed class CountingGitService : GitService
     {

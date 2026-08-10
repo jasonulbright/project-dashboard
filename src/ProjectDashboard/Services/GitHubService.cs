@@ -443,28 +443,56 @@ public class GitHubService(SettingsService settingsService)
         return anyPending ? "pending" : "passing";
     }
 
-    /// <summary>The signed-in user's repositories, newest activity first (clone picker).</summary>
-    public async Task<List<RemoteRepo>> GetUserReposAsync(CancellationToken ct = default)
+    /// <summary>Repositories one read of the account's list asks for.</summary>
+    internal const int UserRepoLimit = 200;
+
+    /// <summary>
+    /// One read of the signed-in account's repositories, on the same terms as
+    /// <see cref="IssuePage"/>. <c>gh repo list</c> has only <c>--limit</c>, so a read that came
+    /// back full says only that the account may own more.
+    /// </summary>
+    public sealed record RemoteRepoPage(IReadOnlyList<RemoteRepo> Items, bool MayHaveMore, int Limit);
+
+    /// <summary>
+    /// The signed-in account's repositories, newest activity first. Null page = the read failed;
+    /// an empty page is an answer. The two were once the same empty list, which reported an
+    /// account with no repositories whenever gh was missing, signed out, or offline.
+    /// </summary>
+    public async Task<ListRead<RemoteRepoPage>> GetUserRepoPageAsync(int limit = UserRepoLimit,
+        CancellationToken ct = default)
+    {
+        var run = await RunAsync(BuildUserRepoListArgs(limit), ct, ReadTimeout);
+        if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
+        {
+            Log.Warn($"gh repo list failed: {run.FirstError}");
+            return new ListRead<RemoteRepoPage>(null, FailureText(run));
+        }
+        var repos = ParseUserRepos(run.StdOut);
+        return new ListRead<RemoteRepoPage>(
+            repos is null ? null : new RemoteRepoPage(repos, PageMayHaveMore(repos.Count, limit), limit),
+            repos is null ? UnreadableResponse : "");
+    }
+
+    internal static List<string> BuildUserRepoListArgs(int limit) =>
+        ["repo", "list", "--json", "nameWithOwner,description,visibility,updatedAt", "--limit", limit.ToString()];
+
+    internal static List<RemoteRepo>? ParseUserRepos(string json)
     {
         try
         {
-            var output = await RunGhAsync(
-                ["repo", "list", "--json", "nameWithOwner,description,visibility,updatedAt", "--limit", "200"], ct);
-            if (string.IsNullOrWhiteSpace(output)) return [];
-
-            var repos = JsonSerializer.Deserialize<List<RemoteRepo>>(output, new JsonSerializerOptions
+            var repos = JsonSerializer.Deserialize<List<RemoteRepo>>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
-            }) ?? [];
-            return repos
+            });
+            return repos?
                 .Select(r => { r.Visibility = r.Visibility.ToLowerInvariant(); return r; })
                 .OrderByDescending(r => r.UpdatedAt)
                 .ToList();
         }
         catch (Exception ex)
         {
-            Log.Warn("gh repo list failed", ex);
-            return [];
+            Log.Warn("gh repo list response unparseable", ex);
+            return null;
         }
     }
 
