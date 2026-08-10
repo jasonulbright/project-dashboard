@@ -152,6 +152,9 @@ public partial class ProjectDetailViewModel
         }
 
         var label = $"Rename {slug} to {newName}";
+        // Captured with the path, for the same reason: the offer awaits a dialog, and a project
+        // applied while it is open moves what Project names out from under the continuation.
+        var owner = Project;
         // A project with no clone has no local state to serialize against, and the lease is keyed
         // on a path it does not have; the rename is then a remote-only call on the light gate.
         var result = repo.Length == 0
@@ -161,7 +164,7 @@ public partial class ProjectDetailViewModel
                 var renamed = await RenameRepoRemoteAsync(slug, newName);
                 // Offered under the same lease as the rename: no local operation may move this
                 // clone's origin between the name changing on GitHub and the URL here matching it.
-                if (renamed.Success) await OfferLocalRemoteUpdateAsync(repo, slug, newName);
+                if (renamed.Success) await OfferLocalRemoteUpdateAsync(owner, repo, slug, newName, gen);
                 return renamed;
             }, label, repo);
 
@@ -180,8 +183,14 @@ public partial class ProjectDetailViewModel
     /// Offers this clone's origin the new URL and reports what came of it. Declining is a complete
     /// outcome, not a half-done rename: GitHub redirects the old address, so fetch and push keep
     /// working — what the reader is told is which name this page goes on showing until the URL changes.
+    ///
+    /// Every parameter is the value the rename was confirmed against, never the live one. The
+    /// offer awaits a dialog, and a project applied while it is open swaps what
+    /// <see cref="ProjectDetailViewModel.Project"/> names; the git write still belongs to
+    /// <paramref name="repo"/>, and its record of itself still belongs to <paramref name="owner"/>.
     /// </summary>
-    private async Task OfferLocalRemoteUpdateAsync(string repo, string oldSlug, string newName)
+    private async Task OfferLocalRemoteUpdateAsync(ProjectInfo? owner, string repo, string oldSlug,
+        string newName, int gen)
     {
         RemotesResult remotes;
         try
@@ -191,44 +200,59 @@ public partial class ProjectDetailViewModel
         catch (Exception ex)
         {
             Log.Warn($"could not read the remotes of {repo} after a rename", ex);
-            RepoRenameNotice = RenameRemoteUnreadableNotice(ex.Message);
+            SetRenameNotice(RenameRemoteUnreadableNotice(ex.Message), gen);
             return;
         }
         if (remotes.HasError)
         {
-            RepoRenameNotice = RenameRemoteUnreadableNotice(remotes.ErrorText);
+            SetRenameNotice(RenameRemoteUnreadableNotice(remotes.ErrorText), gen);
             return;
         }
 
         var origin = remotes.Remotes.FirstOrDefault(r => r.Name == OriginRemote);
         if (origin is null || RenamedRemoteUrl(origin.FetchUrl, oldSlug, newName) is not { } url)
         {
-            RepoRenameNotice = RenameRemoteNotMatchedNotice(oldSlug);
+            SetRenameNotice(RenameRemoteNotMatchedNotice(oldSlug), gen);
             return;
         }
         if (!await ConfirmAsync("Update this clone's remote URL?",
                 RenameRemoteOfferMessage(origin.FetchUrl, url), "Update origin"))
         {
-            RepoRenameNotice = RenameRemoteDeclinedNotice;
+            SetRenameNotice(RenameRemoteDeclinedNotice, gen);
             return;
         }
 
+        // Runs whatever the reader moved to: the confirmation named this clone, the lease is held
+        // over it, and the write is keyed by the captured path rather than by anything on screen.
         var set = await _gitService.SetRemoteUrlAsync(repo, OriginRemote, url);
         if (!set.Success)
         {
-            RepoRenameNotice = RenameRemoteFailedNotice(set.FirstError);
+            SetRenameNotice(RenameRemoteFailedNotice(set.FirstError), gen);
             return;
         }
-        // The slug every gh call on this page addresses is derived from origin's URL. Leaving it
-        // on the old one would keep the whole tab talking through GitHub's redirect. The change
-        // is inside the project rather than on it, so the bindings that name the slug are told.
-        if (Project is { } project)
-        {
-            project.GitStatus.RemoteUrl = url;
-            OnPropertyChanged(nameof(Project));
-        }
+        // The slug every gh call addresses is derived from origin's URL, so the model carrying it
+        // is corrected — on the project that owns the URL, not on whichever one is now open.
+        // Writing the live Project would hand the next project's page a slug for this repository,
+        // and every action on that page would silently address this one.
+        if (owner is not null) owner.GitStatus.RemoteUrl = url;
+        if (!IsCurrent(gen)) return;
+        // Bindings and the notice describe the page, so they follow the page's own project.
+        OnPropertyChanged(nameof(Project));
         RepoRenameNotice = RenameRemoteUpdatedNotice(url);
         if (BranchesTabLoaded) await LoadRemotes();
+    }
+
+    /// <summary>
+    /// Writes the rename notice only while the project it describes is still the one on screen.
+    /// The notice is card state, not a status line: it sits inside the card that names the loaded
+    /// repository, beside that repository's rename box, and a project switch clears it for exactly
+    /// that reason. A sentence about the repository that left would stand there as a claim about
+    /// the one now open. The rename's own record under that repository outlives the switch, and
+    /// the clone's URL is readable from its remotes.
+    /// </summary>
+    private void SetRenameNotice(string notice, int gen)
+    {
+        if (IsCurrent(gen)) RepoRenameNotice = notice;
     }
 
     /// <summary>The remote a clone's slug is read from, and the only one a rename offers to rewrite.</summary>

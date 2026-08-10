@@ -107,6 +107,43 @@ public class RepoAdminSurfaceTests
         Assert.Equal("me/renamed", vm.Project!.GitHubSlug);
     }
 
+    /// <summary>
+    /// The offer's dialog is the one await in this operation a reader can act behind: nothing
+    /// stops a project switch while it is open, and applying one resets the page's busy flag and
+    /// swaps what Project names. The clone the confirmation named is still the one written — the
+    /// path was captured — but every write that describes the page has to follow the page, or the
+    /// project switched to inherits a slug for the repository that was renamed, and its next
+    /// close, merge, archive or delete addresses that repository instead of its own.
+    /// </summary>
+    [Fact]
+    public async Task AProjectSwitchBehindTheOffer_NeverWritesTheRenamedUrlOntoTheProjectSwitchedTo()
+    {
+        using var renamed = await RepoWithOrigin("rename-switch-a", "https://github.com/me/tool.git");
+        using var other = await RepoWithOrigin("rename-switch-b", "https://github.com/me/other.git");
+        var vm = await Opened(renamed, Settings());
+        var left = vm.Project!;
+        var arrived = ProjectFor(other, "https://github.com/me/other.git");
+        vm.Typed = "me/tool";
+        vm.Confirm = true;
+        vm.SwitchToOnConfirm = arrived;      // the reader opens another project while the offer is up
+        vm.RepoRenameDraft = "renamed";
+
+        await vm.RenameRepoCommand.ExecuteAsync(null);
+
+        // First, the harm: the project switched to must not inherit a slug for the repository
+        // that was renamed, and nothing on its tab may claim its remote moved.
+        Assert.Same(arrived, vm.Project);
+        Assert.Equal("https://github.com/me/other.git", arrived.GitStatus.RemoteUrl);
+        Assert.Equal("me/other", arrived.GitHubSlug);
+        Assert.Equal("https://github.com/me/other.git", await OriginUrl(other));
+        Assert.Equal("", vm.RepoRenameNotice);
+
+        // The clone the confirmation named was still updated, on disk and on the model that owns it.
+        Assert.Equal(1, vm.RenameAttempts);
+        Assert.Equal("https://github.com/me/renamed.git", await OriginUrl(renamed));
+        Assert.Equal("https://github.com/me/renamed.git", left.GitStatus.RemoteUrl);
+    }
+
     [Fact]
     public async Task Rename_LeavesOriginAloneWhenTheOfferIsDeclined()
     {
@@ -636,6 +673,12 @@ public class RepoAdminSurfaceTests
         public string? Typed { get; set; }
         public bool Confirm { get; set; }
 
+        /// <summary>
+        /// Applied from inside the confirmation, as a reader opening another project while the
+        /// offer's dialog pumps messages does. Nothing in the app stops that switch.
+        /// </summary>
+        public ProjectInfo? SwitchToOnConfirm { get; set; }
+
         public ProcessResult RenameResult { get; set; } = new(0, "", "", TimedOut: false);
         public ProcessResult ArchiveResult { get; set; } = new(0, "", "", TimedOut: false);
         public ProcessResult SyncResult { get; set; } = new(0, "", "", TimedOut: false);
@@ -693,11 +736,16 @@ public class RepoAdminSurfaceTests
             return Task.FromResult(Divergence);
         }
 
-        internal override Task<bool> ConfirmAsync(string title, string message, string confirmText)
+        internal override async Task<bool> ConfirmAsync(string title, string message, string confirmText)
         {
             Confirms++;
             LastConfirmMessage = message;
-            return Task.FromResult(Confirm);
+            if (SwitchToOnConfirm is { } next)
+            {
+                SwitchToOnConfirm = null;
+                await SetProjectAsync(next);
+            }
+            return Confirm;
         }
 
         internal override Task<string?> PromptForTextAsync(string title, string message, string confirmLabel)
