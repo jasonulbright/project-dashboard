@@ -1810,6 +1810,13 @@
                                       ItemsSource="{x:Static local:ProjectDetailViewModel.GitHubListStates}"
                                       SelectedItem="{Binding IssuesState}"
                                       AutomationProperties.Name="Issue state filter" />
+                            <TextBlock DockPanel.Dock="Left" Text="Milestone:" FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <ComboBox DockPanel.Dock="Left" Width="180" FontSize="12" Margin="6,0,10,0"
+                                      ItemsSource="{Binding IssueMilestoneChoices}"
+                                      SelectedItem="{Binding SelectedIssueMilestone}"
+                                      DisplayMemberPath="Label"
+                                      AutomationProperties.Name="Issue milestone filter" />
                             <ui:Button DockPanel.Dock="Right" Content="Search" FontSize="12" Padding="10,4" Margin="8,0,0,0"
                                        Icon="{ui:SymbolIcon Search24}"
                                        Command="{Binding ApplyIssueFiltersCommand}"
@@ -1831,6 +1838,37 @@
                                     <Setter Property="Visibility" Value="Visible" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IssuesFacetNotice}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding IssueMilestoneProgressText}" FontSize="11" TextWrapping="Wrap"
+                                   Margin="0,4,0,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   AutomationProperties.AutomationId="IssueMilestoneProgressText"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IssueMilestoneProgressText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding IssueMilestonesError}" FontSize="11" TextWrapping="Wrap"
+                                   Margin="0,4,0,0" Foreground="{DynamicResource StatusBadFg}"
+                                   AutomationProperties.AutomationId="IssueMilestonesError"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IssueMilestonesError}" Value="">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
@@ -2024,6 +2062,26 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
+                                        <TextBlock Text="Milestone" FontSize="12" Margin="0,0,0,2"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                        <ComboBox FontSize="12" Margin="0,0,0,4" HorizontalAlignment="Left" MinWidth="220"
+                                                  ItemsSource="{Binding NewIssueMilestoneChoices}"
+                                                  SelectedItem="{Binding NewIssueMilestone}"
+                                                  DisplayMemberPath="Label"
+                                                  AutomationProperties.Name="New issue milestone" />
+                                        <TextBlock Text="{Binding IssueMilestonesError}" FontSize="11" TextWrapping="Wrap"
+                                                   Margin="0,0,0,10" Foreground="{DynamicResource StatusBadFg}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IssueMilestonesError}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                         <StackPanel Orientation="Horizontal">
                                             <ui:Button Content="Create Issue" Appearance="Primary" FontSize="12" Padding="14,4"
                                                        Margin="0,0,8,0" Command="{Binding SubmitNewIssueCommand}"
@@ -3101,6 +3159,11 @@
                                         <ui:Button Content="Cancel run" FontSize="12" Padding="12,4" Margin="0,0,6,6"
                                                    Command="{Binding CancelWorkflowRunCommand}"
                                                    AutomationProperties.Name="Cancel this workflow run" />
+                                        <ui:Button Content="View full log" FontSize="12" Padding="12,4" Margin="0,0,6,6"
+                                                   Icon="{ui:SymbolIcon DocumentText24}"
+                                                   Command="{Binding OpenWorkflowLogCommand}"
+                                                   ToolTip="Read this run's whole log in a pane, with search, copy and save"
+                                                   AutomationProperties.Name="View this run's full log" />
                                         <ui:Button Content="Open on GitHub" FontSize="12" Padding="12,4" Margin="0,0,6,6"
                                                    Icon="{ui:SymbolIcon Open24}"
                                                    Command="{Binding OpenWorkflowRunCommand}"
@@ -4031,6 +4094,24 @@
                                 </ListBox>
 
                                 <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                                    <!-- Above the buttons: what a forced Update would discard is a
+                                         number the reader needs before clicking one, not after. -->
+                                    <TextBlock Text="{Binding SubmoduleDivergenceText}" FontSize="11" TextWrapping="Wrap"
+                                               Margin="0,0,0,6"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               AutomationProperties.AutomationId="SubmoduleDivergenceText"
+                                               AutomationProperties.LiveSetting="Polite">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SubmoduleDivergenceText}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                         <ui:Button Content="Init" FontSize="11" Padding="12,3" Margin="0,0,6,0"
                                                    Command="{Binding InitSubmoduleCommand}"
@@ -4372,5 +4453,12 @@
         <pages:OperationHistoryView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                                     Visibility="{Binding OperationHistoryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                     AutomationProperties.Name="Operation history" />
+
+        <!-- ═══ WORKFLOW RUN LOG ═══
+             Read-only, and it refuses to open while any pane above is up, so nothing here can
+             draw over one that is holding an undo. -->
+        <pages:WorkflowLogView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                               Visibility="{Binding WorkflowLogVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               AutomationProperties.Name="Workflow run log" />
     </Grid>
 </Page>

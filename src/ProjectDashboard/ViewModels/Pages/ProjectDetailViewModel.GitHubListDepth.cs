@@ -43,6 +43,16 @@ public partial class ProjectDetailViewModel
     private bool _issuesFacetsPending;
     private bool _pullRequestsFacetsPending;
 
+    /// <summary>The milestone list this project's pickers stand on; refetched per project.</summary>
+    private bool _milestonesLoaded;
+    private Task<List<Milestone>?>? _milestoneFetch;
+
+    /// <summary>
+    /// The milestone read the issue list started and did not await. Held so a caller — and a
+    /// headless test — can wait for the pickers to be populated instead of polling them.
+    /// </summary>
+    internal Task IssueMilestonesLoad { get; private set; } = Task.CompletedTask;
+
     [ObservableProperty] private GitHubListState _issuesState = GitHubListState.Open;
     [ObservableProperty] private string _issuesSearchText = "";
     [ObservableProperty] private bool _issuesHasMore;
@@ -50,6 +60,33 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private string _issuesFooterText = "";
     [ObservableProperty] private string _issuesEmptyText = "No open issues.";
     [ObservableProperty] private string _issuesFacetNotice = "";
+
+    /// <summary>Every milestone this repository defines, behind the row that filters to none.</summary>
+    [ObservableProperty] private ObservableCollection<MilestoneChoice> _issueMilestoneChoices = [MilestoneChoice.Any];
+
+    [ObservableProperty] private MilestoneChoice _selectedIssueMilestone = MilestoneChoice.Any;
+
+    /// <summary>
+    /// Why the milestone pickers hold nothing but their own no-milestone row, or "" when the
+    /// list is an answer. A repository defines no milestones and a milestone read that failed
+    /// both leave one row on screen, and only this line tells them apart.
+    /// </summary>
+    [ObservableProperty] private string _issueMilestonesError = "";
+
+    /// <summary>
+    /// How far the milestone the list was read under has got, or why that cannot be said. Derived
+    /// from the query that produced the page, never from the picker: a picker moved since the read
+    /// would caption one milestone's rows with another's progress.
+    /// </summary>
+    [ObservableProperty] private string _issueMilestoneProgressText = "";
+
+    /// <summary>The open milestones a new issue may join, behind the row that joins none.</summary>
+    [ObservableProperty] private ObservableCollection<MilestoneChoice> _newIssueMilestoneChoices = [MilestoneChoice.None];
+
+    [ObservableProperty] private MilestoneChoice _newIssueMilestone = MilestoneChoice.None;
+
+    internal const string MilestonesUnavailable =
+        "Milestones are unavailable — the read failed, so this picker lists none rather than none existing.";
 
     [ObservableProperty] private GitHubListState _pullRequestsState = GitHubListState.Open;
     [ObservableProperty] private string _pullRequestsSearchText = "";
@@ -106,6 +143,17 @@ public partial class ProjectDetailViewModel
             IssuesFooterText = "";
             IssuesFacetNotice = "";
             IssuesEmptyText = ListEmptyText(GitHubListState.Open, IssuesNoun, searching: false);
+            // The milestone list belongs to the repository it was read for, so the pickers return
+            // to their no-milestone rows rather than offering another project's milestones.
+            _milestonesLoaded = false;
+            _milestoneFetch = null;
+            IssueMilestonesLoad = Task.CompletedTask;
+            IssueMilestoneChoices = [MilestoneChoice.Any];
+            SelectedIssueMilestone = MilestoneChoice.Any;
+            NewIssueMilestoneChoices = [MilestoneChoice.None];
+            NewIssueMilestone = MilestoneChoice.None;
+            IssueMilestonesError = "";
+            IssueMilestoneProgressText = "";
             PullRequestsState = GitHubListState.Open;
             PullRequestsSearchText = "";
             PullRequestsHasMore = false;
@@ -130,11 +178,21 @@ public partial class ProjectDetailViewModel
         state == GitHubListState.All ? plural : $"{state.Token()} {plural}";
 
     /// <summary>
-    /// The line an empty list carries. It names the facets that produced the emptiness: a list
-    /// filtered to closed rows and a repository with no issues at all are different answers.
+    /// The milestone facet, spelled for a sentence that names it, or "" when none is in force.
     /// </summary>
-    internal static string ListEmptyText(GitHubListState state, string plural, bool searching) =>
-        searching ? $"No {plural} match that search." : $"No {ListLabel(state, plural)}.";
+    internal static string MilestoneSuffix(string? milestone) =>
+        string.IsNullOrEmpty(milestone) ? "" : $" in milestone “{milestone}”";
+
+    /// <summary>
+    /// The line an empty list carries. It names the facets that produced the emptiness: a list
+    /// filtered to closed rows, one filtered to a milestone nothing is in, and a repository with
+    /// no issues at all are three different answers.
+    /// </summary>
+    internal static string ListEmptyText(GitHubListState state, string plural, bool searching,
+        string? milestone = null) =>
+        searching
+            ? $"No {plural}{MilestoneSuffix(milestone)} match that search."
+            : $"No {ListLabel(state, plural)}{MilestoneSuffix(milestone)}.";
 
     /// <summary>
     /// What the list can honestly say about its own depth. A read that came back full establishes
@@ -144,14 +202,15 @@ public partial class ProjectDetailViewModel
     /// rows it described are still the rows on screen.
     /// </summary>
     internal static string ListFooterText(int shown, bool mayHaveMore, GitHubListState state, string plural,
-        string singular, bool searching)
+        string singular, bool searching, string? milestone = null)
     {
         if (shown == 0) return "";
         var noun = shown == 1 ? singular : plural;
         var label = searching ? $"matching {noun}" : ListLabel(state, noun);
+        var scope = $"{label}{MilestoneSuffix(milestone)}";
         return mayHaveMore
-            ? $"Showing the first {shown} {label} — there may be more."
-            : $"All {shown} {label} shown.";
+            ? $"Showing the first {shown} {scope} — there may be more."
+            : $"All {shown} {scope} shown.";
     }
 
     /// <summary>
@@ -162,11 +221,34 @@ public partial class ProjectDetailViewModel
     internal const string SearchSetsStateNotice =
         "The search text sets the state, so the state filter is not applied.";
 
+    /// <summary>
+    /// Says that the milestone picker is not in force, on the same terms as the state one. gh
+    /// turns the milestone flag into a <c>milestone:</c> qualifier, so a search carrying one of
+    /// its own leaves two qualifiers that intersect to nothing while the picker still names a
+    /// milestone — an empty list that would read as a milestone holding no issues.
+    /// </summary>
+    internal const string SearchSetsMilestoneNotice =
+        "The search text sets the milestone, so the milestone filter is not applied.";
+
     private static string FacetNotice(string search) =>
         search.Trim().Length > 0 && GitHubService.SearchSetsState(search) ? SearchSetsStateNotice : "";
 
+    /// <summary>
+    /// The Issues notice, which carries both overruled facets. A milestone qualifier overrules
+    /// nothing while the picker is on its unfiltered row, so it is only reported when a milestone
+    /// is actually selected.
+    /// </summary>
+    private static string IssuesFacetNoticeFor(string search, bool milestoneSelected)
+    {
+        if (search.Trim().Length == 0) return "";
+        var notices = new List<string>();
+        if (GitHubService.SearchSetsState(search)) notices.Add(SearchSetsStateNotice);
+        if (milestoneSelected && GitHubService.SearchSetsMilestone(search)) notices.Add(SearchSetsMilestoneNotice);
+        return string.Join(" ", notices);
+    }
+
     private GitHubService.GitHubListQuery IssuesQuery(int windowSize) =>
-        new(IssuesState.Token(), NullIfBlank(IssuesSearchText), windowSize);
+        new(IssuesState.Token(), NullIfBlank(IssuesSearchText), windowSize, SelectedIssueMilestone.Facet);
 
     private GitHubService.GitHubListQuery PullRequestsQuery(int windowSize) =>
         new(PullRequestsState.Token(), NullIfBlank(PullRequestsSearchText), windowSize);
@@ -183,7 +265,15 @@ public partial class ProjectDetailViewModel
         IssuesPageLoad = ApplyIssueFiltersAsync();
     }
 
-    partial void OnIssuesSearchTextChanged(string value) => IssuesFacetNotice = FacetNotice(value);
+    partial void OnIssuesSearchTextChanged(string value) =>
+        IssuesFacetNotice = IssuesFacetNoticeFor(value, SelectedIssueMilestone.Milestone is not null);
+
+    partial void OnSelectedIssueMilestoneChanged(MilestoneChoice value)
+    {
+        IssuesFacetNotice = IssuesFacetNoticeFor(IssuesSearchText, value.Milestone is not null);
+        if (_gitHubFacetsQuiet) return;
+        IssuesPageLoad = ApplyIssueFiltersAsync();
+    }
 
     partial void OnPullRequestsStateChanged(GitHubListState value)
     {
@@ -348,6 +438,10 @@ public partial class ProjectDetailViewModel
         {
             if (IsCurrent(gen)) IssuesPaging = false;
         }
+
+        // Started, not awaited: the milestone pickers stand beside the list rather than in front
+        // of it, and holding the rows behind a second gh call would delay what was asked for.
+        if (IsCurrent(gen)) IssueMilestonesLoad = EnsureMilestonesLoadedAsync();
     }
 
     /// <summary>
@@ -367,15 +461,105 @@ public partial class ProjectDetailViewModel
         var merged = MergeRows(Issues, page.Items, i => i.Number, SameIssueRow);
         if (!ReferenceEquals(merged, Issues)) Issues = merged;
         if (keep is { } number) SelectedIssue = Issues.FirstOrDefault(i => i.Number == number);
+        // A milestone the search overruled reached no gh call, so it names nothing about these rows.
+        var milestone = query.Search is { } search && GitHubService.SearchSetsMilestone(search)
+            ? null
+            : query.Milestone;
         IssuesHasMore = page.MayHaveMore;
-        IssuesEmptyText = ListEmptyText(state, IssuesNoun, searching);
-        IssuesFooterText = ListFooterText(page.Items.Count, page.MayHaveMore, state, IssuesNoun, IssueNoun, searching);
+        IssuesEmptyText = ListEmptyText(state, IssuesNoun, searching, milestone?.Title);
+        IssuesFooterText = ListFooterText(page.Items.Count, page.MayHaveMore, state, IssuesNoun, IssueNoun,
+            searching, milestone?.Title);
+        IssueMilestoneProgressText = MilestoneProgressText(milestone);
         // Seeds the next visit, which opens under the default facets — a page read under any other
         // facets describes a different question and would seed the list with rows the state picker
         // then names wrongly.
-        if (Project is not null && !searching && state == GitHubListState.Open)
+        if (Project is not null && !searching && milestone is null && state == GitHubListState.Open)
             Project.Issues = [.. page.Items];
     }
+
+    /// <summary>
+    /// How far the milestone a page was read under has got. The counts come from the milestone
+    /// read, which answers them per milestone; a milestone the picker no longer holds, or one
+    /// whose counts the read did not carry, says the counts are unavailable rather than showing a
+    /// zero that would read as an empty milestone.
+    /// </summary>
+    private string MilestoneProgressText(MilestoneFacet? facet)
+    {
+        if (facet is null) return "";
+        var known = IssueMilestoneChoices
+            .Select(c => c.Milestone)
+            .FirstOrDefault(m => m is not null && m.Number == facet.Number);
+        return known is { OpenIssues: { } open, ClosedIssues: { } closed }
+            ? $"Milestone “{facet.Title}”: {closed} of {open + closed} closed."
+            : $"Milestone “{facet.Title}”: issue counts unavailable.";
+    }
+
+    /// <summary>
+    /// Fills both milestone pickers, once per project and joining a fetch already in flight. A
+    /// failed read drops the task so the next visit retries rather than caching the failure for
+    /// the life of the project, and says the pickers list nothing because the read failed.
+    /// </summary>
+    private async Task EnsureMilestonesLoadedAsync()
+    {
+        if (_milestonesLoaded) return;
+        var slug = Slug;
+        if (slug.Length == 0) return;
+        var gen = _generation;
+
+        List<Milestone>? milestones;
+        Task<List<Milestone>?>? fetch = null;
+        try
+        {
+            fetch = _milestoneFetch ??= FetchMilestonesAsync(slug);
+            milestones = await fetch;
+        }
+        catch (Exception ex)
+        {
+            // A read that threw and one that answered null establish the same nothing about which
+            // milestones this repository defines.
+            Log.Warn($"milestone read failed for {slug}", ex);
+            milestones = null;
+        }
+        if (milestones is null)
+        {
+            if (fetch is null || ReferenceEquals(_milestoneFetch, fetch)) _milestoneFetch = null;
+            if (IsCurrent(gen)) IssueMilestonesError = MilestonesUnavailable;
+            return;
+        }
+        if (!IsCurrent(gen)) return;
+
+        var ordered = InPickerOrder(milestones).ToList();
+        var keep = SelectedIssueMilestone.Milestone?.Number;
+        var choices = ordered.Select(MilestoneChoice.For).ToList();
+        // Rewriting the picker's rows replaces the selected one with an equal-but-different
+        // instance; the write is quiet so a list that gained no facet does not reread itself.
+        _gitHubFacetsQuiet = true;
+        try
+        {
+            IssueMilestoneChoices = [MilestoneChoice.Any, .. choices];
+            SelectedIssueMilestone = IssueMilestoneChoices
+                .FirstOrDefault(c => c.Milestone?.Number == keep) ?? MilestoneChoice.Any;
+        }
+        finally
+        {
+            _gitHubFacetsQuiet = false;
+        }
+        // A closed milestone is worth filtering to and is not worth filing new work under.
+        var keepComposed = NewIssueMilestone.Milestone?.Number;
+        NewIssueMilestoneChoices =
+            [MilestoneChoice.None, .. ordered.Where(m => m.State != "closed").Select(MilestoneChoice.For)];
+        NewIssueMilestone = NewIssueMilestoneChoices
+            .FirstOrDefault(c => c.Milestone?.Number == keepComposed) ?? MilestoneChoice.None;
+        IssueMilestonesError = "";
+        _milestonesLoaded = true;
+    }
+
+    /// <summary>Open milestones first, then by due date, then by title — soonest work at the top.</summary>
+    private static IEnumerable<Milestone> InPickerOrder(IEnumerable<Milestone> milestones) =>
+        milestones
+            .OrderBy(m => m.State == "closed")
+            .ThenBy(m => m.DueOn ?? DateTimeOffset.MaxValue)
+            .ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase);
 
     /// <summary><see cref="LoadIssuePageAsync"/> for the pull-request list, on the same terms.</summary>
     private async Task LoadPullRequestPageAsync(int windowSize, bool facetChange = false)

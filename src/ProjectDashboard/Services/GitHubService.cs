@@ -149,11 +149,15 @@ public class GitHubService(SettingsService settingsService)
     }
 
     /// <summary>
-    /// The server-side facets one issue or pull-request list read carries. State and search go
-    /// to gh rather than being applied to what came back: filtering a capped page would answer
-    /// from an arbitrary subset of the repository and call it the whole answer.
+    /// The server-side facets one issue or pull-request list read carries. State, search and
+    /// milestone go to gh rather than being applied to what came back: filtering a capped page
+    /// would answer from an arbitrary subset of the repository and call it the whole answer.
+    ///
+    /// <c>gh pr list</c> carries no milestone flag, so the facet reaches the issue list only; a
+    /// milestone set on a pull-request query is not applied and is never claimed to be.
     /// </summary>
-    public sealed record GitHubListQuery(string State = "open", string? Search = null, int Limit = 100);
+    public sealed record GitHubListQuery(string State = "open", string? Search = null, int Limit = 100,
+        MilestoneFacet? Milestone = null);
 
     /// <summary>
     /// One read of the issue list. MayHaveMore is true whenever the read came back full: a full
@@ -237,8 +241,21 @@ public class GitHubService(SettingsService settingsService)
         return line.Length > 200 ? line[..200] + "…" : line;
     }
 
-    internal static List<string> BuildIssueListArgs(string repoSlug, GitHubListQuery query) =>
-        BuildListArgs("issue", repoSlug, "number,title,state,createdAt,updatedAt,author,labels", query);
+    /// <summary>
+    /// The issue list's argument vector. The milestone travels as its number: gh reads a numeric
+    /// value as a milestone number and anything else as a title, so a milestone whose title reads
+    /// as a number is still the one addressed. A search naming a milestone of its own is left as
+    /// the only one in force, on the same terms as the state flag — gh turns the flag into a
+    /// second <c>milestone:</c> qualifier, and two of them intersect to nothing while the picker
+    /// on screen still names one of them.
+    /// </summary>
+    internal static List<string> BuildIssueListArgs(string repoSlug, GitHubListQuery query)
+    {
+        var args = BuildListArgs("issue", repoSlug, "number,title,state,createdAt,updatedAt,author,labels", query);
+        if (query.Milestone is { } milestone && !SearchSetsMilestone(query.Search ?? ""))
+            args.AddRange(["--milestone", milestone.Number.ToString()]);
+        return args;
+    }
 
     internal static List<string> BuildPullRequestListArgs(string repoSlug, GitHubListQuery query) =>
         BuildListArgs("pr", repoSlug, "number,title,state,author,isDraft,updatedAt,statusCheckRollup", query);
@@ -279,6 +296,16 @@ public class GitHubService(SettingsService settingsService)
             term.Equals("is:closed", StringComparison.OrdinalIgnoreCase) ||
             term.Equals("is:merged", StringComparison.OrdinalIgnoreCase) ||
             term.Equals("is:unmerged", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Whether a search string names the milestone it wants. GitHub spells that as a
+    /// <c>milestone:</c> qualifier and as <c>no:milestone</c>, each only as a term of its own, so
+    /// text inside a quoted phrase names none.
+    /// </summary>
+    internal static bool SearchSetsMilestone(string search) =>
+        SearchTerms(search).Any(term =>
+            term.StartsWith("milestone:", StringComparison.OrdinalIgnoreCase) ||
+            term.Equals("no:milestone", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The terms of a search string: whitespace separates them, except inside a double-quoted
@@ -1009,11 +1036,16 @@ public class GitHubService(SettingsService settingsService)
     }
 
     public Task<ProcessResult> CreateIssueAsync(string repoSlug, string title, string body,
-        IReadOnlyList<string>? labels = null, CancellationToken ct = default)
+        IReadOnlyList<string>? labels = null, string? milestone = null, CancellationToken ct = default)
         => RunMutationAsync($"gh issue create ({repoSlug})",
-            BuildCreateIssueArgs(repoSlug, title, body, labels), ct: ct);
+            BuildCreateIssueArgs(repoSlug, title, body, labels, milestone), ct: ct);
 
-    internal static List<string> BuildCreateIssueArgs(string repoSlug, string title, string body, IReadOnlyList<string>? labels)
+    /// <summary>
+    /// <paramref name="milestone"/> is the milestone's title: <c>gh issue create</c> addresses a
+    /// milestone by name only, unlike the list read, which takes a number.
+    /// </summary>
+    internal static List<string> BuildCreateIssueArgs(string repoSlug, string title, string body,
+        IReadOnlyList<string>? labels, string? milestone = null)
     {
         // --body always present, even empty: without it gh falls into its interactive
         // prompt, which GH_PROMPT_DISABLED turns into a hard failure.
@@ -1023,6 +1055,7 @@ public class GitHubService(SettingsService settingsService)
             args.Add("--label");
             args.Add(label);
         }
+        if (!string.IsNullOrWhiteSpace(milestone)) args.AddRange(["--milestone", milestone]);
         return args;
     }
 
@@ -1344,8 +1377,14 @@ public class GitHubService(SettingsService settingsService)
     /// Full run log, capped: run logs can reach tens of MB, and crossing the cap kills the
     /// fetch instead of buffering the remainder. The cap counts UTF-16 chars, which for
     /// ASCII-dominated logs tracks bytes closely. Null = fetch failed, never an empty log.
+    ///
+    /// Whether the cap fired travels beside the text rather than only inside it: a caller that
+    /// had to find the marker in the log would be reading content to learn a fact about the read,
+    /// and a search or a saved copy of a capped log is a partial answer its reader has to be told
+    /// about. The marker stays in the text too, so a copy that leaves the app carries the
+    /// disclosure with it.
     /// </summary>
-    public async Task<string?> GetWorkflowRunLogAsync(string repoSlug, long runId,
+    public async Task<WorkflowRunLog?> GetWorkflowRunLogAsync(string repoSlug, long runId,
         int maxBytes = 2_000_000, CancellationToken ct = default)
     {
         var capture = new System.Text.StringBuilder();
@@ -1380,8 +1419,7 @@ public class GitHubService(SettingsService settingsService)
             // The cap's own cancellation, not the caller's: return what was captured.
             lock (gate)
             {
-                if (capped)
-                    return capture.AppendLine(TruncationMarker(maxBytes)).ToString();
+                if (capped) return CappedLog(capture, maxBytes);
             }
             Log.Warn($"gh run view --log {runId} canceled unexpectedly for {repoSlug}");
             return null;
@@ -1391,8 +1429,7 @@ public class GitHubService(SettingsService settingsService)
         // still holds: never hand back the oversized full capture.
         lock (gate)
         {
-            if (capped)
-                return capture.AppendLine(TruncationMarker(maxBytes)).ToString();
+            if (capped) return CappedLog(capture, maxBytes);
         }
 
         if (!result.Success)
@@ -1400,8 +1437,16 @@ public class GitHubService(SettingsService settingsService)
             Log.Warn($"gh run view --log {runId} failed for {repoSlug}: {result.FirstError}");
             return null;
         }
-        return result.StdOut;
+        // The runner's own capture budget can only cut a log this method's cap did not reach
+        // first, which takes a maxBytes above it; the bound disclosed is then the one that
+        // actually applied rather than the one that was asked for.
+        return result.Truncated
+            ? CappedLog(new System.Text.StringBuilder(result.StdOut), ProcessRunner.DefaultCaptureCharBudget)
+            : new WorkflowRunLog(result.StdOut, Truncated: false, Cap: maxBytes);
     }
+
+    private static WorkflowRunLog CappedLog(System.Text.StringBuilder capture, int cap) =>
+        new(capture.AppendLine(TruncationMarker(cap)).ToString(), Truncated: true, Cap: cap);
 
     internal static string TruncationMarker(int maxBytes) => $"[log truncated at {maxBytes} bytes]";
 

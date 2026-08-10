@@ -122,6 +122,18 @@ public sealed class WorkflowJob
     public string ElapsedLabel => WorkflowRun.FormatElapsed(StartedAt, CompletedAt, DateTimeOffset.Now);
 }
 
+/// <summary>
+/// One workflow run's log as it was read. <see cref="Truncated"/> is what the text alone cannot
+/// establish: a capture the cap cut short and one that ends where the run ended look the same to
+/// a reader, and a search or a saved copy taken from the first is a partial answer.
+/// <see cref="Cap"/> is the bound that actually applied, so a surface names the budget it hit
+/// rather than the one it asked for.
+/// </summary>
+public sealed record WorkflowRunLog(string Text, bool Truncated, int Cap);
+
+/// <summary>One numbered line of a workflow run log, as the viewer lists it.</summary>
+public sealed record WorkflowLogLine(int Number, string Text);
+
 /// <summary>One step within a workflow job.</summary>
 public sealed class WorkflowStep
 {
@@ -209,4 +221,37 @@ public sealed class Milestone
     /// <summary>Null means the count could not be fetched — not zero.</summary>
     public int? OpenIssues { get; init; }
     public int? ClosedIssues { get; init; }
+
+    /// <summary>Issues in this milestone across both states, or null when either count is missing.</summary>
+    public int? TotalIssues => OpenIssues is { } open && ClosedIssues is { } closed ? open + closed : null;
+}
+
+/// <summary>
+/// The milestone one issue-list read is filtered to. <see cref="Number"/> is what reaches gh,
+/// which resolves a numeric value as a milestone number rather than as a title, so a milestone
+/// whose title reads as a number is still addressed unambiguously. <see cref="Title"/> is what a
+/// surface describing that read names, since a page is labelled from the query that produced it
+/// rather than from a picker the reader may have moved on since.
+/// </summary>
+public sealed record MilestoneFacet(int Number, string Title);
+
+/// <summary>
+/// One row of a milestone picker. The two pickers each carry a row that selects no milestone, and
+/// it is a choice of its own rather than a null selection: a combo box with no item selected
+/// renders blank, which reads as a picker that failed to load rather than as one set to "any".
+/// </summary>
+public sealed record MilestoneChoice(string Label, Milestone? Milestone)
+{
+    /// <summary>The filter picker's unfiltered row.</summary>
+    public static MilestoneChoice Any { get; } = new("Any milestone", null);
+
+    /// <summary>The compose picker's row for an issue that joins no milestone.</summary>
+    public static MilestoneChoice None { get; } = new("None", null);
+
+    /// <summary>The facet a filter selection sends, or null for the unfiltered row.</summary>
+    public MilestoneFacet? Facet => Milestone is null ? null : new MilestoneFacet(Milestone.Number, Milestone.Title);
+
+    /// <summary>A closed milestone is still worth filtering to, and is named as closed.</summary>
+    public static MilestoneChoice For(Milestone milestone) =>
+        new(milestone.State == "closed" ? $"{milestone.Title} (closed)" : milestone.Title, milestone);
 }

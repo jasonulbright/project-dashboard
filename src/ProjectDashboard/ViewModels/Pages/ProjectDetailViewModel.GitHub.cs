@@ -244,6 +244,13 @@ public partial class ProjectDetailViewModel
         => _gitHubService.GetLabelsAsync(slug);
 
     /// <summary>
+    /// The milestone list both pickers stand on. Null is a failed read, never rendered as a
+    /// repository that defines no milestones. Overridable on the same terms as the other reads.
+    /// </summary>
+    internal virtual Task<List<Milestone>?> FetchMilestonesAsync(string slug)
+        => _gitHubService.GetMilestonesAsync(slug);
+
+    /// <summary>
     /// The two list reads the Issues and Pull Requests tabs stand on. Null is a failed read,
     /// never rendered as an empty repository, and the page carries whether the window it filled
     /// may have rows behind it. Overridable on the same terms as the other remote reads, so both
@@ -273,8 +280,11 @@ public partial class ProjectDetailViewModel
         NewIssueTitle = "";
         NewIssueBody = "";
         NewIssueLabels = "";
+        NewIssueMilestone = MilestoneChoice.None;
         IssueComposeVisible = true;
         await EnsureLabelsLoadedAsync();
+        IssueMilestonesLoad = EnsureMilestonesLoadedAsync();
+        await IssueMilestonesLoad;
     }
 
     [RelayCommand]
@@ -294,14 +304,18 @@ public partial class ProjectDetailViewModel
         if (!HasGitHubRemote(slug)) return;
         var body = NewIssueBody;
         var labels = SplitLabels(NewIssueLabels);
+        // gh issue create addresses a milestone by name, unlike the list read, which takes a number.
+        var milestone = NewIssueMilestone.Milestone?.Title;
         var gen = _generation;
-        var ok = await RunGitHubOp(() => _gitHubService.CreateIssueAsync(slug, title, body, labels), "Create issue");
+        var ok = await RunGitHubOp(() => _gitHubService.CreateIssueAsync(slug, title, body, labels, milestone),
+            "Create issue");
         if (ok && IsCurrent(gen))
         {
             IssueComposeVisible = false;
             NewIssueTitle = "";
             NewIssueBody = "";
             NewIssueLabels = "";
+            NewIssueMilestone = MilestoneChoice.None;
             await ReloadIssueListAsync();
         }
     }

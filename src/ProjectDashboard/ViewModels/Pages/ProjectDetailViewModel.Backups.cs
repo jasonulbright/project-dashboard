@@ -120,7 +120,8 @@ public partial class ProjectDetailViewModel
     /// </summary>
     public bool SafetyOverlayHidden =>
         !RewriteWizardVisible && !BackupsVisible && !ForcePushVisible && !ReflogVisible
-        && !TagsVisible && !FileHistoryVisible && !CommitGraphVisible && !OperationHistoryVisible;
+        && !TagsVisible && !FileHistoryVisible && !CommitGraphVisible && !OperationHistoryVisible
+        && !WorkflowLogVisible;
 
     /// <summary>
     /// True when neither maintenance pane is up. The force-push pane opens from the rewrite

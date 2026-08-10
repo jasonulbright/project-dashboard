@@ -1,0 +1,199 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.WorkflowLogView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseWorkflowLogCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <Style x:Key="WorkflowLogHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <Border MaxWidth="1180" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseWorkflowLogCommand}"
+                               ToolTip="Close the log viewer (Esc)"
+                               AutomationProperties.Name="Close the workflow log viewer" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="DocumentText24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusInfoFg}" />
+                            <TextBlock Text="Workflow run log" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding WorkflowLogRun.DisplayTitle}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="520"
+                                       ToolTip="{Binding WorkflowLogRun.DisplayTitle}"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource WorkflowLogHint}" Margin="0,2,0,0"
+                                   Text="Read-only. Nothing here re-runs, cancels or writes anything." />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ SEARCH AND EXPORT ═══ -->
+                <DockPanel Grid.Row="1" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Save…" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                               Icon="{ui:SymbolIcon Save24}"
+                               Command="{Binding SaveWorkflowLogCommand}"
+                               ToolTip="Write the lines on screen to a file you choose"
+                               AutomationProperties.Name="Save this log to a file" />
+                    <ui:Button DockPanel.Dock="Right" Content="Copy" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                               Icon="{ui:SymbolIcon Copy24}"
+                               Command="{Binding CopyWorkflowLogCommand}"
+                               ToolTip="Copy the lines on screen to the clipboard"
+                               AutomationProperties.Name="Copy this log to the clipboard" />
+                    <ui:Button DockPanel.Dock="Right" Content="Next" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                               Icon="{ui:SymbolIcon ChevronDown24}"
+                               Command="{Binding FindNextInWorkflowLogCommand}"
+                               AutomationProperties.Name="Jump to the next matching line" />
+                    <ui:Button DockPanel.Dock="Right" Content="Previous" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                               Icon="{ui:SymbolIcon ChevronUp24}"
+                               Command="{Binding FindPreviousInWorkflowLogCommand}"
+                               AutomationProperties.Name="Jump to the previous matching line" />
+                    <ui:TextBox Text="{Binding WorkflowLogSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                FontSize="12"
+                                PlaceholderText="Find text in this log"
+                                AutomationProperties.Name="Find text in this log">
+                        <ui:TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding FindNextInWorkflowLogCommand}" />
+                        </ui:TextBox.InputBindings>
+                    </ui:TextBox>
+                </DockPanel>
+
+                <!-- ═══ BODY ═══ -->
+                <Grid Grid.Row="2">
+                    <ui:ProgressRing IsIndeterminate="True" Width="28" Height="28"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                                     Visibility="{Binding WorkflowLogLoading, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                     AutomationProperties.Name="Reading this run's log" />
+
+                    <Border CornerRadius="6" Padding="12,10"
+                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            VerticalAlignment="Top"
+                            Visibility="{Binding WorkflowLogEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="This run's log came back empty."
+                                       FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource WorkflowLogHint}" Margin="0,6,0,0"
+                                       Text="A run whose logs have expired on GitHub reads this way too — an empty log is not proof the run printed nothing." />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Virtualized by line: a run log reaches megabytes, which no single text
+                         control lays out without stalling the thread that draws it. -->
+                    <ListBox x:Name="WorkflowLogRows" ItemsSource="{Binding WorkflowLogLines}"
+                             SelectedItem="{Binding SelectedWorkflowLogLine}"
+                             Background="Transparent" HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
+                             AutomationProperties.Name="Log lines">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="AutomationProperties.Name">
+                                    <Setter.Value>
+                                        <MultiBinding StringFormat="{}line {0}, {1}">
+                                            <Binding Path="Number" />
+                                            <Binding Path="Text" />
+                                        </MultiBinding>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:WorkflowLogLine}">
+                                <DockPanel Margin="0,1">
+                                    <TextBlock DockPanel.Dock="Left" Width="62" Text="{Binding Number}"
+                                               FontFamily="Cascadia Code,Consolas" FontSize="11"
+                                               HorizontalAlignment="Right" Margin="0,0,10,0"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <TextBlock Text="{Binding Text}" TextWrapping="NoWrap"
+                                               FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- ═══ FOOTER ═══ -->
+                <StackPanel Grid.Row="3" Margin="0,12,0,0">
+                    <Border Background="{DynamicResource StatusWarnBg}" BorderBrush="{DynamicResource StatusWarnFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WorkflowLogTruncationNotice}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding WorkflowLogTruncationNotice}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="WorkflowLogTruncationNotice"
+                                   AutomationProperties.LiveSetting="Polite" />
+                    </Border>
+
+                    <Border Background="{DynamicResource StatusBadBg}" BorderBrush="{DynamicResource StatusBadFg}"
+                            BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WorkflowLogError}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding WorkflowLogError}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   AutomationProperties.AutomationId="WorkflowLogError" />
+                    </Border>
+
+                    <TextBlock Text="{Binding WorkflowLogSearchStatus}" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.AutomationId="WorkflowLogSearchStatus"
+                               AutomationProperties.LiveSetting="Polite" />
+
+                    <TextBlock Text="{Binding WorkflowLogStatusText}" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.AutomationId="WorkflowLogStatusText"
+                               AutomationProperties.LiveSetting="Polite" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

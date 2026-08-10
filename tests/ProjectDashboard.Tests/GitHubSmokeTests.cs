@@ -173,12 +173,14 @@ public class GitHubSmokeTests(ITestOutputHelper output)
 
             var log = await svc.GetWorkflowRunLogAsync(slug, passRun.Id);
             Check("GetWorkflowRunLogAsync (gh run view --log)",
-                log is not null && log.Contains("smoke-ok-marker"), $"len={log?.Length}");
+                log is { Truncated: false } && log.Text.Contains("smoke-ok-marker"),
+                $"len={log?.Text.Length} truncated={log?.Truncated}");
 
             var cappedLog = await svc.GetWorkflowRunLogAsync(slug, passRun.Id, maxBytes: 200);
-            Check("GetWorkflowRunLogAsync capped at 200 bytes (truncation marker)",
-                cappedLog is not null && cappedLog.Contains(GitHubService.TruncationMarker(200)) && cappedLog.Length < 600,
-                $"len={cappedLog?.Length}");
+            Check("GetWorkflowRunLogAsync capped at 200 bytes (truncation flag and marker)",
+                cappedLog is { Truncated: true, Cap: 200 } &&
+                cappedLog.Text.Contains(GitHubService.TruncationMarker(200)) && cappedLog.Text.Length < 600,
+                $"len={cappedLog?.Text.Length} truncated={cappedLog?.Truncated}");
 
             var rerunFailed = await svc.RerunWorkflowAsync(slug, failRun.Id, failedOnly: true);
             Check("RerunWorkflowAsync (gh run rerun --failed)", rerunFailed.Success, rerunFailed.FirstError);

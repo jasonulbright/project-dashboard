@@ -549,6 +549,76 @@ public class GitHubListArgBuilderTests
     [InlineData(0, 100, false)]
     public void APageIsOnlyOpenEnded_WhenItCameBackFull(int loaded, int limit, bool mayHaveMore)
         => Assert.Equal(mayHaveMore, GitHubService.PageMayHaveMore(loaded, limit));
+
+    // ── Milestone facet ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The number, not the title: gh reads a numeric value as a milestone number, so a milestone
+    /// whose title happens to read as a number is still the one the read addresses.
+    /// </summary>
+    [Fact]
+    public void IssueList_AMilestone_TravelsAsItsNumber()
+        => Assert.Equal(["--milestone", "7"],
+            IssueArgs(new GitHubService.GitHubListQuery(Milestone: new MilestoneFacet(7, "12")))[^2..]);
+
+    [Fact]
+    public void IssueList_NoMilestone_SendsNoMilestoneFlag()
+        => Assert.DoesNotContain("--milestone", IssueArgs(new GitHubService.GitHubListQuery()));
+
+    /// <summary>
+    /// gh turns the milestone flag into a <c>milestone:</c> qualifier, so a search carrying one of
+    /// its own would leave two that intersect to nothing while the picker still names a milestone.
+    /// </summary>
+    [Theory]
+    [InlineData("milestone:\"v2.0\"")]
+    [InlineData("bug milestone:v2.0")]
+    [InlineData("no:milestone")]
+    public void IssueList_ASearchNamingAMilestone_IsLeftAsTheOnlyOneInForce(string search)
+        => Assert.DoesNotContain("--milestone",
+            IssueArgs(new GitHubService.GitHubListQuery(Search: search, Milestone: new MilestoneFacet(7, "v1.0"))));
+
+    /// <summary>Read as a qualifier, a quoted phrase would drop a filter it never named.</summary>
+    [Theory]
+    [InlineData("title:\"a milestone:v2 b\"")]
+    [InlineData("\"no:milestone\"")]
+    public void AMilestoneQualifierInsideAQuotedPhrase_IsPartOfThePhrase(string search)
+    {
+        Assert.False(GitHubService.SearchSetsMilestone(search));
+        Assert.Contains("--milestone",
+            IssueArgs(new GitHubService.GitHubListQuery(Search: search, Milestone: new MilestoneFacet(7, "v1.0"))));
+    }
+
+    [Theory]
+    [InlineData("bug")]
+    [InlineData("state:closed")]
+    [InlineData("")]
+    public void AnythingElse_LeavesTheMilestonePickerInForce(string search)
+        => Assert.False(GitHubService.SearchSetsMilestone(search));
+
+    /// <summary>
+    /// gh pr list carries no milestone flag, so a milestone set on a pull-request query reaches
+    /// no argument rather than reaching a flag gh would reject.
+    /// </summary>
+    [Fact]
+    public void PullRequestList_TakesNoMilestone()
+        => Assert.DoesNotContain("--milestone",
+            GitHubService.BuildPullRequestListArgs("o/r",
+                new GitHubService.GitHubListQuery(Milestone: new MilestoneFacet(7, "v1.0"))));
+
+    /// <summary>Creating an issue addresses a milestone by name; only the list read takes a number.</summary>
+    [Fact]
+    public void IssueCreate_AMilestone_TravelsAsItsTitle()
+        => Assert.Equal(
+            ["issue", "create", "--repo", "o/r", "--title", "t", "--body", "b", "--milestone", "v2.0"],
+            GitHubService.BuildCreateIssueArgs("o/r", "t", "b", null, "v2.0"));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void IssueCreate_NoMilestone_SendsNoMilestoneFlag(string? milestone)
+        => Assert.DoesNotContain("--milestone",
+            GitHubService.BuildCreateIssueArgs("o/r", "t", "b", null, milestone));
 }
 
 /// <summary>

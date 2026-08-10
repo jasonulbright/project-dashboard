@@ -682,6 +682,128 @@ public class InternalsSurfaceTests
         Assert.Empty(vm.Worktrees);
     }
 
+    // ── Submodule divergence ────────────────────────────────────────────────
+
+    /// <summary>Moves the submodule checkout one commit past the gitlink the superproject records.</summary>
+    private static async Task MoveSubmoduleAheadAsync(TempRepo super, string path, int commits)
+    {
+        var sub = Path.Combine(super.Path, path);
+        for (var i = 0; i < commits; i++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(sub, $"ahead-{i}.txt"), $"{i}\n");
+            await Git.RunAsync(sub, "add", "-A");
+            await Git.RunAsync(sub, "commit", "-m", $"ahead {i}");
+        }
+    }
+
+    /// <summary>
+    /// The count is what makes the discard the Force checkbox acknowledges concrete: the badge
+    /// beside it says only that the checkout differs, not by how much a forced Update would throw
+    /// away.
+    /// </summary>
+    [Fact]
+    public async Task ASubmoduleOffTheRecordedCommit_CountsHowFarItHasMoved()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("sub-div-child");
+        using var super = await TempRepo.CreateWithCommitAsync("sub-div-super");
+        await AddSubmoduleAsync(super, child, "lib");
+        await MoveSubmoduleAheadAsync(super, "lib", 2);
+
+        var vm = await OpenedOn(super.Path);
+        await vm.SubmoduleDivergenceLoad;
+
+        Assert.True(vm.SelectedSubmodule!.CommitDiffersFromRecorded);
+        Assert.Equal("2 commits ahead, 0 commits behind the recorded commit.", vm.SubmoduleDivergenceText);
+    }
+
+    /// <summary>
+    /// A checkout sitting on the recorded commit has nothing to say and costs no rev-list: the
+    /// badge is already absent, and a "0 ahead, 0 behind" line beside it would be noise.
+    /// </summary>
+    [Fact]
+    public async Task ASubmoduleOnTheRecordedCommit_SaysNothingAndSpawnsNothing()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("sub-same-child");
+        using var super = await TempRepo.CreateWithCommitAsync("sub-same-super");
+        await AddSubmoduleAsync(super, child, "lib");
+
+        var vm = await OpenedOn(super.Path);
+        await vm.SubmoduleDivergenceLoad;
+
+        Assert.False(vm.SelectedSubmodule!.CommitDiffersFromRecorded);
+        Assert.Equal("", vm.SubmoduleDivergenceText);
+    }
+
+    /// <summary>Exits the divergence count non-zero, leaving every other read real.</summary>
+    private sealed class RevListRefusingGit : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            return list.Count > 0 && list[0] == "rev-list" && list.Contains("--left-right")
+                ? Task.FromResult(new ProcessResult(128, "", "refused by the fixture", TimedOut: false))
+                : base.RunAsync(repoPath, list, environment, ct, timeout);
+        }
+    }
+
+    /// <summary>
+    /// A shallow clone missing the recorded commit answers nothing, and "0 ahead, 0 behind" would
+    /// read as a checkout that matches — the opposite claim, and the one a forced Update's cost is
+    /// judged against.
+    /// </summary>
+    [Fact]
+    public async Task AComparisonThatCouldNotBeMade_ReadsAsUnknownRatherThanAsZero()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("sub-unknown-child");
+        using var super = await TempRepo.CreateWithCommitAsync("sub-unknown-super");
+        await AddSubmoduleAsync(super, child, "lib");
+        await MoveSubmoduleAheadAsync(super, "lib", 1);
+
+        var vm = await OpenedOn(super.Path,
+            submodules: new SubmoduleService(new RevListRefusingGit()));
+        await vm.SubmoduleDivergenceLoad;
+
+        Assert.Equal(ProjectDetailViewModel.SubmoduleDivergenceUnknown, vm.SubmoduleDivergenceText);
+        Assert.DoesNotContain("0 commits", vm.SubmoduleDivergenceText);
+    }
+
+    [Fact]
+    public async Task AProjectSwitch_DropsACountDescribingTheRepositoryBeingLeft()
+    {
+        using var child = await TempRepo.CreateWithCommitAsync("sub-switch-child");
+        using var super = await TempRepo.CreateWithCommitAsync("sub-switch-super");
+        await AddSubmoduleAsync(super, child, "lib");
+        await MoveSubmoduleAheadAsync(super, "lib", 1);
+        using var other = await TempRepo.CreateWithCommitAsync("sub-switch-other");
+
+        var vm = await OpenedOn(super.Path);
+        await vm.SubmoduleDivergenceLoad;
+        Assert.Contains("ahead", vm.SubmoduleDivergenceText);
+
+        await vm.SetProjectAsync(ProjectFor(other.Path));
+
+        Assert.Equal("", vm.SubmoduleDivergenceText);
+    }
+
+    /// <summary>The count belongs above Update and Sync, which is where its consequence is decided.</summary>
+    [Fact]
+    public async Task TheCount_IsRenderedAboveTheActionsItInforms()
+    {
+        var markup = await File.ReadAllTextAsync(PageSource());
+
+        var line = markup.IndexOf("AutomationId=\"SubmoduleDivergenceText\"", StringComparison.Ordinal);
+        var update = markup.IndexOf("UpdateSubmoduleCommand", StringComparison.Ordinal);
+        Assert.True(line >= 0, "no divergence line in the markup");
+        Assert.True(line < update, "the divergence line is rendered after the Update button it informs");
+
+        var block = EmptyStateMarkup(markup, "SubmoduleDivergenceText");
+        Assert.Contains(@"AutomationProperties.LiveSetting=""Polite""", block);
+        // Collapsed on "" alone: a Count- or boolean-driven gate would also hide the unknown line.
+        Assert.Contains(@"<DataTrigger Binding=""{Binding SubmoduleDivergenceText}"" Value="""">", block);
+    }
+
     /// <summary>The markup from an element's automation id onward, for asserting what gates it.</summary>
     private static string EmptyStateMarkup(string markup, string automationId)
     {

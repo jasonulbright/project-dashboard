@@ -32,6 +32,7 @@ public class DetailPageMarkupTests
             Assert.NotNull(page.Content);
             Assert.NotNull(new TagsView { DataContext = NewViewModel() }.Content);
             Assert.NotNull(new ReflogView { DataContext = NewViewModel() }.Content);
+            Assert.NotNull(new WorkflowLogView { DataContext = NewViewModel() }.Content);
 
             // Laid out here for the same reason: the pane's own template and list style, on the
             // one thread this Application's brushes belong to.

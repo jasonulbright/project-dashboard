@@ -90,6 +90,7 @@ public partial class ProjectDetailViewModel
         SubmodulesErrorText = "";
         SubmoduleForce = false;
         SubmoduleConfirmDiscard = false;
+        SubmoduleDivergenceText = "";
         GitignoreText = "";
         GitignoreLoaded = false;
         GitignoreExists = false;
@@ -371,6 +372,78 @@ public partial class ProjectDetailViewModel
     /// <summary>Shown instead of a silent return when the host wired no submodule service.</summary>
     internal const string SubmodulesUnavailableNotice =
         "Submodules are unavailable — the submodule service was not configured for this session.";
+
+    /// <summary>
+    /// How far the selected submodule's checkout has moved from the commit this repository
+    /// records, or why that cannot be said. "" only when there is nothing to say — no selection,
+    /// or a checkout sitting on the recorded commit, which the row's own badge already covers.
+    ///
+    /// Read for the selected submodule alone: the count costs a rev-list per submodule, and one
+    /// per row on every load would charge every reader for a number almost none of them opened
+    /// the tab for.
+    /// </summary>
+    [ObservableProperty] private string _submoduleDivergenceText = "";
+
+    internal const string SubmoduleDivergenceReading = "Counting commits against the recorded commit…";
+
+    /// <summary>
+    /// What an unreadable comparison says. Not "0 ahead, 0 behind", which claims the checkout and
+    /// the recorded commit are the same — the opposite of what a failed read established, and the
+    /// reason a forced Update's discard would look like it costs nothing.
+    /// </summary>
+    internal const string SubmoduleDivergenceUnknown =
+        "Divergence unknown — the recorded commit could not be compared against this checkout.";
+
+    /// <summary>The read the selection started; held so a headless test can wait for the count.</summary>
+    internal Task SubmoduleDivergenceLoad { get; private set; } = Task.CompletedTask;
+
+    partial void OnSelectedSubmoduleChanged(SubmoduleEntry? value)
+    {
+        SubmoduleDivergenceText = "";
+        SubmoduleDivergenceLoad = LoadSubmoduleDivergenceAsync(value);
+    }
+
+    /// <summary>
+    /// Counts the selected submodule's divergence from the recorded gitlink. Runs only for a
+    /// checkout that already differs: the boolean the row badges is the cheap sha comparison, and
+    /// a submodule sitting on the recorded commit has a divergence of zero by that comparison
+    /// alone, with no process to spawn for it.
+    /// </summary>
+    private async Task LoadSubmoduleDivergenceAsync(SubmoduleEntry? entry)
+    {
+        var service = _submoduleService;
+        var repo = RepoPath;
+        if (entry is null || service is null || repo.Length == 0 || !entry.CommitDiffersFromRecorded) return;
+
+        var gen = _generation;
+        SubmoduleDivergenceText = SubmoduleDivergenceReading;
+        SubmoduleDivergence? divergence;
+        try
+        {
+            divergence = await service.GetDivergenceAsync(repo, entry);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not count the divergence of {entry.Path} in {repo}", ex);
+            divergence = null;
+        }
+        // The selection moved while the rev-list ran: this count describes a submodule the action
+        // row no longer names.
+        if (!IsCurrent(gen) || !ReferenceEquals(SelectedSubmodule, entry)) return;
+
+        SubmoduleDivergenceText = divergence is null
+            ? SubmoduleDivergenceUnknown
+            : DivergenceText(divergence);
+    }
+
+    /// <summary>
+    /// The count spelled out for the row above Update and Sync, which is where an Update's cost
+    /// is decided: Behind is what an Update brings back, Ahead is what a forced one discards.
+    /// </summary>
+    internal static string DivergenceText(SubmoduleDivergence divergence) =>
+        $"{CommitCount(divergence.Ahead)} ahead, {CommitCount(divergence.Behind)} behind the recorded commit.";
+
+    private static string CommitCount(int count) => count == 1 ? "1 commit" : $"{count} commits";
 
     [RelayCommand]
     private async Task LoadSubmodules()
