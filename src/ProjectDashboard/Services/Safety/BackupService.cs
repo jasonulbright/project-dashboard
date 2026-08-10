@@ -393,14 +393,32 @@ public sealed class BackupService
             wasDirty, discardedCount, RefsRestored: true);
     }
 
-    /// <summary>Removes a backup's bundle and sidecar (with its .bak). Best-effort; missing files are not an error.</summary>
-    public Task DeleteBackupAsync(BackupHandle handle, CancellationToken ct = default)
+    /// <summary>
+    /// Removes a backup's bundle and sidecar (with its .bak) and reports whether every file it
+    /// owns is gone. Best-effort and never throws; missing files are not an error.
+    ///
+    /// The sidecar is removed only once the bundle is. A bundle another process holds open
+    /// therefore leaves the pair intact and still restorable, rather than stripping the refs
+    /// snapshot a restore needs off a bundle that stayed behind — which
+    /// <see cref="ListBackupsAsync"/> would then skip, hiding the bytes still on disk.
+    /// </summary>
+    public Task<bool> DeleteBackupAsync(BackupHandle handle, CancellationToken ct = default)
     {
         TryDelete(handle.BundlePath);
+        if (File.Exists(handle.BundlePath)) return Task.FromResult(false);
         TryDelete(handle.RefsSnapshotPath);
         TryDelete(handle.RefsSnapshotPath + ".bak");
-        return Task.CompletedTask;
+        return Task.FromResult(!BackupFilesRemain(handle));
     }
+
+    /// <summary>
+    /// Whether any file of a backup is still on disk. Read after a delete rather than the
+    /// listing: a listing answers which pairs are usable, not which bytes were removed.
+    /// </summary>
+    public bool BackupFilesRemain(BackupHandle handle) =>
+        File.Exists(handle.BundlePath)
+        || File.Exists(handle.RefsSnapshotPath)
+        || File.Exists(handle.RefsSnapshotPath + ".bak");
 
     /// <summary>
     /// A sortable UTC stamp guaranteed distinct within a repo's backup dir: two backups

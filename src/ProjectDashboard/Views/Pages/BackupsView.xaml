@@ -84,6 +84,19 @@
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                         </Border>
 
+                        <!-- Available with an empty list too: it is the one action that changes
+                             what the list holds. -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <ui:Button Content="Back up now" Appearance="Primary" FontSize="13" Padding="14,5"
+                                       Icon="{ui:SymbolIcon Save24}"
+                                       Command="{Binding BackupNowCommand}"
+                                       ToolTip="Bundle every ref in this repository and verify the result"
+                                       AutomationProperties.Name="Take a backup of this repository now" />
+                            <TextBlock Style="{StaticResource BackupsHint}" Margin="12,0,0,0" MaxWidth="600"
+                                       VerticalAlignment="Center"
+                                       Text="Bundles every ref and records the ref layout beside it, the same capture a history rewrite takes before it runs. Nothing in the repository changes." />
+                        </StackPanel>
+
                         <!-- The empty state states the limit of what it can claim: no backup on
                              disk is not the same as no operation having run. -->
                         <Border CornerRadius="6" Padding="12,10" Margin="0,0,0,10"
@@ -110,10 +123,11 @@
                                 <Style TargetType="ListBoxItem">
                                     <Setter Property="AutomationProperties.Name">
                                         <Setter.Value>
-                                            <MultiBinding StringFormat="{}{0}, {1}, {2}">
+                                            <MultiBinding StringFormat="{}{0}, {1}, {2}{3}">
                                                 <Binding Path="Taken" />
                                                 <Binding Path="Operation" />
                                                 <Binding Path="Detail" />
+                                                <Binding Path="VerificationSuffix" />
                                             </MultiBinding>
                                         </Setter.Value>
                                     </Setter>
@@ -132,10 +146,43 @@
                                         </DockPanel>
                                         <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0"
                                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        <!-- Absent, not blank, until a verify has been run: a row
+                                             that showed a verification line before one would read
+                                             as an answer this app does not have. -->
+                                        <TextBlock Text="{Binding VerificationText}" FontSize="12" TextWrapping="Wrap"
+                                                   Margin="0,3,0,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding VerificationText}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+
+                        <!-- Both act on the selected row and neither touches the repository, so
+                             they sit with the list rather than beside the restore. -->
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                                    Visibility="{Binding BackupsHasEntries, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <ui:Button Content="Verify this backup" FontSize="12" Padding="12,4" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon CheckmarkCircle24}"
+                                       Command="{Binding VerifySelectedBackupCommand}"
+                                       ToolTip="Check that the selected bundle still reads back, without restoring it"
+                                       AutomationProperties.Name="Verify the selected backup without restoring it" />
+                            <ui:Button Content="Delete this backup…" FontSize="12" Padding="12,4"
+                                       Icon="{ui:SymbolIcon Delete24}"
+                                       Command="{Binding DeleteSelectedBackupCommand}"
+                                       ToolTip="Remove the selected bundle and its refs snapshot from disk"
+                                       AutomationProperties.Name="Delete the selected backup from disk" />
+                        </StackPanel>
 
                         <!-- ── The gate ── -->
                         <StackPanel Visibility="{Binding BackupsHasEntries, Converter={StaticResource BooleanToVisibilityConverter}}">

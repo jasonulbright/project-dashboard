@@ -37,8 +37,30 @@ public class BackupsSurfaceTests
     private static ProjectDetailViewModel NewVm(
         BackupService? backups = null,
         RewriteRecoveryService? recovery = null,
-        RepoBusyRegistry? busy = null) =>
-        new(null!, new GitService(), null!, null, busy, backups: backups, recovery: recovery);
+        RepoBusyRegistry? busy = null,
+        OperationHistory? history = null) =>
+        new(null!, new GitService(), null!, null, busy, backups: backups, recovery: recovery, history: history);
+
+    /// <summary>Answers the delete confirmation without a window, and keeps what it was asked.</summary>
+    private sealed class ConfirmingViewModel(
+        BackupService backups, bool answer, OperationHistory? history = null,
+        RewriteRecoveryService? recovery = null)
+        : ProjectDetailViewModel(null!, new GitService(), null!, null, null,
+            backups: backups, recovery: recovery, history: history)
+    {
+        public string LastMessage { get; private set; } = "";
+
+        public int Confirmations { get; private set; }
+
+        internal override Task<bool> ConfirmAsync(string title, string message, string confirmText)
+        {
+            Confirmations++;
+            LastMessage = message;
+            return Task.FromResult(answer);
+        }
+    }
+
+    private static OperationHistory NewHistory() => new(TestEnv.NewDir("backups-ops"));
 
     private static async Task<RewriteRecoveryService> DetectedRecoveryAsync(RewriteJournalEntry entry)
     {
@@ -143,6 +165,267 @@ public class BackupsSurfaceTests
         Assert.False(vm.RecoveryBannerVisible);
         Assert.Single(vm.BackupList);
         Assert.Equal("", vm.BackupsJournalNote);
+    }
+
+    // ── Back up now ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creation runs `git bundle verify` on what it wrote before it returns a handle, so the
+    /// browser can say the bundle was verified — and it says only that, not that it still is.
+    /// </summary>
+    [Fact]
+    public async Task BackingUpOnDemand_WritesAVerifiedBackupAndRecordsIt()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-now");
+        var history = NewHistory();
+        var vm = NewVm(NewBackups(), history: history);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        Assert.True(vm.BackupsEmpty);
+
+        await vm.BackupNowCommand.ExecuteAsync(null);
+
+        var entry = Assert.Single(vm.BackupList);
+        Assert.Equal("Manual backup", entry.Operation);
+        Assert.True(entry.Restorable);
+        Assert.False(vm.BackupsEmpty);
+        Assert.Same(entry, vm.SelectedBackup);
+        Assert.Contains("verified", vm.BackupsStatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("", vm.BackupsErrorText);
+        Assert.False(vm.BackupsBusy);
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationCategory.BackupCreate, record.Category);
+        Assert.Equal(OperationOutcome.Succeeded, record.Outcome);
+        Assert.Equal(entry.Handle.UtcStamp, record.BackupStamp);
+        _output.WriteLine($"manual backup: {vm.BackupsStatusText}");
+    }
+
+    /// <summary>
+    /// A bundle is a read of the repository, and one taken across another operation's writes
+    /// records a state that never existed as a whole. It is refused rather than taken.
+    /// </summary>
+    [Fact]
+    public async Task BackingUpWhileTheRepositoryIsBusy_IsRefusedAndWritesNoBackup()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-now-busy");
+        var busy = new RepoBusyRegistry();
+        var history = NewHistory();
+        var backups = NewBackups();
+        var vm = NewVm(backups, busy: busy, history: history);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        using (busy.Acquire(repo.Path))
+        {
+            await vm.BackupNowCommand.ExecuteAsync(null);
+
+            Assert.Contains("busy", vm.BackupsErrorText, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(await backups.ListBackupsAsync(repo.Path));
+        }
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationCategory.BackupCreate, record.Category);
+        Assert.Equal(OperationOutcome.Refused, record.Outcome);
+    }
+
+    // ── Verify ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task VerifyingABackup_ReportsThatItReadsBackAndRestoresNothing()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-verify");
+        var backups = NewBackups();
+        await backups.CreateBackupAsync(repo.Path, "History rewrite");
+        repo.Write("later.txt", "committed after the backup\n");
+        await repo.CommitAllAsync("after the backup");
+        var before = await repo.RefStateAsync();
+
+        var vm = NewVm(backups);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        Assert.Null(vm.SelectedBackup!.Verification);
+
+        await vm.VerifySelectedBackupCommand.ExecuteAsync(null);
+
+        Assert.Equal(BundleVerifyState.Verified, vm.SelectedBackup.Verification);
+        Assert.Contains("reads back", vm.BackupsStatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await repo.RefStateAsync());
+    }
+
+    /// <summary>
+    /// A readable sidecar says nothing about the bundle beside it, so a row can list as
+    /// restorable and still hold a bundle that no longer verifies. The verify is what tells them
+    /// apart, and it names the failure rather than leaving the row's earlier claim standing.
+    /// </summary>
+    [Fact]
+    public async Task VerifyingACorruptBundle_SaysSoRatherThanLeavingTheRowLookingRestorable()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-verify-bad");
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+        await File.WriteAllTextAsync(handle.BundlePath, "not a valid git bundle");
+
+        var vm = NewVm(backups);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        Assert.True(vm.SelectedBackup!.Restorable);
+
+        await vm.VerifySelectedBackupCommand.ExecuteAsync(null);
+
+        Assert.Equal(BundleVerifyState.Failed, vm.SelectedBackup.Verification);
+        Assert.NotEqual("", vm.SelectedBackup.VerificationSuffix);
+        Assert.Contains("cannot be restored", vm.BackupsErrorText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Delete ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The confirmation names what is on disk — the refs the sidecar recorded and the bytes the
+    /// two files occupy — rather than asking about "this backup" and leaving the reader to guess
+    /// which one is selected and how much it holds.
+    /// </summary>
+    [Fact]
+    public async Task DeletingABackup_NamesWhatItHoldsAndRemovesBothFiles()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-delete");
+        var history = NewHistory();
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+        var before = await repo.RefStateAsync();
+
+        var vm = new ConfirmingViewModel(backups, answer: true, history);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        await vm.DeleteSelectedBackupCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains("ref(s)", vm.LastMessage);
+        Assert.Contains("not verified", vm.LastMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(handle.BundlePath));
+        Assert.False(File.Exists(handle.RefsSnapshotPath));
+        Assert.Empty(vm.BackupList);
+        Assert.True(vm.BackupsEmpty);
+        Assert.Contains("Deleted", vm.BackupsStatusText, StringComparison.Ordinal);
+
+        // Deleting a bundle is not a repository operation: the refs are exactly as they were.
+        Assert.Equal(before, await repo.RefStateAsync());
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationCategory.BackupDelete, record.Category);
+        Assert.Equal(OperationOutcome.Succeeded, record.Outcome);
+        Assert.Equal(handle.UtcStamp, record.BackupStamp);
+    }
+
+    [Fact]
+    public async Task DeclimingTheDeleteConfirmation_LeavesTheBackupOnDisk()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-delete-no");
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+
+        var vm = new ConfirmingViewModel(backups, answer: false);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        await vm.DeleteSelectedBackupCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.True(File.Exists(handle.BundlePath));
+        Assert.Single(vm.BackupList);
+    }
+
+    /// <summary>
+    /// The delete is best-effort in the service and never throws, so success is read from the
+    /// files afterwards. A bundle held open by another process stays, its sidecar is left alone
+    /// with it, and the browser reports a backup that is still there rather than a delete that
+    /// merely returned.
+    /// </summary>
+    [Fact]
+    public async Task ADeleteTheFileSystemRefuses_IsReportedAsAFailureNotASuccess()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-delete-locked");
+        var history = NewHistory();
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+
+        var vm = new ConfirmingViewModel(backups, answer: true, history);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        using (new FileStream(handle.BundlePath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await vm.DeleteSelectedBackupCommand.ExecuteAsync(null);
+
+            Assert.True(File.Exists(handle.BundlePath));
+            // The refs snapshot went nowhere either: the backup is whole, not stripped.
+            Assert.True(File.Exists(handle.RefsSnapshotPath));
+            Assert.Contains("still on disk", vm.BackupsErrorText, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("", vm.BackupsStatusText);
+            var still = Assert.Single(vm.BackupList);
+            Assert.True(still.Restorable);
+        }
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationCategory.BackupDelete, record.Category);
+        Assert.Equal(OperationOutcome.Failed, record.Outcome);
+    }
+
+    /// <summary>
+    /// Retention keeps the newest N and nothing about a manual delete changes that: the next
+    /// backup prunes from what is left, so deleting one does not cost a second.
+    /// </summary>
+    [Fact]
+    public async Task DeletingABackup_DoesNotMakeTheNextPruneDropAnExtraOne()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-delete-retention");
+        new SettingsService().Save(new AppSettings { BackupRetentionCount = 2 });
+        var backups = NewBackups();
+        var oldest = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+        var kept = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+
+        var vm = new ConfirmingViewModel(backups, answer: true);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        vm.SelectedBackup = vm.BackupList.Single(e => e.Handle.UtcStamp == oldest.UtcStamp);
+
+        await vm.DeleteSelectedBackupCommand.ExecuteAsync(null);
+        Assert.Single(vm.BackupList);
+
+        await vm.BackupNowCommand.ExecuteAsync(null);
+
+        var stamps = vm.BackupList.Select(e => e.Handle.UtcStamp).ToList();
+        Assert.Equal(2, stamps.Count);
+        Assert.Contains(kept.UtcStamp, stamps);
+        Assert.DoesNotContain(oldest.UtcStamp, stamps);
+    }
+
+    /// <summary>
+    /// Deleting the bundle an interrupted operation named leaves that record pointing at nothing.
+    /// The browser says so in the words it already uses when retention pruned the same bundle —
+    /// the reader's situation is identical, so the sentence is.
+    /// </summary>
+    [Fact]
+    public async Task DeletingTheBackupARecoveryRecordNames_SaysItIsNoLongerOnDisk()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-delete-recorded");
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+        var recovery = await DetectedRecoveryAsync(new RewriteJournalEntry
+        {
+            RepoPath = repo.Path, BackupHandle = handle, Phase = "swap", UtcStamp = handle.UtcStamp,
+        });
+
+        var vm = new ConfirmingViewModel(backups, answer: true, recovery: recovery);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsForRecoveryCommand.ExecuteAsync(null);
+
+        await vm.DeleteSelectedBackupCommand.ExecuteAsync(null);
+
+        Assert.Contains("no longer on disk", vm.BackupsErrorText);
+        // The record itself is untouched: this app never discards it on the reader's behalf.
+        Assert.NotNull(await new RewriteJournal().ReadPendingAsync(repo.Path));
     }
 
     // ── The restore gate ────────────────────────────────────────────────────
@@ -591,6 +874,41 @@ public class BackupsSurfaceTests
         Assert.NotNull(allUnnamed);
         Assert.Contains("2 repositories", allUnnamed);
         Assert.Contains("2 unnamed repositories", allUnnamed);
+    }
+
+    // ── Accessible naming ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// The row's name carries the verification clause once there is one. A row nobody has verified
+    /// has no clause and no separator standing in for it — punctuation announcing an answer this
+    /// app does not have would read as one.
+    /// </summary>
+    [Fact]
+    public void ABackupRowName_CarriesTheVerificationOnlyOnceThereIsOne()
+    {
+        var markup = MarkupName.Markup("src/ProjectDashboard/Views/Pages/BackupsView.xaml");
+        var multiBinding = MarkupName.Element(markup,
+            "//*[local-name()='ListBox.ItemContainerStyle']//*[local-name()='MultiBinding']",
+            "BackupsView.xaml");
+
+        var entry = new BackupEntry
+        {
+            Handle = new BackupHandle { UtcStamp = "20260808-101112000" },
+            Taken = "2026-08-08 10:11:12",
+            Operation = "Manual backup",
+            Detail = "2 ref(s) · HEAD refs/heads/main · 1.2 KB",
+            Restorable = true,
+        };
+
+        Assert.Equal(
+            "2026-08-08 10:11:12, Manual backup, 2 ref(s) · HEAD refs/heads/main · 1.2 KB",
+            MarkupName.From(multiBinding, entry));
+
+        entry.Verification = BundleVerifyState.Verified;
+        Assert.Equal(
+            "2026-08-08 10:11:12, Manual backup, 2 ref(s) · HEAD refs/heads/main · 1.2 KB, " +
+            "Verified: the bundle reads back.",
+            MarkupName.From(multiBinding, entry));
     }
 
     private static string ViewSource(string name, [System.Runtime.CompilerServices.CallerFilePath] string testFile = "")

@@ -16,7 +16,16 @@ public enum OperationCategory
     Remote,
     Tag,
     GitHub,
-    Maintenance
+    Maintenance,
+
+    /// <summary>
+    /// A backup taken on demand. The backups a coordinator takes before a destructive operation
+    /// are named by that operation's own record through its backup stamp, so they are not
+    /// recorded again here.
+    /// </summary>
+    BackupCreate,
+
+    BackupDelete
 }
 
 /// <summary>

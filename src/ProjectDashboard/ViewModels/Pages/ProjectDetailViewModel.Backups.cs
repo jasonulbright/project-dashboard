@@ -9,8 +9,12 @@ namespace ProjectDashboard.ViewModels.Pages;
 /// it can put back. <see cref="Restorable"/> is false for a backup whose sidecar could not be
 /// read, which is the same condition a restore refuses on — so the row says what the button
 /// would say, before it is pressed.
+///
+/// <see cref="Verification"/> is null until a verify is asked for. It is never inferred from
+/// <see cref="Restorable"/>: a readable sidecar says nothing about whether the bundle beside it
+/// still unpacks, and only running `git bundle verify` answers that.
 /// </summary>
-public sealed class BackupEntry
+public sealed partial class BackupEntry : ObservableObject
 {
     public required BackupHandle Handle { get; init; }
 
@@ -21,6 +25,25 @@ public sealed class BackupEntry
     public required string Detail { get; init; }
 
     public required bool Restorable { get; init; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VerificationText))]
+    [NotifyPropertyChangedFor(nameof(VerificationSuffix))]
+    private BundleVerifyState? _verification;
+
+    public string VerificationText => Verification switch
+    {
+        BundleVerifyState.Verified => "Verified: the bundle reads back.",
+        BundleVerifyState.Failed => "Verification failed: this bundle cannot be restored.",
+        BundleVerifyState.Unknown => "Verification could not be run, so this bundle's state is unknown.",
+        _ => ""
+    };
+
+    /// <summary>
+    /// The verification clause a composed row name appends, separator included, so an unverified
+    /// row's name ends after its detail instead of on a dangling comma.
+    /// </summary>
+    public string VerificationSuffix => VerificationText.Length == 0 ? "" : ", " + VerificationText;
 }
 
 /// <summary>
@@ -60,6 +83,8 @@ public partial class ProjectDetailViewModel
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RestoreSelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(VerifySelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedBackupCommand))]
     private BackupEntry? _selectedBackup;
 
     [ObservableProperty] private string _backupsStatusText = "";
@@ -67,6 +92,9 @@ public partial class ProjectDetailViewModel
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RestoreSelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BackupNowCommand))]
+    [NotifyCanExecuteChangedFor(nameof(VerifySelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedBackupCommand))]
     private bool _backupsBusy;
 
     /// <summary>True when the browser has finished a load and found nothing — the empty state must not show before that.</summary>
@@ -124,11 +152,11 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private void CloseBackups()
     {
-        // The restore holds the repository lease and the browser is the only report of how it
-        // ended; closing over a running one would hide that.
+        // The browser is the only report of how its own operation ended — and a restore also holds
+        // the repository lease while it runs; closing over either would hide that.
         if (BackupsBusy)
         {
-            BackupsStatusText = "The restore is still running — wait for it to finish.";
+            BackupsStatusText = "This browser's operation is still running — wait for it to finish.";
             return;
         }
         BackupsVisible = false;
@@ -168,7 +196,7 @@ public partial class ProjectDetailViewModel
         var repo = RepoPath;
         if (service is null)
         {
-            BackupsErrorText = "Backups are unavailable — the backup service was not configured for this session.";
+            BackupsErrorText = BackupsUnavailableRefusal;
             return;
         }
         if (repo.Length == 0) return;
@@ -251,6 +279,263 @@ public partial class ProjectDetailViewModel
             ? $"An interrupted {DescribeInterrupted(entry)} is recorded for this repository. " +
               "Restoring the backup it names returns this repository to its state before that operation."
             : "";
+
+    // ── Create, verify, delete ──────────────────────────────────────────────────
+
+    internal const string BackupsUnavailableRefusal =
+        "Backups are unavailable — the backup service was not configured for this session.";
+
+    private bool CanBackupNow() => !BackupsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Takes a backup of the open repository on demand, outside any destructive operation.
+    ///
+    /// The repository lease is not taken — the bundle is a read — but a repository already under
+    /// another operation is refused: `git bundle create` reads refs while that operation writes
+    /// them, and the backup would record a state the repository never held as a whole.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanBackupNow))]
+    private async Task BackupNow()
+    {
+        if (BackupsBusy) return;
+        var service = _backups;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (repo.Length == 0) return;
+        if (service is null)
+        {
+            BackupsErrorText = BackupsUnavailableRefusal;
+            return;
+        }
+
+        var started = DateTimeOffset.UtcNow;
+        if (IsBusy || _busyRegistry.IsBusy(repo))
+        {
+            BackupsErrorText = $"Repository is busy with another operation: {repo}";
+            RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
+                OperationOutcome.Refused, BackupsErrorText, started);
+            return;
+        }
+
+        BackupsBusy = true;
+        BackupsErrorText = "";
+        BackupsStatusText = "Backing up…";
+        BackupHandle? handle = null;
+        try
+        {
+            handle = await service.CreateBackupAsync(repo, ManualBackupOperation);
+            RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
+                OperationOutcome.Succeeded, "", started, handle.UtcStamp);
+        }
+        catch (BackupException ex)
+        {
+            RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
+                OperationOutcome.Failed, ex.Message, started);
+            if (IsCurrent(gen))
+            {
+                BackupsStatusText = "";
+                BackupsErrorText = ex.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"manual backup failed for {repo}", ex);
+            RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
+                OperationOutcome.Failed, ex.Message, started);
+            if (IsCurrent(gen))
+            {
+                BackupsStatusText = "";
+                BackupsErrorText = $"The backup could not be taken: {ex.Message}";
+            }
+        }
+        finally
+        {
+            if (IsCurrent(gen)) BackupsBusy = false;
+        }
+
+        if (handle is null || !IsCurrent(gen)) return;
+        await LoadBackups();
+        if (!IsCurrent(gen)) return;
+        if (BackupList.FirstOrDefault(e => e.Handle.UtcStamp == handle.UtcStamp) is { } fresh)
+        {
+            SelectedBackup = fresh;
+            // Creation runs `git bundle verify` on what it wrote and deletes a bundle that fails,
+            // so a handle coming back is a bundle that verified at that moment — which is what the
+            // row claims, rather than that it still verifies now.
+            fresh.Verification = BundleVerifyState.Verified;
+        }
+        BackupsStatusText =
+            $"Backed up at {DescribeStamp(handle.UtcStamp)}. The bundle was verified as it was written.";
+    }
+
+    /// <summary>What a manual backup's sidecar records it was taken for.</summary>
+    internal const string ManualBackupOperation = "Manual backup";
+
+    private bool CanVerifySelectedBackup() => SelectedBackup is not null && !BackupsBusy;
+
+    /// <summary>
+    /// Runs the restore's own precondition against the selected bundle and reports it, without
+    /// restoring. Read-only, so no confirmation and no repository lease.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanVerifySelectedBackup))]
+    private async Task VerifySelectedBackup()
+    {
+        var service = _backups;
+        var entry = SelectedBackup;
+        var gen = _generation;
+        if (entry is null || BackupsBusy) return;
+        if (service is null)
+        {
+            BackupsErrorText = BackupsUnavailableRefusal;
+            return;
+        }
+
+        BackupsBusy = true;
+        BackupsErrorText = "";
+        BackupsStatusText = "Verifying…";
+        BundleVerifyResult result;
+        try
+        {
+            result = await service.VerifyBackupAsync(entry.Handle);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"verify of backup {entry.Handle.UtcStamp} failed", ex);
+            result = new BundleVerifyResult(BundleVerifyState.Unknown, ex.Message);
+        }
+        finally
+        {
+            if (IsCurrent(gen)) BackupsBusy = false;
+        }
+        if (!IsCurrent(gen)) return;
+
+        entry.Verification = result.State;
+        BackupsStatusText = result.State switch
+        {
+            BundleVerifyState.Verified =>
+                $"The bundle taken {entry.Taken} reads back — this backup is restorable.",
+            BundleVerifyState.Failed => "",
+            _ => ""
+        };
+        BackupsErrorText = result.State switch
+        {
+            BundleVerifyState.Failed =>
+                $"The bundle taken {entry.Taken} cannot be restored — it failed verification: {result.Detail}",
+            BundleVerifyState.Unknown =>
+                $"Verification of the bundle taken {entry.Taken} could not be run, so whether it is restorable " +
+                $"is unknown — it was neither confirmed good nor found bad: {result.Detail}",
+            _ => ""
+        };
+    }
+
+    private bool CanDeleteSelectedBackup() => SelectedBackup is not null && !BackupsBusy;
+
+    /// <summary>
+    /// Removes one backup's bundle and refs sidecar from disk.
+    ///
+    /// Plainly confirmed rather than typed: nothing in the repository changes, only the files
+    /// under the app's backup folder. The repository lease is not taken for the same reason.
+    /// Retention is unaffected — the next backup prunes from whatever is left, so removing one
+    /// here does not cost a second.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDeleteSelectedBackup))]
+    private async Task DeleteSelectedBackup()
+    {
+        var service = _backups;
+        var entry = SelectedBackup;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (entry is null || BackupsBusy || repo.Length == 0) return;
+        if (service is null)
+        {
+            BackupsErrorText = BackupsUnavailableRefusal;
+            return;
+        }
+
+        var stamp = entry.Handle.UtcStamp;
+        var message = DeleteBackupMessage(entry, service.MeasureBackupBytes(entry.Handle));
+        if (!await ConfirmAsync("Delete this backup?", message, "Delete")) return;
+        if (!IsCurrent(gen))
+        {
+            BackupsStatusText = ProjectSwitchedNotice("Backup delete");
+            return;
+        }
+
+        var started = DateTimeOffset.UtcNow;
+        BackupsBusy = true;
+        BackupsErrorText = "";
+        BackupsStatusText = "Deleting…";
+        var gone = false;
+        try
+        {
+            // The delete is best effort and never throws, so what it reports is read from the
+            // files themselves afterwards, not from the call having returned.
+            gone = await service.DeleteBackupAsync(entry.Handle);
+            RecordBackupOp(repo, OperationCategory.BackupDelete, $"Delete backup {stamp}",
+                gone ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                gone ? "" : BackupStillOnDiskFailure, started, stamp);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"delete of backup {stamp} failed", ex);
+            RecordBackupOp(repo, OperationCategory.BackupDelete, $"Delete backup {stamp}",
+                OperationOutcome.Failed, ex.Message, started, stamp);
+            if (IsCurrent(gen))
+            {
+                BackupsStatusText = "";
+                BackupsErrorText = $"The backup could not be deleted: {ex.Message}";
+            }
+            return;
+        }
+        finally
+        {
+            if (IsCurrent(gen)) BackupsBusy = false;
+        }
+
+        if (!IsCurrent(gen)) return;
+        await LoadBackups();
+        if (!IsCurrent(gen)) return;
+
+        if (!gone)
+        {
+            BackupsStatusText = "";
+            BackupsErrorText = BackupStillOnDiskFailure;
+            return;
+        }
+
+        BackupsStatusText =
+            $"Deleted the backup taken {entry.Taken}. Nothing in this repository changed.";
+        // An interrupted operation naming the bundle just deleted is now pointing at nothing, and
+        // the reader is in the state the browser already has words for.
+        if (_recovery?.PendingFor(repo)?.BackupHandle?.UtcStamp == stamp)
+            BackupsErrorText = RecordedBackupGoneNotice;
+    }
+
+    internal const string BackupStillOnDiskFailure =
+        "This backup's bundle is still on disk after the delete — another process may hold it open. Its refs " +
+        "snapshot was left alone, so the backup is intact and still restorable; nothing was removed.";
+
+    /// <summary>
+    /// What the confirmation says: the same detail the row carries — the refs the sidecar recorded
+    /// and where HEAD was — plus what the two files occupy and what is known about whether the
+    /// bundle still reads back, which is nothing at all until a verify is run.
+    /// </summary>
+    internal static string DeleteBackupMessage(BackupEntry entry, long? bytes) =>
+        $"Delete the backup taken {entry.Taken}?\n\n" +
+        $"    {entry.Operation}\n" +
+        $"    {entry.Detail}\n" +
+        $"    On disk: {(bytes is null ? "size unknown — the files could not be read" : DescribeBytes(bytes.Value))}\n" +
+        $"    {(entry.VerificationText.Length > 0 ? entry.VerificationText : "Not verified in this session.")}\n\n" +
+        "This removes the bundle and its refs snapshot from this app's backup folder. Nothing in the " +
+        "repository changes, and no other backup is affected. It cannot be undone.";
+
+    /// <summary>
+    /// One record for a backup this page created or deleted. The backups a coordinator takes are
+    /// already named by that operation's own record, so nothing here duplicates them.
+    /// </summary>
+    private void RecordBackupOp(string repo, OperationCategory category, string label,
+        OperationOutcome outcome, string detail, DateTimeOffset started, string? stamp = null) =>
+        _history.Append(OperationRecord.For(repo, category, label, outcome, detail, started, backupStamp: stamp));
 
     // ── Restore ─────────────────────────────────────────────────────────────────
 
@@ -428,10 +713,17 @@ public partial class ProjectDetailViewModel
             SelectedBackup = match;
             return;
         }
-        BackupsErrorText =
-            "The backup that interrupted operation recorded is no longer on disk — it may have been pruned by the " +
-            "retention setting or deleted. Any other backup below can still be restored.";
+        BackupsErrorText = RecordedBackupGoneNotice;
     }
+
+    /// <summary>
+    /// Said whenever the bundle an interrupted operation named is absent, whether retention pruned
+    /// it or the reader deleted it here — the two leave the reader in the same position, so they
+    /// are told the same thing.
+    /// </summary>
+    internal const string RecordedBackupGoneNotice =
+        "The backup that interrupted operation recorded is no longer on disk — it may have been pruned by the " +
+        "retention setting or deleted. Any other backup below can still be restored.";
 
     /// <summary>Hides the banner for this session and keeps the marker, so the next launch offers it again.</summary>
     [RelayCommand]

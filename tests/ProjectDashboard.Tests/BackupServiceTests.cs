@@ -483,10 +483,38 @@ public class BackupServiceTests
         Assert.Equal(2, listed.Count);
         Assert.Equal(second.UtcStamp, listed[0].UtcStamp); // newest first
 
-        await service.DeleteBackupAsync(first);
+        Assert.True(await service.DeleteBackupAsync(first));
         Assert.False(File.Exists(first.BundlePath));
         Assert.False(File.Exists(first.RefsSnapshotPath));
+        Assert.False(service.BackupFilesRemain(first));
         Assert.Single(await service.ListBackupsAsync(repo.Path));
+    }
+
+    /// <summary>
+    /// A bundle another process holds open cannot be removed. Removing its refs snapshot anyway
+    /// would strip the pair down to bytes no restore can use — and the listing skips a bundle with
+    /// no sidecar, so those bytes would also stop being visible. The sidecar goes only after the
+    /// bundle does, leaving a failed delete with the backup exactly as it was.
+    /// </summary>
+    [Fact]
+    public async Task DeleteBackup_WhenTheBundleIsHeldOpen_LeavesTheBackupWholeAndSaysSo()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path, "History rewrite");
+
+        using (new FileStream(handle.BundlePath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.False(await service.DeleteBackupAsync(handle));
+            Assert.True(File.Exists(handle.BundlePath));
+            Assert.True(File.Exists(handle.RefsSnapshotPath));
+            Assert.True(service.BackupFilesRemain(handle));
+            Assert.Single(await service.ListBackupsAsync(repo.Path));
+        }
+
+        // Once the hold is released the same delete finishes.
+        Assert.True(await service.DeleteBackupAsync(handle));
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
     }
 
     // ── Verify, standalone ──────────────────────────────────────────────────

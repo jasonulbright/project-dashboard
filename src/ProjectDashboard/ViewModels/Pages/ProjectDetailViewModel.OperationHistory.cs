@@ -391,6 +391,8 @@ public partial class ProjectDetailViewModel
         OperationCategory.ForcePush => "Force push",
         OperationCategory.DeepClean => "Deep clean",
         OperationCategory.BackupRestore => "Backup restore",
+        OperationCategory.BackupCreate => "Backup created",
+        OperationCategory.BackupDelete => "Backup deleted",
         _ => category.ToString()
     };
 
