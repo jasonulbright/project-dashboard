@@ -110,13 +110,19 @@ public partial class DashboardViewModel : ObservableObject
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var root in ProjectRootSettings.Scannable(settings))
         {
-            foreach (var entry in root.ExcludedDirectories)
-            {
-                var candidate = Path.Combine(root.Path, entry.Replace('/', '\\'));
-                if (!Directory.Exists(candidate) || !GitService.IsGitRepo(candidate)) continue;
-                var normalized = RepoPaths.Normalize(candidate);
-                if (seen.Add(normalized)) hidden.Add((normalized, root.Path));
-            }
+            if (root.ExcludedDirectories.Length == 0) continue;
+
+            // The same walk the scan runs, with the exclusions lifted, then filtered back
+            // through them. A bare exclusion name matches at every depth, so probing only the
+            // root's own children would leave a repository hidden from the grid AND absent from
+            // the Hidden view — hiding would then be losing.
+            var unfiltered = root.Copy();
+            unfiltered.ExcludedDirectories = [];
+            var walk = RepositoryWalk.Run(unfiltered, CancellationToken.None);
+            var exclusions = new RootExclusions(root.Path, root.ExcludedDirectories);
+
+            foreach (var repo in walk.Repositories)
+                if (exclusions.Excludes(repo) && seen.Add(repo)) hidden.Add((repo, root.Path));
         }
         return hidden;
     }

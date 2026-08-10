@@ -48,6 +48,29 @@ public class DashboardHiddenCountTests
         await WaitUntil(() => dashboard.HiddenCount == 1);
     }
 
+    /// <summary>
+    /// A bare exclusion name hides that name at every depth, so the hidden set has to be found
+    /// the same way the scan finds repositories. Probing only the root's own children leaves a
+    /// nested repository absent from the grid AND absent from the Hidden view, which is not
+    /// hiding it — it is losing it.
+    /// </summary>
+    [Fact]
+    public async Task ARepositoryHiddenBelowTheTopLevel_IsStillListedAsHidden()
+    {
+        var root = TestEnv.NewDir("hidden-nested");
+        await InitRepoAsync(Path.Combine(root, "group", "docs"));
+        await InitRepoAsync(Path.Combine(root, "group", "keeper"));
+
+        var settings = BaseSettings(root, "docs");
+        settings.ProjectRoots = [new ProjectRoot { Path = root, ExcludedDirectories = ["docs"], MaxDepth = 3 }];
+
+        var hidden = DashboardViewModel.HiddenRepoPaths(settings);
+
+        Assert.Equal(
+            RepoPaths.Normalize(Path.Combine(root, "group", "docs")),
+            Assert.Single(hidden).Path);
+    }
+
     /// <summary>The count itself, without a view model in the way.</summary>
     [Fact]
     public async Task OnlyExcludedDirectoriesThatAreRepositories_AreCounted()

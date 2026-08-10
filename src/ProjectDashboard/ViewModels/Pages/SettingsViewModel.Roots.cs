@@ -19,8 +19,6 @@ public partial class SettingsViewModel
     /// <summary>What the last add, move, or removal did, or why it was refused.</summary>
     [ObservableProperty] private string _rootsStatus = "";
 
-    public bool HasNoRoots => ProjectRoots.Count == 0;
-
     private void LoadRoots(AppSettings settings)
     {
         ProjectRoots.Clear();
@@ -29,7 +27,6 @@ public partial class SettingsViewModel
 
         EnsureOneDefault();
         ApplyRootStatuses();
-        OnPropertyChanged(nameof(HasNoRoots));
     }
 
     /// <summary>
@@ -114,7 +111,6 @@ public partial class SettingsViewModel
         ProjectRoots.Add(ProjectRootRow.From(new ProjectRoot { Path = path }, isDefault: ProjectRoots.Count == 0));
         EnsureOneDefault();
         ApplyRootStatuses();
-        OnPropertyChanged(nameof(HasNoRoots));
         RootsStatus = $"Added {path}. Save to scan it.";
     }
 
@@ -124,7 +120,6 @@ public partial class SettingsViewModel
         if (row is null || !ProjectRoots.Remove(row)) return;
 
         EnsureOneDefault();
-        OnPropertyChanged(nameof(HasNoRoots));
         RootsStatus = ProjectRoots.Count == 0
             ? $"Removed {row.Path}. No projects folder is left — the dashboard has nothing to scan."
             : $"Removed {row.Path}. Save to drop its cards.";
@@ -240,10 +235,11 @@ public partial class ProjectRootRow : ObservableObject
         };
     }
 
-    partial void OnEnabledChanged(bool value)
-    {
-        if (!value) Status = "Off";
-    }
+    /// <summary>
+    /// A row switched off is off now, not at the last scan. Switched back on it has not been
+    /// scanned since, and claiming the previous count would describe a folder nothing has read.
+    /// </summary>
+    partial void OnEnabledChanged(bool value) => Status = value ? NotScannedYet : "Off";
 }
 
 /// <summary>A scan-depth option, with the wording the page shows for it.</summary>

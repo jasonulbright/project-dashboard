@@ -121,7 +121,6 @@ public class SettingsRootsEditorTests
         vm.RemoveRootCommand.Execute(vm.ProjectRoots[0]);
 
         Assert.Empty(vm.ProjectRoots);
-        Assert.True(vm.HasNoRoots);
         Assert.Contains("nothing to scan", vm.RootsStatus);
     }
 
@@ -139,6 +138,25 @@ public class SettingsRootsEditorTests
         vm.SaveSettingsCommand.Execute(null);
 
         Assert.Equal(@"D:\two", new SettingsService().Load().DefaultRootPath);
+    }
+
+    /// <summary>
+    /// Removing every folder has to stick. The singular compatibility field is what a root list
+    /// is synthesized from when it is empty, so a mirror left standing puts the folder back.
+    /// </summary>
+    [Fact]
+    public void RemovingEveryFolder_LeavesNoneBehindAfterASaveAndReload()
+    {
+        var vm = NewVm(new ProjectRoot { Path = @"C:\one" }, new ProjectRoot { Path = @"D:\two" });
+
+        vm.RemoveRootCommand.Execute(vm.ProjectRoots[1]);
+        vm.RemoveRootCommand.Execute(vm.ProjectRoots[0]);
+        vm.SaveSettingsCommand.Execute(null);
+
+        var saved = new SettingsService().Load();
+        Assert.Empty(saved.ProjectRoots);
+        Assert.Equal("", saved.ProjectsRootPath);
+        Assert.Equal("", saved.DefaultRootPath);
     }
 
     [Fact]

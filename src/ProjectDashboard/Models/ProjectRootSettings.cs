@@ -88,7 +88,14 @@ public static class ProjectRootSettings
     /// </summary>
     public static void SyncLegacyFields(AppSettings settings)
     {
-        if (Primary(settings) is not { } primary) return;
+        if (Primary(settings) is not { } primary)
+        {
+            // An empty list clears the mirror. Left standing, the singular root is what
+            // Effective synthesizes a root from, and removing every folder would not stick.
+            settings.ProjectsRootPath = "";
+            settings.ExcludedDirectories = [];
+            return;
+        }
 
         settings.ProjectsRootPath = primary.Path;
         settings.ExcludedDirectories = [.. primary.ExcludedDirectories];
