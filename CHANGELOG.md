@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1] - 2026-08-10
+
+The 2.1.0 release build failed in its test gate and published nothing; this release carries the same product with the suite corrected.
+
+### Fixed
+- Three view tests ran WPF-UI controls on private threads beside the suite's shared UI thread and could read its theme brushes across threads, failing the release runner; they now run on the shared thread with the rest of the view tests
+
 ## [2.1.0] - 2026-08-10
 
 Deeper repository management -- on-demand and deep-tier backups, an update check, richer GitHub depth, multi-root discovery, and a safety rollup.

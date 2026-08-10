@@ -15,26 +15,12 @@ namespace ProjectDashboard.Tests;
 /// <summary>
 /// The two library facts the commit-surgery view layer rests on, neither of which any
 /// view-model test can reach: a context menu declared on a list binds to that list's data
-/// context, and a WPF-UI button honours an access key in its content. WPF controls require an
+/// context, and a WPF-UI button honours an access key in its content. WPF-UI controls resolve theme resources through the process-wide Application, so these run on the shared STA host; a private STA thread reads that Application's unfrozen brushes across threads. WPF controls require an
 /// STA thread; no Application is needed.
 /// </summary>
+[Collection("shipped-markup")]
 public class SurgeryViewBindingTests
 {
-    private static void RunSta(Action action)
-    {
-        Exception? error = null;
-        var thread = new Thread(() =>
-        {
-            try { action(); }
-            catch (Exception ex) { error = ex; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (!thread.Join(TimeSpan.FromSeconds(30)))
-            throw new TimeoutException("STA test body did not complete");
-        if (error is not null)
-            ExceptionDispatchInfo.Capture(error).Throw();
-    }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
@@ -56,7 +42,7 @@ public class SurgeryViewBindingTests
     [Fact]
     public void AContextMenuOnAList_ResolvesItsBindingsAgainstTheListsDataContext()
     {
-        RunSta(() =>
+        StaHost.Run(() =>
         {
             var viewModel = new MenuHost();
             var list = new ListBox { DataContext = viewModel };
@@ -93,17 +79,18 @@ public class SurgeryViewBindingTests
     [Fact]
     public void AWpfUiButton_ReadsAnUnderscoreInItsContentAsAnAccessKey()
     {
-        RunSta(() =>
+        StaHost.Run(() =>
         {
             var button = new Wpf.Ui.Controls.Button { Content = "Move _up" };
-            var host = new Border { Child = button };
-            host.Measure(new Size(400, 200));
-            host.Arrange(new Rect(0, 0, 400, 200));
-
-            var presenter = Descendants(button).OfType<ContentPresenter>().FirstOrDefault();
-            Assert.NotNull(presenter);
-            Assert.True(presenter.RecognizesAccessKey);
-            Assert.Single(Descendants(button).OfType<AccessText>());
+            var window = new Window { Content = button, Width = 400, Height = 200, ShowInTaskbar = false, ShowActivated = false };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                Assert.Contains(Descendants(button).OfType<ContentPresenter>(), p => p.RecognizesAccessKey);
+                Assert.Single(Descendants(button).OfType<AccessText>());
+            }
+            finally { window.Close(); }
         });
     }
 

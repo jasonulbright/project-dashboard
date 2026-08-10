@@ -14,6 +14,7 @@ namespace ProjectDashboard.Tests;
 /// leaves every hunk action permanently unavailable, and a pane declared without its visibility
 /// binding never appears at all.
 /// </summary>
+[Collection("shipped-markup")]
 public class HistoryDepthViewBindingTests
 {
     private static string ViewXaml(string fileName, [CallerFilePath] string testFile = "")
@@ -106,7 +107,7 @@ public class HistoryDepthViewBindingTests
     [Fact]
     public void AnItemTemplate_ReadsTheListsDataContextThroughItsAncestor()
     {
-        RunSta(() =>
+        StaHost.Run(() =>
         {
             var host = new LaneWidthHost();
             var list = new ListBox { DataContext = host, ItemsSource = new[] { "row" } };
@@ -153,18 +154,4 @@ public class HistoryDepthViewBindingTests
         public double GraphLaneColumnWidth => 48;
     }
 
-    private static void RunSta(Action action)
-    {
-        Exception? error = null;
-        var thread = new Thread(() =>
-        {
-            try { action(); }
-            catch (Exception ex) { error = ex; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (!thread.Join(TimeSpan.FromSeconds(30)))
-            throw new TimeoutException("STA test body did not complete");
-        if (error is not null) ExceptionDispatchInfo.Capture(error).Throw();
-    }
 }

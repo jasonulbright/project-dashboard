@@ -11,23 +11,9 @@ namespace ProjectDashboard.Tests;
 /// item instances per rebuild leak entries while reused instances keep the
 /// count flat. WPF controls require an STA thread; no Application is needed.
 /// </summary>
+[Collection("shipped-markup")]
 public class AppNavigationViewTests
 {
-    private static void RunSta(Action action)
-    {
-        Exception? error = null;
-        var thread = new Thread(() =>
-        {
-            try { action(); }
-            catch (Exception ex) { error = ex; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (!thread.Join(TimeSpan.FromSeconds(30)))
-            throw new TimeoutException("STA test body did not complete");
-        if (error is not null)
-            ExceptionDispatchInfo.Capture(error).Throw();
-    }
 
     /// <summary>
     /// Total entries across every base-class dictionary whose values are
@@ -58,7 +44,7 @@ public class AppNavigationViewTests
     [Fact]
     public void ReusedItemInstances_KeepDictionariesBounded_AcrossRebuilds()
     {
-        RunSta(() =>
+        StaHost.Run(() =>
         {
             var nav = new AppNavigationView();
             var parent = new NavigationViewItem { Content = "Projects" };
@@ -87,7 +73,7 @@ public class AppNavigationViewTests
     [Fact]
     public void FreshItemInstancesPerRebuild_GrowDictionaries()
     {
-        RunSta(() =>
+        StaHost.Run(() =>
         {
             var nav = new AppNavigationView();
             var parent = new NavigationViewItem { Content = "Projects" };
