@@ -75,56 +75,16 @@ public partial class DashboardViewModel : ObservableObject
     private int _hiddenCount;
 
     /// <summary>
-    /// Recounts the hidden repositories off the UI thread and publishes the result
-    /// through the UI post. A count one notification stale is what the summary bar shows
-    /// meanwhile, which is what it showed before the disk answered anyway.
+    /// Re-reads the hidden count from the last scan. No disk: the scan's own walk classified
+    /// every repository it met as visible or hidden, and this is called from every summary
+    /// notification — which the file watcher raises on every save in every repository.
     /// </summary>
     private void RefreshHiddenCount()
     {
-        _ = Task.Run(() =>
-        {
-            var count = CountHiddenRepos(_settingsService.Load());
-            _uiPost(() =>
-            {
-                if (_hiddenCount == count) return;
-                _hiddenCount = count;
-                OnPropertyChanged(nameof(HiddenCount));
-            });
-        });
-    }
-
-    /// <summary>
-    /// Excluded entries that are really repositories on disk, across every scanned root. An
-    /// excluded name with no repository behind it is not a hidden project — the Hidden view
-    /// would have nothing to show for it.
-    /// </summary>
-    internal static int CountHiddenRepos(AppSettings settings) => HiddenRepoPaths(settings).Count;
-
-    /// <summary>
-    /// Where the hidden repositories are, root by root. Exclusions are per root, so the same
-    /// name excluded under one root says nothing about a folder of that name under another.
-    /// </summary>
-    internal static List<(string Path, string RootPath)> HiddenRepoPaths(AppSettings settings)
-    {
-        var hidden = new List<(string, string)>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var root in ProjectRootSettings.Scannable(settings))
-        {
-            if (root.ExcludedDirectories.Length == 0) continue;
-
-            // The same walk the scan runs, with the exclusions lifted, then filtered back
-            // through them. A bare exclusion name matches at every depth, so probing only the
-            // root's own children would leave a repository hidden from the grid AND absent from
-            // the Hidden view — hiding would then be losing.
-            var unfiltered = root.Copy();
-            unfiltered.ExcludedDirectories = [];
-            var walk = RepositoryWalk.Run(unfiltered, CancellationToken.None);
-            var exclusions = new RootExclusions(root.Path, root.ExcludedDirectories);
-
-            foreach (var repo in walk.Repositories)
-                if (exclusions.Excludes(repo) && seen.Add(repo)) hidden.Add((repo, root.Path));
-        }
-        return hidden;
+        var count = _discoveryService.LastHiddenRepositories.Count;
+        if (_hiddenCount == count) return;
+        _hiddenCount = count;
+        OnPropertyChanged(nameof(HiddenCount));
     }
 
     public int MismatchCount => Projects.Count(p => !p.IsRemoteOnly && p.HasRemoteMismatch);
@@ -216,8 +176,15 @@ public partial class DashboardViewModel : ObservableObject
     /// the same UI post every other off-thread signal takes, so a host without an
     /// <see cref="Application"/> still runs the handler instead of dropping it.
     /// </summary>
+    /// <summary>
+    /// The refresh the last watcher signal started and did not await. Held so a caller can wait
+    /// for the read itself; polling what it writes cannot tell a refresh that has not started
+    /// from one that found nothing to change.
+    /// </summary>
+    internal Task WatcherRefresh { get; private set; } = Task.CompletedTask;
+
     internal void OnRepoDirsChanged(IReadOnlyCollection<string> repoPaths) =>
-        _uiPost(() => _ = HandleRepoDirsChangedAsync(repoPaths));
+        _uiPost(() => WatcherRefresh = HandleRepoDirsChangedAsync(repoPaths));
 
     private async Task HandleRepoDirsChangedAsync(IReadOnlyCollection<string> repoPaths)
     {
@@ -1672,10 +1639,9 @@ public partial class DashboardViewModel : ObservableObject
     {
         ActiveFilter = "hidden";
 
-        var settings = _settingsService.Load();
-        // Probing every root is disk work, and a disconnected one blocks for the share's own
-        // timeout; the dispatcher is what draws the list it produces.
-        var hiddenDirs = await Task.Run(() => HiddenRepoPaths(settings));
+        // From the last scan's own walk. Re-deriving it here would walk every root again on a
+        // click, and would disagree with the badge that sent the reader to this view.
+        var hiddenDirs = _discoveryService.LastHiddenRepositories;
 
         var hiddenList = new List<ProjectInfo>();
         foreach (var (dir, rootPath) in hiddenDirs)

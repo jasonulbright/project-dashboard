@@ -28,6 +28,21 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// </summary>
     public IReadOnlyList<RootStatus> LastRootStatuses { get; private set; } = [];
 
+    /// <summary>
+    /// The repositories the last scan found and this root's exclusions hid, produced by the same
+    /// walk that found the visible ones. Computed here rather than on demand: the hidden count is
+    /// read by the summary bar on every notification, and the file watcher notifies on every save
+    /// in every repository — deriving it there is a directory walk per keystroke-rate event.
+    /// </summary>
+    public IReadOnlyList<HiddenRepository> LastHiddenRepositories { get; private set; } = [];
+
+    /// <summary>
+    /// The walk, as one overridable call. The seam exists so a test can count walks and show that
+    /// the watcher path causes none.
+    /// </summary>
+    protected virtual RootWalkResult WalkRoot(ProjectRoot root, CancellationToken ct) =>
+        RepositoryWalk.Run(root, ct);
+
     /// <summary>A discovered repository and the configured root the walk found it under.</summary>
     private readonly record struct RepoCandidate(string Path, string RootPath);
 
@@ -95,8 +110,9 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     {
         // Off the calling thread before anything touches the disk: probing a disconnected UNC
         // root blocks for the SMB timeout, and this is awaited from the dispatcher.
-        var (candidates, statuses) = await Task.Run(() => WalkRoots(settings, ct), ct);
+        var (candidates, statuses, hidden) = await Task.Run(() => WalkRoots(settings, ct), ct);
         LastRootStatuses = statuses;
+        LastHiddenRepositories = hidden;
 
         // Phase A: local git/file facts, parallel with a small concurrency cap. One semaphore
         // over the COMBINED candidate list — one per root would multiply the cap, and the git
@@ -180,12 +196,14 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// Candidates are deduplicated by normalized path, so a root nested inside another — or the
     /// same path listed twice — produces one card rather than two.
     /// </summary>
-    private static (List<RepoCandidate> Candidates, List<RootStatus> Statuses) WalkRoots(
+    private (List<RepoCandidate> Candidates, List<RootStatus> Statuses, List<HiddenRepository> Hidden) WalkRoots(
         AppSettings settings, CancellationToken ct)
     {
         var candidates = new List<RepoCandidate>();
         var statuses = new List<RootStatus>();
+        var hidden = new List<HiddenRepository>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenHidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var root in ProjectRootSettings.Clean(ProjectRootSettings.Effective(settings)))
         {
@@ -197,7 +215,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 continue;
             }
 
-            var walk = RepositoryWalk.Run(root, ct);
+            var walk = WalkRoot(root, ct);
             var added = 0;
             foreach (var repo in walk.Repositories)
                 if (seen.Add(repo))
@@ -206,11 +224,14 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                     added++;
                 }
 
+            foreach (var repo in walk.Excluded)
+                if (seenHidden.Add(repo)) hidden.Add(new HiddenRepository(repo, root.Path));
+
             statuses.Add(RootStatus.For(
                 root, walk.Availability, added, walk.Truncated, walk.UnreadableFolders, walk.Detail));
         }
 
-        return (candidates, statuses);
+        return (candidates, statuses, hidden);
     }
 
     /// <summary>
@@ -398,6 +419,12 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         /// reads as an empty one for as long as the cache lasts.
         /// </summary>
         public List<RootStatus> Roots { get; set; } = [];
+
+        /// <summary>
+        /// What the exclusions hid. Served with the list, or the Hidden view is empty until the
+        /// next full scan and the summary badge disagrees with it.
+        /// </summary>
+        public List<HiddenRepository> Hidden { get; set; } = [];
     }
 
     /// <summary>
@@ -438,6 +465,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
             LastDiscoveryAt = cache.CachedAt;
             LastRootStatuses = cache.Roots;
+            LastHiddenRepositories = cache.Hidden;
             return cache.Projects;
         }
         catch (Exception ex)
@@ -460,7 +488,8 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 SchemaVersion = CacheSchemaVersion,
                 CachedAt = DateTimeOffset.Now,
                 Projects = projects,
-                Roots = [.. LastRootStatuses]
+                Roots = [.. LastRootStatuses],
+                Hidden = [.. LastHiddenRepositories]
             };
             LastDiscoveryAt = cache.CachedAt;
 

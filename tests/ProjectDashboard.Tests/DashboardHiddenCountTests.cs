@@ -64,11 +64,9 @@ public class DashboardHiddenCountTests
         var settings = BaseSettings(root, "docs");
         settings.ProjectRoots = [new ProjectRoot { Path = root, ExcludedDirectories = ["docs"], MaxDepth = 3 }];
 
-        var hidden = DashboardViewModel.HiddenRepoPaths(settings);
+        var hidden = RepositoryWalk.Run(settings.ProjectRoots[0], CancellationToken.None).Excluded;
 
-        Assert.Equal(
-            RepoPaths.Normalize(Path.Combine(root, "group", "docs")),
-            Assert.Single(hidden).Path);
+        Assert.Equal(RepoPaths.Normalize(Path.Combine(root, "group", "docs")), Assert.Single(hidden));
     }
 
     /// <summary>The count itself, without a view model in the way.</summary>
@@ -80,9 +78,74 @@ public class DashboardHiddenCountTests
         await InitRepoAsync(Path.Combine(root, "beta"));
         Directory.CreateDirectory(Path.Combine(root, "plain"));
 
-        Assert.Equal(2, DashboardViewModel.CountHiddenRepos(
-            BaseSettings(root, "alpha", "beta", "plain", "never-created")));
-        Assert.Equal(0, DashboardViewModel.CountHiddenRepos(BaseSettings(root)));
+        Assert.Equal(2, HiddenCountFor(BaseSettings(root, "alpha", "beta", "plain", "never-created")));
+        Assert.Equal(0, HiddenCountFor(BaseSettings(root)));
+    }
+
+    /// <summary>The hidden set the scan's own walk produces, without a view model in the way.</summary>
+    private static int HiddenCountFor(AppSettings settings) =>
+        ProjectRootSettings.Scannable(settings)
+            .Sum(root => RepositoryWalk.Run(root, CancellationToken.None).Excluded.Count);
+
+    /// <summary>Counts the directory walks a scan runs, so the watcher path can be shown to run none.</summary>
+    private sealed class CountingDiscovery(SettingsService settings, GitHubService gitHub)
+        : ProjectDiscoveryService(new GitService(), gitHub, settings, new ManifestStore())
+    {
+        private int _walks;
+
+        public int Walks => Volatile.Read(ref _walks);
+
+        protected override RootWalkResult WalkRoot(ProjectRoot root, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _walks);
+            return base.WalkRoot(root, ct);
+        }
+    }
+
+    /// <summary>
+    /// The badge is read by the summary bar on every notification, and the file watcher notifies
+    /// on every save in every repository. Deriving the hidden set there is a directory walk per
+    /// event, stacked and uncancelled during exactly the busy periods the debounce exists for —
+    /// so the watcher path runs none, and a rescan is what refreshes the count.
+    /// </summary>
+    [Fact]
+    public async Task WatcherSignals_RunNoDirectoryWalks_WhileARescanStillRefreshesTheCount()
+    {
+        var root = TestEnv.NewDir("hidden-walk-cost");
+        await InitRepoAsync(Path.Combine(root, "alpha"));
+        await InitRepoAsync(Path.Combine(root, "beta"));
+
+        var settings = new SettingsService();
+        settings.Save(BaseSettings(root, "alpha"));
+
+        var gitHub = new GitHubService(settings);
+        var discovery = new CountingDiscovery(settings, gitHub);
+        using var watcher = new ProjectWatcherService();
+        var dashboard = NewDashboard(settings, watcher, discovery);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+        await WaitUntil(() => dashboard.HiddenCount == 1);
+
+        var afterScan = discovery.Walks;
+        Assert.True(afterScan > 0, "the scan itself must walk");
+
+        // Ten signals naming the visible repository, each awaited to completion: every one drives
+        // a card refresh AND the summary notification, which is where the walk used to be.
+        for (var i = 0; i < 10; i++)
+        {
+            dashboard.OnRepoDirsChanged([Path.Combine(root, "beta")]);
+            await dashboard.WatcherRefresh;
+        }
+
+        Assert.Equal(afterScan, discovery.Walks);
+        Assert.Equal(1, dashboard.HiddenCount);
+
+        // A rescan is what moves it: hiding the second repository too.
+        var hideBoth = settings.Load();
+        hideBoth.ProjectRoots[0].ExcludedDirectories = ["alpha", "beta"];
+        settings.Save(hideBoth);
+
+        await WaitUntil(() => dashboard.HiddenCount == 2);
+        Assert.True(discovery.Walks > afterScan, "the rescan must walk again");
     }
 
     private static AppSettings BaseSettings(string root, params string[] excluded) => new()
@@ -101,11 +164,12 @@ public class DashboardHiddenCountTests
         await Git.RunAsync(path, "init", "-b", "main");
     }
 
-    private static DashboardViewModel NewDashboard(SettingsService settings, ProjectWatcherService watcher)
+    private static DashboardViewModel NewDashboard(
+        SettingsService settings, ProjectWatcherService watcher, ProjectDiscoveryService? discovery = null)
     {
         var gitHub = new GitHubService(settings);
         return new DashboardViewModel(
-            new ProjectDiscoveryService(new GitService(), gitHub, settings, new ManifestStore()),
+            discovery ?? new ProjectDiscoveryService(new GitService(), gitHub, settings, new ManifestStore()),
             navigationService: null!,
             settings,
             gitHub,

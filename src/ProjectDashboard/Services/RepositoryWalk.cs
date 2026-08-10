@@ -39,6 +39,7 @@ public sealed record WalkLimits(int MaxDirectories, TimeSpan Budget)
 /// </summary>
 public sealed record RootWalkResult(
     IReadOnlyList<string> Repositories,
+    IReadOnlyList<string> Excluded,
     RootAvailability Availability,
     bool Truncated,
     int UnreadableFolders,
@@ -61,25 +62,26 @@ public static class RepositoryWalk
 
         var rootPath = RepoPaths.Normalize(root.Path);
         if (rootPath.Length == 0)
-            return new RootWalkResult([], RootAvailability.Missing, false, 0, "no path configured");
+            return new RootWalkResult([], [], RootAvailability.Missing, false, 0, "no path configured");
 
         try
         {
             if (!Directory.Exists(rootPath))
-                return new RootWalkResult([], RootAvailability.Missing, false, 0, "");
+                return new RootWalkResult([], [], RootAvailability.Missing, false, 0, "");
         }
         catch (Exception ex)
         {
-            return new RootWalkResult([], RootAvailability.Unreadable, false, 0, ex.Message);
+            return new RootWalkResult([], [], RootAvailability.Unreadable, false, 0, ex.Message);
         }
 
         var exclusions = new RootExclusions(rootPath, root.ExcludedDirectories);
         var maxDepth = ProjectRootSettings.ClampDepth(root.MaxDepth);
 
         var found = new List<string>();
+        var excluded = new List<string>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Identity(rootPath) };
-        var queue = new Queue<(string Path, int Depth)>();
-        queue.Enqueue((rootPath, 0));
+        var queue = new Queue<(string Path, int Depth, bool Hidden)>();
+        queue.Enqueue((rootPath, 0, false));
 
         var clock = Stopwatch.StartNew();
         var examined = 0;
@@ -91,7 +93,7 @@ public static class RepositoryWalk
         while (queue.Count > 0 && !truncated)
         {
             ct.ThrowIfCancellationRequested();
-            var (directory, depth) = queue.Dequeue();
+            var (directory, depth, inHiddenSubtree) = queue.Dequeue();
             if (depth >= maxDepth) continue;
 
             List<string> children;
@@ -106,7 +108,7 @@ public static class RepositoryWalk
                 // better answer than nothing, provided the skip travels with it.
                 deniedSubtrees++;
                 if (firstDenial.Length == 0) firstDenial = $"{directory} ({ex.Message})";
-                if (depth == 0) return new RootWalkResult(found, RootAvailability.Unreadable, false, 0, ex.Message);
+                if (depth == 0) return new RootWalkResult(found, excluded, RootAvailability.Unreadable, false, 0, ex.Message);
                 continue;
             }
 
@@ -130,14 +132,18 @@ public static class RepositoryWalk
                 }
 
                 if (ScanSkips.IsSkipped(Path.GetFileName(child))) continue;
-                if (exclusions.Excludes(child)) continue;
+
+                // An excluded directory is walked, not skipped, and everything under it is
+                // classified hidden. Skipping it outright would leave a repository beneath it
+                // absent from the grid AND absent from the Hidden view, which is not hiding it.
+                var hidden = inHiddenSubtree || exclusions.Excludes(child);
 
                 // A repository is a leaf. Not descending into one is what keeps the walk cheap
                 // — no git internals, no vendored trees — and a repository nested inside another
                 // belongs to the card that already covers it.
                 if (GitService.IsGitRepo(child))
                 {
-                    found.Add(RepoPaths.Normalize(child));
+                    (hidden ? excluded : found).Add(RepoPaths.Normalize(child));
                     continue;
                 }
 
@@ -147,7 +153,7 @@ public static class RepositoryWalk
                 if (IsReparsePoint(child)) continue;
                 if (!visited.Add(Identity(child))) continue;
 
-                queue.Enqueue((RepoPaths.Normalize(child), depth + 1));
+                queue.Enqueue((RepoPaths.Normalize(child), depth + 1, hidden));
             }
         }
 
@@ -157,7 +163,7 @@ public static class RepositoryWalk
             deniedSubtrees > 0 ? $"{deniedSubtrees} folder(s) could not be read, first {firstDenial}" : "",
         }.Where(part => part.Length > 0));
 
-        return new RootWalkResult(found, RootAvailability.Available, truncated, deniedSubtrees, detail);
+        return new RootWalkResult(found, excluded, RootAvailability.Available, truncated, deniedSubtrees, detail);
     }
 
     private static bool IsReparsePoint(string path)

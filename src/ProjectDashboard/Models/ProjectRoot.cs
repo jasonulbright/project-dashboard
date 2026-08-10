@@ -34,6 +34,9 @@ public sealed class ProjectRoot
     };
 }
 
+/// <summary>A repository the scan found and its root's exclusions hid, and which root hid it.</summary>
+public sealed record HiddenRepository(string Path, string RootPath);
+
 /// <summary>What the last scan found the root to be. Never inferred from an empty result.</summary>
 public enum RootAvailability
 {
