@@ -1,10 +1,16 @@
 using System.IO;
 using System.Text.Json;
 using ProjectDashboard.Models;
+using ProjectDashboard.Services.Safety;
 
 namespace ProjectDashboard.Services;
 
-public class ProjectDiscoveryService(GitService gitService, GitHubService gitHubService, SettingsService settingsService, ManifestStore manifestStore)
+public class ProjectDiscoveryService(
+    GitService gitService,
+    GitHubService gitHubService,
+    SettingsService settingsService,
+    ManifestStore manifestStore,
+    RepoBusyRegistry? busyRegistry = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -45,14 +51,52 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     public bool RemoteListStoppedShort { get; protected set; }
 
     /// <summary>
+    /// What the last full scan's identity pass concluded: the records it re-keyed onto a moved
+    /// repository, the ones it refused to place, and the ones no repository was found for. Empty
+    /// until a full scan has run; a list served from the cache leaves the previous answer alone
+    /// rather than claiming a pass that did not happen.
+    /// </summary>
+    public ManifestIdentityReport LastManifestReport { get; private set; } = ManifestIdentityReport.Empty;
+
+    /// <summary>
+    /// What each repository the last full scan met was found to be. Held so the surfaces that
+    /// list orphaned metadata can tell a record with no repository from one whose repository is
+    /// simply outside the configured folders.
+    /// </summary>
+    public IReadOnlyDictionary<string, RepoFingerprint> LastFingerprints { get; private set; } =
+        new Dictionary<string, RepoFingerprint>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// The walk, as one overridable call. The seam exists so a test can count walks and show that
     /// the watcher path causes none.
     /// </summary>
     protected virtual RootWalkResult WalkRoot(ProjectRoot root, CancellationToken ct) =>
         RepositoryWalk.Run(root, ct);
 
+    /// <summary>
+    /// What a repository is, read once per full scan. Null leaves whatever was recorded before in
+    /// place: a repository under an operation's lease has its refs mid-swap, and a rev-list there
+    /// is exactly the read the lease exists to prevent.
+    /// </summary>
+    protected virtual async Task<RepoFingerprint?> ReadFingerprintAsync(
+        string repoPath, string remoteUrl, CancellationToken ct)
+    {
+        if (busyRegistry?.IsBusy(repoPath) == true) return null;
+
+        return RepoFingerprint.For(
+            Path.GetFileName(RepoPaths.Normalize(repoPath)),
+            await gitService.GetRootCommitsAsync(repoPath, ct),
+            remoteUrl);
+    }
+
     /// <summary>A discovered repository and the configured root the walk found it under.</summary>
     private readonly record struct RepoCandidate(string Path, string RootPath);
+
+    /// <summary>
+    /// One candidate after the fan-out read it. A null project is a path the guard refused; a null
+    /// fingerprint is a repository whose identity was not read this pass.
+    /// </summary>
+    private readonly record struct BuiltRepo(ProjectInfo? Project, RepoFingerprint? Fingerprint);
 
     /// <summary>
     /// Loads from cache if fresh, otherwise runs full discovery and updates cache.
@@ -111,8 +155,18 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// holds the only copy of the edit and must not present it as stored.
     /// </summary>
     public virtual Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
+    {
         // Manifests live out-of-source under AppPaths.RoamingDir, not in the repo root.
-        => Task.FromResult(manifestStore.Save(repoPath, manifest));
+        if (!manifestStore.Save(repoPath, manifest)) return Task.FromResult(false);
+
+        // The scan already read what this repository is, so recording it alongside a brand-new
+        // entry costs no process and closes the window where metadata typed between two scans has
+        // nothing to recognise its repository by if the folder moves first.
+        if (LastFingerprints.TryGetValue(RepoPaths.Normalize(repoPath), out var fingerprint))
+            manifestStore.RecordFingerprint(repoPath, fingerprint);
+
+        return Task.FromResult(true);
+    }
 
     private async Task<List<ProjectInfo>> DiscoverFromDiskAsync(AppSettings settings, CancellationToken ct)
     {
@@ -135,8 +189,11 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             try
             {
                 var project = await BuildProjectInfoAsync(candidate.Path, ct);
-                if (project is not null) project.RootPath = candidate.RootPath;
-                return project;
+                if (project is null) return new BuiltRepo(null, null);
+                project.RootPath = candidate.RootPath;
+                // Read under the same cap as everything else the fan-out spawns: a second pass
+                // over the same repositories would run its own processes outside it.
+                return new BuiltRepo(project, await ReadFingerprintAsync(candidate.Path, project.GitStatus.RemoteUrl, ct));
             }
             finally
             {
@@ -144,10 +201,18 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             }
         });
 
-        var results = (await Task.WhenAll(tasks))
+        var built = await Task.WhenAll(tasks);
+        var results = built
+            .Select(entry => entry.Project)
             .OfType<ProjectInfo>() // scan paths are never empty; keeps the guard's contract explicit
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // Off the calling thread: the pass probes the disk for every stored path the scan did not
+        // meet, and this is awaited from the dispatcher. The pin write that follows is not — it
+        // publishes a settings change, and every subscriber of that rebuilds bound collections.
+        var identity = await Task.Run(() => ReconcileManifestIdentity(built, statuses), ct);
+        RekeyPins(identity.Adoptions);
 
         // Phase B: one batched gh call per ~25 GitHub repos (was 3 spawns per repo).
         if (await gitHubService.IsAvailableAsync(ct))
@@ -164,6 +229,83 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         return results
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// Matches stored metadata against what this scan found, and carries a record onto the
+    /// repository it belongs to when that repository has moved.
+    ///
+    /// Runs inside the scan, which the dashboard already holds to one in flight, so two passes
+    /// can never adopt concurrently. A record is re-keyed only on an unambiguous one-to-one
+    /// fingerprint match onto a repository with no record of its own; everything else is left
+    /// exactly where it is and reported, because one project's notes landing on another is data
+    /// loss rather than a cosmetic mistake.
+    /// </summary>
+    private ManifestIdentityReport ReconcileManifestIdentity(
+        IReadOnlyList<BuiltRepo> built, IReadOnlyList<RootStatus> statuses)
+    {
+        var live = new Dictionary<string, RepoFingerprint>(StringComparer.OrdinalIgnoreCase);
+        var projects = new Dictionary<string, ProjectInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in built)
+        {
+            if (entry.Project is not { FullPath.Length: > 0 } project) continue;
+            projects[RepoPaths.Normalize(project.FullPath)] = project;
+            if (entry.Fingerprint is { } fingerprint)
+                live[RepoPaths.Normalize(project.FullPath)] = fingerprint;
+        }
+
+        LastFingerprints = live;
+
+        var report = ManifestIdentity.Reconcile(manifestStore.Snapshot(), live, statuses);
+        LastManifestReport = report;
+
+        if (!manifestStore.ApplyScan(report.Adoptions, live, DateTimeOffset.UtcNow))
+        {
+            // The store still describes what is on disk. Reporting the re-key anyway would tell
+            // the reader their metadata moved and leave it at the old path at the next launch.
+            LastManifestReport = new ManifestIdentityReport([], report.Refusals, report.Orphans);
+            return LastManifestReport;
+        }
+
+        foreach (var adoption in report.Adoptions)
+        {
+            if (!projects.TryGetValue(RepoPaths.Normalize(adoption.ToPath), out var project)) continue;
+            if (!manifestStore.TryGet(adoption.ToPath, out var manifest) || manifest is null) continue;
+
+            project.Manifest = manifest;
+            project.HasManifest = true;
+        }
+
+        return report;
+    }
+
+    /// <summary>
+    /// Carries a pin onto the path its repository moved to. Written through the same list the
+    /// grid reads, which lands in the view-preferences delta rather than the rediscovery one —
+    /// a pin edit that asked for a re-scan would make every adopting scan start another.
+    /// </summary>
+    private void RekeyPins(IReadOnlyList<ManifestAdoption> adoptions)
+    {
+        if (adoptions.Count == 0) return;
+
+        var settings = settingsService.Load();
+        var pinned = settings.PinnedProjectPaths.ToList();
+        var moved = false;
+
+        foreach (var adoption in adoptions)
+        {
+            // Replaced in place rather than appended: the list is the pinned order, and a
+            // repository that moved has not been re-pinned.
+            var at = pinned.FindIndex(p => RepoPaths.Equal(p, adoption.FromPath));
+            if (at < 0) continue;
+
+            pinned[at] = RepoPaths.Normalize(adoption.ToPath);
+            moved = true;
+        }
+
+        if (!moved) return;
+        settings.PinnedProjectPaths = [.. pinned];
+        settingsService.Save(settings);
     }
 
     /// <summary>

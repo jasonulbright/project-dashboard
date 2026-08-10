@@ -133,7 +133,14 @@ public partial class App : Application
                 services.AddSingleton<ManifestStore>();
                 services.AddSingleton<GitService>();
                 services.AddSingleton<GitHubService>();
-                services.AddSingleton<ProjectDiscoveryService>();
+                // Explicit factory: the scan skips reading a repository under a lease, and that
+                // rule must not rest on the container guessing an optional parameter.
+                services.AddSingleton(sp => new ProjectDiscoveryService(
+                    sp.GetRequiredService<GitService>(),
+                    sp.GetRequiredService<GitHubService>(),
+                    sp.GetRequiredService<SettingsService>(),
+                    sp.GetRequiredService<ManifestStore>(),
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>()));
                 services.AddSingleton<ProjectWatcherService>();
                 services.AddSingleton<ProjectTemplateService>();
                 services.AddSingleton<SubmoduleService>();
@@ -163,7 +170,8 @@ public partial class App : Application
                     sp.GetRequiredService<GitService>(),
                     sp.GetRequiredService<Services.Rewrite.SwapService>(),
                     sp.GetRequiredService<Services.Safety.RewriteJournal>(),
-                    history: sp.GetRequiredService<Services.Safety.OperationHistory>()));
+                    history: sp.GetRequiredService<Services.Safety.OperationHistory>(),
+                    manifests: sp.GetRequiredService<ManifestStore>()));
                 services.AddSingleton<IRewriteSessionFactory>(sp =>
                     new CoordinatorRewriteSessionFactory(sp.GetRequiredService<Services.Rewrite.RewriteCoordinator>()));
 
@@ -211,7 +219,15 @@ public partial class App : Application
                     Surgery = sp.GetRequiredService<SurgeryCoordinator>()
                 });
                 services.AddSingleton<SettingsPage>();
-                services.AddSingleton<SettingsViewModel>();
+                // Explicit factory: the metadata section shares the container's own store, or a
+                // record forgotten here would still be live in the index every scan reads.
+                services.AddSingleton(sp => new SettingsViewModel(
+                    sp.GetRequiredService<SettingsService>(),
+                    sp.GetRequiredService<GitHubService>(),
+                    sp.GetRequiredService<DashboardViewModel>(),
+                    sp.GetRequiredService<Services.Update.UpdateCheckService>(),
+                    sp.GetRequiredService<ManifestStore>(),
+                    sp.GetRequiredService<ProjectDiscoveryService>()));
 
                 // The rollup reads the dashboard's own project list rather than scanning again,
                 // and shares the container's busy registry, backup store and ledger — a private

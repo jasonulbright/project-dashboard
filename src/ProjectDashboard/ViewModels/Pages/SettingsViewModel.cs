@@ -17,6 +17,11 @@ public partial class SettingsViewModel : ObservableObject
     /// <summary>Null when the host supplied none; the page then offers no manual check.</summary>
     private readonly UpdateCheckService? _updateCheck;
 
+    private readonly ManifestStore _manifests;
+
+    /// <summary>Null when the host supplied none; the page then reports no scan has run.</summary>
+    private readonly ProjectDiscoveryService? _discovery;
+
     [ObservableProperty] private ApplicationTheme _currentTheme = ApplicationTheme.Dark;
     [ObservableProperty] private int _refreshIntervalSeconds = 300;
     [ObservableProperty] private string _gitHubStatus = "Checking...";
@@ -29,12 +34,16 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _syncStatus = "";
     [ObservableProperty] private string _saveStatus = "";
 
-    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null)
+    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null, ManifestStore? manifests = null, ProjectDiscoveryService? discovery = null)
     {
         _settingsService = settingsService;
         _gitHubService = gitHubService;
         _dashboardViewModel = dashboardViewModel;
         _updateCheck = updateCheck;
+        // Defaulted rather than left null: the section reads one file, and a page that showed no
+        // records at all would read as a reader having none rather than as a host wiring gap.
+        _manifests = manifests ?? new ManifestStore();
+        _discovery = discovery;
 
         LoadSettings();
         _ = CheckGitHubStatusAsync();
@@ -51,6 +60,7 @@ public partial class SettingsViewModel : ObservableObject
     {
         var settings = _settingsService.Load();
         LoadRoots(settings);
+        LoadMetadata();
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         GhPath = settings.GhPath;
         EnableGitHubDiscovery = settings.EnableGitHubDiscovery;

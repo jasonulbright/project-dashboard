@@ -1,4 +1,5 @@
 using System.IO;
+using ProjectDashboard.Models;
 using ProjectDashboard.Services.History;
 using ProjectDashboard.Services.Safety;
 
@@ -30,6 +31,9 @@ public sealed class RewriteCoordinator
     private readonly SwapService _swap;
     private readonly RewriteJournal _journal;
     private readonly OperationHistory _history;
+
+    /// <summary>Null when the host supplied none; the stored fingerprint then waits for the next scan.</summary>
+    private readonly ManifestStore? _manifests;
     private readonly string _gitExe;
     private readonly string _workRoot;
 
@@ -56,7 +60,8 @@ public sealed class RewriteCoordinator
         RewriteJournal? journal = null,
         string? gitExecutable = null,
         string? workRoot = null,
-        OperationHistory? history = null)
+        OperationHistory? history = null,
+        ManifestStore? manifests = null)
     {
         _backup = backup;
         _busy = busy;
@@ -64,6 +69,7 @@ public sealed class RewriteCoordinator
         _swap = swap;
         _journal = journal ?? new RewriteJournal();
         _history = history ?? new OperationHistory();
+        _manifests = manifests;
         _gitExe = gitExecutable ?? HistoryPipeline.ResolveGitExecutable();
         _workRoot = workRoot ?? Path.Combine(AppPaths.LocalDir, "rewrite-work");
         ScratchSweep = Task.Run(SweepStaleScratch);
@@ -146,6 +152,7 @@ public sealed class RewriteCoordinator
     {
         var started = DateTimeOffset.UtcNow;
         var result = await RunPipelineAsync(request, preview, ct, phase);
+        if (result.Success) await RefreshFingerprintAsync(request.RepoPath);
         _history.Append(OperationRecord.For(
             request.RepoPath, OperationCategory.Rewrite, "History rewrite",
             result.Cancelled ? OperationOutcome.Cancelled
@@ -157,6 +164,31 @@ public sealed class RewriteCoordinator
             started,
             backupStamp: result.Undo?.Backup.UtcStamp));
         return result;
+    }
+
+    /// <summary>
+    /// Re-reads what the repository is now that its history has been replaced. A rewrite changes
+    /// the root commits the stored fingerprint was recorded from, and a record left describing
+    /// the pre-rewrite history would no longer recognise its own repository if the folder later
+    /// moved. Read after the lease is released, and never allowed to fail the rewrite: the record
+    /// is still reachable by its path key, and the next scan records the same thing.
+    /// </summary>
+    private async Task RefreshFingerprintAsync(string repoPath)
+    {
+        if (_manifests is null) return;
+
+        try
+        {
+            var status = await _git.GetStatusAsync(repoPath, CancellationToken.None);
+            _manifests.RecordFingerprint(repoPath, RepoFingerprint.For(
+                Path.GetFileName(RepoPaths.Normalize(repoPath)),
+                await _git.GetRootCommitsAsync(repoPath, CancellationToken.None),
+                status.RemoteUrl));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not re-read what {repoPath} is after its history rewrite", ex);
+        }
     }
 
     /// <summary>

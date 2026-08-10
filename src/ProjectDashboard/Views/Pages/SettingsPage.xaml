@@ -8,6 +8,7 @@
 
     <Page.Resources>
         <helpers:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
+        <helpers:HasNonWhitespaceTextConverter x:Key="HasNonWhitespaceTextConverter" />
     </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -122,6 +123,61 @@
                            AutomationProperties.Name="Add a projects folder"
                            Command="{Binding AddRootCommand}" />
                 <TextBlock Text="{Binding RootsStatus}"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
+                           MaxWidth="400"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+            </StackPanel>
+
+            <!-- Project metadata: what is stored, and the records naming folders that are gone.
+                 Forgetting is the only deletion in this feature and it happens here, by hand. -->
+            <TextBlock Text="Project Metadata" FontSize="16" Margin="0,0,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="Descriptions, categories, statuses and notes are kept outside your repositories, so nothing is ever written into them. A repository that moves or is renamed is recognised on the next scan and its metadata moves with it."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="{Binding MetadataSummary}" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       AutomationProperties.AutomationId="SettingsMetadataSummary"
+                       AutomationProperties.LiveSetting="Polite"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+            <ItemsControl ItemsSource="{Binding MetadataOrphans}" Margin="0,0,0,8"
+                          AutomationProperties.Name="Saved metadata for folders that are no longer there">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlElevationBorderBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                            <DockPanel>
+                                <ui:Button DockPanel.Dock="Right" Content="Forget" FontSize="12" Padding="8,4"
+                                           Margin="8,0,0,0" VerticalAlignment="Center"
+                                           AutomationProperties.Name="Forget the saved metadata for this folder"
+                                           Command="{Binding DataContext.ForgetMetadataCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                           CommandParameter="{Binding}" />
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}" FontSize="13"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    <TextBlock Text="{Binding Path}" FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap"
+                                               Visibility="{Binding Description, Converter={StaticResource HasNonWhitespaceTextConverter}}"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <TextBlock Text="{Binding LastSeen}" FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <ui:Button Content="Forget all of these"
+                           Icon="{ui:SymbolIcon Delete24}"
+                           AutomationProperties.Name="Forget every saved record for folders that are no longer there"
+                           Visibility="{Binding HasMetadataOrphans, Converter={StaticResource BooleanToVisibilityConverter}}"
+                           Command="{Binding ForgetAllMetadataCommand}" />
+                <TextBlock Text="{Binding MetadataStatus}"
                            AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
                            MaxWidth="400"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"

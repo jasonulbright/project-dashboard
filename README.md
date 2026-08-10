@@ -150,16 +150,30 @@ Two things relocate all of the above under a single directory. In the portable b
 
 ### Project metadata
 
-Per-project metadata that can't be derived from git is stored in the path-keyed `manifests.json` index above and edited in the detail view. Each entry:
+Per-project metadata that can't be derived from git is stored in the path-keyed `manifests.json` index above and edited in the detail view. Each entry carries the metadata itself plus what the repository was when a scan last met it:
 
 ```json
 {
-  "Description": "MECM application packaging automation with WinForms GUI",
-  "ProjectType": "mecm-tool",
-  "Status": "active",
-  "Category": "MECM",
-  "ValidationSchedule": "weekly",
-  "Notes": "TASK: PSADT scaffolding\nINFO: 115 packagers, schema v2"
+  "SchemaVersion": 2,
+  "Entries": {
+    "C:\\projects\\packaging-tool": {
+      "Manifest": {
+        "Description": "MECM application packaging automation with WinForms GUI",
+        "ProjectType": "mecm-tool",
+        "Status": "active",
+        "Category": "MECM",
+        "ValidationSchedule": "weekly",
+        "Notes": "TASK: PSADT scaffolding\nINFO: 115 packagers, schema v2"
+      },
+      "Fingerprint": {
+        "RootCommitOids": ["9f1c…"],
+        "RemoteUrl": "github.com/owner/packaging-tool",
+        "FolderName": "packaging-tool"
+      },
+      "FirstSeenUtc": "2026-06-01T09:00:00+00:00",
+      "LastSeenUtc": "2026-08-09T18:20:00+00:00"
+    }
+  }
 }
 ```
 
@@ -172,7 +186,18 @@ Per-project metadata that can't be derived from git is stored in the path-keyed 
 | ValidationSchedule | daily, weekly, monthly, none |
 | Notes | Newline-separated entries with prefixes: TASK:, BUG:, WAIT:, PLAN:, INFO: |
 
-> Legacy `project-manifest.json` files at a repo root are auto-imported into the index on first scan, then no longer needed.
+> Legacy `project-manifest.json` files at a repo root are auto-imported into the index on first scan, then no longer needed. An index written before `SchemaVersion` — a bare path-to-metadata map — is read as-is and carried up to the shape above by the next write, with every field intact.
+
+#### Metadata follows a repository that moves
+
+Nothing is ever written into your repositories. Instead, each scan records what a repository *is* — its root-commit IDs and its normalized remote URL — beside the metadata. Move or rename a repository, including into a different projects folder, and the next scan recognizes it and carries the description, category, status, validation schedule, and notes across; the pin moves with it. The dashboard says so when it happens.
+
+Adoption is deliberately conservative, because putting one project's notes on another is not a cosmetic mistake:
+
+- A record is re-keyed only when it matches **exactly one** repository and that repository has **no metadata of its own**. Two clones of one upstream, a fork, or two records matching one repository all mean no adoption, and the dashboard says which record it could not place.
+- A repository with no commits and no remote carries nothing that identifies it. Folder names are never matched on.
+- A repository under a projects folder that is missing, unreadable, or switched off is not gone — an unplugged drive never orphans anything.
+- Metadata is never deleted automatically. Records naming folders that are no longer there are listed under **Settings → Project Metadata**, with the description they carry and when they were last seen, and are dropped only by pressing Forget.
 
 ## Architecture
 

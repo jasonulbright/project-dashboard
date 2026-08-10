@@ -79,6 +79,28 @@
             </StackPanel>
         </Border>
 
+        <!-- Saved metadata that followed a repository to a new folder, or that matched more than
+             one repository and was therefore left alone. Metadata is hand-typed, so a record that
+             moved and a record that could not be placed are both worth saying out loud. -->
+        <Border DockPanel.Dock="Top"
+                Visibility="{Binding MetadataNoticeVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8"
+                Padding="12,8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <ui:SymbolIcon Symbol="Info24" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="16"
+                               Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding MetadataNoticeText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           MaxWidth="760"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13"
+                           AutomationProperties.AutomationId="DashboardMetadataNoticeText"
+                           AutomationProperties.LiveSetting="Polite" />
+                <ui:Button Content="Open Settings" FontSize="12" Padding="10,4" Margin="14,0,0,0"
+                           AutomationProperties.Name="Open Settings to review saved project metadata"
+                           Command="{Binding OpenSettingsCommand}" />
+            </StackPanel>
+        </Border>
+
         <!-- Interrupted-history banner: a repository whose last history operation died mid-flight
              is only offered a restore on its own page, so the dashboard is where a reader who
              never opens that page finds out. No action here — every gate lives on that page. -->

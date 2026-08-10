@@ -1,4 +1,5 @@
 using System.Text;
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using ProjectDashboard.Services.History;
 using ProjectDashboard.Services.Rewrite;
@@ -34,7 +35,8 @@ public class RewriteCoordinatorTests
         ContentOps = [new LiteralReplace { Find = Encoding.UTF8.GetBytes(find), Replace = Encoding.UTF8.GetBytes(replace) }]
     };
 
-    private static RewriteCoordinator NewCoordinator(SwapService? swap = null, RepoBusyRegistry? busy = null)
+    private static RewriteCoordinator NewCoordinator(
+        SwapService? swap = null, RepoBusyRegistry? busy = null, ManifestStore? manifests = null)
     {
         var git = new GitService();
         return new RewriteCoordinator(
@@ -42,7 +44,8 @@ public class RewriteCoordinatorTests
             busy ?? new RepoBusyRegistry(),
             git,
             swap ?? new SwapService(git),
-            gitExecutable: GitGuard.GitExe);
+            gitExecutable: GitGuard.GitExe,
+            manifests: manifests);
     }
 
     private static RewriteRequest Request(FixtureRepo f) => new()
@@ -132,6 +135,38 @@ public class RewriteCoordinatorTests
         Assert.True(scrub.Complete);
         Assert.Empty(scrub.Hits);
         Assert.Null(await new RewriteJournal().ReadPendingAsync());
+    }
+
+    /// <summary>
+    /// A rewrite replaces the root commits the repository's saved metadata was fingerprinted from.
+    /// Left describing the history that no longer exists, the record would not recognise its own
+    /// repository if the folder later moved — and the metadata would be stranded by an operation
+    /// this app performed itself.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ReReadsWhatTheRepositoryIs_ForItsSavedMetadata()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var git = new GitService();
+        var store = new ManifestStore();
+        store.Save(f.SourcePath, new ProjectManifest { Description = "a scrubbed project" });
+        var before = RepoFingerprint.For("source", await git.GetRootCommitsAsync(f.SourcePath), "");
+        Assert.NotEmpty(before.RootCommitOids);
+        store.ApplyScan([], new Dictionary<string, RepoFingerprint> { [f.SourcePath] = before }, DateTimeOffset.UtcNow);
+
+        var result = await NewCoordinator(manifests: store).ExecuteAsync(Request(f));
+        Assert.True(result.Success, result.FailureReason);
+
+        var recorded = store.Snapshot()[RepoPaths.Normalize(f.SourcePath)];
+        var now = RepoFingerprint.For("source", await git.GetRootCommitsAsync(f.SourcePath), "");
+        Assert.NotNull(recorded.Fingerprint);
+        Assert.Equal(now.RootCommitOids, recorded.Fingerprint!.RootCommitOids);
+        Assert.NotEqual(before.RootCommitOids, recorded.Fingerprint.RootCommitOids);
+        // The metadata itself is untouched: this refreshes what the repository is, nothing else.
+        Assert.True(store.TryGet(f.SourcePath, out var manifest));
+        Assert.Equal("a scrubbed project", manifest!.Description);
     }
 
     [Fact]

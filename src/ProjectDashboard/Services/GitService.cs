@@ -216,6 +216,28 @@ public class GitService
         return state;
     }
 
+    /// <summary>
+    /// Every parentless commit reachable from any ref, sorted. One process, and the only read
+    /// the repository fingerprint needs beyond what a card already costs.
+    ///
+    /// Empty for a repository with no commits, and empty for one git could not read — the caller
+    /// treats both as "nothing to identify this by" rather than as an identity of its own, so an
+    /// unreadable repository can never match another unreadable one.
+    /// </summary>
+    public async Task<string[]> GetRootCommitsAsync(string repoPath, CancellationToken ct = default)
+    {
+        var result = await RunAsync(repoPath, ["rev-list", "--max-parents=0", "--all"], ct);
+        if (!result.Success)
+        {
+            Log.Warn($"git rev-list of root commits failed for {repoPath}: {result.FirstError}");
+            return [];
+        }
+
+        return [.. result.StdOut
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => line.Length > 0)];
+    }
+
     /// <summary>Real git dir for a checkout — a linked worktree's .git is a file pointing elsewhere. Null when git can't read the repo.</summary>
     public async Task<string?> ResolveGitDirAsync(string repoPath, CancellationToken ct = default, TimeSpan? timeout = null)
     {

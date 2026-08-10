@@ -470,6 +470,27 @@ public partial class DashboardViewModel : ObservableObject
         _configuredRoots = [.. ProjectRootSettings.Effective(_settingsService.Load()).Select(r => r.Path)];
         _rootStatuses = _discoveryService.LastRootStatuses;
         UpdateRootIssueBanner();
+        UpdateMetadataNotice();
+    }
+
+    /// <summary>
+    /// What the scan's identity pass did with saved project metadata: a description, category,
+    /// status and notes that followed a repository to a new folder, and an adoption that was
+    /// refused because more than one repository answered to the record. Both are facts about the
+    /// reader's own typing, and neither is left to the log.
+    /// </summary>
+    [ObservableProperty] private bool _metadataNoticeVisible;
+    [ObservableProperty] private string _metadataNoticeText = "";
+
+    private void UpdateMetadataNotice()
+    {
+        var report = _discoveryService.LastManifestReport;
+        MetadataNoticeText = string.Join(" ", new[]
+        {
+            ManifestIdentity.DescribeAdoptions(report.Adoptions),
+            ManifestIdentity.DescribeRefusals(report.Refusals),
+        }.Where(part => part.Length > 0));
+        MetadataNoticeVisible = MetadataNoticeText.Length > 0;
     }
 
     /// <summary>
