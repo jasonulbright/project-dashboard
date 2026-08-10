@@ -228,6 +228,70 @@ public class FindInRepoSurfaceTests
         Assert.Contains("gamma.hidden", vm.FindStatusText);
     }
 
+    /// <summary>
+    /// Two read-only panes added on separate lanes, each covering the whole page. The single
+    /// visibility union is what keeps one from opening over the other, and it is a line both lanes
+    /// appended to — a resolution that kept one flag and dropped the other leaves the dropped
+    /// pane's scrim over a live surface, which stops a mouse and no keystroke. Asserted in both
+    /// directions, because a union missing either flag fails only one of them.
+    /// </summary>
+    [Fact]
+    public async Task TheFindPaneAndTheRunLogPane_EachRefuseToOpenOverTheOther()
+    {
+        using var repo = await ThreeKindsRepoAsync("find-vs-log");
+        var vm = new LogPaneViewModel();
+        await vm.SetProjectAsync(RemoteProjectFor(repo));
+        await vm.IssuesPageLoad;
+        vm.SelectedWorkflowRun = new WorkflowRun { Id = 42, Name = "build", Status = "completed" };
+
+        await vm.OpenWorkflowLogCommand.ExecuteAsync(null);
+        await vm.WorkflowLogLoad;
+        Assert.True(vm.WorkflowLogVisible);
+        Assert.False(vm.SafetyOverlayHidden);
+
+        vm.OpenFindCommand.Execute(null);
+        Assert.False(vm.FindVisible);
+
+        vm.CloseWorkflowLogCommand.Execute(null);
+        Assert.True(vm.SafetyOverlayHidden);
+
+        vm.OpenFindCommand.Execute(null);
+        Assert.True(vm.FindVisible);
+        Assert.False(vm.SafetyOverlayHidden);
+
+        await vm.OpenWorkflowLogCommand.ExecuteAsync(null);
+
+        Assert.False(vm.WorkflowLogVisible);
+        Assert.True(vm.FindVisible);
+    }
+
+    private static ProjectInfo RemoteProjectFor(TempRepo repo)
+    {
+        var project = ProjectFor(repo);
+        project.GitStatus.RemoteUrl = "https://github.com/o/r.git";
+        return project;
+    }
+
+    /// <summary>Answers the run-log read and the list reads, so the pane opens without gh.</summary>
+    private sealed class LogPaneViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    {
+        internal override Task<WorkflowRunLog?> FetchWorkflowRunLogAsync(string slug, long runId)
+            => Task.FromResult<WorkflowRunLog?>(new WorkflowRunLog("one\ntwo\n", Truncated: false, Cap: 2_000_000));
+
+        internal override Task<GitHubService.ListRead<GitHubService.IssuePage>> FetchIssuePageAsync(
+            string slug, GitHubService.GitHubListQuery query)
+            => Task.FromResult(new GitHubService.ListRead<GitHubService.IssuePage>(
+                new GitHubService.IssuePage([], false, query.Limit), ""));
+
+        internal override Task<GitHubService.ListRead<GitHubService.PullRequestPage>> FetchPullRequestPageAsync(
+            string slug, GitHubService.GitHubListQuery query)
+            => Task.FromResult(new GitHubService.ListRead<GitHubService.PullRequestPage>(
+                new GitHubService.PullRequestPage([], false, query.Limit), ""));
+
+        internal override Task<List<Milestone>?> FetchMilestonesAsync(string slug)
+            => Task.FromResult<List<Milestone>?>([]);
+    }
+
     /// <summary>Overrides the shell seam so the suite spawns no explorer.</summary>
     private sealed class RecordingRevealViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
     {
