@@ -290,11 +290,11 @@ public class SafetyDashboardTests
     }
 
     /// <summary>
-    /// The cheap tier lists what is on disk; it never checks one. A repository with bundles reads
-    /// as having them and as having none of them checked.
+    /// The cheap tier lists what is on disk; it never verifies one. A repository with bundles reads
+    /// as having them and as having none of them verified.
     /// </summary>
     [Fact]
-    public async Task TheCheapCheck_ListsBackupsWithoutClaimingTheyWouldRestore()
+    public async Task TheCheapCheck_ListsBackupsWithoutClaimingTheyVerify()
     {
         var host = await NewHostAsync("backup-listing", repos: 1);
         var backups = new BackupService(new GitService(), host.Settings, host.History);
@@ -305,16 +305,17 @@ public class SafetyDashboardTests
 
         var row = Assert.Single(safety.Rows,
             r => r.IsFinding && r.Line.Contains("backup(s) on disk", StringComparison.Ordinal));
-        Assert.Contains("none checked", row.Line, StringComparison.Ordinal);
-        Assert.Equal("Check", row.ActionLabel);
+        Assert.Contains("none verified", row.Line, StringComparison.Ordinal);
+        Assert.Equal("Verify", row.ActionLabel);
     }
 
     /// <summary>
-    /// Checking bundles is the expensive tier, run per repository, and its answer carries the moment
-    /// it was taken — a result shown without its age reads as current.
+    /// Verifying bundles is the expensive tier, run per repository, and its answer carries the
+    /// moment it was taken — a result shown without its age reads as current. The bound on what
+    /// verification establishes travels with it, on the heading and on the row.
     /// </summary>
     [Fact]
-    public async Task CheckingOneRepositorysBackups_StampsTheAnswer()
+    public async Task VerifyingOneRepositorysBackups_StampsTheAnswerAndStatesItsBound()
     {
         var host = await NewHostAsync("backup-verify", repos: 1);
         var backups = new BackupService(new GitService(), host.Settings, host.History);
@@ -325,10 +326,51 @@ public class SafetyDashboardTests
         var row = Assert.Single(safety.Rows, r => r.Action == SafetyAction.VerifyBackups);
         await safety.RunRowActionCommand.ExecuteAsync(row);
 
-        var checkedRow = Assert.Single(safety.Rows,
-            r => r.IsFinding && r.Line.Contains("passed the restore's own check", StringComparison.Ordinal));
-        Assert.Contains("1 backup(s) passed", checkedRow.Line, StringComparison.Ordinal);
-        Assert.Contains("not the packed objects", checkedRow.Detail, StringComparison.Ordinal);
+        var verified = Assert.Single(safety.Rows,
+            r => r.IsFinding && r.Line.Contains("backup(s) verified on", StringComparison.Ordinal));
+        Assert.Contains("1 backup(s) verified on", verified.Line, StringComparison.Ordinal);
+        Assert.Contains(SafetyCopy.BackupCheckLimit, verified.Detail, StringComparison.Ordinal);
+
+        var heading = Assert.Single(safety.Rows, r => r.IsGroup && r.Title == "Backups");
+        Assert.Contains(SafetyCopy.BackupCheckLimit, heading.Line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A verify that never answered leaves the row saying so. Ranking it beside a bundle found bad
+    /// would send a reader to replace a backup that may be intact.
+    /// </summary>
+    [Fact]
+    public async Task ABackupTheVerifierCouldNotAnswerFor_ReadsAsUnansweredNotFailed()
+    {
+        var host = await NewHostAsync("backup-unknown", repos: 1);
+        var settings = host.Settings;
+        await new BackupService(new GitService(), settings, host.History)
+            .CreateBackupAsync(host.Repos[0], "fixture");
+        var timingOut = new BackupService(new TimeOutOnVerifyGitService(), settings, host.History);
+        var safety = host.NewSafety(backups: timingOut);
+        await safety.CheckBranchesAndBackupsCommand.ExecuteAsync(null);
+
+        var row = Assert.Single(safety.Rows, r => r.Action == SafetyAction.VerifyBackups);
+        await safety.RunRowActionCommand.ExecuteAsync(row);
+
+        var answered = Assert.Single(safety.Rows,
+            r => r.IsFinding && r.Line.Contains("could not be verified", StringComparison.Ordinal));
+        Assert.DoesNotContain("failed verification", answered.Line, StringComparison.Ordinal);
+        Assert.Equal(SafetySeverity.WorthALook, answered.Severity);
+    }
+
+    /// <summary>Reports every bundle verify as killed on its budget; every other git call is real.</summary>
+    private sealed class TimeOutOnVerifyGitService : GitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var listed = args.ToList();
+            return listed.Contains("bundle") && listed.Contains("verify")
+                ? new ProcessResult(-1, "", "", TimedOut: true)
+                : await base.RunAsync(repoPath, listed, environment, ct, timeout);
+        }
     }
 
     // ── Where a row leads ───────────────────────────────────────────────────

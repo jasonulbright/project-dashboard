@@ -118,7 +118,54 @@ public class SafetyScannerTests
         var corrupted = await scanner.VerifyBackupsAsync(repo.Path);
         Assert.Equal(1, corrupted.Checked);
         Assert.Equal(handle.UtcStamp, Assert.Single(corrupted.FailedStamps));
-        _output.WriteLine($"bundle {handle.UtcStamp} passed, then was refused after corruption");
+        Assert.Empty(corrupted.UnknownStamps);
+        _output.WriteLine($"bundle {handle.UtcStamp} verified, then failed after corruption");
+    }
+
+    /// <summary>
+    /// A verify killed on its timeout answered nothing about the bundle. Counting it as a failure
+    /// sends a reader to replace or delete a backup that may be intact, so the unanswered ones are
+    /// carried in their own list and never summed into the failures.
+    /// </summary>
+    [Fact]
+    public async Task AVerifyThatTimedOut_IsUnansweredRatherThanFailed()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("verify-timeout");
+        var settings = new SettingsService();
+        settings.Save(new AppSettings { BackupRetentionCount = 5 });
+        var handle = await new BackupService(new GitService(), settings, NewHistory())
+            .CreateBackupAsync(repo.Path, "fixture");
+
+        var history = NewHistory();
+        var timingOut = new BackupService(new TimeOutOnVerifyGitService(), settings, NewHistory());
+
+        var result = await NewScanner(history, timingOut).VerifyBackupsAsync(repo.Path);
+
+        Assert.Equal(1, result.Checked);
+        Assert.Empty(result.FailedStamps);
+        Assert.Equal(handle.UtcStamp, Assert.Single(result.UnknownStamps));
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationOutcome.Unknown, record.Outcome);
+        Assert.Contains("could not be verified", record.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("failed verification", record.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Reports every <c>bundle verify</c> as killed on its budget. Every other git call runs for
+    /// real, so the fixture's listing and its repository are the genuine ones.
+    /// </summary>
+    private sealed class TimeOutOnVerifyGitService : GitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var listed = args.ToList();
+            return listed.Contains("bundle") && listed.Contains("verify")
+                ? new ProcessResult(-1, "", "", TimedOut: true)
+                : await base.RunAsync(repoPath, listed, environment, ct, timeout);
+        }
     }
 
     /// <summary>
@@ -142,17 +189,16 @@ public class SafetyScannerTests
         var result = await NewScanner(NewHistory(), backups).VerifyBackupsAsync(repo.Path);
 
         Assert.Empty(result.FailedStamps);
+        Assert.Empty(result.UnknownStamps);
         Assert.Contains("not the packed objects", SafetyCopy.BackupCheckLimit, StringComparison.Ordinal);
-        Assert.Contains("passed the restore's own check",
-            SafetyCopy.BackupState(1, 0, DateTimeOffset.Now), StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The outcome is the durable half of the answer: "last checked when" is a ledger fact, not one
-    /// this session holds and forgets.
+    /// The outcome is the durable half of the answer: "last verified when" is a ledger fact, not
+    /// one this session holds and forgets.
     /// </summary>
     [Fact]
-    public async Task AFailedCheck_IsRecordedAsAFailureNamingTheBundle()
+    public async Task AFailedVerification_IsRecordedAsAFailureNamingTheBundle()
     {
         using var repo = await TempRepo.CreateWithCommitAsync("verify-record");
         var settings = new SettingsService();

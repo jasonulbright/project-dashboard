@@ -46,8 +46,8 @@
             <ui:Button Content="Check all — reads every object store" FontSize="13" Padding="14,5" Margin="0,0,8,0"
                        Icon="{ui:SymbolIcon ShieldTask24}"
                        Command="{Binding CheckAllCommand}"
-                       ToolTip="Checks every backup bundle and walks every reflog. Minutes on a large portfolio."
-                       AutomationProperties.Name="Check every backup and walk every reflog — this takes minutes" />
+                       ToolTip="Verifies every backup bundle and walks every reflog. Minutes on a large portfolio."
+                       AutomationProperties.Name="Verify every backup and walk every reflog — this takes minutes" />
             <ui:Button Content="Cancel" FontSize="13" Padding="14,5" Margin="0,0,8,0"
                        Command="{Binding CancelCheckCommand}"
                        Visibility="{Binding CheckRunning, Converter={StaticResource BooleanToVisibilityConverter}}"

@@ -142,32 +142,38 @@ public static class SafetyCopy
 
         var expensive = repoCount == 0
             ? ""
-            : $" Backups checked on {verified} of {repoCount}; reflog-only commits checked on {reflogChecked} of {repoCount}.";
+            : $" Backups verified on {verified} of {repoCount}; reflog-only commits checked on {reflogChecked} of {repoCount}.";
 
         return branches + expensive;
     }
 
     /// <summary>
-    /// What one repository's backups amount to. Four conditions, four sentences, no overlap.
-    ///
-    /// The check behind <paramref name="checkedAt"/> is the one a restore runs first, so a bundle
-    /// that passes is one a restore would accept — not one whose packed objects have been read.
-    /// <c>git bundle verify</c> reads the header and the prerequisites and stops there, so the
-    /// wording claims the gate and never the contents.
+    /// What one repository's backups amount to, in the same vocabulary the Backups browser uses for
+    /// one bundle. A bundle found bad and a bundle the verifier never answered for are counted and
+    /// worded apart, and never summed: a reader told a backup failed acts on a defect it may not
+    /// have.
     /// </summary>
-    public static string BackupState(int onDisk, int failed, DateTimeOffset? checkedAt) =>
-        onDisk == 0 ? "No backup on disk."
-        : checkedAt is null ? $"{onDisk} backup(s) on disk, none checked."
-        : failed > 0 ? $"{failed} of {onDisk} backup(s) would be refused by a restore, checked {Stamp(checkedAt.Value)}."
-        : $"{onDisk} backup(s) passed the restore's own check on {Stamp(checkedAt.Value)}.";
+    public static string BackupState(int onDisk, int failed, int unknown, DateTimeOffset? checkedAt)
+    {
+        if (onDisk == 0) return "No backup on disk.";
+        if (checkedAt is null) return $"{onDisk} backup(s) on disk, none verified.";
+
+        var when = Stamp(checkedAt.Value);
+        if (failed == 0 && unknown == 0) return $"{onDisk} backup(s) verified on {when}.";
+
+        var parts = new List<string>();
+        if (failed > 0) parts.Add($"{failed} failed verification");
+        if (unknown > 0) parts.Add($"{unknown} could not be verified");
+        return $"Of {onDisk} backup(s) on {when}: {string.Join(", ", parts)}.";
+    }
 
     /// <summary>
-    /// The limit of the backup check, carried beside every result it produces. A reader told a
-    /// backup is "verified" would take it as proof the objects are intact, which this is not.
+    /// The limit of what verification establishes, carried beside every result that reports one. A
+    /// reader told a backup is verified would otherwise take it as proof the objects are intact.
     /// </summary>
     public const string BackupCheckLimit =
-        "This runs the same check a restore runs first, so the row says what the restore would say. "
-        + "It reads the bundle's header and prerequisites, not the packed objects.";
+        "Verifying runs the same check a restore makes first: it reads the bundle's header and "
+        + "prerequisites, not the packed objects, so a bundle that verifies can still be damaged.";
 
     /// <summary>
     /// A cached expensive result always carries when it was taken. A result shown without its age

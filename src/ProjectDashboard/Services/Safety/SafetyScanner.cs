@@ -13,17 +13,24 @@ public sealed record SafetyCheapScan(
     string? Error);
 
 /// <summary>
-/// What verifying one repository's bundles found. <see cref="Checked"/> counts the bundles git was
-/// actually run against, so a walk cut short by cancellation reports fewer than are on disk rather
-/// than presenting a partial pass as a whole one.
+/// What verifying one repository's bundles found. <see cref="Checked"/> counts the bundles the
+/// verifier was actually run against, so a pass cut short by cancellation reports fewer than are on
+/// disk rather than presenting a partial result as a whole one.
+///
+/// <see cref="UnknownStamps"/> is kept apart from <see cref="FailedStamps"/> and never folded into
+/// it: a verify that was killed on its timeout did not find the bundle bad, and a reader told a
+/// backup failed acts on a defect it may not have.
 /// </summary>
 public sealed record SafetyBackupVerification(
     int OnDisk,
     int Checked,
     IReadOnlyList<string> FailedStamps,
+    IReadOnlyList<string> UnknownStamps,
     string? Error)
 {
     public int Failed => FailedStamps.Count;
+
+    public int Unknown => UnknownStamps.Count;
 }
 
 /// <summary>
@@ -43,9 +50,6 @@ public sealed record SafetyReflogOnlyScan(int Count, string? Error);
 /// </summary>
 public sealed class SafetyScanner
 {
-    /// <summary>Per bundle, matching the budget the restore path already allows one verification.</summary>
-    internal static readonly TimeSpan BundleVerifyTimeout = TimeSpan.FromMinutes(2);
-
     /// <summary>The reflog-only walk is bounded by the reflogs, which no setting bounds; the budget does.</summary>
     internal static readonly TimeSpan ReflogWalkTimeout = TimeSpan.FromMinutes(5);
 
@@ -84,30 +88,31 @@ public sealed class SafetyScanner
     }
 
     /// <summary>
-    /// Expensive tier: <c>git bundle verify</c> per bundle, newest first — the same command a
-    /// restore runs before it touches anything, so a bundle that fails here is one a restore would
-    /// refuse. Otherwise that is only ever learned at the moment a reader can least afford it.
+    /// Expensive tier: every bundle verified through <see cref="BackupService.VerifyBackupAsync"/>,
+    /// newest first — the same verifier the Backups browser and the restore's own precondition use,
+    /// so the answer here is the answer a restore would act on and the two surfaces cannot word one
+    /// bundle two ways.
     ///
-    /// What it establishes is bounded and the caller states the bound: git reads the bundle header
-    /// and checks the prerequisite commits exist here, and does not read the packed objects. A
-    /// bundle whose pack is truncated or altered still passes, so no result from here may be
-    /// reported as the objects being intact.
+    /// What verification establishes is bounded and the caller states the bound: git reads the
+    /// bundle header and checks the prerequisite commits exist here, and does not read the packed
+    /// objects. A bundle whose pack is truncated or altered still verifies.
     ///
     /// The outcome is appended to the repository's operation ledger, which is what makes
-    /// "last checked" a durable fact rather than one this session holds and forgets.
+    /// "last verified" a durable fact rather than one this session holds and forgets.
     /// </summary>
     public async Task<SafetyBackupVerification> VerifyBackupsAsync(string repoPath, CancellationToken ct = default)
     {
         var started = DateTimeOffset.UtcNow;
         var result = await VerifyCoreAsync(repoPath, ct);
-        Record(repoPath, "Check backup bundles", VerifyOutcome(result), DescribeVerification(result), started);
+        Record(repoPath, "Verify backup bundles", VerifyOutcome(result), DescribeVerification(result), started);
         return result;
     }
 
     private async Task<SafetyBackupVerification> VerifyCoreAsync(string repoPath, CancellationToken ct)
     {
         if (_backups is null)
-            return new SafetyBackupVerification(0, 0, [], "No backup store is configured, so nothing was verified.");
+            return new SafetyBackupVerification(0, 0, [], [],
+                "No backup store is configured, so nothing was verified.");
 
         List<BackupHandle> handles;
         try
@@ -117,24 +122,40 @@ public sealed class SafetyScanner
         catch (Exception ex)
         {
             Log.Warn($"could not list backups to verify for {repoPath}", ex);
-            return new SafetyBackupVerification(0, 0, [], ex.Message);
+            return new SafetyBackupVerification(0, 0, [], [], ex.Message);
         }
 
         var failed = new List<string>();
+        var unknown = new List<string>();
         var checkedCount = 0;
         foreach (var handle in handles)
         {
             if (ct.IsCancellationRequested)
-                return new SafetyBackupVerification(handles.Count, checkedCount, failed,
-                    "The check was cancelled, so the remaining bundles were not checked.");
+                return new SafetyBackupVerification(handles.Count, checkedCount, failed, unknown,
+                    "The check was cancelled, so the remaining bundles were not verified.");
 
-            var verify = await _git.RunAsync(
-                repoPath, ["bundle", "verify", handle.BundlePath], ct, BundleVerifyTimeout);
+            BundleVerifyResult verify;
+            try
+            {
+                verify = await _backups.VerifyBackupAsync(handle, ct);
+            }
+            catch (Exception ex)
+            {
+                // A verifier that threw answered nothing about the bundle, which is not the same
+                // fact as the bundle being bad.
+                Log.Warn($"could not verify backup {handle.UtcStamp} for {repoPath}", ex);
+                verify = new BundleVerifyResult(BundleVerifyState.Unknown, ex.Message);
+            }
+
             checkedCount++;
-            if (!verify.Success) failed.Add(handle.UtcStamp);
+            switch (verify.State)
+            {
+                case BundleVerifyState.Failed: failed.Add(handle.UtcStamp); break;
+                case BundleVerifyState.Unknown: unknown.Add(handle.UtcStamp); break;
+            }
         }
 
-        return new SafetyBackupVerification(handles.Count, checkedCount, failed, null);
+        return new SafetyBackupVerification(handles.Count, checkedCount, failed, unknown, null);
     }
 
     /// <summary>
@@ -178,18 +199,31 @@ public sealed class SafetyScanner
         return counts is null ? null : $"{counts.LooseObjects}/{counts.PackedObjects}";
     }
 
+    /// <summary>
+    /// A bundle found bad is a failure; a bundle the verifier never answered for is unknown. The
+    /// ledger keeps them apart for the same reason the surface does.
+    /// </summary>
     private static OperationOutcome VerifyOutcome(SafetyBackupVerification result) =>
-        result.Error is not null ? OperationOutcome.Unknown
-        : result.Failed > 0 ? OperationOutcome.Failed
+        result.Failed > 0 ? OperationOutcome.Failed
+        : result.Error is not null || result.Unknown > 0 ? OperationOutcome.Unknown
         : OperationOutcome.Succeeded;
 
-    private static string DescribeVerification(SafetyBackupVerification result) =>
-        result.Error is not null ? result.Error
-        : result.OnDisk == 0 ? "No backup bundle is on disk for this repository."
-        : result.Failed > 0
-            ? $"{result.Failed} of {result.Checked} bundle(s) would be refused by a restore: "
-              + $"{string.Join(", ", result.FailedStamps)}. {SafetyCopy.BackupCheckLimit}"
-            : $"{result.Checked} bundle(s) passed. {SafetyCopy.BackupCheckLimit}";
+    private static string DescribeVerification(SafetyBackupVerification result)
+    {
+        if (result.Error is not null) return result.Error;
+        if (result.OnDisk == 0) return "No backup bundle is on disk for this repository.";
+
+        var parts = new List<string>();
+        if (result.Failed > 0)
+            parts.Add($"{result.Failed} failed verification ({string.Join(", ", result.FailedStamps)})");
+        if (result.Unknown > 0)
+            parts.Add($"{result.Unknown} could not be verified ({string.Join(", ", result.UnknownStamps)})");
+
+        return (parts.Count == 0
+            ? $"{result.Checked} of {result.OnDisk} bundle(s) verified."
+            : $"Of {result.Checked} bundle(s) checked: {string.Join("; ", parts)}.")
+            + " " + SafetyCopy.BackupCheckLimit;
+    }
 
     private static string DescribeReflogOnly(int count) =>
         count == 0

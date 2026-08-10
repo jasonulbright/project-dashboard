@@ -219,34 +219,44 @@ public class SafetySurveyTests
     public void SkippedRepositories_AreNamedOrAbsent(int skipped, string expected) =>
         Assert.Equal(expected, SafetyCopy.Skipped(skipped));
 
-    /// <summary>Four backup conditions, four sentences. None of them is silence.</summary>
+    /// <summary>Every backup condition gets its own sentence. None of them is silence.</summary>
     [Fact]
-    public void BackupState_SeparatesAllFourConditions()
+    public void BackupState_SeparatesEveryCondition()
     {
         var when = new DateTimeOffset(2026, 8, 9, 12, 0, 0, TimeSpan.Zero);
-        Assert.Equal("No backup on disk.", SafetyCopy.BackupState(0, 0, null));
-        Assert.Contains("none checked", SafetyCopy.BackupState(4, 0, null), StringComparison.Ordinal);
-        Assert.Contains("refused by a restore", SafetyCopy.BackupState(4, 1, when), StringComparison.Ordinal);
-        Assert.Contains("passed the restore's own check", SafetyCopy.BackupState(4, 0, when), StringComparison.Ordinal);
+        Assert.Equal("No backup on disk.", SafetyCopy.BackupState(0, 0, 0, null));
+        Assert.Contains("none verified", SafetyCopy.BackupState(4, 0, 0, null), StringComparison.Ordinal);
+        Assert.Contains("4 backup(s) verified on", SafetyCopy.BackupState(4, 0, 0, when), StringComparison.Ordinal);
+        Assert.Contains("1 failed verification", SafetyCopy.BackupState(4, 1, 0, when), StringComparison.Ordinal);
+        Assert.Contains("1 could not be verified", SafetyCopy.BackupState(4, 0, 1, when), StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The backup check claims the restore's gate, never the objects. `git bundle verify` reads the
-    /// header and prerequisites and stops, so a passing bundle is one a restore would accept and
-    /// not one whose packed objects have been read.
+    /// A verify that never answered is not a bundle found bad. Both counts appear, neither absorbs
+    /// the other, and the sentence never reports one total for the two.
     /// </summary>
     [Fact]
-    public void TheBackupCheck_NeverClaimsThePackedObjectsWereRead()
+    public void BackupState_NeverSumsAnUnansweredVerifyIntoTheFailures()
+    {
+        var line = SafetyCopy.BackupState(5, 2, 1, new DateTimeOffset(2026, 8, 9, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Contains("2 failed verification", line, StringComparison.Ordinal);
+        Assert.Contains("1 could not be verified", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("3 failed", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The word "verified" is the app's own, pinned by the Backups browser to mean exactly what
+    /// <c>git bundle verify</c> answers — so the rollup uses it rather than inventing a second
+    /// vocabulary for one fact. What keeps it honest is the bound travelling with it: verification
+    /// reads the bundle's header and prerequisites and not the packed objects, and every surface
+    /// reporting a verification states that.
+    /// </summary>
+    [Fact]
+    public void TheBackupLimit_SaysWhatVerificationDoesNotRead()
     {
         Assert.Contains("not the packed objects", SafetyCopy.BackupCheckLimit, StringComparison.Ordinal);
-        foreach (var state in new[]
-                 {
-                     SafetyCopy.BackupState(0, 0, null),
-                     SafetyCopy.BackupState(4, 0, null),
-                     SafetyCopy.BackupState(4, 1, DateTimeOffset.Now),
-                     SafetyCopy.BackupState(4, 0, DateTimeOffset.Now),
-                 })
-            Assert.DoesNotContain("verified", state, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("can still be damaged", SafetyCopy.BackupCheckLimit, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -262,7 +272,7 @@ public class SafetySurveyTests
 
         var partial = SafetyCopy.TiersRun(SafetyTierState.Ran, 2, 1, 30);
         Assert.Contains("Branches and backups checked", partial, StringComparison.Ordinal);
-        Assert.Contains("Backups checked on 2 of 30", partial, StringComparison.Ordinal);
+        Assert.Contains("Backups verified on 2 of 30", partial, StringComparison.Ordinal);
         Assert.Contains("reflog-only commits checked on 1 of 30", partial, StringComparison.Ordinal);
     }
 

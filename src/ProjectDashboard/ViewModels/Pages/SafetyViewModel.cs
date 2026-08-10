@@ -353,7 +353,7 @@ public partial class SafetyViewModel : ObservableObject
     {
         var state = _cheap.Count == 0
             ? SafetyCopy.NotChecked + " Run the branch and backup check to list what is on disk."
-            : $"Listed on {_cheap.Count} of {checkable.Count} repositor(y/ies); checked on {_verified.Count}. "
+            : $"Listed on {_cheap.Count} of {checkable.Count} repositor(y/ies); verified on {_verified.Count}. "
               + SafetyCopy.BackupCheckLimit + SafetyCopy.Skipped(_cheapSkipped);
 
         yield return new SafetyRow { IsGroup = true, Title = "Backups", Line = state };
@@ -366,24 +366,44 @@ public partial class SafetyViewModel : ObservableObject
             {
                 IsGroup = false,
                 Title = project.DirectoryName,
-                Line = SafetyCopy.BackupState(cheap.Scan.BackupCount, verified?.Result.Failed ?? 0, verified?.At),
+                Line = SafetyCopy.BackupState(
+                    cheap.Scan.BackupCount, verified?.Result.Failed ?? 0, verified?.Result.Unknown ?? 0, verified?.At),
                 Detail = BackupDetail(cheap, verified),
-                ActionLabel = cheap.Scan.BackupCount == 0 ? "Open Backups" : "Check",
+                ActionLabel = cheap.Scan.BackupCount == 0 ? "Open Backups" : "Verify",
                 Action = cheap.Scan.BackupCount == 0 ? SafetyAction.OpenBackups : SafetyAction.VerifyBackups,
                 RepoPath = project.FullPath,
-                Severity = (verified?.Result.Failed ?? 0) > 0 ? SafetySeverity.NeedsAttention
-                    : cheap.Scan.BackupCount == 0 ? SafetySeverity.WorthALook
-                    : SafetySeverity.Informational,
+                Severity = BackupSeverity(cheap, verified),
             };
         }
     }
 
+    /// <summary>
+    /// A bundle found bad needs attention; one the verifier never answered for is worth a look and
+    /// is never ranked as a defect it was not shown to have.
+    /// </summary>
+    private static SafetySeverity BackupSeverity(CheapEntry cheap, VerifyEntry? verified) =>
+        (verified?.Result.Failed ?? 0) > 0 ? SafetySeverity.NeedsAttention
+        : cheap.Scan.BackupCount == 0 ? SafetySeverity.WorthALook
+        : verified is not null && (verified.Result.Unknown > 0 || verified.Result.Error is not null)
+            ? SafetySeverity.WorthALook
+            : SafetySeverity.Informational;
+
     private static string BackupDetail(CheapEntry cheap, VerifyEntry? verified)
     {
         if (verified?.Result.Error is { } error) return error;
-        if (verified is { Result.FailedStamps.Count: > 0 })
-            return $"Refused: {string.Join(", ", verified.Result.FailedStamps)}. "
-                + "A bundle a restore would refuse is a backup that is not there. " + SafetyCopy.BackupCheckLimit;
+
+        if (verified is not null && (verified.Result.Failed > 0 || verified.Result.Unknown > 0))
+        {
+            var parts = new List<string>();
+            if (verified.Result.Failed > 0)
+                parts.Add($"Failed verification: {string.Join(", ", verified.Result.FailedStamps)}. "
+                    + "A bundle a restore would refuse is a backup that is not there.");
+            if (verified.Result.Unknown > 0)
+                parts.Add($"Could not be verified: {string.Join(", ", verified.Result.UnknownStamps)}. "
+                    + "Neither confirmed good nor found bad.");
+            return string.Join(" ", parts) + " " + SafetyCopy.BackupCheckLimit;
+        }
+
         if (cheap.Scan.BackupCount == 0)
             return "Nothing here can be restored from this app; a destructive operation would take one first.";
         return SafetyCopy.BackupCheckLimit;
@@ -429,12 +449,23 @@ public partial class SafetyViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// What the rollup counts a repository's backups as. A bundle the verifier never answered for
+    /// is its own finding at its own severity rather than being counted as a failure or as clear.
+    /// </summary>
     private List<SafetyFinding> BackupFindings(IReadOnlyList<ProjectInfo> checkable) =>
         checkable
-            .Where(p => _verified.TryGetValue(p.FullPath, out var v) && v.Result.Failed > 0)
-            .Select(p => new SafetyFinding(
-                SafetySignal.UnverifiedBackup, SafetySeverity.NeedsAttention, p.FullPath, p.DirectoryName,
-                "A backup bundle would be refused by a restore", "", SafetyAction.OpenBackups, "Open Backups"))
+            .Where(p => _verified.ContainsKey(p.FullPath))
+            .Select(p => (Project: p, Result: _verified[p.FullPath].Result))
+            .Where(x => x.Result.Failed > 0 || x.Result.Unknown > 0)
+            .Select(x => new SafetyFinding(
+                SafetySignal.UnverifiedBackup,
+                x.Result.Failed > 0 ? SafetySeverity.NeedsAttention : SafetySeverity.WorthALook,
+                x.Project.FullPath, x.Project.DirectoryName,
+                x.Result.Failed > 0
+                    ? "A backup bundle failed verification"
+                    : "A backup bundle could not be verified",
+                "", SafetyAction.OpenBackups, "Open Backups"))
             .ToList();
 
     private List<SafetyFinding> ReflogOnlyFindings(IReadOnlyList<ProjectInfo> checkable) =>
@@ -697,7 +728,7 @@ public partial class SafetyViewModel : ObservableObject
         _checkCts = new CancellationTokenSource();
         CheckRunning = true;
         StatusText = row.Action == SafetyAction.VerifyBackups
-            ? $"Checking {row.Title}'s backup bundles…"
+            ? $"Verifying {row.Title}'s backup bundles…"
             : $"Walking {row.Title}'s reflogs…";
         try
         {
@@ -708,7 +739,7 @@ public partial class SafetyViewModel : ObservableObject
                 var result = await _scanner.VerifyBackupsAsync(row.RepoPath, ct);
                 _verified[row.RepoPath] = new VerifyEntry(result, generation, DateTimeOffset.Now);
                 StatusText = $"{row.Title}: "
-                    + SafetyCopy.BackupState(result.OnDisk, result.Failed, DateTimeOffset.Now);
+                    + SafetyCopy.BackupState(result.OnDisk, result.Failed, result.Unknown, DateTimeOffset.Now);
             }
             else
             {
