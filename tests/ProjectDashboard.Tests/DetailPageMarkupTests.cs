@@ -37,6 +37,7 @@ public class DetailPageMarkupTests
             // Laid out here for the same reason: the pane's own template and list style, on the
             // one thread this Application's brushes belong to.
             SideBySidePane_SplitsEvenlyAndScrollsToTheEndOfALongLine(page);
+            EveryOverlayPane_CoversEveryRowOfThePage(page);
             ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(page);
             StatusLines_CarryTheirValueAndAreAnnouncedAsTheyChange(page);
             WizardChoices_SurviveASecondPageBoundToTheSameViewModel();
@@ -110,6 +111,32 @@ public class DetailPageMarkupTests
                 }
             },
             ["Removed line 2: gone", "Added line 2: fresh"]);
+    }
+
+    /// <summary>
+    /// Each full-page pane is a modal takeover: it is laid over the whole page so the surface
+    /// underneath cannot be reached while a rewrite, a restore, or a force push is being decided.
+    /// The span is what makes that true, and it is a count written next to a row list it has no
+    /// link to — a row added to the page leaves every pane covering all of it but the last row,
+    /// with the page live and clickable under a scrim that looks complete.
+    ///
+    /// The expected span is read off the page's own row list rather than written here, so the
+    /// next row added fails this instead of silently uncovering the page.
+    /// </summary>
+    private static void EveryOverlayPane_CoversEveryRowOfThePage(ProjectDetailPage page)
+    {
+        var root = (Grid)page.Content;
+        var rows = root.RowDefinitions.Count;
+
+        var panes = root.Children.OfType<UserControl>().ToList();
+        Assert.True(panes.Count >= 10, $"only {panes.Count} full-page panes found on the page");
+
+        foreach (var pane in panes)
+        {
+            var name = pane.GetType().Name;
+            Assert.Equal((name, 0), (name, Grid.GetRow(pane)));
+            Assert.Equal((name, rows), (name, Grid.GetRowSpan(pane)));
+        }
     }
 
     /// <summary>

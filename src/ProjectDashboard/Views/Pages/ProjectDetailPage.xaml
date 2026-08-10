@@ -4565,7 +4565,7 @@
              stays visible while the page's busy gate is held, and every gate it enforces is
              view-model state a headless test can drive. The negative margin cancels the page
              padding so the scrim covers the whole surface. -->
-        <pages:RewriteWizardView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:RewriteWizardView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                                  IsEnabled="{Binding MaintenanceOverlayHidden}"
                                  Visibility="{Binding RewriteWizardVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                  AutomationProperties.Name="Rewrite history wizard" />
@@ -4573,21 +4573,21 @@
         <!-- ═══ BACKUPS ═══
              A pane on the same terms as the wizard: the restore it offers replaces every ref in
              the repository, so the surfaces behind it are disabled rather than merely covered. -->
-        <pages:BackupsView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:BackupsView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                            IsEnabled="{Binding MaintenanceOverlayHidden}"
                            Visibility="{Binding BackupsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                            AutomationProperties.Name="Backups browser" />
 
         <!-- ═══ REFLOG ═══
              Last but one in the Grid so it draws over the panes above it. -->
-        <pages:ReflogView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:ReflogView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                           Visibility="{Binding ReflogVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                           AutomationProperties.Name="Reflog viewer" />
 
         <!-- ═══ TAGS ═══
              Draws over the reflog viewer, and refuses to open while one is up, so only one
              ref-level surface is ever live. -->
-        <pages:TagsView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:TagsView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                         Visibility="{Binding TagsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                         AutomationProperties.Name="Tag viewer" />
 
@@ -4595,40 +4595,40 @@
              Last in the Grid, so opening it from the wizard's result screen draws over the wizard
              rather than replacing it — closing the wizard would take the only one-click undo for
              the history just replaced. -->
-        <pages:ForcePushView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:ForcePushView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                              Visibility="{Binding ForcePushVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                              AutomationProperties.Name="Push rewritten history" />
 
         <!-- ═══ FILE HISTORY AND BLAME ═══
              Read-only, and it refuses to open while any pane above is up, so nothing here can
              draw over one that is holding an undo. -->
-        <pages:FileHistoryView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:FileHistoryView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                                Visibility="{Binding FileHistoryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                AutomationProperties.Name="File history and blame" />
 
         <!-- ═══ COMMIT GRAPH ═══ -->
-        <pages:CommitGraphView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:CommitGraphView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                                Visibility="{Binding CommitGraphVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                AutomationProperties.Name="Commit graph" />
 
         <!-- ═══ OPERATION HISTORY ═══
              After the Backups browser in the Grid: it is reached from it as a cross-link and has
              to draw over it, and the panes it covers are disabled rather than merely scrimmed. -->
-        <pages:OperationHistoryView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:OperationHistoryView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                                     Visibility="{Binding OperationHistoryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                     AutomationProperties.Name="Operation history" />
 
         <!-- ═══ WORKFLOW RUN LOG ═══
              Read-only, and it refuses to open while any pane above is up, so nothing here can
              draw over one that is holding an undo. -->
-        <pages:WorkflowLogView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:WorkflowLogView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                                Visibility="{Binding WorkflowLogVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                AutomationProperties.Name="Workflow run log" />
 
         <!-- ═══ FIND IN THIS REPOSITORY ═══
              Read-only, and it refuses to open while any pane above is up, so nothing here can
              draw over one that is holding an undo. -->
-        <pages:FindInRepoView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+        <pages:FindInRepoView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                               Visibility="{Binding FindVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                               AutomationProperties.Name="Find in this repository" />
     </Grid>
