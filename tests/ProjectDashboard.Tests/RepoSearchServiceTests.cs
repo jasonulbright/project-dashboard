@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using ProjectDashboard.Services;
 using ProjectDashboard.Services.Safety;
 
@@ -8,11 +7,28 @@ namespace ProjectDashboard.Tests;
 /// The fan-out runs one git process per repo across every repo the user has, driven by
 /// keystrokes. Every bound it relies on — hits per repo, hits overall, per-repo wall
 /// clock, and prompt cancellation — is asserted here against real repositories.
+///
+/// Two kinds of test live here and they must not be confused. A test that asserts what a search
+/// FOUND runs on <see cref="Unhurried"/>, so the shipped clock cannot decide its result: those
+/// assertions are about git's flags and this service's bookkeeping, and a loaded machine that
+/// pushed one past the shipped budget would redden a gate over nothing. A test that asserts what
+/// the budget DOES injects one small enough to be certain of, against a read that provably
+/// overruns it. Nothing asserts a shipped budget by waiting to see whether it is met.
 /// </summary>
 public class RepoSearchServiceTests
 {
+    /// <summary>
+    /// A budget no fixture in this file can exhaust, injected wherever the assertion is about the
+    /// result rather than the clock. Generous rather than infinite: a search that hangs should
+    /// still fail the run rather than hold it open.
+    /// </summary>
+    private static readonly TimeSpan Unhurried = TimeSpan.FromMinutes(2);
+
     private static RepoSearchService NewService(RepoBusyRegistry? registry = null) =>
-        new(new GitService(), registry ?? new RepoBusyRegistry());
+        NewService(new GitService(), registry);
+
+    private static RepoSearchService NewService(GitService git, RepoBusyRegistry? registry = null) =>
+        new(git, registry ?? new RepoBusyRegistry(), Unhurried, Unhurried);
 
     private static RepoSearchTarget Target(TempRepo repo) =>
         new(Path.GetFileName(repo.Path), repo.Path);
@@ -185,14 +201,14 @@ public class RepoSearchServiceTests
             using var cts = new CancellationTokenSource();
             await cts.CancelAsync();
 
-            var watch = Stopwatch.StartNew();
+            // Counted, not timed. "Promptly" means no git ran at all, which is both the stronger
+            // claim and the one a loaded machine cannot turn into a false failure.
+            var git = new CountingGitService();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => NewService().SearchAsync(
+                () => NewService(git).SearchAsync(
                     "needle", repos.Select(Target).ToList(), SearchScope.Default, cts.Token));
-            watch.Stop();
 
-            Assert.True(watch.Elapsed < RepoSearchService.PerRepoTimeout,
-                $"an already-cancelled search must not run a repo's full timeout budget; took {watch.Elapsed}");
+            Assert.Equal(0, git.Runs);
         }
         finally
         {
@@ -200,22 +216,36 @@ public class RepoSearchServiceTests
         }
     }
 
+    /// <summary>
+    /// The budget is what stops one pathological repo from stalling the whole fan-out, and it
+    /// covers the repo rather than each git invocation inside it. Read off the timeouts the service
+    /// hands git rather than off a stopwatch: the claim is that the second call gets what the first
+    /// one left, and a stopwatch can only ever show that the machine was fast enough today.
+    /// </summary>
     [Fact]
-    public async Task PerRepoTimeoutIsBounded()
+    public async Task OneBudgetSpansARepositorysReads_RatherThanOnePerInvocation()
     {
-        // The budget is what stops one pathological repo from stalling the whole
-        // fan-out. It covers the repo, not each git invocation inside it: a healthy
-        // repo must finish inside one budget, not two.
         using var repo = await RepoWithAsync(("a.txt", "needle\n"));
+        var git = new CountingGitService();
 
-        var watch = Stopwatch.StartNew();
-        var result = await NewService().SearchAsync("needle", [Target(repo)], SearchScope.Default);
-        watch.Stop();
+        var result = await new RepoSearchService(git, new RepoBusyRegistry(), Unhurried, Unhurried)
+            .SearchAsync("needle", [Target(repo)], SearchScope.Default);
 
         Assert.NotEmpty(result.Hits);
-        Assert.True(watch.Elapsed < RepoSearchService.PerRepoTimeout,
-            $"one repo took {watch.Elapsed}, past its own budget");
-        Assert.True(RepoSearchService.PerRepoTimeout > TimeSpan.Zero);
+        Assert.Equal(2, git.Runs);
+        Assert.All(git.Budgets, budget => Assert.True(budget <= Unhurried,
+            $"a call was handed {budget}, more than the repository's whole budget"));
+        Assert.True(git.Budgets[1] < git.Budgets[0],
+            "the second read must run on what the first one left, not on a budget of its own");
+    }
+
+    [Fact]
+    public void TheShippedBudgetsAndCapsAreTheOnesTheProductStandsOn()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(4), RepoSearchService.PerRepoTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(2), RepoSearchService.WidePerRepoTimeout);
+        Assert.Equal(RepoSearchService.PerRepoTimeout,
+            RepoSearchService.TimeoutFor(SearchContentScope.Tracked));
         Assert.True(RepoSearchService.MaxConcurrency > 0);
     }
 
@@ -439,17 +469,14 @@ public class RepoSearchServiceTests
             for (var i = 0; i < 40; i++)
                 repo.WriteFile($"obj/Debug/gen{i}.cs", "needlewide in build output\n");
 
-            var watch = Stopwatch.StartNew();
             var result = await NewService().SearchAsync(
                 "needlewide", [Target(repo)], Scope(SearchContentScope.Everything));
-            watch.Stop();
 
             Assert.Equal(RepoSearchService.WideMaxHitsPerRepo, result.Hits.Count);
             Assert.Equal(SearchFileScope.Tracked, result.Hits[0].FileScope);
             Assert.Equal("src/app.cs", result.Hits[0].FilePath);
             Assert.True(result.More > 0, "the matches past the cap must be counted, not dropped silently");
-            Assert.True(watch.Elapsed < RepoSearchService.WidePerRepoTimeout * 2,
-                $"the widest scope took {watch.Elapsed} against a {RepoSearchService.WidePerRepoTimeout} budget");
+            Assert.Equal(0, result.ReposTruncated);
         }
         finally
         {
@@ -469,14 +496,12 @@ public class RepoSearchServiceTests
             using var cts = new CancellationTokenSource();
             await cts.CancelAsync();
 
-            var watch = Stopwatch.StartNew();
+            var git = new CountingGitService();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => NewService().SearchAsync(
+                () => NewService(git).SearchAsync(
                     "needle", repos.Select(Target).ToList(), Scope(SearchContentScope.Everything), cts.Token));
-            watch.Stop();
 
-            Assert.True(watch.Elapsed < RepoSearchService.WidePerRepoTimeout,
-                $"an already-cancelled wide search must not run a repo's full budget; took {watch.Elapsed}");
+            Assert.Equal(0, git.Runs);
         }
         finally
         {
@@ -519,6 +544,90 @@ public class RepoSearchServiceTests
     // ── Outcome states ──────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Runs git for real and records what each call was handed: how many ran, and the budget the
+    /// service allowed each one. Both are what the timing claims here are read off, in place of a
+    /// stopwatch that measures the machine as much as the code.
+    /// </summary>
+    private class CountingGitService : GitService
+    {
+        private readonly List<TimeSpan> _budgets = [];
+
+        public int Runs { get; private set; }
+
+        /// <summary>The timeout each call was given, in call order.</summary>
+        public IReadOnlyList<TimeSpan> Budgets
+        {
+            get { lock (_budgets) return [.. _budgets]; }
+        }
+
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            lock (_budgets)
+            {
+                Runs++;
+                _budgets.Add(timeout ?? TimeSpan.MaxValue);
+            }
+            return base.RunAsync(repoPath, args, environment, ct, timeout);
+        }
+    }
+
+    /// <summary>
+    /// Runs git for real, and spends <paramref name="cost"/> on the named subcommand before
+    /// answering. Deterministic where a slow fixture is not: the cost is chosen against an injected
+    /// budget so the budget is provably gone by the next read, and a loaded machine can only make
+    /// that more true.
+    /// </summary>
+    private sealed class CostlyGitService(string command, TimeSpan cost) : CountingGitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var list = args.ToList();
+            var result = await base.RunAsync(repoPath, list, environment, ct, timeout);
+            if (list.Contains(command)) await Task.Delay(cost, ct);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// The budget's own behaviour, on a budget small enough to be certain of. The first listing is
+    /// made to cost more than the whole repository has, so by the second read there is nothing left
+    /// to spend: the repository reports as cut short, the reads that had no budget never run, and
+    /// no row is returned under a scope whose labels those unread listings carry.
+    ///
+    /// Injected rather than shipped. Waiting out the real 2s budget would put the pass/fail on the
+    /// machine's load, which is what this test exists to stop.
+    /// </summary>
+    [Fact]
+    public async Task ARepositoryThatSpendsItsWholeBudgetOnOneRead_StopsAndSaysSo()
+    {
+        using var repo = await ThreeKindsRepoAsync();
+        var budget = TimeSpan.FromMilliseconds(50);
+        var git = new CostlyGitService("ls-files", TimeSpan.FromMilliseconds(600));
+
+        var result = await new RepoSearchService(git, new RepoBusyRegistry(), budget, budget)
+            .SearchAsync("needlealpha", [Target(repo)], Scope(SearchContentScope.Everything));
+
+        Assert.Equal(1, result.ReposTruncated);
+        Assert.Equal(0, result.ReposSearched);
+        Assert.Equal(0, result.ReposFailed);
+        Assert.True(result.IsPartial);
+
+        // One read ran and the rest were never started: the untracked and ignored listings and the
+        // content pass all needed budget this repository no longer had.
+        Assert.Equal(1, git.Runs);
+        Assert.True(git.Budgets[0] <= budget,
+            $"the first read was handed {git.Budgets[0]} against an injected budget of {budget}");
+
+        // Nothing is returned rather than returned unlabelled: the listings that say what a file is
+        // are the ones that did not run.
+        Assert.Empty(result.Hits);
+    }
+
+    /// <summary>
     /// Runs git for real, and answers the named subcommand the way <paramref name="answer"/> says —
     /// in <paramref name="inRepo"/> only, so one repository's failure can be told apart from the
     /// fan-out's.
@@ -548,10 +657,8 @@ public class RepoSearchServiceTests
         using var broken = await RepoWithAsync(("needle-a.txt", "needle\n"));
         using var fine = await RepoWithAsync(("needle-b.txt", "needle\n"));
 
-        var service = new RepoSearchService(
-            new AnsweringGitService("grep", broken.Path,
-                r => r with { ExitCode = 128, StdErr = "fatal: bad revision" }),
-            new RepoBusyRegistry());
+        var service = NewService(new AnsweringGitService("grep", broken.Path,
+            r => r with { ExitCode = 128, StdErr = "fatal: bad revision" }));
 
         var result = await service.SearchAsync(
             "needle", [Target(broken), Target(fine)], SearchScope.Default);
@@ -576,9 +683,8 @@ public class RepoSearchServiceTests
     {
         using var repo = await RepoWithAsync(("a.txt", "needle\n"));
 
-        var service = new RepoSearchService(
-            new AnsweringGitService("grep", repo.Path, r => r with { TimedOut = true }),
-            new RepoBusyRegistry());
+        var service = NewService(
+            new AnsweringGitService("grep", repo.Path, r => r with { TimedOut = true }));
 
         var result = await service.SearchAsync("needle", [Target(repo)], SearchScope.Default);
 
@@ -594,9 +700,8 @@ public class RepoSearchServiceTests
     {
         using var repo = await RepoWithAsync(("needle-a.txt", "x\n"));
 
-        var service = new RepoSearchService(
-            new AnsweringGitService("ls-files", repo.Path, r => r with { Truncated = true }),
-            new RepoBusyRegistry());
+        var service = NewService(
+            new AnsweringGitService("ls-files", repo.Path, r => r with { Truncated = true }));
 
         var result = await service.SearchAsync("needle", [Target(repo)], SearchScope.Default);
 
@@ -615,9 +720,8 @@ public class RepoSearchServiceTests
     {
         using var repo = await ThreeKindsRepoAsync();
 
-        var service = new RepoSearchService(
-            new AnsweringGitService("ls-files", repo.Path, r => r with { Truncated = true }),
-            new RepoBusyRegistry());
+        var service = NewService(
+            new AnsweringGitService("ls-files", repo.Path, r => r with { Truncated = true }));
 
         var wide = await service.SearchAsync(
             "needlealpha", [Target(repo)], Scope(SearchContentScope.Everything));

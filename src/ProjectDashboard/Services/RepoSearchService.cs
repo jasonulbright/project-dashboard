@@ -71,7 +71,17 @@ public sealed record RepoSearchResult(
 /// git does not descend into a directory that holds its own repository, at any scope: a nested
 /// repository's matches come from its own invocation as its own target, never through its parent.
 /// </summary>
-public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry busyRegistry)
+/// <param name="perRepoTimeout">
+/// Overrides <see cref="PerRepoTimeout"/>. The shipped value stands; this exists so a test that
+/// asserts what a search FOUND is not racing it, and so a test that asserts what the budget DOES
+/// can spend one small enough to be certain rather than one it waits out.
+/// </param>
+/// <param name="widePerRepoTimeout">Overrides <see cref="WidePerRepoTimeout"/>, on the same terms.</param>
+public sealed class RepoSearchService(
+    GitService gitService,
+    RepoBusyRegistry busyRegistry,
+    TimeSpan? perRepoTimeout = null,
+    TimeSpan? widePerRepoTimeout = null)
 {
     public const int MaxConcurrency = 6;
     public const int MaxHitsPerRepo = 5;
@@ -89,8 +99,15 @@ public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry bu
     public static int HitsPerRepoFor(SearchContentScope scope) =>
         scope == SearchContentScope.Everything ? WideMaxHitsPerRepo : MaxHitsPerRepo;
 
+    /// <summary>The shipped budget for a scope, whatever this instance was built with.</summary>
     public static TimeSpan TimeoutFor(SearchContentScope scope) =>
         scope == SearchContentScope.Everything ? WidePerRepoTimeout : PerRepoTimeout;
+
+    /// <summary>The budget this instance spends on one repository — the shipped one unless overridden.</summary>
+    private TimeSpan BudgetFor(SearchContentScope scope) =>
+        scope == SearchContentScope.Everything
+            ? widePerRepoTimeout ?? WidePerRepoTimeout
+            : perRepoTimeout ?? PerRepoTimeout;
 
     /// <summary>The index, which is every scope's tracked half.</summary>
     internal static readonly string[] TrackedListArgs = ["ls-files", "-z"];
@@ -253,7 +270,7 @@ public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry bu
     private async Task<RepoMatches> SearchRepoAsync(
         string term, RepoSearchTarget target, SearchContentScope scope, CancellationToken ct)
     {
-        var timeout = TimeoutFor(scope);
+        var timeout = BudgetFor(scope);
         var banked = new BankedHits(HitsPerRepoFor(scope));
         var budget = Stopwatch.StartNew();
         var truncated = false;

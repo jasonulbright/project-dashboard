@@ -17,7 +17,17 @@ public partial class ProjectDetailViewModel
     private RepoSearchService? _searchService;
 
     private RepoSearchService SearchService =>
-        _searchService ??= new RepoSearchService(_gitService, _busyRegistry);
+        _searchService ??= NewSearchService(_gitService, _busyRegistry);
+
+    /// <summary>
+    /// The fan-out this pane runs, built once. Virtual so a test that asserts what a search found
+    /// can hand it a budget the shipped clock cannot cut short — the pane's own reads are four git
+    /// processes, and on a loaded machine four spawns alone can outlast the widest scope's budget.
+    /// The registry is passed through rather than rebuilt: a search that consulted a private one
+    /// would read a repository another operation holds.
+    /// </summary>
+    internal virtual RepoSearchService NewSearchService(GitService git, RepoBusyRegistry busy) =>
+        new(git, busy);
 
     private readonly SearchScopeSelection _findScope = new();
 

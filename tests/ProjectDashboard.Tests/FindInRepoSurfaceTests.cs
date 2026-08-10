@@ -36,10 +36,24 @@ public class FindInRepoSurfaceTests
 
     private static async Task<ProjectDetailViewModel> OpenOnAsync(TempRepo repo)
     {
-        var vm = new ProjectDetailViewModel(null!, new GitService(), null!);
+        var vm = new UnhurriedViewModel();
         await vm.SetProjectAsync(ProjectFor(repo));
         await vm.WorkingStateRefresh;
         return vm;
+    }
+
+    /// <summary>
+    /// A budget no fixture here can exhaust. What these tests assert is which files a scope read
+    /// and what the rows say about them; the widest scope's shipped budget is four git spawns wide,
+    /// and on a loaded machine four spawns alone outlast it — a result asserted against that clock
+    /// measures the machine.
+    /// </summary>
+    private static readonly TimeSpan Unhurried = TimeSpan.FromMinutes(2);
+
+    private class UnhurriedViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    {
+        internal override RepoSearchService NewSearchService(GitService git, RepoBusyRegistry busy) =>
+            new(git, busy, Unhurried, Unhurried);
     }
 
     [Fact]
@@ -273,7 +287,7 @@ public class FindInRepoSurfaceTests
     }
 
     /// <summary>Answers the run-log read and the list reads, so the pane opens without gh.</summary>
-    private sealed class LogPaneViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    private sealed class LogPaneViewModel : UnhurriedViewModel
     {
         internal override Task<WorkflowRunLog?> FetchWorkflowRunLogAsync(string slug, long runId)
             => Task.FromResult<WorkflowRunLog?>(new WorkflowRunLog("one\ntwo\n", Truncated: false, Cap: 2_000_000));
@@ -293,7 +307,7 @@ public class FindInRepoSurfaceTests
     }
 
     /// <summary>Overrides the shell seam so the suite spawns no explorer.</summary>
-    private sealed class RecordingRevealViewModel() : ProjectDetailViewModel(null!, new GitService(), null!)
+    private sealed class RecordingRevealViewModel : UnhurriedViewModel
     {
         public string Revealed { get; private set; } = "";
 
