@@ -31,11 +31,17 @@ public sealed record WalkLimits(int MaxDirectories, TimeSpan Budget)
     public static WalkLimits Default { get; } = new(10_000, TimeSpan.FromSeconds(10));
 }
 
-/// <summary>What one root's walk found, and whether it finished.</summary>
+/// <summary>
+/// What one root's walk found, and whether it finished. <see cref="UnreadableFolders"/> and
+/// <see cref="Truncated"/> are separate facts with separate remedies — a denied folder is fixed
+/// with permissions, a bound that was hit is fixed with depth or exclusions — and each is counted
+/// rather than described, so the surfaces that report them do not parse prose.
+/// </summary>
 public sealed record RootWalkResult(
     IReadOnlyList<string> Repositories,
     RootAvailability Availability,
     bool Truncated,
+    int UnreadableFolders,
     string Detail);
 
 /// <summary>
@@ -55,16 +61,16 @@ public static class RepositoryWalk
 
         var rootPath = RepoPaths.Normalize(root.Path);
         if (rootPath.Length == 0)
-            return new RootWalkResult([], RootAvailability.Missing, false, "no path configured");
+            return new RootWalkResult([], RootAvailability.Missing, false, 0, "no path configured");
 
         try
         {
             if (!Directory.Exists(rootPath))
-                return new RootWalkResult([], RootAvailability.Missing, false, "");
+                return new RootWalkResult([], RootAvailability.Missing, false, 0, "");
         }
         catch (Exception ex)
         {
-            return new RootWalkResult([], RootAvailability.Unreadable, false, ex.Message);
+            return new RootWalkResult([], RootAvailability.Unreadable, false, 0, ex.Message);
         }
 
         var exclusions = new RootExclusions(rootPath, root.ExcludedDirectories);
@@ -100,7 +106,7 @@ public static class RepositoryWalk
                 // better answer than nothing, provided the skip travels with it.
                 deniedSubtrees++;
                 if (firstDenial.Length == 0) firstDenial = $"{directory} ({ex.Message})";
-                if (depth == 0) return new RootWalkResult(found, RootAvailability.Unreadable, false, ex.Message);
+                if (depth == 0) return new RootWalkResult(found, RootAvailability.Unreadable, false, 0, ex.Message);
                 continue;
             }
 
@@ -151,7 +157,7 @@ public static class RepositoryWalk
             deniedSubtrees > 0 ? $"{deniedSubtrees} folder(s) could not be read, first {firstDenial}" : "",
         }.Where(part => part.Length > 0));
 
-        return new RootWalkResult(found, RootAvailability.Available, truncated, detail);
+        return new RootWalkResult(found, RootAvailability.Available, truncated, deniedSubtrees, detail);
     }
 
     private static bool IsReparsePoint(string path)

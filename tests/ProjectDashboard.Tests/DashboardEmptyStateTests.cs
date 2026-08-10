@@ -160,6 +160,7 @@ public class DashboardEmptyStateTests
     public void ACompleteWalk_ReportsNoTruncation()
         => Assert.Null(DashboardEmptyState.DescribeTruncatedRoots([Status(@"C:\one", RootAvailability.Available)]));
 
-    private static RootStatus Status(string path, RootAvailability availability, bool truncated = false) =>
-        new(path, "", availability, 0, truncated, "");
+    private static RootStatus Status(
+        string path, RootAvailability availability, bool truncated = false, int unreadableFolders = 0) =>
+        new(path, "", availability, 0, truncated, unreadableFolders, "");
 }

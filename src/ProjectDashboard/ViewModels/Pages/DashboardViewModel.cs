@@ -547,8 +547,9 @@ public partial class DashboardViewModel : ObservableObject
         // report the same fact twice.
         var unavailable = UsableRootCount > 0 ? DashboardEmptyState.DescribeUnavailableRoots(_rootStatuses) : null;
         var truncated = DashboardEmptyState.DescribeTruncatedRoots(_rootStatuses);
+        var refused = DashboardEmptyState.DescribeUnreadableFolders(_rootStatuses);
 
-        RootIssueText = string.Join(" ", new[] { unavailable, truncated }.Where(t => t is not null));
+        RootIssueText = string.Join(" ", new[] { unavailable, truncated, refused }.Where(t => t is not null));
         RootIssueVisible = RootIssueText.Length > 0;
     }
 
@@ -2267,6 +2268,24 @@ public static class DashboardEmptyState
 
         return $"{string.Join(", ", truncated.Select(s => s.Path))}: the scan stopped early, so some " +
                "repositories may be missing. Lower the scan depth or add exclusions.";
+    }
+
+    /// <summary>
+    /// What to say about folders the scan was refused inside an otherwise readable root, or null
+    /// when it read every one. A denied folder yields the same empty result an empty folder does,
+    /// and the count is a floor while one is unreported — the remedy is permissions, which is why
+    /// this is a sentence of its own rather than part of the truncation notice.
+    /// </summary>
+    public static string? DescribeUnreadableFolders(IReadOnlyList<RootStatus> statuses)
+    {
+        var refused = statuses.Where(s => s.IsUsable && s.UnreadableFolders > 0).ToList();
+        if (refused.Count == 0) return null;
+
+        var named = string.Join(", ", refused.Select(s =>
+            $"{s.Path} ({s.UnreadableFolders} folder{(s.UnreadableFolders == 1 ? "" : "s")})"));
+
+        return $"Some folders could not be read, so repositories inside them are missing — {named}. " +
+               "Check their permissions.";
     }
 }
 

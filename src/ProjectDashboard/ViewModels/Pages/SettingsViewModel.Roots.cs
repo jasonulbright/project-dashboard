@@ -229,10 +229,21 @@ public partial class ProjectRootRow : ObservableObject
             RootAvailability.Missing => "Not there",
             RootAvailability.Unreadable => "Could not be read",
             RootAvailability.Disabled => "Off",
-            _ => status.Truncated
-                ? $"{status.RepositoryCount}+ repositories — the scan stopped early"
-                : $"{status.RepositoryCount} repositories",
+            _ => Counted(status),
         };
+    }
+
+    /// <summary>
+    /// A count the scan could not complete is a floor, and says which bound it hit. Shown as a
+    /// total it would report a denied folder as a folder holding nothing.
+    /// </summary>
+    private static string Counted(RootStatus status)
+    {
+        if (status.Truncated) return $"{status.RepositoryCount}+ repositories — the scan stopped early";
+        if (status.UnreadableFolders > 0)
+            return $"{status.RepositoryCount}+ repositories — " +
+                   $"{status.UnreadableFolders} folder{(status.UnreadableFolders == 1 ? "" : "s")} could not be read";
+        return $"{status.RepositoryCount} repositories";
     }
 
     /// <summary>

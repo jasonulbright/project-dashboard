@@ -206,7 +206,8 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                     added++;
                 }
 
-            statuses.Add(RootStatus.For(root, walk.Availability, added, walk.Truncated, walk.Detail));
+            statuses.Add(RootStatus.For(
+                root, walk.Availability, added, walk.Truncated, walk.UnreadableFolders, walk.Detail));
         }
 
         return (candidates, statuses);

@@ -305,6 +305,79 @@ public class MultipleRootDiscoveryTests
         }
     }
 
+    /// <summary>
+    /// A folder refused part way down leaves the rest of the walk usable, but the count it
+    /// produced is a floor. Unreported it is indistinguishable from a folder holding nothing,
+    /// which is the state this whole surface exists to prevent — so it reaches the dashboard
+    /// banner and the Settings row, not just a log line.
+    /// </summary>
+    [Fact]
+    public async Task AFolderDeniedPartWayDown_IsCountedAndNamedRatherThanReadAsEmpty()
+    {
+        var root = TestEnv.NewDir("acl-subtree");
+        await InitRepoAsync(root, @"group\reachable");
+        var denied = Path.Combine(root, "locked");
+        Directory.CreateDirectory(denied);
+        await InitRepoAsync(denied, "unreachable");
+
+        using (DenyListing(denied))
+        {
+            var settings = new SettingsService();
+            settings.Save(BaseSettings(new ProjectRoot { Path = root, MaxDepth = 3 }));
+
+            var service = NewService(settings);
+            var results = await service.ForceRefreshAllAsync();
+
+            // The rest of the walk still lands.
+            Assert.Equal("reachable", Assert.Single(results).DirectoryName);
+
+            var status = Assert.Single(service.LastRootStatuses);
+            Assert.Equal(RootAvailability.Available, status.Availability);
+            Assert.Equal(1, status.UnreadableFolders);
+            Assert.True(status.IsPartial);
+
+            // Both surfaces that report on a root say so.
+            var banner = DashboardEmptyState.DescribeUnreadableFolders(service.LastRootStatuses);
+            Assert.NotNull(banner);
+            Assert.Contains(root, banner);
+
+            var row = ProjectRootRow.From(new ProjectRoot { Path = root }, isDefault: true);
+            row.ApplyStatus(status);
+            Assert.Contains("could not be read", row.Status);
+            Assert.Contains("1+", row.Status);
+        }
+    }
+
+    [Fact]
+    public void AFullyReadRootReportsNoRefusedFolders()
+        => Assert.Null(DashboardEmptyState.DescribeUnreadableFolders(
+            [new RootStatus(@"C:\one", "", RootAvailability.Available, 3, false, 0, "")]));
+
+    /// <summary>
+    /// Denies the current user permission to list <paramref name="directory"/>, and restores the
+    /// ACL on dispose so the fixture tree stays deletable.
+    /// </summary>
+    private static IDisposable DenyListing(string directory)
+    {
+        var info = new DirectoryInfo(directory);
+        var security = info.GetAccessControl();
+        var rule = new FileSystemAccessRule(
+            WindowsIdentity.GetCurrent().User!, FileSystemRights.ListDirectory, AccessControlType.Deny);
+        security.AddAccessRule(rule);
+        info.SetAccessControl(security);
+
+        return new Restore(() =>
+        {
+            security.RemoveAccessRule(rule);
+            info.SetAccessControl(security);
+        });
+    }
+
+    private sealed class Restore(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
     [Fact]
     public async Task PerRootExclusions_HideOnlyUnderTheRootTheyBelongTo()
     {

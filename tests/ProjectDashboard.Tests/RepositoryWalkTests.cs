@@ -171,6 +171,21 @@ public class RepositoryWalkTests
         Assert.NotNull(DashboardEmptyState.DescribeTruncatedRoots([status]));
     }
 
+    /// <summary>
+    /// A denied folder and a truncated walk both make the count a floor, and both are reported —
+    /// but they are separate facts with separate remedies, so neither is folded into the other.
+    /// </summary>
+    [Fact]
+    public void ADeniedFolder_IsCountedSeparatelyFromHittingABound()
+    {
+        var complete = RootStatusFor(truncated: false);
+        Assert.False(complete.IsPartial);
+
+        var refused = complete with { UnreadableFolders = 2 };
+        Assert.True(refused.IsPartial);
+        Assert.False(refused.Truncated);
+    }
+
     [Fact]
     public void Cancellation_IsHonouredInsideARootRatherThanOnlyBetweenThem()
     {
@@ -245,7 +260,7 @@ public class RepositoryWalkTests
         Directory.CreateDirectory(Path.Combine(root, relativePath, ".git"));
 
     private static RootStatus RootStatusFor(bool truncated) =>
-        new(@"C:\root", "", RootAvailability.Available, 0, truncated, "");
+        new(@"C:\root", "", RootAvailability.Available, 0, truncated, 0, "");
 
     /// <summary>
     /// Junctions need no privilege, unlike symlinks. A machine that refuses fails the test

@@ -51,8 +51,9 @@ public enum RootAvailability
 
 /// <summary>
 /// One root's result from the last scan. <see cref="Truncated"/> says the walk stopped before it
-/// ran out of directories, so <see cref="RepositoryCount"/> is a floor rather than a total — a
-/// partial scan presented as complete is the failure this record exists to prevent.
+/// ran out of directories and <see cref="UnreadableFolders"/> says it was refused part of the
+/// tree; under either, <see cref="RepositoryCount"/> is a floor rather than a total — a partial
+/// scan presented as complete is the failure this record exists to prevent.
 /// </summary>
 public sealed record RootStatus(
     string Path,
@@ -60,10 +61,16 @@ public sealed record RootStatus(
     RootAvailability Availability,
     int RepositoryCount,
     bool Truncated,
+    int UnreadableFolders,
     string Detail)
 {
-    public static RootStatus For(ProjectRoot root, RootAvailability availability, int count = 0, bool truncated = false, string detail = "") =>
-        new(root.Path, root.Label, availability, count, truncated, detail);
+    public static RootStatus For(
+        ProjectRoot root, RootAvailability availability, int count = 0,
+        bool truncated = false, int unreadableFolders = 0, string detail = "") =>
+        new(root.Path, root.Label, availability, count, truncated, unreadableFolders, detail);
+
+    /// <summary>Whether the count is a floor: something under this root went unread.</summary>
+    public bool IsPartial => Truncated || UnreadableFolders > 0;
 
     /// <summary>The root's display name: its label, or the folder name, or the path itself.</summary>
     public string DisplayName =>
