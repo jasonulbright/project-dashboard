@@ -229,6 +229,38 @@ public class BackupsSurfaceTests
         Assert.Equal(OperationOutcome.Refused, record.Outcome);
     }
 
+    /// <summary>
+    /// The bundle walks refs and objects for as long as it takes, so the lease is held across the
+    /// whole run — an operation that could start halfway through would be writing what the bundle
+    /// is still reading.
+    /// </summary>
+    [Fact]
+    public async Task ABackup_HoldsTheRepositoryLeaseAndReleasesIt()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-now-lease");
+        var busy = new RepoBusyRegistry();
+        var transitions = new List<bool>();
+        var refusedDuringBackup = false;
+        busy.Changed += r =>
+        {
+            var isBusy = busy.IsBusy(r);
+            transitions.Add(isBusy);
+            if (isBusy) refusedDuringBackup = !busy.TryAcquire(r, out _);
+        };
+
+        var vm = NewVm(NewBackups(), busy: busy);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        await vm.BackupNowCommand.ExecuteAsync(null);
+
+        Assert.Equal([true, false], transitions);
+        Assert.True(refusedDuringBackup);
+        Assert.False(busy.IsBusy(repo.Path));
+        Assert.False(vm.IsBusy);
+        Assert.Single(vm.BackupList);
+    }
+
     // ── Verify ──────────────────────────────────────────────────────────────
 
     [Fact]

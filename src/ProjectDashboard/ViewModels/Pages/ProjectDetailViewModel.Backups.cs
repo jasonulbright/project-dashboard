@@ -290,9 +290,12 @@ public partial class ProjectDetailViewModel
     /// <summary>
     /// Takes a backup of the open repository on demand, outside any destructive operation.
     ///
-    /// The repository lease is not taken — the bundle is a read — but a repository already under
-    /// another operation is refused: `git bundle create` reads refs while that operation writes
-    /// them, and the backup would record a state the repository never held as a whole.
+    /// Unlike the verify and delete beside it, this reads the repository rather than only the
+    /// files under the app's backup folder, so it holds the repository lease for its whole run:
+    /// `git bundle create` walks refs and objects, and an operation writing them underneath it
+    /// would leave a bundle recording a state the repository never held as a whole. Acquiring the
+    /// lease is also what decides the refusal — a prior "is anything running?" read would be
+    /// answered before the operation it is asking about could start.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanBackupNow))]
     private async Task BackupNow()
@@ -309,7 +312,14 @@ public partial class ProjectDetailViewModel
         }
 
         var started = DateTimeOffset.UtcNow;
-        if (IsBusy || _busyRegistry.IsBusy(repo))
+        if (IsBusy)
+        {
+            BackupsErrorText = BusyNotice("Back up now");
+            RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
+                OperationOutcome.Refused, BackupsErrorText, started);
+            return;
+        }
+        if (!_busyRegistry.TryAcquire(repo, out var lease))
         {
             BackupsErrorText = $"Repository is busy with another operation: {repo}";
             RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
@@ -317,6 +327,9 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        var holder = new object();
+        IsBusy = true;
+        _busyGateHolder = holder;
         BackupsBusy = true;
         BackupsErrorText = "";
         BackupsStatusText = "Backing up…";
@@ -350,7 +363,15 @@ public partial class ProjectDetailViewModel
         }
         finally
         {
+            lease.Dispose();
+            // A backup started before a project switch raises these on an older generation;
+            // lowering them from here would open the gate under the newer page's own operation.
             if (IsCurrent(gen)) BackupsBusy = false;
+            if (ReferenceEquals(_busyGateHolder, holder))
+            {
+                _busyGateHolder = null;
+                if (IsCurrent(gen)) IsBusy = false;
+            }
         }
 
         if (handle is null || !IsCurrent(gen)) return;
@@ -410,13 +431,9 @@ public partial class ProjectDetailViewModel
         if (!IsCurrent(gen)) return;
 
         entry.Verification = result.State;
-        BackupsStatusText = result.State switch
-        {
-            BundleVerifyState.Verified =>
-                $"The bundle taken {entry.Taken} reads back — this backup is restorable.",
-            BundleVerifyState.Failed => "",
-            _ => ""
-        };
+        BackupsStatusText = result.Verified
+            ? $"The bundle taken {entry.Taken} reads back — this backup is restorable."
+            : "";
         BackupsErrorText = result.State switch
         {
             BundleVerifyState.Failed =>
@@ -465,41 +482,38 @@ public partial class ProjectDetailViewModel
         BackupsBusy = true;
         BackupsErrorText = "";
         BackupsStatusText = "Deleting…";
-        var gone = false;
+        var failure = "";
         try
         {
             // The delete is best effort and never throws, so what it reports is read from the
             // files themselves afterwards, not from the call having returned.
-            gone = await service.DeleteBackupAsync(entry.Handle);
+            var gone = await service.DeleteBackupAsync(entry.Handle);
+            if (!gone) failure = BackupStillOnDiskFailure;
             RecordBackupOp(repo, OperationCategory.BackupDelete, $"Delete backup {stamp}",
-                gone ? OperationOutcome.Succeeded : OperationOutcome.Failed,
-                gone ? "" : BackupStillOnDiskFailure, started, stamp);
+                gone ? OperationOutcome.Succeeded : OperationOutcome.Failed, failure, started, stamp);
         }
         catch (Exception ex)
         {
             Log.Warn($"delete of backup {stamp} failed", ex);
+            failure = $"The backup could not be deleted: {ex.Message}";
             RecordBackupOp(repo, OperationCategory.BackupDelete, $"Delete backup {stamp}",
                 OperationOutcome.Failed, ex.Message, started, stamp);
-            if (IsCurrent(gen))
-            {
-                BackupsStatusText = "";
-                BackupsErrorText = $"The backup could not be deleted: {ex.Message}";
-            }
-            return;
         }
         finally
         {
             if (IsCurrent(gen)) BackupsBusy = false;
         }
 
+        // Reloaded whichever way it went: a delete that failed part way leaves a list that no
+        // longer describes what is on disk.
         if (!IsCurrent(gen)) return;
         await LoadBackups();
         if (!IsCurrent(gen)) return;
 
-        if (!gone)
+        if (failure.Length > 0)
         {
             BackupsStatusText = "";
-            BackupsErrorText = BackupStillOnDiskFailure;
+            BackupsErrorText = failure;
             return;
         }
 
