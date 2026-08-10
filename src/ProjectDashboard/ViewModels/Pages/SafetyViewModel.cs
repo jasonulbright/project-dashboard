@@ -70,6 +70,14 @@ public sealed class SafetyRow
 /// walks the object store, per repository, on an explicit ask, and never runs on a timer or as
 /// part of any scan.
 ///
+/// No expensive answer is cached. Every candidate key is an approximation of the thing it stands
+/// for and each misses changes this app itself makes: an object-store reading does not move when a
+/// reset abandons a commit, and a backup listing does not move when a bundle already on disk is
+/// altered. Both checks are behind a press that states its cost, so a reader asking for one is
+/// asking for the repository as it is now — and serving a stale answer to that ask is the one
+/// failure this page exists to prevent. Each result carries the moment it was taken, which is what
+/// keeps a result still on screen from a previous run honest.
+///
 /// Absence of a finding is never a clean bill of health: the header states which tiers have run,
 /// and a repository the expensive tier has not reached reads as not checked.
 /// </summary>
@@ -91,9 +99,14 @@ public partial class SafetyViewModel : ObservableObject
 
     private sealed record CheapEntry(SafetyCheapScan Scan, DateTimeOffset At);
 
-    private sealed record VerifyEntry(SafetyBackupVerification Result, string? Generation, DateTimeOffset At);
+    /// <summary>
+    /// One repository's expensive answers, each carrying when it was taken. Nothing here is a
+    /// cache: an expensive check runs every time it is asked for, and the stamp is what keeps a
+    /// result left on screen from reading as current.
+    /// </summary>
+    private sealed record VerifyEntry(SafetyBackupVerification Result, DateTimeOffset At);
 
-    private sealed record ReflogOnlyEntry(SafetyReflogOnlyScan Result, string? Generation, DateTimeOffset At);
+    private sealed record ReflogOnlyEntry(SafetyReflogOnlyScan Result, DateTimeOffset At);
 
     private readonly Dictionary<string, CheapEntry> _cheap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, VerifyEntry> _verified = new(StringComparer.OrdinalIgnoreCase);
@@ -571,13 +584,10 @@ public partial class SafetyViewModel : ObservableObject
                         Interlocked.Increment(ref skipped);
                         return;
                     }
-                    var generation = await _scanner.ObjectStoreGenerationAsync(project.FullPath, ct);
-                    if (NeedsVerify(project.FullPath, generation))
-                        verified[project.FullPath] = new VerifyEntry(
-                            await _scanner.VerifyBackupsAsync(project.FullPath, ct), generation, DateTimeOffset.Now);
-                    if (NeedsReflogWalk(project.FullPath, generation))
-                        walked[project.FullPath] = new ReflogOnlyEntry(
-                            await _scanner.CountReflogOnlyAsync(project.FullPath, ct), generation, DateTimeOffset.Now);
+                    verified[project.FullPath] = new VerifyEntry(
+                        await _scanner.VerifyBackupsAsync(project.FullPath, ct), DateTimeOffset.Now);
+                    walked[project.FullPath] = new ReflogOnlyEntry(
+                        await _scanner.CountReflogOnlyAsync(project.FullPath, ct), DateTimeOffset.Now);
                 }
                 catch (OperationCanceledException)
                 {
@@ -603,20 +613,6 @@ public partial class SafetyViewModel : ObservableObject
             EndCheck();
         }
     }
-
-    /// <summary>
-    /// A cached expensive answer stands while the object store it described is unchanged. A store
-    /// that could not be measured invalidates: unmeasured is not unchanged.
-    /// </summary>
-    private bool NeedsVerify(string repoPath, string? generation) =>
-        generation is null
-        || !_verified.TryGetValue(repoPath, out var entry)
-        || entry.Generation != generation;
-
-    private bool NeedsReflogWalk(string repoPath, string? generation) =>
-        generation is null
-        || !_reflogOnly.TryGetValue(repoPath, out var entry)
-        || entry.Generation != generation;
 
     private bool CanStartCheck() => !CheckRunning;
 
@@ -733,18 +729,17 @@ public partial class SafetyViewModel : ObservableObject
         try
         {
             var ct = _checkCts.Token;
-            var generation = await _scanner.ObjectStoreGenerationAsync(row.RepoPath, ct);
             if (row.Action == SafetyAction.VerifyBackups)
             {
                 var result = await _scanner.VerifyBackupsAsync(row.RepoPath, ct);
-                _verified[row.RepoPath] = new VerifyEntry(result, generation, DateTimeOffset.Now);
+                _verified[row.RepoPath] = new VerifyEntry(result, DateTimeOffset.Now);
                 StatusText = $"{row.Title}: "
                     + SafetyCopy.BackupState(result.OnDisk, result.Failed, result.Unknown, DateTimeOffset.Now);
             }
             else
             {
                 var result = await _scanner.CountReflogOnlyAsync(row.RepoPath, ct);
-                _reflogOnly[row.RepoPath] = new ReflogOnlyEntry(result, generation, DateTimeOffset.Now);
+                _reflogOnly[row.RepoPath] = new ReflogOnlyEntry(result, DateTimeOffset.Now);
                 StatusText = result.Error is not null
                     ? $"{row.Title}: the reflog walk could not be completed — {result.Error}"
                     : $"{row.Title}: {result.Count} reflog-only commit(s).";

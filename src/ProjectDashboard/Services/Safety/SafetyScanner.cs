@@ -188,18 +188,6 @@ public sealed class SafetyScanner
     }
 
     /// <summary>
-    /// A token that changes whenever the object store does, used to decide whether a cached
-    /// expensive answer still describes the repository. Null when the store could not be measured,
-    /// which invalidates rather than preserves a cached answer: an unmeasured store is not an
-    /// unchanged one.
-    /// </summary>
-    public async Task<string?> ObjectStoreGenerationAsync(string repoPath, CancellationToken ct = default)
-    {
-        var counts = await _git.CountObjectsAsync(repoPath, ct);
-        return counts is null ? null : $"{counts.LooseObjects}/{counts.PackedObjects}";
-    }
-
-    /// <summary>
     /// A bundle found bad is a failure; a bundle the verifier never answered for is unknown. The
     /// ledger keeps them apart for the same reason the surface does.
     /// </summary>

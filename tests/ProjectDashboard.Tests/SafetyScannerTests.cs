@@ -291,26 +291,35 @@ public class SafetyScannerTests
         Assert.Empty(scan.Branches);
     }
 
-    // ── Object-store generation ─────────────────────────────────────────────
+    // ── What an object-store reading cannot stand in for ────────────────────
 
     /// <summary>
-    /// The generation is what lets a cached expensive answer stand. It has to move when the store
-    /// does, or a stale answer would be served for a repository that has been committed to since.
+    /// Why no expensive answer is keyed on the object store: abandoning a commit produces a
+    /// reflog-only commit and leaves the loose and packed counts byte-identical, because the
+    /// objects are all still there and only unreferenced. A key that cannot move on the operation
+    /// that changes the answer is a key that serves the stale answer for exactly that operation.
     /// </summary>
     [Fact]
-    public async Task TheObjectStoreGeneration_MovesWhenTheStoreDoes()
+    public async Task AbandoningACommit_ChangesTheAnswerAndNotTheObjectCounts()
     {
-        using var repo = await TempRepo.CreateWithCommitAsync("generation");
+        using var repo = await TempRepo.CreateWithCommitAsync("store-reading");
+        repo.WriteFile("second.txt", "work\n");
+        await repo.CommitAllAsync("about to be abandoned");
+        var git = new GitService();
         var scanner = NewScanner(NewHistory());
 
-        var before = await scanner.ObjectStoreGenerationAsync(repo.Path);
+        var before = await git.CountObjectsAsync(repo.Path);
+        Assert.Equal(0, (await scanner.CountReflogOnlyAsync(repo.Path)).Count);
+
+        await repo.GitAsync("reset", "--hard", "HEAD~1");
+
+        var after = await git.CountObjectsAsync(repo.Path);
         Assert.NotNull(before);
-        Assert.Equal(before, await scanner.ObjectStoreGenerationAsync(repo.Path));
-
-        repo.WriteFile("more.txt", "more\n");
-        await repo.CommitAllAsync("another commit");
-
-        Assert.NotEqual(before, await scanner.ObjectStoreGenerationAsync(repo.Path));
+        Assert.NotNull(after);
+        Assert.Equal(before.LooseObjects, after.LooseObjects);
+        Assert.Equal(before.PackedObjects, after.PackedObjects);
+        Assert.Equal(1, (await scanner.CountReflogOnlyAsync(repo.Path)).Count);
+        _output.WriteLine($"counts {before.LooseObjects}/{before.PackedObjects} unchanged; reflog-only 0 -> 1");
     }
 
     /// <summary>

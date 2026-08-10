@@ -176,8 +176,9 @@ public static class SafetyCopy
         + "prerequisites, not the packed objects, so a bundle that verifies can still be damaged.";
 
     /// <summary>
-    /// A cached expensive result always carries when it was taken. A result shown without its age
-    /// is read as current, and this page never silently re-runs an expensive check to make it so.
+    /// An expensive result always carries when it was taken. A result left on screen from an
+    /// earlier run is read as current otherwise, and nothing re-runs an expensive check on its own
+    /// to make it so.
     /// </summary>
     public static string Stamp(DateTimeOffset when) =>
         when.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.CurrentCulture);

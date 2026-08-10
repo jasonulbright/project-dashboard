@@ -250,6 +250,88 @@ public class SafetyDashboardTests
         File.WriteAllText(Path.Combine(gitDir, "HEAD"), "not a ref\n");
     }
 
+    // ── The expensive tier answers the repository as it is now ──────────────
+
+    /// <summary>
+    /// A reset that abandons a commit changes no object count — the objects are all still there,
+    /// only unreferenced — while it is exactly the operation that produces a reflog-only commit.
+    /// A second run must walk again and report 1, not re-serve the 0 the first run found.
+    /// </summary>
+    [Fact]
+    public async Task ASecondCheckAll_AfterAResetAbandonsACommit_ReportsTheReflogOnlyCommit()
+    {
+        var host = await NewHostAsync("checkall-reset", repos: 1);
+        var repo = host.Repos[0];
+        await File.WriteAllTextAsync(Path.Combine(repo, "second.txt"), "work\n");
+        await Git.RunAsync(repo, "add", "-A");
+        await Git.RunAsync(repo, "commit", "-m", "about to be abandoned");
+        var safety = host.NewSafety();
+
+        await safety.CheckAllCommand.ExecuteAsync(null);
+        Assert.Contains("No reflog-only commit",
+            ReflogRowFor(safety, Path.GetFileName(repo)).Line, StringComparison.Ordinal);
+
+        var before = await ObjectCountsAsync(repo);
+        await Git.RunAsync(repo, "reset", "--hard", "HEAD~1");
+        // The premise the stale answer rode on: nothing about the object store moved.
+        Assert.Equal(before, await ObjectCountsAsync(repo));
+
+        await safety.CheckAllCommand.ExecuteAsync(null);
+
+        Assert.Contains("1 reflog-only commit",
+            ReflogRowFor(safety, Path.GetFileName(repo)).Line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A backup bundle is written under the app's own folder, so taking one moves nothing in the
+    /// repository. A second run must verify what is on disk now: a bundle that appeared since the
+    /// first run and cannot be verified has to be reported, not covered by the first run's pass.
+    /// </summary>
+    [Fact]
+    public async Task ASecondCheckAll_VerifiesABundleThatAppearedSinceTheFirst()
+    {
+        var host = await NewHostAsync("checkall-bundle", repos: 1);
+        var backups = new BackupService(new GitService(), host.Settings, host.History);
+        await backups.CreateBackupAsync(host.Repos[0], "first");
+        var safety = host.NewSafety(backups: backups);
+
+        await safety.CheckBranchesAndBackupsCommand.ExecuteAsync(null);
+        await safety.CheckAllCommand.ExecuteAsync(null);
+        Assert.Contains("1 backup(s) verified on", BackupRow(safety).Line, StringComparison.Ordinal);
+
+        var before = await ObjectCountsAsync(host.Repos[0]);
+        var second = await backups.CreateBackupAsync(host.Repos[0], "second");
+        CorruptBundle(second.BundlePath);
+        // The premise the stale answer rode on: nothing about the object store moved.
+        Assert.Equal(before, await ObjectCountsAsync(host.Repos[0]));
+
+        await safety.CheckBranchesAndBackupsCommand.ExecuteAsync(null);
+        await safety.CheckAllCommand.ExecuteAsync(null);
+
+        var row = BackupRow(safety);
+        Assert.Contains("1 failed verification", row.Line, StringComparison.Ordinal);
+        Assert.Contains(second.UtcStamp, row.Detail, StringComparison.Ordinal);
+    }
+
+    private static SafetyRow BackupRow(SafetyViewModel safety) =>
+        Assert.Single(safety.Rows, r => r.Action == SafetyAction.VerifyBackups);
+
+    /// <summary>Clobbers the bundle's signature line, which is the part git reads.</summary>
+    private static void CorruptBundle(string bundlePath)
+    {
+        var bytes = File.ReadAllBytes(bundlePath);
+        Array.Fill(bytes, (byte)0, 0, 16);
+        File.WriteAllBytes(bundlePath, bytes);
+    }
+
+    /// <summary>The loose and packed counts, which is all an object-store reading amounts to.</summary>
+    private static async Task<string> ObjectCountsAsync(string repoPath)
+    {
+        var counts = await new GitService().CountObjectsAsync(repoPath);
+        Assert.NotNull(counts);
+        return $"{counts.LooseObjects}/{counts.PackedObjects}";
+    }
+
     // ── The cheap tier ──────────────────────────────────────────────────────
 
     /// <summary>
