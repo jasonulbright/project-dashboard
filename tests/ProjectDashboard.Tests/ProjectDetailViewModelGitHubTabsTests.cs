@@ -224,6 +224,89 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.False(vm.NotificationsLoading);
     }
 
+    /// <summary>
+    /// The notification read follows GitHub's pages to the end, so it is long enough for a second
+    /// one to be asked for while the first is still running — and the refresh button takes no gate
+    /// of its own. Racing them, the read that finishes last wins whatever it read: an older answer
+    /// landing after a newer one puts threads the newer read saw cleared back on screen as unread.
+    ///
+    /// Completed here in the order that lets exactly that happen — the newer answer first, the
+    /// older one after it.
+    /// </summary>
+    [Fact]
+    public async Task ARefreshDuringARefresh_LeavesTheNewerAnswerOnScreen()
+    {
+        var older = new TaskCompletionSource<List<GitHubNotification>?>();
+        var newer = new TaskCompletionSource<List<GitHubNotification>?>();
+        var vm = new StubTabsViewModel
+        {
+            NotificationGates = new Queue<TaskCompletionSource<List<GitHubNotification>?>>([older, newer])
+        };
+        await vm.SetProjectAsync(RemoteProject());
+
+        var first = vm.LoadNotificationsCommand.ExecuteAsync(null);
+        var second = vm.LoadNotificationsCommand.ExecuteAsync(null);
+
+        newer.SetResult([]);
+        older.SetResult([new GitHubNotification { ThreadId = "1", Title = "Review me", Unread = true }]);
+        await first;
+        await second;
+
+        Assert.Empty(vm.Notifications);
+        Assert.Equal("", vm.NotificationsError);
+    }
+
+    /// <summary>
+    /// One read at a time: a second paginated pass over the same inbox costs a whole gh run and
+    /// answers the question the first one is already answering.
+    /// </summary>
+    [Fact]
+    public async Task ARefreshDuringARefresh_WaitsInsteadOfRunningASecondReadAlongsideIt()
+    {
+        var gate = new TaskCompletionSource<List<GitHubNotification>?>();
+        var vm = new StubTabsViewModel
+        {
+            NotificationGates = new Queue<TaskCompletionSource<List<GitHubNotification>?>>([gate]),
+            SeedNotifications = []
+        };
+        await vm.SetProjectAsync(RemoteProject());
+
+        var first = vm.LoadNotificationsCommand.ExecuteAsync(null);
+        await vm.LoadNotificationsCommand.ExecuteAsync(null);
+        Assert.Equal(1, vm.NotificationFetches);
+
+        gate.SetResult([]);
+        await first;
+
+        // Held, not dropped: marking read changes the answer, and a reload that never ran would
+        // leave the list describing the inbox as it was before.
+        Assert.Equal(2, vm.NotificationFetches);
+    }
+
+    /// <summary>
+    /// A reload asked for on the way out belongs to the repository that asked for it. Carried
+    /// over, it spends a gh run re-reading a repository nothing asked about.
+    /// </summary>
+    [Fact]
+    public async Task AProjectSwitch_DropsAHeldReload()
+    {
+        var gate = new TaskCompletionSource<List<GitHubNotification>?>();
+        var vm = new StubTabsViewModel
+        {
+            NotificationGates = new Queue<TaskCompletionSource<List<GitHubNotification>?>>([gate]),
+            SeedNotifications = []
+        };
+        await vm.SetProjectAsync(RemoteProject());
+        var first = vm.LoadNotificationsCommand.ExecuteAsync(null);
+        await vm.LoadNotificationsCommand.ExecuteAsync(null);
+
+        await vm.SetProjectAsync(RemoteProject());
+        gate.SetResult([]);
+        await first;
+
+        Assert.Equal(1, vm.NotificationFetches);
+    }
+
     [Fact]
     public async Task RefreshingTheRunList_KeepsTheSelectedRun()
     {
@@ -1213,6 +1296,7 @@ public class ProjectDetailViewModelGitHubTabsTests
         public Queue<TaskCompletionSource<List<GitHubNotification>?>>? NotificationGates { get; init; }
 
         public int RunFetches { get; private set; }
+        public int NotificationFetches { get; private set; }
         public int TextPrompts { get; private set; }
         public int Confirms { get; private set; }
         public int DeleteAttempts { get; private set; }
@@ -1260,7 +1344,12 @@ public class ProjectDetailViewModelGitHubTabsTests
             => SettingsGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Settings);
 
         internal override Task<List<GitHubNotification>?> FetchNotificationsAsync(string slug)
-            => NotificationGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(SeedNotifications);
+        {
+            NotificationFetches++;
+            return NotificationGates is { Count: > 0 } gates
+                ? gates.Dequeue().Task
+                : Task.FromResult(SeedNotifications);
+        }
 
         internal override Task<TagsResult> FetchReleaseTagsAsync(string repoPath) => Task.FromResult(
             TagReadError is { } failure ? new TagsResult([], true, failure) : new TagsResult(SeedTags));

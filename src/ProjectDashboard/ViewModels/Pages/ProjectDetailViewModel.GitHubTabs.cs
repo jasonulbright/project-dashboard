@@ -149,6 +149,7 @@ public partial class ProjectDetailViewModel
         Notifications = [];
         NotificationsLoading = false;
         NotificationsError = "";
+        _notificationsReloadPending = false;
 
         RepoDeleteNotice = "";
         DeleteScopeHintVisible = false;
@@ -793,6 +794,18 @@ public partial class ProjectDetailViewModel
         typed is not null && slug.Length > 0 &&
         string.Equals(typed.Trim(), slug, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Reads this repository's notification threads. The read follows GitHub's pages to the end,
+    /// so it is long enough that a second one is easy to ask for while the first is in flight —
+    /// from the refresh button, or from the reload a mark-read ends with.
+    ///
+    /// Two of them racing is not a wasted call, it is a wrong list: the one that finishes last
+    /// wins, and the older answer puts threads the newer one saw cleared back on screen as unread.
+    /// So one read runs at a time and a reload asked for meanwhile is held rather than started —
+    /// held rather than dropped, because marking read changes the answer and a dropped reload
+    /// would leave the list describing the inbox as it was before. The write is gated on the same
+    /// token at the last safe point, so a read that lost ownership cannot land either.
+    /// </summary>
     [RelayCommand]
     private async Task LoadNotifications()
     {
@@ -802,26 +815,39 @@ public partial class ProjectDetailViewModel
             NotificationsError = NoRemoteStatus;
             return;
         }
+        if (NotificationsLoading)
+        {
+            _notificationsReloadPending = true;
+            return;
+        }
+
         var gen = _generation;
         var fetch = ++_notificationsFetch;
         NotificationsLoading = true;
         try
         {
-            var notifications = await FetchNotificationsAsync(slug);
-            if (!IsCurrent(gen)) return;
-            if (notifications is null)
+            do
             {
-                NotificationsError = "Couldn't load notifications. Check that the GitHub CLI is installed and signed in.";
-                return;
-            }
-            NotificationsError = "";
-            Notifications = new ObservableCollection<GitHubNotification>(notifications);
+                _notificationsReloadPending = false;
+                var notifications = await FetchNotificationsAsync(slug);
+                if (!IsCurrent(gen) || _notificationsFetch != fetch) return;
+                if (notifications is null)
+                    NotificationsError = NotificationsFetchFailed;
+                else
+                {
+                    NotificationsError = "";
+                    Notifications = new ObservableCollection<GitHubNotification>(notifications);
+                }
+            } while (_notificationsReloadPending && IsCurrent(gen));
         }
         finally
         {
             if (IsCurrent(gen) && _notificationsFetch == fetch) NotificationsLoading = false;
         }
     }
+
+    private const string NotificationsFetchFailed =
+        "Couldn't load notifications. Check that the GitHub CLI is installed and signed in.";
 
     /// <summary>
     /// Marking read is an explicit act. Opening a notification, refreshing the list, or
@@ -986,6 +1012,9 @@ public partial class ProjectDetailViewModel
     private int _workflowJobsFetch;
     private int _repoSettingsFetch;
     private int _notificationsFetch;
+
+    /// <summary>A reload was asked for while a read held the list; it is answered when that read lands.</summary>
+    private bool _notificationsReloadPending;
 
     /// <summary>
     /// Says a typed confirmation was spent on an op that never started because another
