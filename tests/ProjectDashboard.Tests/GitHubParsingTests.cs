@@ -741,6 +741,28 @@ public class GitHubWorkflowJobParsingTests
         Assert.Equal(mayHaveMore, page.MayHaveMore);
     }
 
+    /// <summary>
+    /// The shape this endpoint would produce if its pages were ever followed: gh cannot merge an
+    /// object-wrapped payload, so it writes each page's object one after another. That is the
+    /// reason this read stays at one page and discloses the total instead — and read as the first
+    /// of those objects, a paged run would report one page's jobs as the whole run.
+    ///
+    /// Nothing here relies on where the reader stops: the assertion is that the concatenation is a
+    /// failed read, not that the first object happens to parse.
+    /// </summary>
+    [Fact]
+    public void PagesWrittenBackToBack_AreNotReadAsTheFirstOfThem()
+    {
+        const string firstPage = """{"total_count":3,"jobs":[{"id":1,"name":"build"}]}""";
+        const string secondPage = """{"total_count":3,"jobs":[{"id":2,"name":"test"}]}""";
+
+        // The first page is a whole answer on its own, so a null below is about the concatenation
+        // rather than about a payload nothing could have read either way.
+        Assert.NotNull(GitHubService.ParseWorkflowJobs(firstPage));
+
+        Assert.Null(GitHubService.ParseWorkflowJobs(firstPage + secondPage));
+    }
+
     [Fact]
     public void TotalCountAbsent_ReadsAsNoStatedTotal()
     {
