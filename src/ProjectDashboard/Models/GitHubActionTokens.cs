@@ -64,6 +64,18 @@ public static class GitHubActionTokens
         _ => throw new ArgumentOutOfRangeException(nameof(state)),
     };
 
+    /// <summary>
+    /// The state a read was made under, back from the token it carried. A surface labels its rows
+    /// from the query that produced them rather than from the picker, which the reader may have
+    /// moved on since.
+    /// </summary>
+    public static GitHubListState ParseListState(string token) => token switch
+    {
+        "open" => GitHubListState.Open,
+        "closed" => GitHubListState.Closed,
+        _ => GitHubListState.All,
+    };
+
     public static string Token(this MergeStrategy strategy) => strategy switch
     {
         MergeStrategy.Merge => "merge",

@@ -56,19 +56,19 @@ public class ProjectDetailViewModelGitHubListDepthTests
         public Func<GitHubService.GitHubListQuery, int, GitHubService.PullRequestPage?> PullRequestAnswer { get; set; } =
             (query, _) => PullRequestPage(0, query.Limit);
 
-        /// <summary>Held open to keep one read in flight while the test does something else.</summary>
-        public TaskCompletionSource<GitHubService.IssuePage?>? IssueGate { get; set; }
+        /// <summary>
+        /// Hand-completed reads, in call order, for the cases that need a read left in flight while
+        /// the test does something else.
+        /// </summary>
+        public Queue<TaskCompletionSource<GitHubService.IssuePage?>> IssueGates { get; } = [];
 
         internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
             string slug, GitHubService.GitHubListQuery query)
         {
             IssueReads.Add(query);
-            if (IssueGate is { } gate)
-            {
-                IssueGate = null;
-                return gate.Task;
-            }
-            return Task.FromResult(IssueAnswer(query, IssueReads.Count - 1));
+            return IssueGates.Count > 0
+                ? IssueGates.Dequeue().Task
+                : Task.FromResult(IssueAnswer(query, IssueReads.Count - 1));
         }
 
         internal override Task<GitHubService.PullRequestPage?> FetchPullRequestPageAsync(
@@ -129,10 +129,11 @@ public class ProjectDetailViewModelGitHubListDepthTests
 
     [Theory]
     [InlineData(5, false, "All 5 closed pull requests shown.")]
+    [InlineData(1, false, "All 1 closed pull request shown.")]
     [InlineData(100, true, "Showing the first 100 closed pull requests — there may be more.")]
     public void TheFooter_NamesTheFacetsTheCountBelongsTo(int shown, bool mayHaveMore, string expected)
-        => Assert.Equal(expected,
-            ProjectDetailViewModel.ListFooterText(shown, mayHaveMore, GitHubListState.Closed, "pull requests", false));
+        => Assert.Equal(expected, ProjectDetailViewModel.ListFooterText(
+            shown, mayHaveMore, GitHubListState.Closed, "pull requests", "pull request", false));
 
     // ── Paging ──────────────────────────────────────────────────────────────────
 
@@ -179,7 +180,7 @@ public class ProjectDetailViewModelGitHubListDepthTests
         await vm.IssuesPageLoad;
 
         var gate = new TaskCompletionSource<GitHubService.IssuePage?>();
-        vm.IssueGate = gate;
+        vm.IssueGates.Enqueue(gate);
         vm.LoadMoreIssuesCommand.Execute(null);
         vm.LoadMoreIssuesCommand.Execute(null);
         gate.SetResult(IssuePage(200, 200));
@@ -349,7 +350,7 @@ public class ProjectDetailViewModelGitHubListDepthTests
         await vm.IssuesPageLoad;
 
         var gate = new TaskCompletionSource<GitHubService.IssuePage?>();
-        vm.IssueGate = gate;
+        vm.IssueGates.Enqueue(gate);
         vm.RefreshIssuesCommand.Execute(null);   // left in flight, not awaited
         vm.IssuesState = GitHubListState.Closed;
         var applied = vm.IssuesPageLoad;
@@ -358,6 +359,39 @@ public class ProjectDetailViewModelGitHubListDepthTests
 
         Assert.Equal(["open", "open", "closed"], vm.IssueReads.Select(q => q.State));
         Assert.Equal("All 2 closed issues shown.", vm.IssuesFooterText);
+    }
+
+    /// <summary>
+    /// A facet changed mid-read is answered by a further read, and until that one lands the rows on
+    /// screen belong to the earlier query. Labelled from the picker instead, three open issues
+    /// render under closed-issue copy for as long as a gh call takes.
+    /// </summary>
+    [Fact]
+    public async Task ThePageThatLandsDuringAFacetChange_IsLabelledByTheQueryThatProducedIt()
+    {
+        var vm = new ListViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.IssuesPageLoad;
+
+        var openRead = new TaskCompletionSource<GitHubService.IssuePage?>();
+        var closedRead = new TaskCompletionSource<GitHubService.IssuePage?>();
+        vm.IssueGates.Enqueue(openRead);
+        vm.IssueGates.Enqueue(closedRead);
+        vm.RefreshIssuesCommand.Execute(null);       // open read, left in flight
+        vm.IssuesState = GitHubListState.Closed;     // queued behind it
+        var applied = vm.IssuesPageLoad;
+
+        openRead.SetResult(new GitHubService.IssuePage(NumberedIssues(1, 2, 3), false, 100));
+
+        // The frame between the two reads: three open issues, and nothing on screen calls them closed.
+        Assert.Equal("All 3 open issues shown.", vm.IssuesFooterText);
+        Assert.Equal("No open issues.", vm.IssuesEmptyText);
+
+        closedRead.SetResult(new GitHubService.IssuePage([], false, 100));
+        await applied;
+
+        Assert.Equal("", vm.IssuesFooterText);
+        Assert.Equal("No closed issues.", vm.IssuesEmptyText);
     }
 
     /// <summary>
@@ -446,7 +480,7 @@ public class ProjectDetailViewModelGitHubListDepthTests
     {
         var vm = new ListViewModel();
         var gate = new TaskCompletionSource<GitHubService.IssuePage?>();
-        vm.IssueGate = gate;
+        vm.IssueGates.Enqueue(gate);
         await vm.SetProjectAsync(RemoteProject("gh-depth-stale"));
 
         await vm.SetProjectAsync(RemoteProject("gh-depth-fresh"));

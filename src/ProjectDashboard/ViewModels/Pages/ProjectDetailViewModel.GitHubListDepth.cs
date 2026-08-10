@@ -121,7 +121,9 @@ public partial class ProjectDetailViewModel
     }
 
     private const string IssuesNoun = "issues";
+    private const string IssueNoun = "issue";
     private const string PullRequestsNoun = "pull requests";
+    private const string PullRequestNoun = "pull request";
 
     /// <summary>What a surface calls the rows one state selects.</summary>
     internal static string ListLabel(GitHubListState state, string plural) =>
@@ -142,10 +144,11 @@ public partial class ProjectDetailViewModel
     /// rows it described are still the rows on screen.
     /// </summary>
     internal static string ListFooterText(int shown, bool mayHaveMore, GitHubListState state, string plural,
-        bool searching)
+        string singular, bool searching)
     {
         if (shown == 0) return "";
-        var label = searching ? $"matching {plural}" : ListLabel(state, plural);
+        var noun = shown == 1 ? singular : plural;
+        var label = searching ? $"matching {noun}" : ListLabel(state, noun);
         return mayHaveMore
             ? $"Showing the first {shown} {label} — there may be more."
             : $"All {shown} {label} shown.";
@@ -172,9 +175,10 @@ public partial class ProjectDetailViewModel
 
     // ── Facet changes ───────────────────────────────────────────────────────────
 
+    // The picker moves before the read it starts lands. Every line describing the list is written
+    // by the page that arrives, so until it does, the lines keep describing the rows on screen.
     partial void OnIssuesStateChanged(GitHubListState value)
     {
-        IssuesEmptyText = ListEmptyText(value, IssuesNoun, IssuesSearchText.Trim().Length > 0);
         if (_gitHubFacetsQuiet) return;
         IssuesPageLoad = ApplyIssueFiltersAsync();
     }
@@ -183,7 +187,6 @@ public partial class ProjectDetailViewModel
 
     partial void OnPullRequestsStateChanged(GitHubListState value)
     {
-        PullRequestsEmptyText = ListEmptyText(value, PullRequestsNoun, PullRequestsSearchText.Trim().Length > 0);
         if (_gitHubFacetsQuiet) return;
         PullRequestsPageLoad = ApplyPullRequestFiltersAsync();
     }
@@ -308,21 +311,29 @@ public partial class ProjectDetailViewModel
         }
     }
 
+    /// <summary>
+    /// Writes a page onto the Issues surface. Every line describing it is derived from the query
+    /// that produced it, never from the pickers: a facet changed while the read was in flight is
+    /// answered by a further read, and until that one lands the rows on screen are the earlier
+    /// query's — labelling them from the live picker would caption open rows as closed ones for a
+    /// whole gh call.
+    /// </summary>
     private void ApplyIssuePage(GitHubService.IssuePage page, GitHubService.GitHubListQuery query)
     {
         var searching = query.Search is not null;
-        // Rebuilt list, new instances: a selection held by reference would keep the detail pane
-        // on a row the list no longer holds, and a facet that dropped the row must clear it.
+        var state = GitHubActionTokens.ParseListState(query.State);
+        // A selection held by reference would keep the detail pane on a row the list no longer
+        // holds, and a facet that dropped the row must clear it.
         var keep = SelectedIssue?.Number;
         Issues = new ObservableCollection<GitHubIssue>(page.Items);
         if (keep is { } number) SelectedIssue = Issues.FirstOrDefault(i => i.Number == number);
         IssuesHasMore = page.MayHaveMore;
-        IssuesEmptyText = ListEmptyText(IssuesState, IssuesNoun, searching);
-        IssuesFooterText = ListFooterText(page.Items.Count, page.MayHaveMore, IssuesState, IssuesNoun, searching);
+        IssuesEmptyText = ListEmptyText(state, IssuesNoun, searching);
+        IssuesFooterText = ListFooterText(page.Items.Count, page.MayHaveMore, state, IssuesNoun, IssueNoun, searching);
         // Seeds the next visit, which opens under the default facets — a page read under any other
         // facets describes a different question and would seed the list with rows the state picker
         // then names wrongly.
-        if (Project is not null && !searching && IssuesState == GitHubListState.Open)
+        if (Project is not null && !searching && state == GitHubListState.Open)
             Project.Issues = [.. page.Items];
     }
 
@@ -379,17 +390,19 @@ public partial class ProjectDetailViewModel
         }
     }
 
+    /// <summary><see cref="ApplyIssuePage"/> for the pull-request surface, on the same terms.</summary>
     private void ApplyPullRequestPage(GitHubService.PullRequestPage page, GitHubService.GitHubListQuery query)
     {
         var searching = query.Search is not null;
+        var state = GitHubActionTokens.ParseListState(query.State);
         var keep = SelectedPullRequest?.Number;
         PullRequests = new ObservableCollection<GitHubPullRequest>(page.Items);
         if (keep is { } number) SelectedPullRequest = PullRequests.FirstOrDefault(p => p.Number == number);
         PullRequestsLoaded = true;
         PullRequestsHasMore = page.MayHaveMore;
-        PullRequestsEmptyText = ListEmptyText(PullRequestsState, PullRequestsNoun, searching);
+        PullRequestsEmptyText = ListEmptyText(state, PullRequestsNoun, searching);
         PullRequestsFooterText =
-            ListFooterText(page.Items.Count, page.MayHaveMore, PullRequestsState, PullRequestsNoun, searching);
+            ListFooterText(page.Items.Count, page.MayHaveMore, state, PullRequestsNoun, PullRequestNoun, searching);
     }
 
     /// <summary>
