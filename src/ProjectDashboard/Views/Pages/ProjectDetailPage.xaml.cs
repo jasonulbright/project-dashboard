@@ -37,6 +37,10 @@ public partial class ProjectDetailPage
         // Issue/PR bodies render natively into their FlowDocuments when the fetched
         // detail lands. Unloaded unsubscribes — this page is transient.
         Unloaded += (_, _) => viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+
+        // A health check reads the whole object store and can run for minutes. Left running past
+        // the page it was asked from, it holds a git process against a repository nobody is on.
+        Unloaded += (_, _) => viewModel.CancelHealthChecksOnLeave();
     }
 
     private void OnThemeChanged(Wpf.Ui.Appearance.ApplicationTheme theme, System.Windows.Media.Color accent)
@@ -401,7 +405,8 @@ public partial class ProjectDetailPage
             WorkflowRuns: _viewModel.WorkflowRunsLoaded,
             Releases: _viewModel.ReleasesLoaded,
             RepoTab: _viewModel.RepoSettingsLoaded,
-            Internals: _viewModel.InternalsLoaded));
+            Internals: _viewModel.InternalsLoaded,
+            Health: _viewModel.HealthLoaded));
         switch (load)
         {
             case DetailTabLoad.Branches:
@@ -424,6 +429,9 @@ public partial class ProjectDetailPage
                 break;
             case DetailTabLoad.Internals:
                 _viewModel.LoadInternalsCommand.Execute(null);
+                break;
+            case DetailTabLoad.Health:
+                _viewModel.LoadHealthCommand.Execute(null);
                 break;
         }
     }

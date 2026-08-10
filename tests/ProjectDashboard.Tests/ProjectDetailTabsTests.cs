@@ -50,7 +50,7 @@ public class ProjectDetailTabsTests
     }
 
     /// <summary>Nothing fetched yet — the state every project switch resets to.</summary>
-    private static DetailTabLoadState Nothing => new(false, false, false, false, false, false, false);
+    private static DetailTabLoadState Nothing => new(false, false, false, false, false, false, false, false);
 
     [Theory]
     [InlineData(DetailTab.Branches, DetailTabLoad.Branches)]
@@ -60,6 +60,7 @@ public class ProjectDetailTabsTests
     [InlineData(DetailTab.Releases, DetailTabLoad.Releases)]
     [InlineData(DetailTab.Repo, DetailTabLoad.RepoTab)]
     [InlineData(DetailTab.Internals, DetailTabLoad.Internals)]
+    [InlineData(DetailTab.Health, DetailTabLoad.Health)]
     public void LoadForTab_LazyTabsFetchWhenNotYetLoaded(DetailTab tab, DetailTabLoad expected)
     {
         Assert.Equal(expected, ProjectDetailTabs.LoadForTab(tab, Nothing));
@@ -82,6 +83,8 @@ public class ProjectDetailTabsTests
             ProjectDetailTabs.LoadForTab(DetailTab.Repo, Nothing with { RepoTab = true }));
         Assert.Equal(DetailTabLoad.None,
             ProjectDetailTabs.LoadForTab(DetailTab.Internals, Nothing with { Internals = true }));
+        Assert.Equal(DetailTabLoad.None,
+            ProjectDetailTabs.LoadForTab(DetailTab.Health, Nothing with { Health = true }));
     }
 
     /// <summary>
@@ -93,16 +96,19 @@ public class ProjectDetailTabsTests
     {
         Assert.Equal(DetailTabLoad.WorkflowRuns,
             ProjectDetailTabs.LoadForTab(DetailTab.Actions,
-                new DetailTabLoadState(true, true, true, false, true, true, true)));
+                new DetailTabLoadState(true, true, true, false, true, true, true, true)));
         Assert.Equal(DetailTabLoad.Releases,
             ProjectDetailTabs.LoadForTab(DetailTab.Releases,
-                new DetailTabLoadState(true, true, true, true, false, true, true)));
+                new DetailTabLoadState(true, true, true, true, false, true, true, true)));
         Assert.Equal(DetailTabLoad.RepoTab,
             ProjectDetailTabs.LoadForTab(DetailTab.Repo,
-                new DetailTabLoadState(true, true, true, true, true, false, true)));
+                new DetailTabLoadState(true, true, true, true, true, false, true, true)));
         Assert.Equal(DetailTabLoad.Internals,
             ProjectDetailTabs.LoadForTab(DetailTab.Internals,
-                new DetailTabLoadState(true, true, true, true, true, true, false)));
+                new DetailTabLoadState(true, true, true, true, true, true, false, true)));
+        Assert.Equal(DetailTabLoad.Health,
+            ProjectDetailTabs.LoadForTab(DetailTab.Health,
+                new DetailTabLoadState(true, true, true, true, true, true, true, false)));
     }
 
     [Theory]

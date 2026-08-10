@@ -352,28 +352,16 @@ public class RebaseDriver
 
     /// <summary>
     /// The `--empty` spelling a `git --version` line accepts: `stop` from 2.45, `ask` before it.
-    /// Only the token directly after the literal `version` is read — `git version 2.45.1.windows.1`
-    /// — because any other dotted-numeric token on the line belongs to something else: an install
-    /// path, a bundled tool's version, a distributor's suffix. Reading one of those decides the
-    /// flag from a number that has nothing to do with git.
     ///
     /// An unreadable version answers `ask`, which every version that has `--empty` accepts — a
     /// deprecation warning on a new git costs a noisier message, an unknown value costs the whole
     /// operation.
     /// </summary>
-    public static string EmptyModeFor(string gitVersionOutput)
-    {
-        var tokens = gitVersionOutput.Split([' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i + 1 < tokens.Length; i++)
-        {
-            if (!string.Equals(tokens[i], "version", StringComparison.OrdinalIgnoreCase)) continue;
-            var parts = tokens[i + 1].Split('.');
-            if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
-                return "ask";
-            return major > 2 || (major == 2 && minor >= 45) ? "stop" : "ask";
-        }
-        return "ask";
-    }
+    public static string EmptyModeFor(string gitVersionOutput) =>
+        GitVersion.MajorMinorFrom(gitVersionOutput) is { } version
+        && (version.Major > 2 || (version.Major == 2 && version.Minor >= 45))
+            ? "stop"
+            : "ask";
 
     private async Task<string> EmptyModeAsync(string repoPath, CancellationToken ct)
     {

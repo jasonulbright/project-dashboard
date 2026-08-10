@@ -18,4 +18,5 @@ public enum DetailTab
     Releases,
     Repo,
     Internals,
+    Health,
 }

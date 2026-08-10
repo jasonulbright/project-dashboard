@@ -12,20 +12,24 @@ namespace ProjectDashboard.Tests;
 public class AccessibleNamingTests
 {
     /// <summary>
-    /// Ten digits, eleven tabs. A sheet that listed only the digit jumps would read as though
-    /// the eleventh tab had no keyboard route at all.
+    /// Ten digits, twelve tabs. A sheet that listed only the digit jumps would read as though the
+    /// tabs past the tenth had no keyboard route at all. The count is asserted so that adding a
+    /// thirteenth tab fails here rather than silently leaving the arrow-key row describing fewer
+    /// tabs than the page hosts — that failure is the reminder, and it is meant to be loud.
     /// </summary>
     [Fact]
-    public void TheCheatSheet_SaysHowToReachTheEleventhTab()
+    public void TheCheatSheet_SaysHowToReachTheTabsPastTheDigits()
     {
-        Assert.Equal(11, Enum.GetValues<DetailTab>().Length);
+        Assert.Equal(12, Enum.GetValues<DetailTab>().Length);
 
         var detail = ShortcutTable.All
             .Where(e => e.Group == ShortcutTable.DetailGroup)
             .ToList();
 
         Assert.Contains(detail, e => e.Gesture == "Ctrl+0");
-        Assert.Contains(detail, e => e.Description.Contains("eleven", StringComparison.OrdinalIgnoreCase));
+        var arrows = detail.Single(e => e.Gesture == "Left / Right");
+        Assert.Contains("twelve", arrows.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("twelfth", arrows.Description, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

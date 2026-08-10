@@ -378,6 +378,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         BranchExtrasStatusText = "";
         BranchExtrasErrorText = "";
         ResetInternalsState();
+        ResetHealthState();
         Stashes = [];
         StashesLoaded = false;
         SelectedStash = null;

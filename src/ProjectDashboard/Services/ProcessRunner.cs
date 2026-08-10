@@ -101,8 +101,11 @@ public static class ProcessRunner
     /// callback, and the process result is never held hostage to delivery; CR, LF, and CRLF
     /// each terminate a callback line (git progress redraws lines with bare CR); timeout,
     /// cancellation, and kill semantics are identical to RunAsync. The capture is bounded by
-    /// <see cref="DefaultCaptureCharBudget"/>, the queue of undelivered lines is not, so
-    /// per-line callbacks suit progress- and log-scale output, not bulk data transfer.
+    /// <paramref name="captureCharBudget"/>, the queue of undelivered lines is not, so
+    /// per-line callbacks suit progress- and log-scale output, not bulk data transfer. A caller
+    /// that consumes every line as it arrives and needs the capture only for an error message
+    /// passes a small budget: the capture is what would otherwise hold a whole object listing in
+    /// memory a second time.
     /// </summary>
     public static Task<ProcessResult> RunStreamingAsync(
         string fileName,
@@ -112,9 +115,10 @@ public static class ProcessRunner
         IReadOnlyDictionary<string, string>? environment,
         Action<string>? onStdOutLine,
         Action<string>? onStdErrLine,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int captureCharBudget = DefaultCaptureCharBudget)
         => RunCoreAsync(fileName, args, workingDirectory, timeout, environment,
-                        onStdOutLine, onStdErrLine, standardInput: null, ct, DefaultCaptureCharBudget);
+                        onStdOutLine, onStdErrLine, standardInput: null, ct, captureCharBudget);
 
     private static async Task<ProcessResult> RunCoreAsync(
         string fileName,

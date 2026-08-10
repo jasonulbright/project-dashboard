@@ -4018,6 +4018,157 @@
                     </Border>
                 </Grid>
             </TabItem>
+
+            <!-- ═══ HEALTH ═══
+                 One scrolling list of checks. The quick tier runs on activation; every deep row
+                 stays at Not run until its own button is pressed, and a clean connectivity pass
+                 never promotes itself into a claim about object contents. -->
+            <TabItem Header="Health" Tag="{x:Static models:DetailTab.Health}">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <ui:Button DockPanel.Dock="Right" Content="Refresh quick checks" FontSize="12" Padding="10,4"
+                                   Margin="8,0,0,0" Icon="{ui:SymbolIcon ArrowSync24}"
+                                   Command="{Binding RefreshHealthCommand}"
+                                   AutomationProperties.Name="Run this repository's local checks again" />
+                        <ui:Button DockPanel.Dock="Right" Content="Cancel" FontSize="12" Padding="10,4"
+                                   Margin="8,0,0,0"
+                                   Command="{Binding CancelHealthCheckCommand}"
+                                   Visibility="{Binding HealthCheckRunning, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   AutomationProperties.Name="Cancel the running check" />
+                        <StackPanel>
+                            <TextBlock Text="{Binding HealthHeaderText}" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       AutomationProperties.AutomationId="HealthHeaderText" />
+                            <TextBlock Text="{Binding HealthTierText}" FontSize="12" TextWrapping="Wrap"
+                                       Margin="0,3,0,0"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       AutomationProperties.AutomationId="HealthTierText" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <ListBox Grid.Row="1" ItemsSource="{Binding HealthRows}"
+                             Background="Transparent" BorderThickness="0"
+                             HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             AutomationProperties.Name="Repository health checks">
+                        <ListBox.ItemContainerStyle>
+                            <!-- Without an automation name the row is announced as its type's name:
+                                 an item container falls back to the item's ToString. -->
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                                <Setter Property="Padding" Value="6,4" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type local:HealthRow}">
+                                <StackPanel>
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Margin" Value="0,2" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsObject}" Value="True">
+                                                    <Setter Property="Margin" Value="28,1,0,1" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+
+                                    <DockPanel>
+                                        <ui:Button DockPanel.Dock="Right" FontSize="11" Padding="10,3" Margin="12,0,0,0"
+                                                   VerticalAlignment="Top"
+                                                   Content="{Binding ActionLabel}"
+                                                   Command="{Binding DataContext.RunHealthRowActionCommand,
+                                                                     RelativeSource={RelativeSource AncestorType=Page}}"
+                                                   CommandParameter="{Binding}"
+                                                   Visibility="{Binding HasAction, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                   AutomationProperties.Name="{Binding AccessibleName, StringFormat=Act on {0}}" />
+
+                                        <!-- The state badge takes the status palette, which outranks
+                                             the theme by a contract its own test pins. -->
+                                        <Border DockPanel.Dock="Left" CornerRadius="4" Padding="6,1" Margin="0,0,10,0"
+                                                VerticalAlignment="Center" Width="118">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding State}" Value="Ok">
+                                                            <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding State}" Value="Warn">
+                                                            <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding State}" Value="Bad">
+                                                            <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding State}" Value="Unknown">
+                                                            <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsObject}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding StateLabel}" FontSize="10"
+                                                       HorizontalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding State}" Value="Ok">
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding State}" Value="Warn">
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding State}" Value="Bad">
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding State}" Value="Unknown">
+                                                                <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Border>
+
+                                        <TextBlock DockPanel.Dock="Left" Width="180" Text="{Binding Title}" FontSize="12"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
+                                                   FontFamily="Cascadia Code,Consolas"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{Binding Summary}" FontSize="13" TextWrapping="Wrap"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    </DockPanel>
+
+                                    <Expander Header="Details" FontSize="11" Margin="128,2,0,0"
+                                              Visibility="{Binding HasDetail, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                              AutomationProperties.Name="{Binding Title, StringFormat=Details of {0}}">
+                                        <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    </Expander>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="2" Text="{Binding HealthStatusText}" FontSize="12" TextWrapping="Wrap"
+                               Margin="0,10,0,0"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.AutomationId="HealthStatusText"
+                               AutomationProperties.LiveSetting="Polite" />
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <!-- ═══ REWRITE WIZARD ═══

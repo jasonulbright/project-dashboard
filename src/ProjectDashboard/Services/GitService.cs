@@ -314,6 +314,32 @@ public class GitService
             ResolveGitExe(), full, standardInput, repoPath, timeout ?? Timeout, NonInteractiveEnvironment, ct);
     }
 
+    /// <summary>
+    /// Characters retained per stream by <see cref="RunStreamingAsync"/>. A streaming caller
+    /// consumes each line as it arrives, so the capture exists only to carry an error message; at
+    /// the default budget it would hold a second copy of a whole object listing.
+    /// </summary>
+    internal const int StreamingCaptureCharBudget = 64 * 1024;
+
+    /// <summary>
+    /// Structured run whose stdout is delivered line by line while git is still running, for the
+    /// reads whose output is proportional to the object store rather than to a result. The capture
+    /// is bounded at <see cref="StreamingCaptureCharBudget"/>, so a caller that keeps only what it
+    /// needs from each line never holds the whole listing.
+    /// Virtual for the same reason the other two run shapes are: a subclass that cannot observe a
+    /// run sees an incomplete picture of what this service did to a repository.
+    /// </summary>
+    public virtual Task<ProcessResult> RunStreamingAsync(
+        string repoPath, IEnumerable<string> args, Action<string> onStdOutLine,
+        CancellationToken ct = default, TimeSpan? timeout = null)
+    {
+        var full = new List<string> { "-c", "core.quotepath=false" };
+        full.AddRange(args);
+        return ProcessRunner.RunStreamingAsync(
+            ResolveGitExe(), full, repoPath, timeout ?? Timeout, NonInteractiveEnvironment,
+            onStdOutLine, onStdErrLine: null, ct, StreamingCaptureCharBudget);
+    }
+
     /// <summary>The non-interactive environment with <paramref name="extra"/> layered on top; the base pair itself is never overridden away.</summary>
     private static IReadOnlyDictionary<string, string> MergedEnvironment(IReadOnlyDictionary<string, string>? extra)
     {
