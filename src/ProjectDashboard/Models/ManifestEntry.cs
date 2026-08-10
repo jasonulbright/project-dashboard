@@ -91,4 +91,12 @@ public sealed record ManifestIdentityReport(
     public static ManifestIdentityReport Empty { get; } = new([], [], []);
 
     public bool HasNews => Adoptions.Count > 0 || Refusals.Count > 0;
+
+    /// <summary>
+    /// Which pass produced this, counting from one. A surface reads the latest report on every
+    /// refresh, and most refreshes are served from the cache and re-hand it the same conclusions;
+    /// without a number to compare, an announcement made once is re-made forever. Zero means no
+    /// pass produced it.
+    /// </summary>
+    public long Sequence { get; init; }
 }

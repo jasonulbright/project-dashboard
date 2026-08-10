@@ -482,15 +482,42 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private bool _metadataNoticeVisible;
     [ObservableProperty] private string _metadataNoticeText = "";
 
+    /// <summary>
+    /// The pass whose conclusions have already been put on screen. Most refreshes are served from
+    /// the discovery cache and hand back the same report, so announcing on every one of them
+    /// leaves a notice about a single scan standing for the rest of the session. It is said once,
+    /// and the next refresh takes it down without the reader doing anything.
+    /// </summary>
+    private long _announcedManifestReport;
+
     private void UpdateMetadataNotice()
     {
         var report = _discoveryService.LastManifestReport;
+        if (report.Sequence == 0 || report.Sequence == _announcedManifestReport)
+        {
+            MetadataNoticeText = "";
+            MetadataNoticeVisible = false;
+            return;
+        }
+
+        _announcedManifestReport = report.Sequence;
         MetadataNoticeText = string.Join(" ", new[]
         {
             ManifestIdentity.DescribeAdoptions(report.Adoptions),
             ManifestIdentity.DescribeRefusals(report.Refusals),
         }.Where(part => part.Length > 0));
         MetadataNoticeVisible = MetadataNoticeText.Length > 0;
+    }
+
+    /// <summary>
+    /// Takes the notice down early. What it announced is still in Settings under Project
+    /// Metadata, so nothing is lost by dismissing it.
+    /// </summary>
+    [RelayCommand]
+    private void DismissMetadataNotice()
+    {
+        MetadataNoticeVisible = false;
+        MetadataNoticeText = "";
     }
 
     /// <summary>

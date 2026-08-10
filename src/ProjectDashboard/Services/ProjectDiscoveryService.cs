@@ -58,6 +58,8 @@ public class ProjectDiscoveryService(
     /// </summary>
     public ManifestIdentityReport LastManifestReport { get; private set; } = ManifestIdentityReport.Empty;
 
+    private long _manifestReportSequence;
+
     /// <summary>
     /// What each repository the last full scan met was found to be. Held so the surfaces that
     /// list orphaned metadata can tell a record with no repository from one whose repository is
@@ -264,14 +266,20 @@ public class ProjectDiscoveryService(
 
         LastFingerprints = live;
 
-        var report = ManifestIdentity.Reconcile(manifestStore.Snapshot(), live, statuses);
+        // Numbered per pass, so a surface can tell a fresh conclusion from the same one handed
+        // back on every cache-served refresh.
+        var sequence = Interlocked.Increment(ref _manifestReportSequence);
+        var report = ManifestIdentity.Reconcile(manifestStore.Snapshot(), live, statuses) with { Sequence = sequence };
         LastManifestReport = report;
 
         if (!manifestStore.ApplyScan(report.Adoptions, live, DateTimeOffset.UtcNow))
         {
             // The store still describes what is on disk. Reporting the re-key anyway would tell
             // the reader their metadata moved and leave it at the old path at the next launch.
-            LastManifestReport = new ManifestIdentityReport([], report.Refusals, report.Orphans);
+            LastManifestReport = new ManifestIdentityReport([], report.Refusals, report.Orphans)
+            {
+                Sequence = sequence
+            };
             return LastManifestReport;
         }
 

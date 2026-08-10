@@ -98,6 +98,9 @@
                 <ui:Button Content="Open Settings" FontSize="12" Padding="10,4" Margin="14,0,0,0"
                            AutomationProperties.Name="Open Settings to review saved project metadata"
                            Command="{Binding OpenSettingsCommand}" />
+                <ui:Button Content="Dismiss" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                           AutomationProperties.Name="Dismiss the saved project metadata notice"
+                           Command="{Binding DismissMetadataNoticeCommand}" />
             </StackPanel>
         </Border>
 
