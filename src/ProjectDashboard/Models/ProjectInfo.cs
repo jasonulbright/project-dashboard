@@ -23,6 +23,13 @@ public partial class ProjectInfo : ObservableObject
 
     partial void OnLocationHintChanged(string value) => OnPropertyChanged(nameof(HasLocationHint));
 
+    /// <summary>
+    /// What the scan read this repository to be, carried so a metadata write can say which
+    /// repository it means and not merely which folder it was opened from. Null for a remote-only
+    /// card, and for one whose identity the scan did not read.
+    /// </summary>
+    public RepoFingerprint? Fingerprint { get; set; }
+
     public string DisplayName { get; set; } = "";
     public string Description { get; set; } = "";
     public string LatestVersion { get; set; } = "";

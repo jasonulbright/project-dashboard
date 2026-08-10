@@ -227,6 +227,148 @@ public class ManifestStoreSchemaTests : IDisposable
         Assert.False(store.TryGet(BetaPath, out _));
     }
 
+    // ── A save that arrives after the record moved ─────────────────
+
+    /// <summary>
+    /// A surface that opened a project before a scan re-keyed its record still holds the old path.
+    /// Written by path alone, the edit lands in a fresh empty record at a folder nobody is looking
+    /// at, and the record the reader was editing never receives it — the edit is gone at the next
+    /// launch with nothing said. Following happens under the store's own lock, which is the only
+    /// place the re-key and the write can be ordered against each other.
+    /// </summary>
+    [Fact]
+    public void AnEditWrittenAgainstThePathARecordMovedOff_LandsOnTheRecord()
+    {
+        var store = new ManifestStore();
+        var identity = Print("alpha", "aaa");
+        store.Save(AlphaPath, new ProjectManifest { Description = "before", Category = "Tools" });
+        store.ApplyScan(
+            [new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = identity },
+            DateTimeOffset.UtcNow);
+
+        Assert.True(store.Save(AlphaPath, new ProjectManifest { Description = "after", Category = "Tools" }, identity));
+
+        var reloaded = new ManifestStore();
+        Assert.True(reloaded.TryGet(BetaPath, out var moved));
+        Assert.Equal("after", moved!.Description);
+        // No empty record left behind at the vacated folder.
+        Assert.False(reloaded.TryGet(AlphaPath, out _));
+        Assert.Single(reloaded.Snapshot());
+    }
+
+    /// <summary>
+    /// The trail is followed only by the repository that left. A different repository that later
+    /// occupies the vacated folder keeps its own key — redirecting its metadata onto the one that
+    /// moved away would be the wrong-adoption failure by another route.
+    /// </summary>
+    [Fact]
+    public void AnEditFromADifferentRepositoryInTheVacatedFolder_KeepsItsOwnRecord()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "the one that moved" });
+        store.ApplyScan(
+            [new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = Print("alpha", "aaa") },
+            DateTimeOffset.UtcNow);
+
+        Assert.True(store.Save(AlphaPath, new ProjectManifest { Description = "a newcomer" }, Print("alpha", "zzz")));
+
+        var reloaded = new ManifestStore();
+        Assert.True(reloaded.TryGet(AlphaPath, out var newcomer));
+        Assert.Equal("a newcomer", newcomer!.Description);
+        Assert.True(reloaded.TryGet(BetaPath, out var moved));
+        Assert.Equal("the one that moved", moved!.Description);
+    }
+
+    /// <summary>A caller offering no identity is asking about a folder, and is answered literally.</summary>
+    [Fact]
+    public void AnEditWithNoIdentity_IsTakenAtThePathItNames()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "before" });
+        store.ApplyScan(
+            [new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = Print("alpha", "aaa") },
+            DateTimeOffset.UtcNow);
+
+        Assert.True(store.Save(AlphaPath, new ProjectManifest { Description = "literal" }));
+
+        Assert.True(store.TryGet(AlphaPath, out var literal));
+        Assert.Equal("literal", literal!.Description);
+        Assert.True(store.TryGet(BetaPath, out var moved));
+        Assert.Equal("before", moved!.Description);
+    }
+
+    /// <summary>A record re-keyed twice is still reachable from the path the first move left.</summary>
+    [Fact]
+    public void ARecordThatMovedTwice_IsStillReachedFromWhereItStarted()
+    {
+        const string GammaPath = @"E:\archive\gamma";
+        var store = new ManifestStore();
+        var identity = Print("alpha", "aaa");
+        store.Save(AlphaPath, new ProjectManifest { Description = "before" });
+        store.ApplyScan([new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = identity }, DateTimeOffset.UtcNow);
+        store.ApplyScan([new ManifestAdoption(BetaPath, GammaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [GammaPath] = identity }, DateTimeOffset.UtcNow);
+
+        Assert.True(store.Save(AlphaPath, new ProjectManifest { Description = "after" }, identity));
+
+        Assert.True(new ManifestStore().TryGet(GammaPath, out var moved));
+        Assert.Equal("after", moved!.Description);
+    }
+
+    /// <summary>
+    /// A read is a question about a folder, never about a repository that left it. Following one
+    /// would hand a fresh repository in the vacated folder the metadata of the one that moved.
+    /// </summary>
+    [Fact]
+    public void AReadAgainstTheVacatedPath_DoesNotFollowTheRecord()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "before" });
+        store.ApplyScan([new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = Print("alpha", "aaa") }, DateTimeOffset.UtcNow);
+
+        Assert.False(store.TryGet(AlphaPath, out var found));
+        Assert.Null(found);
+    }
+
+    /// <summary>
+    /// The trail lives exactly as long as the record it points at. Forgetting that record leaves
+    /// nothing for a later save to follow.
+    /// </summary>
+    [Fact]
+    public void ForgettingTheMovedRecord_TakesItsTrailWithIt()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "before" });
+        store.ApplyScan([new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = Print("alpha", "aaa") }, DateTimeOffset.UtcNow);
+        Assert.Single(store.ForwardSnapshot());
+
+        Assert.True(store.Forget([BetaPath]));
+
+        Assert.Empty(store.ForwardSnapshot());
+        Assert.Empty(new ManifestStore().ForwardSnapshot());
+    }
+
+    /// <summary>A record taking the vacated key again is what that key means; the trail gives way.</summary>
+    [Fact]
+    public void ARecordTakingTheVacatedPathAgain_ClearsTheTrail()
+    {
+        var store = new ManifestStore();
+        store.Save(AlphaPath, new ProjectManifest { Description = "before" });
+        store.ApplyScan([new ManifestAdoption(AlphaPath, BetaPath, "alpha")],
+            new Dictionary<string, RepoFingerprint> { [BetaPath] = Print("alpha", "aaa") }, DateTimeOffset.UtcNow);
+
+        store.Save(AlphaPath, new ProjectManifest { Description = "a newcomer" }, Print("alpha", "zzz"));
+        store.ApplyScan([], new Dictionary<string, RepoFingerprint>(), DateTimeOffset.UtcNow.AddHours(2));
+
+        Assert.Empty(store.ForwardSnapshot());
+    }
+
     [Fact]
     public void ForgettingARecord_RemovesItAndLeavesTheOthers()
     {

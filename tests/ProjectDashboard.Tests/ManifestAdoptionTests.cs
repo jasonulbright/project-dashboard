@@ -338,6 +338,40 @@ public class ManifestAdoptionTests : IDisposable
         Assert.Equal("typed just now", manifest!.Description);
     }
 
+    /// <summary>
+    /// A page opened before a scan re-keyed its record holds the path the record moved off. The
+    /// edit has to reach the record, not a fresh empty one at the vacated folder — the reader is
+    /// told the save landed either way, and only one of those is true.
+    /// </summary>
+    [Fact]
+    public async Task AnEditSavedAgainstThePathAPageWasOpenedOn_ReachesTheRecordThatMoved()
+    {
+        var origin = await NewRepoAsync(_rootOne, "tabkit");
+        var (discovery, store) = NewService();
+        store.Save(origin, new ProjectManifest { Description = "a tab manager", Category = "Tools" });
+
+        // The card a detail page would be holding, read before the move.
+        var opened = Assert.Single(await discovery.ForceRefreshAllAsync(), p => RepoPaths.Equal(p.FullPath, origin));
+        Assert.NotNull(opened.Fingerprint);
+
+        var moved = Path.Combine(_rootTwo, "tabkit");
+        Move(origin, moved);
+        await discovery.ForceRefreshAllAsync();
+        Assert.Single(discovery.LastManifestReport.Adoptions);
+
+        // The page saves what it has, against the path it was opened on.
+        Assert.True(await discovery.SaveManifestAsync(
+            opened.FullPath,
+            new ProjectManifest { Description = "edited while it moved", Category = "Tools" },
+            opened.Fingerprint));
+
+        var reloaded = new ManifestStore();
+        Assert.True(reloaded.TryGet(moved, out var record));
+        Assert.Equal("edited while it moved", record!.Description);
+        Assert.False(reloaded.TryGet(origin, out _));
+        Assert.Single(reloaded.Snapshot());
+    }
+
     [Fact]
     public async Task AScanRecordsWhatEachRepositoryIs_SoTheNextOneCanRecogniseIt()
     {

@@ -469,7 +469,10 @@ public partial class ProjectDetailViewModel : ObservableObject
     /// </summary>
     private async Task<bool> PersistManifestAsync(ProjectInfo project, ProjectManifest manifest)
     {
-        if (!await _discoveryService.SaveManifestAsync(project.FullPath, manifest)) return false;
+        // The project's identity travels with the path: a scan that re-keyed this record while the
+        // editor was open leaves this page holding a path the record moved off, and a write by
+        // path alone would create an empty record there instead of reaching the edited one.
+        if (!await _discoveryService.SaveManifestAsync(project.FullPath, manifest, project.Fingerprint)) return false;
 
         project.Manifest = manifest;
         project.HasManifest = true;

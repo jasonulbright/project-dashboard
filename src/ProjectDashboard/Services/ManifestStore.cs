@@ -10,7 +10,7 @@ namespace ProjectDashboard.Services;
 /// project source trees, as manifests.json under AppPaths.RoamingDir.
 ///
 /// Shape: { "SchemaVersion": 2, "Entries": { "C:\\projects\\tabkit": { "Manifest": {…},
-/// "Fingerprint": {…}, "FirstSeenUtc": …, "LastSeenUtc": … }, … } }
+/// "Fingerprint": {…}, "FirstSeenUtc": …, "LastSeenUtc": … } }, "Forwards": { … } }
 /// Keys are full repo paths, compared case-insensitively (Windows). Path-keying
 /// avoids name collisions between repos that share a folder name; the fingerprint beside each
 /// entry is what re-keys a record whose folder moved, and is never written into the repository.
@@ -34,6 +34,12 @@ public class ManifestStore
     /// </summary>
     private static readonly TimeSpan SeenWriteInterval = TimeSpan.FromHours(1);
 
+    /// <summary>
+    /// How many times a save may follow a record that moved. A repository re-keyed repeatedly
+    /// leaves a chain, and a bound is what keeps a damaged file from looping a caller forever.
+    /// </summary>
+    private const int MaxForwardHops = 16;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -41,22 +47,27 @@ public class ManifestStore
     };
 
     private readonly object _lock = new();
-    private Dictionary<string, ManifestEntry>? _index;
+    private State? _state;
+
+    /// <summary>The records and the trail left by the ones that moved. Mutated only under the lock.</summary>
+    private sealed record State(
+        Dictionary<string, ManifestEntry> Entries,
+        Dictionary<string, ManifestForward> Forwards);
 
     private static string NormalizeKey(string repoPath) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
 
-    private Dictionary<string, ManifestEntry> Index()
+    private State Current()
     {
         lock (_lock)
         {
-            if (_index is not null) return _index;
+            if (_state is not null) return _state;
 
             try
             {
                 // Corrupt-index handling (quarantine + .bak recovery) lives in
                 // DurableJsonFile.Read; null here means a legitimately fresh start.
-                _index = Bind(DurableJsonFile.Read<JsonNode>(IndexPath, JsonOptions));
+                _state = Bind(DurableJsonFile.Read<JsonNode>(IndexPath, JsonOptions));
             }
             catch (Exception ex)
             {
@@ -64,37 +75,47 @@ public class ManifestStore
                 // atomic write path keeps a .bak, so the next Save cannot destroy the
                 // only copy the way an in-place truncating write could.
                 Log.Error($"Failed to read manifest index at {IndexPath} — starting empty", ex);
-                _index = Empty();
+                _state = EmptyState();
             }
 
-            return _index;
+            return _state;
         }
     }
 
-    private static Dictionary<string, ManifestEntry> Empty() => new(StringComparer.OrdinalIgnoreCase);
+    private static Dictionary<string, T> Empty<T>() => new(StringComparer.OrdinalIgnoreCase);
+
+    private static State EmptyState() => new(Empty<ManifestEntry>(), Empty<ManifestForward>());
 
     /// <summary>
     /// Reads either stored shape. The version probe decides it: a versioned envelope read as a
     /// bare map yields one meaningless entry, and a bare map read as an envelope yields none at
     /// all — both silently, which is how metadata disappears.
     /// </summary>
-    private static Dictionary<string, ManifestEntry> Bind(JsonNode? root)
+    private static State Bind(JsonNode? root)
     {
-        if (root is not JsonObject document) return Empty();
+        if (root is not JsonObject document) return EmptyState();
 
-        var entries = Empty();
+        var entries = Empty<ManifestEntry>();
+        var forwards = Empty<ManifestForward>();
+
         if (Property(document, "SchemaVersion") is not null && Property(document, "Entries") is JsonObject versioned)
         {
             foreach (var (key, value) in versioned)
                 if (value.Deserialize<ManifestEntry>(JsonOptions) is { } entry)
                     entries[key] = entry;
-            return entries;
+
+            if (Property(document, "Forwards") is JsonObject stored)
+                foreach (var (key, value) in stored)
+                    if (value.Deserialize<ManifestForward>(JsonOptions) is { ToPath.Length: > 0 } forward)
+                        forwards[key] = forward;
+
+            return new State(entries, forwards);
         }
 
         foreach (var (key, value) in document)
             if (value.Deserialize<ProjectManifest>(JsonOptions) is { } manifest)
                 entries[key] = new ManifestEntry { Manifest = manifest };
-        return entries;
+        return new State(entries, forwards);
     }
 
     private static JsonNode? Property(JsonObject document, string name)
@@ -109,6 +130,10 @@ public class ManifestStore
     /// Returns true and a COPY of the stored manifest for the given repo path, if present.
     /// Copies both ways (get and save) so no caller ever holds a reference into the live
     /// index — a mutated shared instance would silently persist on the next unrelated Save.
+    ///
+    /// A read never follows a record that moved. The path is the question being asked, and a
+    /// different repository sitting in the vacated folder must not be handed the metadata of the
+    /// one that left.
     /// </summary>
     public bool TryGet(string repoPath, out ProjectManifest? manifest)
     {
@@ -120,10 +145,10 @@ public class ManifestStore
             return false;
         }
 
-        var index = Index();
+        var state = Current();
         lock (_lock)
         {
-            if (index.TryGetValue(NormalizeKey(repoPath), out var stored) && stored is not null)
+            if (state.Entries.TryGetValue(NormalizeKey(repoPath), out var stored) && stored is not null)
             {
                 manifest = stored.Manifest.Copy();
                 return true;
@@ -136,11 +161,23 @@ public class ManifestStore
     /// <summary>Every stored record, detached. The input to the identity pass and to the surfaces that list them.</summary>
     public IReadOnlyDictionary<string, ManifestEntry> Snapshot()
     {
-        var index = Index();
+        var state = Current();
         lock (_lock)
         {
-            var copy = Empty();
-            foreach (var (key, entry) in index) copy[key] = entry.Copy();
+            var copy = Empty<ManifestEntry>();
+            foreach (var (key, entry) in state.Entries) copy[key] = entry.Copy();
+            return copy;
+        }
+    }
+
+    /// <summary>Where each record that moved went. Detached, and read by the tests that pin the rule down.</summary>
+    internal IReadOnlyDictionary<string, ManifestForward> ForwardSnapshot()
+    {
+        var state = Current();
+        lock (_lock)
+        {
+            var copy = Empty<ManifestForward>();
+            foreach (var (key, forward) in state.Forwards) copy[key] = forward.Copy();
             return copy;
         }
     }
@@ -149,8 +186,14 @@ public class ManifestStore
     /// Upserts the manifest for a repo path and persists the whole index. False means the value
     /// did not reach disk, and the in-memory index is left as it was: adopted in memory only, an
     /// edit would read as saved for the rest of the session and be gone at the next launch.
+    ///
+    /// <paramref name="identity"/> is what the caller believes it is editing. A surface opened
+    /// before a scan re-keyed the record still holds the old path; passing the repository's
+    /// fingerprint lets the write follow the record to where it went, decided here under the same
+    /// lock the re-key itself took. Resolving that outside the lock would only move the window.
+    /// Null means no identity was offered and the path is taken literally.
     /// </summary>
-    public bool Save(string repoPath, ProjectManifest manifest)
+    public bool Save(string repoPath, ProjectManifest manifest, RepoFingerprint? identity = null)
     {
         // An empty path cannot key the index; dropping the write beats poisoning
         // the store with an unreachable "" entry, but it must not be silent.
@@ -160,21 +203,47 @@ public class ManifestStore
             return false;
         }
 
-        var index = Index();
+        var state = Current();
         lock (_lock)
         {
-            var key = NormalizeKey(repoPath);
-            var entry = index.TryGetValue(key, out var existing) ? existing.Copy() : new ManifestEntry();
+            var key = Resolve(state, NormalizeKey(repoPath), identity);
+            var entry = state.Entries.TryGetValue(key, out var existing) ? existing.Copy() : new ManifestEntry();
             entry.Manifest = manifest.Copy();
 
             // The candidate is written before it is adopted, so a failed write leaves the live
             // index exactly as the file on disk still describes it.
-            var candidate = Clone(index);
-            candidate[key] = entry;
+            var candidate = Clone(state);
+            candidate.Entries[key] = entry;
             if (!Persist(candidate)) return false;
-            index[key] = entry;
+            Adopt(state, candidate);
             return true;
         }
+    }
+
+    /// <summary>
+    /// The key a write for <paramref name="identity"/> belongs at. A path that still names a
+    /// record is that record. A path a record moved off resolves to where it went, but only while
+    /// the repository asking answers to the fingerprint recorded at the re-key — a fresh
+    /// repository in the vacated folder does not, and keeps its own key.
+    /// </summary>
+    private static string Resolve(State state, string key, RepoFingerprint? identity)
+    {
+        if (identity is null) return key;
+
+        var walked = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { key };
+        for (var hop = 0; hop < MaxForwardHops; hop++)
+        {
+            if (state.Entries.ContainsKey(key)) return key;
+            if (!state.Forwards.TryGetValue(key, out var forward)) return key;
+            if (!RepoFingerprint.Matches(forward.Fingerprint, identity)) return key;
+
+            var next = forward.ToPath;
+            if (!walked.Add(next)) return key;
+            key = next;
+        }
+
+        Log.Warn($"stopped following moved project metadata after {MaxForwardHops} hops");
+        return key;
     }
 
     /// <summary>
@@ -182,8 +251,10 @@ public class ManifestStore
     /// its new path, and what every repository the scan met was found to be.
     ///
     /// A re-key is a move, not a copy — the stale key is what the plan calls redundant, and it is
-    /// dropped with the record intact at its new key. Nothing here deletes a record for a
-    /// repository that was simply not found; that is only ever a reader's own decision.
+    /// dropped with the record intact at its new key, leaving a forwarding trail so a surface
+    /// still holding the old path writes to the record rather than past it. Nothing here deletes a
+    /// record for a repository that was simply not found; that is only ever a reader's own
+    /// decision.
     ///
     /// Returns false when the write did not reach disk, leaving the live index describing the
     /// file: a re-key held in memory alone would present metadata as moved and lose it at the
@@ -194,27 +265,48 @@ public class ManifestStore
         IReadOnlyDictionary<string, RepoFingerprint> live,
         DateTimeOffset seenAt)
     {
-        var index = Index();
+        var state = Current();
         lock (_lock)
         {
-            var candidate = Clone(index);
+            var candidate = Clone(state);
             var changed = false;
 
             foreach (var adoption in adoptions)
             {
                 var from = NormalizeKey(adoption.FromPath);
                 var to = NormalizeKey(adoption.ToPath);
-                if (!candidate.TryGetValue(from, out var moving) || candidate.ContainsKey(to)) continue;
+                if (!candidate.Entries.TryGetValue(from, out var moving) || candidate.Entries.ContainsKey(to)) continue;
 
-                candidate.Remove(from);
-                candidate[to] = moving;
+                candidate.Entries.Remove(from);
+                candidate.Entries[to] = moving;
+
+                var identity = (live.TryGetValue(to, out var print) ? print : moving.Fingerprint)?.Copy();
+
+                // Every trail that ended at the vacated key is re-pointed at the new one rather
+                // than chained onto it: a chain's first hop names a key that no longer holds a
+                // record, and pruning a dead hop would cut the trail from the path a page opened
+                // two moves ago.
+                foreach (var (key, forward) in candidate.Forwards)
+                    if (string.Equals(forward.ToPath, from, StringComparison.OrdinalIgnoreCase))
+                    {
+                        forward.ToPath = to;
+                        forward.Fingerprint = identity;
+                        forward.RecordedUtc = seenAt;
+                    }
+
+                candidate.Forwards[from] = new ManifestForward
+                {
+                    ToPath = to,
+                    Fingerprint = identity,
+                    RecordedUtc = seenAt,
+                };
                 changed = true;
             }
 
             foreach (var (path, fingerprint) in live)
             {
                 var key = NormalizeKey(path);
-                if (!candidate.TryGetValue(key, out var entry)) continue;
+                if (!candidate.Entries.TryGetValue(key, out var entry)) continue;
 
                 if (!fingerprint.SameAs(entry.Fingerprint))
                 {
@@ -233,11 +325,29 @@ public class ManifestStore
                 }
             }
 
+            changed |= PruneForwards(candidate);
+
             if (!changed) return true;
             if (!Persist(candidate)) return false;
-            Adopt(index, candidate);
+            Adopt(state, candidate);
             return true;
         }
+    }
+
+    /// <summary>
+    /// Drops a trail that leads nowhere: one whose record has been forgotten, and one whose own
+    /// path holds a record again. Both are how a forward ages out — it lives exactly as long as
+    /// the record it points at, and never outlives a new record taking its place.
+    /// </summary>
+    private static bool PruneForwards(State candidate)
+    {
+        var dead = candidate.Forwards
+            .Where(f => candidate.Entries.ContainsKey(f.Key) || !candidate.Entries.ContainsKey(f.Value.ToPath))
+            .Select(f => f.Key)
+            .ToList();
+
+        foreach (var key in dead) candidate.Forwards.Remove(key);
+        return dead.Count > 0;
     }
 
     /// <summary>
@@ -249,17 +359,17 @@ public class ManifestStore
     {
         if (string.IsNullOrWhiteSpace(repoPath)) return false;
 
-        var index = Index();
+        var state = Current();
         lock (_lock)
         {
             var key = NormalizeKey(repoPath);
-            if (!index.TryGetValue(key, out var stored)) return true;
+            if (!state.Entries.TryGetValue(key, out var stored)) return true;
             if (fingerprint.SameAs(stored.Fingerprint)) return true;
 
-            var candidate = Clone(index);
-            candidate[key].Fingerprint = fingerprint.Copy();
+            var candidate = Clone(state);
+            candidate.Entries[key].Fingerprint = fingerprint.Copy();
             if (!Persist(candidate)) return false;
-            index[key].Fingerprint = fingerprint.Copy();
+            Adopt(state, candidate);
             return true;
         }
     }
@@ -270,43 +380,59 @@ public class ManifestStore
     /// </summary>
     public bool Forget(IEnumerable<string> repoPaths)
     {
-        var index = Index();
+        var state = Current();
         lock (_lock)
         {
-            var candidate = Clone(index);
+            var candidate = Clone(state);
             var removed = false;
             foreach (var path in repoPaths)
             {
                 if (string.IsNullOrWhiteSpace(path)) continue;
-                if (candidate.Remove(NormalizeKey(path))) removed = true;
+                if (candidate.Entries.Remove(NormalizeKey(path))) removed = true;
             }
 
-            if (!removed) return true;
+            // A forgotten record takes its trail with it: a forward to a key nothing holds would
+            // send a later save to a record that no longer exists.
+            var pruned = PruneForwards(candidate);
+
+            if (!removed && !pruned) return true;
             if (!Persist(candidate)) return false;
-            Adopt(index, candidate);
+            Adopt(state, candidate);
             return true;
         }
     }
 
-    private static Dictionary<string, ManifestEntry> Clone(Dictionary<string, ManifestEntry> index)
+    private static State Clone(State state)
     {
-        var copy = Empty();
-        foreach (var (key, entry) in index) copy[key] = entry.Copy();
-        return copy;
+        var entries = Empty<ManifestEntry>();
+        foreach (var (key, entry) in state.Entries) entries[key] = entry.Copy();
+
+        var forwards = Empty<ManifestForward>();
+        foreach (var (key, forward) in state.Forwards) forwards[key] = forward.Copy();
+
+        return new State(entries, forwards);
     }
 
-    private static void Adopt(Dictionary<string, ManifestEntry> index, Dictionary<string, ManifestEntry> candidate)
+    private static void Adopt(State live, State candidate)
     {
-        index.Clear();
-        foreach (var (key, entry) in candidate) index[key] = entry;
+        live.Entries.Clear();
+        foreach (var (key, entry) in candidate.Entries) live.Entries[key] = entry;
+
+        live.Forwards.Clear();
+        foreach (var (key, forward) in candidate.Forwards) live.Forwards[key] = forward;
     }
 
-    private static bool Persist(Dictionary<string, ManifestEntry> index)
+    private static bool Persist(State state)
     {
         try
         {
             Directory.CreateDirectory(StoreDir);
-            var document = new ManifestDocument { SchemaVersion = SchemaVersion, Entries = index };
+            var document = new ManifestDocument
+            {
+                SchemaVersion = SchemaVersion,
+                Entries = state.Entries,
+                Forwards = state.Forwards,
+            };
             DurableJsonFile.Write(IndexPath, JsonSerializer.Serialize(document, JsonOptions));
             return true;
         }
@@ -321,5 +447,6 @@ public class ManifestStore
     {
         public int SchemaVersion { get; set; }
         public Dictionary<string, ManifestEntry> Entries { get; set; } = [];
+        public Dictionary<string, ManifestForward> Forwards { get; set; } = [];
     }
 }

@@ -154,10 +154,17 @@ public class ProjectDiscoveryService(
     /// Persists a project's manifest. False when the write did not reach disk — the caller still
     /// holds the only copy of the edit and must not present it as stored.
     /// </summary>
-    public virtual Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest, CancellationToken ct = default)
+    /// <summary>
+    /// <paramref name="identity"/> is what the caller believes it is editing, carried from the
+    /// project it opened. A surface that opened a project before a scan re-keyed its record still
+    /// holds the old path, and without the identity the write lands at a folder nobody is looking
+    /// at while the record the reader is editing never receives it.
+    /// </summary>
+    public virtual Task<bool> SaveManifestAsync(
+        string repoPath, ProjectManifest manifest, RepoFingerprint? identity = null, CancellationToken ct = default)
     {
         // Manifests live out-of-source under AppPaths.RoamingDir, not in the repo root.
-        if (!manifestStore.Save(repoPath, manifest)) return Task.FromResult(false);
+        if (!manifestStore.Save(repoPath, manifest, identity)) return Task.FromResult(false);
 
         // The scan already read what this repository is, so recording it alongside a brand-new
         // entry costs no process and closes the window where metadata typed between two scans has
@@ -193,7 +200,8 @@ public class ProjectDiscoveryService(
                 project.RootPath = candidate.RootPath;
                 // Read under the same cap as everything else the fan-out spawns: a second pass
                 // over the same repositories would run its own processes outside it.
-                return new BuiltRepo(project, await ReadFingerprintAsync(candidate.Path, project.GitStatus.RemoteUrl, ct));
+                project.Fingerprint = await ReadFingerprintAsync(candidate.Path, project.GitStatus.RemoteUrl, ct);
+                return new BuiltRepo(project, project.Fingerprint);
             }
             finally
             {

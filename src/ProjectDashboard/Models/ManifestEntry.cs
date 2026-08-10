@@ -30,6 +30,32 @@ public sealed class ManifestEntry
 public sealed record ManifestAdoption(string FromPath, string ToPath, string Name);
 
 /// <summary>
+/// Where a record went when its repository moved, left behind at the path it moved off.
+///
+/// A surface that opened a project before the scan re-keyed it still holds the old path, and a
+/// save against that path would otherwise land on a fresh, empty record at a folder nobody is
+/// looking at while the edit never reaches the real one. <see cref="Fingerprint"/> is what makes
+/// following this safe: a different repository that later occupies the vacated folder does not
+/// answer to it, so its own metadata is never redirected onto the repository that left.
+/// </summary>
+public sealed class ManifestForward
+{
+    public string ToPath { get; set; } = "";
+
+    /// <summary>What the repository was when it was re-keyed. A save must answer to this to follow.</summary>
+    public RepoFingerprint? Fingerprint { get; set; }
+
+    public DateTimeOffset RecordedUtc { get; set; }
+
+    public ManifestForward Copy() => new()
+    {
+        ToPath = ToPath,
+        Fingerprint = Fingerprint?.Copy(),
+        RecordedUtc = RecordedUtc,
+    };
+}
+
+/// <summary>
 /// A stored record whose repository was not found, and which nothing says is gone: it is kept
 /// until a reader forgets it. Hand-typed metadata is not reconstructible, so an automatic
 /// deletion is the one outcome this design refuses.

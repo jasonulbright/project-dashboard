@@ -29,7 +29,7 @@ public class ProjectMetadataEditorTests
         public int Calls => Attempts.Count;
 
         public override Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest,
-            CancellationToken ct = default)
+            RepoFingerprint? identity = null, CancellationToken ct = default)
         {
             Attempts.Add((repoPath, manifest));
             return Task.FromResult(false);
@@ -55,7 +55,7 @@ public class ProjectMetadataEditorTests
         public void Release() => _gate.TrySetResult();
 
         public override async Task<bool> SaveManifestAsync(string repoPath, ProjectManifest manifest,
-            CancellationToken ct = default)
+            RepoFingerprint? identity = null, CancellationToken ct = default)
         {
             Attempts.Add((repoPath, manifest));
             _suspended.TrySetResult();

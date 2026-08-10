@@ -199,6 +199,8 @@ Adoption is deliberately conservative, because putting one project's notes on an
 - A repository under a projects folder that is missing, unreadable, or switched off is not gone — an unplugged drive never orphans anything.
 - Metadata is never deleted automatically. Records naming folders that are no longer there are listed under **Settings → Project Metadata**, with the description they carry and when they were last seen, and are dropped only by pressing Forget.
 
+The index also records where a record went when its repository moved, so an edit saved from a page opened before the move reaches the record rather than the folder it was opened on. That trail is followed only by the repository the record belongs to — a different repository that later occupies the vacated folder keeps its own metadata — and it is dropped once the record it points at is forgotten.
+
 ## Architecture
 
 ```
