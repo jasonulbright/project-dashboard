@@ -91,11 +91,19 @@ public sealed class UndoHandle
 {
     private readonly BackupService _backup;
     private readonly RepoBusyRegistry _busy;
+    private readonly GitService _git;
 
-    internal UndoHandle(BackupService backup, RepoBusyRegistry busy, BackupHandle handle)
+    /// <summary>Null when the host supplied none; the stored fingerprint then waits for the next scan.</summary>
+    private readonly ManifestStore? _manifests;
+
+    internal UndoHandle(
+        BackupService backup, RepoBusyRegistry busy, BackupHandle handle,
+        GitService git, ManifestStore? manifests = null)
     {
         _backup = backup;
         _busy = busy;
+        _git = git;
+        _manifests = manifests;
         Backup = handle;
     }
 
@@ -111,10 +119,18 @@ public sealed class UndoHandle
     /// </summary>
     public async Task<RestoreResult> RestoreAsync(CancellationToken ct = default)
     {
+        RestoreResult result;
         if (!_busy.TryAcquire(Backup.RepoPath, out var lease))
             return new RestoreResult(false, $"Repository is busy with another operation: {Backup.RepoPath}");
         using (lease)
-            return await _backup.RestoreAsync(Backup, allowDirty: true, ct);
+            result = await _backup.RestoreAsync(Backup, allowDirty: true, ct);
+
+        // Read after the lease is released, and only once the restore landed: the repository now
+        // carries the history it had before the rewrite, and its saved metadata was fingerprinted
+        // from what the rewrite produced.
+        if (result.Success) await RepoIdentityRefresh.RecordAsync(_git, _manifests, Backup.RepoPath);
+
+        return result;
     }
 }
 

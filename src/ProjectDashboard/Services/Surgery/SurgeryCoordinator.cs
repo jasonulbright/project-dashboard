@@ -34,6 +34,12 @@ public sealed class SurgeryCoordinator
     private readonly RewriteJournal _journal;
     private readonly OperationHistory _history;
 
+    /// <summary>
+    /// Handed to the undo this coordinator returns: a restore puts back history the stored
+    /// fingerprint was not taken from. Null when the host supplied none.
+    /// </summary>
+    private readonly ManifestStore? _manifests;
+
     public SurgeryCoordinator(
         BackupService backup,
         RepoBusyRegistry busy,
@@ -42,8 +48,10 @@ public sealed class SurgeryCoordinator
         CommitSurgery? surgery = null,
         HistoryEdits? edits = null,
         RewriteJournal? journal = null,
-        OperationHistory? history = null)
+        OperationHistory? history = null,
+        ManifestStore? manifests = null)
     {
+        _manifests = manifests;
         _history = history ?? new OperationHistory();
         _backup = backup;
         _busy = busy;
@@ -276,7 +284,7 @@ public sealed class SurgeryCoordinator
                     return SurgeryResult.Refused(
                         $"backup failed — no history was touched: {ex.Message}", SurgeryRefusal.BackupFailed);
                 }
-                undo = new UndoHandle(_backup, _busy, handle);
+                undo = new UndoHandle(_backup, _busy, handle, _git, _manifests);
 
                 // 4. Journal: the in-flight operation is on disk before anything moves, so a
                 // crash part-way through is detectable at the next launch.

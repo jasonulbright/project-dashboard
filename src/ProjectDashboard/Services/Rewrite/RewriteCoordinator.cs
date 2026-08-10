@@ -152,7 +152,8 @@ public sealed class RewriteCoordinator
     {
         var started = DateTimeOffset.UtcNow;
         var result = await RunPipelineAsync(request, preview, ct, phase);
-        if (result.Success) await RefreshFingerprintAsync(request.RepoPath);
+        // The lease is released by the time the pipeline returns, so this read is safe.
+        if (result.Success) await RepoIdentityRefresh.RecordAsync(_git, _manifests, request.RepoPath);
         _history.Append(OperationRecord.For(
             request.RepoPath, OperationCategory.Rewrite, "History rewrite",
             result.Cancelled ? OperationOutcome.Cancelled
@@ -164,31 +165,6 @@ public sealed class RewriteCoordinator
             started,
             backupStamp: result.Undo?.Backup.UtcStamp));
         return result;
-    }
-
-    /// <summary>
-    /// Re-reads what the repository is now that its history has been replaced. A rewrite changes
-    /// the root commits the stored fingerprint was recorded from, and a record left describing
-    /// the pre-rewrite history would no longer recognise its own repository if the folder later
-    /// moved. Read after the lease is released, and never allowed to fail the rewrite: the record
-    /// is still reachable by its path key, and the next scan records the same thing.
-    /// </summary>
-    private async Task RefreshFingerprintAsync(string repoPath)
-    {
-        if (_manifests is null) return;
-
-        try
-        {
-            var status = await _git.GetStatusAsync(repoPath, CancellationToken.None);
-            _manifests.RecordFingerprint(repoPath, RepoFingerprint.For(
-                Path.GetFileName(RepoPaths.Normalize(repoPath)),
-                await _git.GetRootCommitsAsync(repoPath, CancellationToken.None),
-                status.RemoteUrl));
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"could not re-read what {repoPath} is after its history rewrite", ex);
-        }
     }
 
     /// <summary>
@@ -254,7 +230,7 @@ public sealed class RewriteCoordinator
             {
                 return RewriteExecutionResult.RefusedByGate($"backup failed — no rewrite attempted: {ex.Message}");
             }
-            undo = new UndoHandle(_backup, _busy, backup);
+            undo = new UndoHandle(_backup, _busy, backup, _git, _manifests);
 
             // 4. Journal: the in-flight op is on disk before the swap, so a crash between
             // here and completion is detectable at the next launch.

@@ -169,6 +169,39 @@ public class RewriteCoordinatorTests
         Assert.Equal("a scrubbed project", manifest!.Description);
     }
 
+    /// <summary>
+    /// The undo puts back the history the rewrite replaced, so the record left describing the
+    /// rewritten history describes a repository that no longer exists. Until the next full scan
+    /// that record would fail to recognise its own repository — and a folder that moves inside
+    /// that window strands metadata an operation this app performed made unrecognisable.
+    /// </summary>
+    [Fact]
+    public async Task Undo_PutsBackWhatTheRepositoryIs_ForItsSavedMetadata()
+    {
+        using var f = NewFixture();
+        SeedSecretHistory(f);
+
+        var git = new GitService();
+        var store = new ManifestStore();
+        store.Save(f.SourcePath, new ProjectManifest { Description = "a scrubbed project" });
+        var before = RepoFingerprint.For("source", await git.GetRootCommitsAsync(f.SourcePath), "");
+        store.ApplyScan([], new Dictionary<string, RepoFingerprint> { [f.SourcePath] = before }, DateTimeOffset.UtcNow);
+
+        var result = await NewCoordinator(manifests: store).ExecuteAsync(Request(f));
+        Assert.True(result.Success, result.FailureReason);
+        var rewritten = store.Snapshot()[RepoPaths.Normalize(f.SourcePath)].Fingerprint!;
+        Assert.NotEqual(before.RootCommitOids, rewritten.RootCommitOids);
+
+        var restore = await result.Undo!.RestoreAsync();
+        Assert.True(restore.Success, restore.Message);
+
+        var recorded = store.Snapshot()[RepoPaths.Normalize(f.SourcePath)].Fingerprint;
+        Assert.NotNull(recorded);
+        Assert.Equal(before.RootCommitOids, recorded!.RootCommitOids);
+        Assert.True(store.TryGet(f.SourcePath, out var manifest));
+        Assert.Equal("a scrubbed project", manifest!.Description);
+    }
+
     [Fact]
     public async Task Undo_AfterRewrite_ReturnsSourceRefsToPreRewriteStateExactly()
     {

@@ -21,7 +21,19 @@ public static class SurgeryRegistration
         services.AddSingleton(sp => new RebaseDriver(sp.GetRequiredService<GitService>()));
         services.AddSingleton<CommitSurgery>();
         services.AddSingleton<HistoryEdits>();
-        services.AddSingleton<SurgeryCoordinator>();
+        // Explicit factory: the undo this coordinator hands back re-reads what the repository is,
+        // and that has to reach the container's own store rather than a private one.
+        services.AddSingleton(sp => new SurgeryCoordinator(
+            sp.GetRequiredService<Safety.BackupService>(),
+            sp.GetRequiredService<Safety.RepoBusyRegistry>(),
+            sp.GetRequiredService<GitService>(),
+            sp.GetRequiredService<RebaseDriver>(),
+            sp.GetRequiredService<CommitSurgery>(),
+            sp.GetRequiredService<HistoryEdits>(),
+            // Optional by design, and asked for as such: this stack composes onto a container
+            // that registered only the rails above, and a required lookup would refuse it.
+            history: sp.GetService<Safety.OperationHistory>(),
+            manifests: sp.GetService<ManifestStore>()));
         return services;
     }
 }
