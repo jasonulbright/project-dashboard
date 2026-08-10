@@ -114,6 +114,14 @@ public static class SafetyCopy
     public const string RepoBusyRefusal = "This repository is busy with another operation.";
 
     /// <summary>
+    /// Why a per-repository check is turned away while another is running. The page runs one check
+    /// at a time, and a button that did nothing without saying so is the thing every other refusal
+    /// on this surface exists to avoid.
+    /// </summary>
+    public const string CheckAlreadyRunningRefusal =
+        "Another check is already running on this page. Wait for it to finish, or cancel it first.";
+
+    /// <summary>
     /// The severity line. The third count is what was measured and found nothing, deliberately not
     /// called clear: the tiers that did not run are named on the line below it.
     /// </summary>

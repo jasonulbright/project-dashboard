@@ -441,6 +441,46 @@ public class SafetyDashboardTests
         Assert.Equal(SafetySeverity.WorthALook, answered.Severity);
     }
 
+    /// <summary>
+    /// The page runs one check at a time, and a row pressed while another is running is turned away
+    /// out loud. A bare return here is a button that did nothing and said nothing, which is the
+    /// shape every other refusal on this surface exists to avoid.
+    /// </summary>
+    [Fact]
+    public async Task ARowCheckPressedWhileAnotherCheckRuns_IsRefusedOutLoud()
+    {
+        var host = await NewHostAsync("row-refused", repos: 1);
+        var gate = new TaskCompletionSource();
+        var safety = host.NewSafety(git: new GateOnReflogWalkGitService(gate.Task));
+        var row = ReflogRowFor(safety, Path.GetFileName(host.Repos[0]));
+
+        // ExecuteAsync runs the command body up to its first await, so the portfolio check owns the
+        // page's one check slot by the time this returns.
+        var running = safety.CheckAllCommand.ExecuteAsync(null);
+        Assert.True(safety.CheckRunning);
+
+        await safety.RunRowActionCommand.ExecuteAsync(row);
+
+        Assert.Contains(SafetyCopy.CheckAlreadyRunningRefusal, safety.StatusText, StringComparison.Ordinal);
+        Assert.Equal(SafetyCopy.NotChecked, ReflogRowFor(safety, Path.GetFileName(host.Repos[0])).Line);
+
+        gate.SetResult();
+        await running;
+    }
+
+    /// <summary>Holds the reflog walk open until released; every other git call is real.</summary>
+    private sealed class GateOnReflogWalkGitService(Task gate) : GitService
+    {
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var listed = args.ToList();
+            if (listed.Contains("rev-list") && listed.Contains("--reflog")) await gate;
+            return await base.RunAsync(repoPath, listed, environment, ct, timeout);
+        }
+    }
+
     /// <summary>Reports every bundle verify as killed on its budget; every other git call is real.</summary>
     private sealed class TimeOutOnVerifyGitService : GitService
     {

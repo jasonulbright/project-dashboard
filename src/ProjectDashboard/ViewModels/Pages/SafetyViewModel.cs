@@ -714,7 +714,11 @@ public partial class SafetyViewModel : ObservableObject
 
     private async Task RunRepoCheckAsync(SafetyRow row)
     {
-        if (CheckRunning) return;
+        if (CheckRunning)
+        {
+            StatusText = $"{row.Title}: {SafetyCopy.CheckAlreadyRunningRefusal}";
+            return;
+        }
         if (_busy.IsBusy(row.RepoPath))
         {
             StatusText = $"{row.Title}: {SafetyCopy.RepoBusyRefusal}";
