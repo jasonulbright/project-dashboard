@@ -402,6 +402,66 @@ public class ManifestStore
         }
     }
 
+    /// <summary>
+    /// How many stored records hold <paramref name="value"/> in <paramref name="field"/>. Read
+    /// before a taxonomy value is dropped, so the refusal can name the count rather than the
+    /// deletion discovering the orphans afterwards.
+    /// </summary>
+    public int CountUsing(TaxonomyField field, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+
+        var state = Current();
+        lock (_lock)
+        {
+            return state.Entries.Values.Count(entry =>
+                string.Equals(Taxonomy.ValueOf(entry.Manifest, field), value, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// Rewrites every record holding a renamed value, in one write. Returns how many fields
+    /// changed, or null when the write did not reach disk — leaving the live index describing the
+    /// file, as every other write here does.
+    ///
+    /// A rename is not a delete and an add: dropping the value would leave every record holding a
+    /// string no list still names, which is the orphan this exists to prevent.
+    ///
+    /// Every rename is matched against the values as they were read, not against the ones the
+    /// pass has already written. Two values that trade names would otherwise both end up as the
+    /// second one, the first rename having renamed the records the second then matched.
+    /// </summary>
+    public int? RenameValues(IReadOnlyList<TaxonomyRename> renames)
+    {
+        var wanted = renames
+            .Where(r => r.From.Trim().Length > 0 && r.To.Trim().Length > 0)
+            .Where(r => !string.Equals(r.From, r.To, StringComparison.Ordinal))
+            .ToList();
+        if (wanted.Count == 0) return 0;
+
+        var state = Current();
+        lock (_lock)
+        {
+            var candidate = Clone(state);
+            var changed = 0;
+            foreach (var entry in candidate.Entries.Values)
+            {
+                var before = Taxonomy.Fields.ToDictionary(f => f, f => Taxonomy.ValueOf(entry.Manifest, f));
+                foreach (var rename in wanted)
+                {
+                    if (!string.Equals(before[rename.Field], rename.From, StringComparison.OrdinalIgnoreCase)) continue;
+                    Taxonomy.SetValue(entry.Manifest, rename.Field, rename.To);
+                    changed++;
+                }
+            }
+
+            if (changed == 0) return 0;
+            if (!Persist(candidate)) return null;
+            Adopt(state, candidate);
+            return changed;
+        }
+    }
+
     private static State Clone(State state)
     {
         var entries = Empty<ManifestEntry>();

@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
     ShutdownMode="OnMainWindowClose">
     <Application.Resources>
         <ResourceDictionary>
@@ -28,6 +29,77 @@
                     </Setter.Value>
                 </Setter>
             </Style>
+
+            <!-- One metadata chip, shared by the card grid and the Settings list editor's preview.
+                 The triggers key on the palette key the model resolved, never on a metadata value:
+                 a value the reader renames keeps its colour, and a value their lists no longer
+                 hold is drawn as itself and marked rather than mapped onto a list entry. The mark
+                 is a glyph as well as the untinted fill, so the chip does not rely on colour to
+                 say it is unrecognised. -->
+            <DataTemplate DataType="{x:Type models:TaxonomyBadge}">
+                <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0"
+                        ToolTip="{Binding Tip}"
+                        AutomationProperties.Name="{Binding AccessibleName}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Color}" Value="good">
+                                    <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Color}" Value="warn">
+                                    <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Color}" Value="bad">
+                                    <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Color}" Value="private">
+                                    <Setter Property="Background" Value="{DynamicResource StatusPrivateBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Color}" Value="info">
+                                    <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Color}" Value="neutral">
+                                    <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="QuestionCircle24" FontSize="11" Margin="0,0,3,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource StatusWarnFg}"
+                                       Visibility="{Binding OffList, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <TextBlock Text="{Binding Text}" FontSize="10">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Color}" Value="good">
+                                            <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Color}" Value="warn">
+                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Color}" Value="bad">
+                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Color}" Value="private">
+                                            <Setter Property="Foreground" Value="{DynamicResource StatusPrivateFg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Color}" Value="info">
+                                            <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Color}" Value="neutral">
+                                            <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

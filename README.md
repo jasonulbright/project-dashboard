@@ -28,6 +28,7 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Clone** — pick from your GitHub repositories (type-to-filter) or paste any URL; clones into the projects folder you picked as the default. The picker holds your 200 most recently updated repositories and says so when there are more, and a list that could not be read says that rather than showing an empty picker
 - **Sync All** — fetches every clean repo, fast-forwards the ones behind and pushes the ones ahead; dirty, diverged, detached, and conflicted repos are skipped and reported (never a surprise merge)
 - **New Project** — a template picker (empty, documentation, PowerShell script, .NET console app, .NET class library) that names exactly the files it will create, then git init + first commit (metadata stored out-of-source)
+- **Select** — put the grid into multi-select, tick the cards you want, and set one metadata field (type, status, category, or validation schedule) on all of them at once. The selection is only ever what the current filter shows, and the outcome names every project whose write failed rather than reporting a tally
 - **Export** — write the whole inventory to CSV, JSON, or a standalone HTML page
 - **Auto-refresh** — a debounced file watcher updates a card within a couple of seconds of an on-disk edit, commit, or branch switch
 - **Shortcut cheat sheet** — `?` lists every keyboard gesture the app registers
@@ -180,7 +181,7 @@ Per-project metadata that can't be derived from git is stored in the path-keyed 
 }
 ```
 
-| Field | Values |
+| Field | Values shipped by default |
 |---|---|
 | Description | Short one-liner (under 80 chars), shown on cards and detail header |
 | ProjectType | mecm-tool, powershell-script, web-app, game, framework, library, dashboard, unknown |
@@ -190,6 +191,15 @@ Per-project metadata that can't be derived from git is stored in the path-keyed 
 | Notes | Newline-separated entries with prefixes: TASK:, BUG:, WAIT:, PLAN:, INFO: |
 
 > Legacy `project-manifest.json` files at a repo root are auto-imported into the index on first scan, then no longer needed. An index written before `SchemaVersion` — a bare path-to-metadata map — is read as-is and carried up to the shape above by the next write, with every field intact.
+
+#### Your own metadata lists
+
+The four value lists above are defaults, not limits. **Settings → Metadata Lists** edits all four: add a value, rename one, reorder them (order is the order the pickers offer), give one a chip colour, or turn a value's chip off entirely. The lists live in `settings.json`; the per-project values stay in `manifests.json`.
+
+- **Renaming cascades.** Renaming a value also renames it on every project already using it, in one write. It is not a delete and an add — no project is left holding a value the list no longer offers.
+- **A value in use cannot be removed.** The refusal names the count ("still the category of 3 projects"); change those projects first. The dashboard's **Select** mode does that in one action: tick cards, choose a field and a value, and every write is reported — including any that failed, by name and reason.
+- **A value outside your lists still shows.** A hand-edited or imported record can hold anything. Its chip is drawn as it is, marked with a glyph and named as unrecognised rather than quietly swapped for a list entry, and the manifest editor keeps offering it. On first launch after upgrading, any such value already in your index is taken into the matching list.
+- **Colours come from a fixed set** (green, amber, red, violet, blue, grey, or none), each held to a contrast floor against both the light and dark surfaces. A chip always names its value too, so colour is never the only thing carrying the meaning.
 
 #### Metadata follows a repository that moves
 

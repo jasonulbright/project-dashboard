@@ -1,3 +1,5 @@
+using ProjectDashboard.Services;
+
 namespace ProjectDashboard.Models;
 
 /// <summary>A settings write that reached disk: the state before it and the state after.</summary>
@@ -89,6 +91,28 @@ public static class SettingsDelta
     public static bool ViewPreferencesChanged(SettingsChange change) =>
         !string.Equals(change.Previous.CardDensity, change.Current.CardDensity, StringComparison.OrdinalIgnoreCase)
         || !NamesEqual(change.Previous.PinnedProjectPaths, change.Current.PinnedProjectPaths);
+
+    /// <summary>
+    /// The metadata lists. The manifest editor's pickers and every card chip are derived from
+    /// them and held until something says otherwise, so a rename made in Settings reaches an
+    /// already-open page only through here.
+    /// </summary>
+    public static bool TaxonomyChanged(SettingsChange change) =>
+        Taxonomy.Fields.Any(field => !EntriesEqual(
+            Taxonomy.Entries(change.Previous.Taxonomy ?? new TaxonomyConfig(), field),
+            Taxonomy.Entries(change.Current.Taxonomy ?? new TaxonomyConfig(), field)));
+
+    private static bool EntriesEqual(IReadOnlyList<TaxonomyEntry> left, IReadOnlyList<TaxonomyEntry> right)
+    {
+        if (left.Count != right.Count) return false;
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i].Name, right[i].Name, StringComparison.Ordinal)) return false;
+            if (!string.Equals(left[i].Color, right[i].Color, StringComparison.OrdinalIgnoreCase)) return false;
+            if (left[i].ShowOnCard != right[i].ShowOnCard) return false;
+        }
+        return true;
+    }
 
     private static bool PathsEqual(string left, string right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);

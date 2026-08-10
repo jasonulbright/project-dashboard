@@ -296,6 +296,13 @@
                        ToolTip="Save the project inventory as CSV, JSON or an HTML page"
                        AutomationProperties.Name="Export project inventory"
                        Width="92" Margin="0,0,8,0" />
+            <ui:Button Content="{Binding SelectionModeLabel}" FontSize="12" Padding="8,6"
+                       Icon="{ui:SymbolIcon CheckboxChecked24}"
+                       Command="{Binding ToggleSelectionModeCommand}"
+                       ToolTip="Tick several cards and set one metadata field on all of them"
+                       AutomationProperties.AutomationId="DashboardSelectModeButton"
+                       AutomationProperties.Name="{Binding SelectionModeLabel, StringFormat='{}{0} several cards'}"
+                       Width="92" Margin="0,0,8,0" />
             <TextBlock Text="{Binding OpStatusText}"
                        AutomationProperties.LiveSetting="Polite" FontSize="12" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
@@ -335,6 +342,33 @@
                        ToolTip="Switch card density"
                        AutomationProperties.Name="{Binding DensityToggleLabel, StringFormat='Switch cards to {0} density'}"
                        Width="140" />
+
+            <!-- The selection bar. Only ever the cards the current filter shows: a tick on a card
+                 the filter has since dropped is cleared, so the count is what is on screen. -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0"
+                        Visibility="{Binding IsSelectionMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Text="{Binding SelectionSummary}" FontSize="12" VerticalAlignment="Center"
+                           AutomationProperties.AutomationId="DashboardSelectionSummary"
+                           AutomationProperties.LiveSetting="Polite"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <ui:Button Content="All visible" FontSize="12" Padding="8,4" Margin="8,0,0,0"
+                           AutomationProperties.Name="Select every card the current filter shows"
+                           Command="{Binding SelectAllVisibleCommand}" />
+                <ui:Button Content="None" FontSize="12" Padding="8,4" Margin="8,0,0,0"
+                           AutomationProperties.Name="Clear the selection"
+                           IsEnabled="{Binding HasSelection}"
+                           Command="{Binding ClearSelectionCommand}" />
+                <!-- ShowOnDisabled: a disabled control shows no tip by default, which is exactly
+                     when this one has something to say. -->
+                <ui:Button Content="Set metadata…" FontSize="12" Padding="8,4" Margin="8,0,0,0"
+                           Appearance="Primary"
+                           AutomationProperties.AutomationId="DashboardBulkSetButton"
+                           AutomationProperties.Name="Set one metadata field on the selected cards"
+                           ToolTip="Tick at least one card first"
+                           ToolTipService.ShowOnDisabled="True"
+                           IsEnabled="{Binding HasSelection}"
+                           Command="{Binding BulkSetTaxonomyCommand}" />
+            </StackPanel>
 
             <!-- Reload over a rendered grid reports itself here; replacing the body with a
                  spinner would discard the scroll position and the focused card. -->
@@ -778,6 +812,29 @@
                                                ToolTip="{Binding FullPath}"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                                Visibility="{Binding HasLocationHint, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <!-- Shown only in selection mode, and never on a card with no
+                                         working tree: a repository that is not cloned has no path
+                                         to key a metadata record on, so ticking one would put a
+                                         card in the count that the bulk edit could not write. -->
+                                    <CheckBox DockPanel.Dock="Left" Margin="0,0,6,0" VerticalAlignment="Center"
+                                              IsChecked="{Binding IsSelected}"
+                                              AutomationProperties.Name="{Binding DisplayName, StringFormat='Select {0}'}"
+                                              Command="{Binding Tag.SelectionChangedCommand, RelativeSource={RelativeSource AncestorType=helpers:FocusableCard}}">
+                                        <CheckBox.Style>
+                                            <Style TargetType="CheckBox">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding DataContext.IsSelectionMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True" />
+                                                            <Condition Binding="{Binding IsRemoteOnly}" Value="False" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </CheckBox.Style>
+                                    </CheckBox>
                                     <TextBlock Text="{Binding DisplayName}"
                                                FontWeight="Bold" FontSize="14"
                                                TextTrimming="CharacterEllipsis"
@@ -800,42 +857,9 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <Border CornerRadius="4" Padding="6,2">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{DynamicResource StatusGoodBg}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
-                                                        <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
-                                                        <Setter Property="Background" Value="{DynamicResource StatusNeutralBg}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
-                                                        <Setter Property="Background" Value="{DynamicResource StatusPrivateBg}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="{Binding Manifest.Status}" FontSize="10">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{DynamicResource StatusGoodFg}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Manifest.Status}" Value="maintenance">
-                                                            <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Manifest.Status}" Value="archived">
-                                                            <Setter Property="Foreground" Value="{DynamicResource StatusNeutralFg}" />
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Manifest.Status}" Value="experimental">
-                                                            <Setter Property="Foreground" Value="{DynamicResource StatusPrivateFg}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </Border>
+                                    <ContentControl Content="{Binding StatusBadge}"
+                                                    Focusable="False"
+                                                    Visibility="{Binding StatusBadge.Visible, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                 </StackPanel>
 
                                 <!-- Sync status + note prefix icons -->
@@ -1011,44 +1035,15 @@
 
                                 <!-- Category + Type + Validation + Visibility badges -->
                                 <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
-                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                            CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
-                                        <TextBlock Text="{Binding Manifest.Category}" FontSize="10"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    </Border>
-                                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                            CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
-                                        <TextBlock Text="{Binding Manifest.ProjectType}" FontSize="10"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    </Border>
-                                    <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                                <Setter Property="Background" Value="{DynamicResource StatusInfoBg}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="none">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
-                                                        <Setter Property="Background" Value="{DynamicResource StatusBadBg}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="{Binding Manifest.ValidationSchedule}" FontSize="10">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{DynamicResource StatusInfoFg}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Manifest.ValidationSchedule}" Value="daily">
-                                                            <Setter Property="Foreground" Value="{DynamicResource StatusBadFg}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </Border>
+                                    <ContentControl Content="{Binding CategoryBadge}"
+                                                    Focusable="False"
+                                                    Visibility="{Binding CategoryBadge.Visible, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <ContentControl Content="{Binding TypeBadge}"
+                                                    Focusable="False"
+                                                    Visibility="{Binding TypeBadge.Visible, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <ContentControl Content="{Binding ScheduleBadge}"
+                                                    Focusable="False"
+                                                    Visibility="{Binding ScheduleBadge.Visible, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <!-- Visibility badge: GitHub-native glyph + tonal chip -->
                                     <Border CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
                                         <Border.Style>

@@ -184,6 +184,101 @@
                            VerticalAlignment="Center" Margin="12,0,0,0" />
             </StackPanel>
 
+            <!-- Metadata lists: the values the four manifest pickers offer, their order, and the
+                 colour each gives a card chip. Applied as one action — a rename has to reach
+                 every stored record, and a value in use is refused rather than orphaned. -->
+            <TextBlock Text="Metadata Lists" FontSize="16" Margin="0,0,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="These are the values a project's Type, Status, Category and Validation pickers offer, in this order. Renaming a value here also renames it on every project already using it. A value a project still uses cannot be removed — change those projects first, which the dashboard's Select mode can do in one go. A colour is picked from a fixed set so every chip stays readable in both themes; a card also names the value, so colour is never the only thing saying what it is."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+            <ItemsControl ItemsSource="{Binding TaxonomyLists}" Margin="0,0,0,8">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlElevationBorderBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Heading}" FontSize="13"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap"
+                                           Margin="0,2,0,8"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+                                <ItemsControl ItemsSource="{Binding Rows}"
+                                              AutomationProperties.Name="{Binding Heading}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <DockPanel Margin="0,0,0,6">
+                                                <ui:Button DockPanel.Dock="Right" Content="Remove" FontSize="12" Padding="8,4"
+                                                           Margin="4,0,0,0"
+                                                           AutomationProperties.Name="Remove this value"
+                                                           Command="{Binding DataContext.RemoveTaxonomyValueCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           CommandParameter="{Binding}" />
+                                                <ui:Button DockPanel.Dock="Right" Content="Down" FontSize="12" Padding="8,4"
+                                                           Margin="4,0,0,0"
+                                                           IsEnabled="{Binding CanMoveDown}"
+                                                           AutomationProperties.Name="Move this value down"
+                                                           Command="{Binding DataContext.MoveTaxonomyValueDownCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           CommandParameter="{Binding}" />
+                                                <ui:Button DockPanel.Dock="Right" Content="Up" FontSize="12" Padding="8,4"
+                                                           Margin="4,0,0,0"
+                                                           IsEnabled="{Binding CanMoveUp}"
+                                                           AutomationProperties.Name="Move this value up"
+                                                           Command="{Binding DataContext.MoveTaxonomyValueUpCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           CommandParameter="{Binding}" />
+                                                <CheckBox DockPanel.Dock="Right" Content="On cards" FontSize="12"
+                                                          Margin="8,0,0,0" VerticalAlignment="Center"
+                                                          IsChecked="{Binding ShowOnCard}"
+                                                          AutomationProperties.Name="Draw a chip on the card for this value" />
+                                                <ComboBox DockPanel.Dock="Right" Width="120" Margin="8,0,0,0"
+                                                          ItemsSource="{Binding ColorChoices}"
+                                                          DisplayMemberPath="Label"
+                                                          SelectedValuePath="Key"
+                                                          SelectedValue="{Binding Color}"
+                                                          AutomationProperties.Name="Chip colour for this value" />
+                                                <ContentControl DockPanel.Dock="Right" Content="{Binding Preview}"
+                                                                Focusable="False" VerticalAlignment="Center"
+                                                                Margin="8,0,0,0" />
+                                                <ui:TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                                            AutomationProperties.Name="Value name"
+                                                            PlaceholderText="Name" />
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <ui:Button Content="Add a value" FontSize="12" Padding="8,4"
+                                           HorizontalAlignment="Left" Margin="0,4,0,0"
+                                           Icon="{ui:SymbolIcon Add24}"
+                                           AutomationProperties.Name="{Binding Heading, StringFormat='Add a value to {0}'}"
+                                           Command="{Binding DataContext.AddTaxonomyValueCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                           CommandParameter="{Binding}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <ui:Button Content="Apply metadata lists"
+                           Appearance="Primary"
+                           Icon="{ui:SymbolIcon Save24}"
+                           AutomationProperties.AutomationId="SettingsTaxonomyApply"
+                           AutomationProperties.Name="Apply the metadata lists"
+                           Command="{Binding SaveTaxonomyCommand}" />
+                <ui:Button Content="Discard changes" FontSize="12" Padding="8,4" Margin="8,0,0,0"
+                           AutomationProperties.Name="Discard the unapplied list edits"
+                           Command="{Binding ResetTaxonomyCommand}" />
+                <TextBlock Text="{Binding TaxonomyStatus}"
+                           AutomationProperties.AutomationId="SettingsTaxonomyStatus"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
+                           MaxWidth="400"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+            </StackPanel>
+
             <!-- Refresh Interval -->
             <TextBlock Text="Refresh Interval (seconds)" FontSize="16" Margin="0,0,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />

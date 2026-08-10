@@ -68,6 +68,7 @@ public partial class SettingsViewModel : ObservableObject
         var settings = _settingsService.Load();
         LoadRoots(settings);
         LoadMetadata();
+        LoadTaxonomy(settings);
         LoadBackupSettings(settings);
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         GhPath = settings.GhPath;

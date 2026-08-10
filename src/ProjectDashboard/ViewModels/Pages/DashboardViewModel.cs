@@ -1947,6 +1947,8 @@ public partial class DashboardViewModel : ObservableObject
             ApplyFilters();
         }
 
+        if (SettingsDelta.TaxonomyChanged(change)) ApplyTaxonomyBadges();
+
         if (SettingsDelta.RediscoveryRequired(change))
         {
             // The excluded set and the root are both inputs to the hidden count, and a
@@ -2245,7 +2247,12 @@ public partial class DashboardViewModel : ObservableObject
             await LoadProjectsCommand.ExecuteAsync(null);
     }
 
-    private void UpdateProjectList(List<ProjectInfo> results)
+    /// <summary>
+    /// Adopts a scan's results: the ordering preferences, the chips, the category filter's items,
+    /// and the visible set are all re-derived here. Internal so a test can seed the grid the way
+    /// a scan does rather than assigning the list and leaving every derived surface unbuilt.
+    /// </summary>
+    internal void UpdateProjectList(List<ProjectInfo> results)
     {
         Projects = new ObservableCollection<ProjectInfo>(results);
 
@@ -2258,8 +2265,23 @@ public partial class DashboardViewModel : ObservableObject
         // and cached ProjectInfo carries whatever IsPinned was serialized with.
         ReloadViewPreferences();
         ApplyPinnedFlags();
+        ApplyTaxonomyBadges();
+        RefreshCategoryChoices();
 
-        var cats = results
+        ApplyFilters();
+        NotifySummary();
+    }
+
+    /// <summary>
+    /// The category filter's items. Built from the values the projects actually hold rather than
+    /// from the reader's list: a filter offering a category nothing carries matches no card, and
+    /// one that omitted a stored-but-unlisted value would hide those cards from filtering
+    /// entirely.
+    /// </summary>
+    private void RefreshCategoryChoices()
+    {
+        var chosen = SelectedCategory;
+        var cats = Projects
             .Select(p => p.Manifest.Category)
             .Where(c => !string.IsNullOrWhiteSpace(c))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2267,9 +2289,9 @@ public partial class DashboardViewModel : ObservableObject
             .ToList();
 
         Categories = new ObservableCollection<string>(["All", .. cats]);
-
-        ApplyFilters();
-        NotifySummary();
+        // Re-selected rather than left to the collection swap, which clears it: a bulk edit that
+        // emptied the category being filtered on would otherwise silently widen the grid.
+        SelectedCategory = Categories.Contains(chosen, StringComparer.OrdinalIgnoreCase) ? chosen : "All";
     }
 
     /// <summary>Raise change notification for every summary-count property in one place.</summary>
@@ -2338,6 +2360,7 @@ public partial class DashboardViewModel : ObservableObject
         }
 
         SetDisplayedProjects(DashboardOrdering.Apply(filtered, SelectedSort, _pinnedKeys));
+        DropSelectionOutsideView();
         NotifyContentState();
     }
 }

@@ -17,6 +17,19 @@ public sealed class AppSettings
     /// <summary>Which root a new project or a clone lands in. Empty until a root exists.</summary>
     public string DefaultRootPath { get; set; } = "";
 
+    /// <summary>
+    /// Which one-time migrations this file has already been through. Zero is every file written
+    /// before the number existed, and is what makes a migration that reads other stores — the
+    /// taxonomy union over the manifest index — run once rather than on every load.
+    /// </summary>
+    public int SettingsSchemaVersion { get; set; }
+
+    /// <summary>
+    /// The allowed values behind the four manifest fields. Null in a file written before they
+    /// became editable; seeded in memory on first read from the lists that were compiled in.
+    /// </summary>
+    public TaxonomyConfig? Taxonomy { get; set; }
+
     public int RefreshIntervalSeconds { get; set; } = 7200;
     public string Theme { get; set; } = "Dark";
 

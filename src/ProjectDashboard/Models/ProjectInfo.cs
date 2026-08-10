@@ -48,6 +48,19 @@ public partial class ProjectInfo : ObservableObject
     /// </summary>
     [ObservableProperty] private bool _isPinned;
 
+    /// <summary>Ticked in the grid's selection mode. Never persisted — a selection is one action long.</summary>
+    [ObservableProperty] private bool _isSelected;
+
+    /// <summary>
+    /// What the card draws for each metadata field, resolved against the reader's lists rather
+    /// than matched in markup against literal values: a renamed value would stop matching a
+    /// literal without anything reporting that the chip had gone plain.
+    /// </summary>
+    [ObservableProperty] private TaxonomyBadge _statusBadge = TaxonomyBadge.Hidden;
+    [ObservableProperty] private TaxonomyBadge _categoryBadge = TaxonomyBadge.Hidden;
+    [ObservableProperty] private TaxonomyBadge _typeBadge = TaxonomyBadge.Hidden;
+    [ObservableProperty] private TaxonomyBadge _scheduleBadge = TaxonomyBadge.Hidden;
+
     /// <summary>True for a GitHub repo that isn't cloned locally (a "Cloud" card — no git status, offers Clone).</summary>
     public bool IsRemoteOnly { get; set; }
     /// <summary>owner/repo for a remote-only entry (drives Clone + browser links).</summary>

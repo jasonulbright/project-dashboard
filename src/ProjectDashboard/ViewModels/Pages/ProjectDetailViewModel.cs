@@ -28,11 +28,6 @@ public partial class ProjectDetailViewModel : ObservableObject
     [ObservableProperty] private bool _isEditingNotes;
     [ObservableProperty] private ObservableCollection<NoteLine> _noteLines = [];
 
-    public static List<string> ProjectTypes { get; } = ["mecm-tool", "powershell-script", "web-app", "game", "framework", "library", "dashboard", "unknown"];
-    public static List<string> Statuses { get; } = ["active", "maintenance", "archived", "experimental"];
-    public static List<string> CategoriesList { get; } = ["MECM", "Web", "Games", "Infrastructure", "Utilities", "Uncategorized"];
-    public static List<string> Schedules { get; } = ["none", "daily", "weekly", "monthly"];
-
     public IAsyncRelayCommand SaveManifestCommand { get; }
     public IAsyncRelayCommand LoadDetailsCommand { get; }
     public IRelayCommand<GitCommit> OpenCommitCommand { get; }
@@ -82,7 +77,12 @@ public partial class ProjectDetailViewModel : ObservableObject
         // The page outlives every settings write, so the layout is re-derived from the one
         // notification path rather than read once here and held until relaunch.
         RefreshDiffLayout();
-        if (_settingsService is not null) _settingsService.Changed += OnSettingsChangedForDiffLayout;
+        RefreshTaxonomyChoices();
+        if (_settingsService is not null)
+        {
+            _settingsService.Changed += OnSettingsChangedForDiffLayout;
+            _settingsService.Changed += OnSettingsChangedForTaxonomy;
+        }
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);
@@ -432,6 +432,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedStatus = p.Manifest.Status;
         SelectedCategory = p.Manifest.Category;
         ValidationSchedule = p.Manifest.ValidationSchedule;
+        RefreshTaxonomyChoices();
         // A reload of the project already open re-reads the stored notes. While the editor is
         // open it holds text nothing has written yet, and the stored value is what that text is
         // replacing. A switch closes the editor first, so the incoming project still re-reads.

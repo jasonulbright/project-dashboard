@@ -61,6 +61,7 @@ public class SettingsService
     private static AppSettings Migrated(AppSettings settings)
     {
         ProjectRootSettings.Migrate(settings);
+        Taxonomy.EnsureSeeded(settings);
         return settings;
     }
 
