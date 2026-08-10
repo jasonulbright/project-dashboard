@@ -175,6 +175,60 @@ public class HealthSurfaceTests
         Assert.Equal(HealthState.NotRun, Row(vm, HealthCheckId.Strict).State);
     }
 
+    /// <summary>
+    /// A lease taken while the check is reading means the object store was written under it, so the
+    /// reading describes a store in motion and establishes nothing. Reported as unmeasured rather
+    /// than as the verdict the walk happened to produce.
+    /// </summary>
+    [Fact]
+    public async Task ARepositoryThatBecomesBusyMidCheck_ReportsUnmeasuredRatherThanAVerdict()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("health-disturbed");
+        var git = new BlockingFsckGitService();
+        var busy = new RepoBusyRegistry();
+        var vm = await OpenedOn(repo.Path, git, busy);
+        await vm.LoadHealthCommand.ExecuteAsync(null);
+
+        var running = vm.RunHealthRowActionCommand.ExecuteAsync(Row(vm, HealthCheckId.Connectivity));
+        await git.Started;
+        using (busy.Acquire(repo.Path)) { }
+        git.Release();
+        await running;
+
+        var row = Row(vm, HealthCheckId.Connectivity);
+        Assert.Equal(HealthState.Unknown, row.State);
+        Assert.Contains("while the check was in progress", row.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The busy watch is subscribed BEFORE the busy test, never after. Testing first leaves a lease
+    /// taken between the test and the subscription observed by neither, and the check then reports a
+    /// verdict about a store being written.
+    ///
+    /// Asserted on the source rather than by interleaving: the window is a few instructions wide and
+    /// nothing in the registry can be made to acquire inside it on demand, so a runtime test would
+    /// pass under either ordering. The consequence of the watch being live is covered by
+    /// <see cref="ARepositoryThatBecomesBusyMidCheck_ReportsUnmeasuredRatherThanAVerdict"/>.
+    /// </summary>
+    [Fact]
+    public void TheBusyWatch_IsSubscribedBeforeTheBusyTest()
+    {
+        var source = RepoSource.Read("src/ProjectDashboard/ViewModels/Pages/ProjectDetailViewModel.Health.cs");
+
+        // Scoped to the deep-check method: the quick tier has a busy test of its own, earlier in
+        // the file, and it takes no watch.
+        var method = source.IndexOf("private async Task RunDeepHealthCheckAsync", StringComparison.Ordinal);
+        Assert.True(method > 0, "the deep-check method moved");
+
+        var subscribe = source.IndexOf("_busyRegistry.Changed += OnBusyChanged;", method, StringComparison.Ordinal);
+        var test = source.IndexOf("if (_busyRegistry.IsBusy(repo))", method, StringComparison.Ordinal);
+
+        Assert.True(subscribe > 0, "the busy watch subscription moved");
+        Assert.True(test > 0, "the deep-check busy test moved");
+        Assert.True(subscribe < test,
+            "the busy watch must be subscribed before the busy test, or a lease taken between them is lost");
+    }
+
     // ── Cancellation ────────────────────────────────────────────────────────
 
     /// <summary>

@@ -289,12 +289,6 @@ public partial class ProjectDetailViewModel
             HealthStatusText = SafetyCopy.CheckAlreadyRunningRefusal;
             return;
         }
-        if (_busyRegistry.IsBusy(repo))
-        {
-            HealthStatusText = SafetyCopy.RepoBusyRefusal;
-            return;
-        }
-
         // A repository that becomes busy mid-check has its object store written under the reading,
         // so the answer describes a store in motion. Watched rather than re-tested at the end: an
         // operation that started and finished inside the window would leave no trace to test for.
@@ -305,10 +299,21 @@ public partial class ProjectDetailViewModel
                 Interlocked.Exchange(ref disturbed, 1);
         }
 
+        // Subscribed BEFORE the busy test, never after. Testing first would leave a lease taken
+        // between the test and the subscription observed by neither, and the check would report a
+        // verdict about a store being written. Subscribed first, that lease either fails the test
+        // below or trips the watch, so no ordering of the two loses it.
+        _busyRegistry.Changed += OnBusyChanged;
+        if (_busyRegistry.IsBusy(repo))
+        {
+            _busyRegistry.Changed -= OnBusyChanged;
+            HealthStatusText = SafetyCopy.RepoBusyRefusal;
+            return;
+        }
+
         _healthCts = new CancellationTokenSource();
         HealthCheckRunning = true;
         HealthStatusText = $"{TitleFor(id)}… this runs until it finishes or you cancel it.";
-        _busyRegistry.Changed += OnBusyChanged;
         try
         {
             var ct = _healthCts.Token;
