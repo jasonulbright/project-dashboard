@@ -510,6 +510,7 @@ public partial class ProjectDetailViewModel
         HandleHunkPropertyChanged(e);
         HandleHistoryDepthPropertyChanged(e);
         HandleGitHubListDepthPropertyChanged(e);
+        HandleWorkflowRunDepthPropertyChanged(e);
     }
 
     // ── Step flags ──────────────────────────────────────────────────────────────

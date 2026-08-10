@@ -156,7 +156,7 @@ public class GitHubSmokeTests(ITestOutputHelper output)
             var deadline = DateTimeOffset.Now.AddSeconds(240);
             while (DateTimeOffset.Now < deadline)
             {
-                var runs = await svc.GetWorkflowRunsAsync(slug);
+                var runs = (await svc.GetWorkflowRunPageAsync(slug, new GitHubService.WorkflowRunQuery())).Page?.Items;
                 passRun = runs?.FirstOrDefault(r => r.Name == "smoke-pass" && r.Status == "completed");
                 failRun = runs?.FirstOrDefault(r => r.Name == "smoke-fail" && r.Status == "completed");
                 if (passRun is not null && failRun is not null) break;
@@ -190,7 +190,8 @@ public class GitHubSmokeTests(ITestOutputHelper output)
             var cancelDeadline = DateTimeOffset.Now.AddSeconds(90);
             while (DateTimeOffset.Now < cancelDeadline)
             {
-                var runs = await svc.GetWorkflowRunsAsync(slug, limit: 10);
+                var runs = (await svc.GetWorkflowRunPageAsync(slug, new GitHubService.WorkflowRunQuery(Limit: 10)))
+                    .Page?.Items;
                 var current = runs?.FirstOrDefault(r => r.Id == failRun.Id);
                 if (current is not null && current.Status != "completed")
                 {

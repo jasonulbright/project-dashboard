@@ -24,6 +24,22 @@ public enum GitHubListState
     All,
 }
 
+/// <summary>
+/// Workflow-run status the UI offers; maps to the exact gh flag token. The members are named for
+/// what a reader filtering runs asks for rather than for GitHub's own spelling of it, so the
+/// picker binds the enum directly and the token stays the API's.
+/// </summary>
+public enum WorkflowRunStatus
+{
+    Any,
+    Queued,
+    Running,
+    Completed,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
 /// <summary>Repository visibility the UI offers; maps to the exact gh flag token.</summary>
 public enum RepoVisibility
 {
@@ -74,6 +90,38 @@ public static class GitHubActionTokens
         "open" => GitHubListState.Open,
         "closed" => GitHubListState.Closed,
         _ => GitHubListState.All,
+    };
+
+    /// <summary>
+    /// The gh status token, or null for the row that filters nothing — which is a selection the
+    /// picker offers rather than a token gh has, so the flag is left off the read entirely.
+    /// </summary>
+    public static string? Token(this WorkflowRunStatus status) => status switch
+    {
+        WorkflowRunStatus.Any => null,
+        WorkflowRunStatus.Queued => "queued",
+        WorkflowRunStatus.Running => "in_progress",
+        WorkflowRunStatus.Completed => "completed",
+        WorkflowRunStatus.Succeeded => "success",
+        WorkflowRunStatus.Failed => "failure",
+        WorkflowRunStatus.Cancelled => "cancelled",
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
+
+    /// <summary>
+    /// The status a read was made under, back from the token it carried, on the same terms as
+    /// <see cref="ParseListState"/>. An unrecognized token is the unfiltered row: a surface names
+    /// the facets it can account for and claims no filter it cannot.
+    /// </summary>
+    public static WorkflowRunStatus ParseRunStatus(string? token) => token switch
+    {
+        "queued" => WorkflowRunStatus.Queued,
+        "in_progress" => WorkflowRunStatus.Running,
+        "completed" => WorkflowRunStatus.Completed,
+        "success" => WorkflowRunStatus.Succeeded,
+        "failure" => WorkflowRunStatus.Failed,
+        "cancelled" => WorkflowRunStatus.Cancelled,
+        _ => WorkflowRunStatus.Any,
     };
 
     public static string Token(this MergeStrategy strategy) => strategy switch

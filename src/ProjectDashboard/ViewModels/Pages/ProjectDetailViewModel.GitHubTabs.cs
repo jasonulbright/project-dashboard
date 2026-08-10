@@ -97,6 +97,7 @@ public partial class ProjectDetailViewModel
         WorkflowJobsLoading = false;
         WorkflowJobsError = "";
         RerunFailedJobsOnly = false;
+        ResetWorkflowRunDepth();
 
         Releases = [];
         ReleasesLoaded = false;
@@ -148,8 +149,14 @@ public partial class ProjectDetailViewModel
 
     // ── Remote reads (overridable so the surfaces are drivable without gh) ───────
 
-    internal virtual Task<List<WorkflowRun>?> FetchWorkflowRunsAsync(string slug)
-        => _gitHubService.GetWorkflowRunsAsync(slug);
+    /// <summary>
+    /// The run list the Actions tab stands on. Null page is a failed read, never rendered as a
+    /// repository with no runs, and the page carries whether the window it filled may have runs
+    /// behind it. Overridable on the same terms as the other remote reads.
+    /// </summary>
+    internal virtual Task<GitHubService.ListRead<GitHubService.WorkflowRunPage>> FetchWorkflowRunPageAsync(
+        string slug, GitHubService.WorkflowRunQuery query)
+        => _gitHubService.GetWorkflowRunPageAsync(slug, query);
 
     internal virtual Task<List<WorkflowJob>?> FetchWorkflowJobsAsync(string slug, long runId)
         => _gitHubService.GetWorkflowRunJobsAsync(slug, runId);
@@ -208,32 +215,17 @@ public partial class ProjectDetailViewModel
 
     // ── Actions tab ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Re-reads the run list at the depth and facets it is already showing, so a refresh — and the
+    /// reload a re-run or a cancel ends with — does not undo the window the reader paged into.
+    /// A failed read leaves the tab unloaded: marked loaded, the next visit skips its own load and
+    /// an empty list reads as "this repository has no runs".
+    /// </summary>
     [RelayCommand]
-    private async Task LoadWorkflowRuns()
+    private Task LoadWorkflowRuns()
     {
-        var slug = Slug;
-        if (slug.Length == 0)
-        {
-            WorkflowRunsError = NoRemoteStatus;
-            return;
-        }
-        var gen = _generation;
-        var runs = await FetchWorkflowRunsAsync(slug);
-        if (!IsCurrent(gen)) return;
-        if (runs is null)
-        {
-            // A failed fetch leaves the tab unloaded: marked loaded, the next visit skips
-            // its own load and an empty list reads as "this repository has no runs".
-            WorkflowRunsError = "Couldn't load workflow runs. Check that the GitHub CLI is installed and signed in.";
-            return;
-        }
-        WorkflowRunsError = "";
-        var keepId = SelectedWorkflowRun?.Id;
-        WorkflowRuns = new ObservableCollection<WorkflowRun>(runs);
-        WorkflowRunsLoaded = true;
-        // Rebuilt list, new instances: without this a refresh blanks the jobs pane.
-        if (keepId is { } id)
-            SelectedWorkflowRun = WorkflowRuns.FirstOrDefault(r => r.Id == id);
+        WorkflowRunsPageLoad = LoadWorkflowRunPageAsync(_workflowRunsWindowSize);
+        return WorkflowRunsPageLoad;
     }
 
     partial void OnSelectedWorkflowRunChanged(WorkflowRun? value)

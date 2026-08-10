@@ -200,6 +200,20 @@ public sealed record ForkDivergence(int Ahead, int Behind)
     public bool InSync => Ahead == 0 && Behind == 0;
 }
 
+/// <summary>
+/// One row of the workflow picker on the Actions tab. The unfiltered row is a choice of its own
+/// rather than a null selection, on the same terms as <see cref="MilestoneChoice"/>, and it is
+/// distinguished by <see cref="Name"/> rather than by its label — a workflow actually called
+/// "Any workflow" would otherwise select every run instead of its own.
+/// </summary>
+public sealed record WorkflowChoice(string? Name)
+{
+    /// <summary>The row that filters to no particular workflow.</summary>
+    public static WorkflowChoice Any { get; } = new((string?)null);
+
+    public string Label => Name ?? "Any workflow";
+}
+
 /// <summary>One issue/PR label defined on a repo.</summary>
 public sealed class Label
 {

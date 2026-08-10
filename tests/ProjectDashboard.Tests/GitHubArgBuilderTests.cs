@@ -289,6 +289,83 @@ public class GitHubArgBuilderTests
         Assert.DoesNotContain("--limit", args);
     }
 
+    private static List<string> RunArgs(GitHubService.WorkflowRunQuery query) =>
+        GitHubService.BuildWorkflowRunListArgs("o/r", query);
+
+    [Fact]
+    public void WorkflowRuns_UnfilteredReadCarriesTheWindowAndNoFacet()
+    {
+        Assert.Equal(
+            ["run", "list", "--repo", "o/r",
+             "--json", "databaseId,workflowName,displayTitle,headBranch,event,status,conclusion,startedAt,updatedAt,url",
+             "--limit", "30"],
+            RunArgs(new GitHubService.WorkflowRunQuery()));
+    }
+
+    [Theory]
+    [InlineData(30)]
+    [InlineData(60)]
+    [InlineData(300)]
+    public void WorkflowRuns_TheWindowIsTheDepthAsked(int window)
+        => Assert.Equal(["--limit", window.ToString()],
+            RunArgs(new GitHubService.WorkflowRunQuery(Limit: window))[^2..]);
+
+    [Fact]
+    public void WorkflowRuns_EveryFacetGoesToGh()
+    {
+        Assert.Equal(
+            ["--workflow", "Build & test", "--branch", "release/1.x", "--status", "failure"],
+            RunArgs(new GitHubService.WorkflowRunQuery("Build & test", "release/1.x", "failure"))[^6..]);
+    }
+
+    /// <summary>
+    /// gh reads an empty --workflow as a workflow named "", which matches no run — a filter nobody
+    /// set would report an unfiltered repository as one with no runs at all.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void WorkflowRuns_AFacetWithNothingInIt_AddsNoFlag(string? blank)
+    {
+        var args = RunArgs(new GitHubService.WorkflowRunQuery(blank, blank, blank));
+
+        Assert.DoesNotContain("--workflow", args);
+        Assert.DoesNotContain("--branch", args);
+        Assert.DoesNotContain("--status", args);
+    }
+
+    [Fact]
+    public void WorkflowRuns_FacetTextTravelsTrimmedAndVerbatim()
+        => Assert.Equal(["--workflow", "Nightly (slow)"],
+            RunArgs(new GitHubService.WorkflowRunQuery("  Nightly (slow)  "))[^2..]);
+
+    /// <summary>The picker binds the enum, so only tokens gh's --status documents can reach it.</summary>
+    [Theory]
+    [InlineData(WorkflowRunStatus.Any, null)]
+    [InlineData(WorkflowRunStatus.Queued, "queued")]
+    [InlineData(WorkflowRunStatus.Running, "in_progress")]
+    [InlineData(WorkflowRunStatus.Completed, "completed")]
+    [InlineData(WorkflowRunStatus.Succeeded, "success")]
+    [InlineData(WorkflowRunStatus.Failed, "failure")]
+    [InlineData(WorkflowRunStatus.Cancelled, "cancelled")]
+    public void WorkflowRunStatus_MapsToTheExactGhToken(WorkflowRunStatus status, string? token)
+    {
+        Assert.Equal(token, status.Token());
+        if (token is not null) Assert.Equal(status, GitHubActionTokens.ParseRunStatus(token));
+    }
+
+    /// <summary>
+    /// A token this app does not map is the unfiltered row: a surface names the facets it can
+    /// account for and claims no filter it cannot.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("startup_failure")]
+    public void WorkflowRunStatus_AnUnmappedToken_ReadsAsNoFilter(string? token)
+        => Assert.Equal(WorkflowRunStatus.Any, GitHubActionTokens.ParseRunStatus(token));
+
     [Fact]
     public void MarkNotificationRead_PatchesTheThread()
     {

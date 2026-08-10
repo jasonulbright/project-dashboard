@@ -629,20 +629,57 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
-    /// <summary>Latest workflow runs, newest first. Null = fetch failed.</summary>
-    public async Task<List<WorkflowRun>?> GetWorkflowRunsAsync(string repoSlug, int limit = 30, CancellationToken ct = default)
+    /// <summary>
+    /// The server-side facets one workflow-run list read carries. Each goes to gh rather than
+    /// being applied to what came back: a facet applied here would answer from whichever runs the
+    /// window happened to hold and report that as the repository's history.
+    /// </summary>
+    public sealed record WorkflowRunQuery(string? Workflow = null, string? Branch = null,
+        string? Status = null, int Limit = 30);
+
+    /// <summary>One read of the workflow-run list, on the same terms as <see cref="IssuePage"/>.</summary>
+    public sealed record WorkflowRunPage(IReadOnlyList<WorkflowRun> Items, bool MayHaveMore, int Limit);
+
+    /// <summary>
+    /// The repository's workflow runs under <paramref name="query"/>, newest first. Null page = the
+    /// read failed; an empty page is an answer, and the two are never the same value.
+    /// </summary>
+    public async Task<ListRead<WorkflowRunPage>> GetWorkflowRunPageAsync(string repoSlug,
+        WorkflowRunQuery query, CancellationToken ct = default)
     {
-        var run = await RunAsync(
-            ["run", "list", "--repo", repoSlug, "--limit", limit.ToString(),
-             "--json", "databaseId,workflowName,displayTitle,headBranch,event,status,conclusion,startedAt,updatedAt,url"],
-            ct, ReadTimeout);
+        var run = await RunAsync(BuildWorkflowRunListArgs(repoSlug, query), ct, ReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh run list failed for {repoSlug}: {run.FirstError}");
-            return null;
+            return new ListRead<WorkflowRunPage>(null, FailureText(run));
         }
-        return ParseWorkflowRuns(run.StdOut);
+        var runs = ParseWorkflowRuns(run.StdOut);
+        return new ListRead<WorkflowRunPage>(
+            runs is null ? null : new WorkflowRunPage(runs, PageMayHaveMore(runs.Count, query.Limit), query.Limit),
+            runs is null ? UnreadableResponse : "");
     }
+
+    /// <summary>
+    /// The workflow-run list's argument vector. A facet with no value set adds no flag: gh reads
+    /// an empty <c>--workflow</c> as a workflow named "", which matches no run and would report an
+    /// unfiltered repository as an empty one.
+    /// </summary>
+    internal static List<string> BuildWorkflowRunListArgs(string repoSlug, WorkflowRunQuery query)
+    {
+        var args = new List<string>
+        {
+            "run", "list", "--repo", repoSlug,
+            "--json", "databaseId,workflowName,displayTitle,headBranch,event,status,conclusion,startedAt,updatedAt,url",
+            "--limit", query.Limit.ToString()
+        };
+        if (Facet(query.Workflow) is { } workflow) args.AddRange(["--workflow", workflow]);
+        if (Facet(query.Branch) is { } branch) args.AddRange(["--branch", branch]);
+        if (Facet(query.Status) is { } status) args.AddRange(["--status", status]);
+        return args;
+    }
+
+    private static string? Facet(string? value) =>
+        value is null || value.Trim().Length == 0 ? null : value.Trim();
 
     internal static List<WorkflowRun>? ParseWorkflowRuns(string json)
     {

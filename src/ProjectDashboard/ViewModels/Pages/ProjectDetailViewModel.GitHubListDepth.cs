@@ -348,7 +348,7 @@ public partial class ProjectDetailViewModel
     /// the case where a preserved scroll offset would point at rows it no longer describes.
     /// </summary>
     private static ObservableCollection<T> MergeRows<T>(ObservableCollection<T> shown, IReadOnlyList<T> rows,
-        Func<T, int> number, Func<T, T, bool> unchanged)
+        Func<T, long> number, Func<T, T, bool> unchanged)
     {
         if (shown.Count == 0 || rows.Count < shown.Count) return new ObservableCollection<T>(rows);
         for (var i = 0; i < shown.Count; i++)

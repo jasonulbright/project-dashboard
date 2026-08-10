@@ -1185,10 +1185,12 @@ public class ProjectDetailViewModelGitHubTabsTests
 
         internal override bool ReadDangerZoneEnabled() => DangerZone;
 
-        internal override Task<List<WorkflowRun>?> FetchWorkflowRunsAsync(string slug)
+        internal override Task<GitHubService.ListRead<GitHubService.WorkflowRunPage>> FetchWorkflowRunPageAsync(
+            string slug, GitHubService.WorkflowRunQuery query)
         {
             RunFetches++;
-            return Task.FromResult(Runs);
+            return Task.FromResult(new GitHubService.ListRead<GitHubService.WorkflowRunPage>(
+                Runs is null ? null : new GitHubService.WorkflowRunPage(Runs, false, query.Limit), ""));
         }
 
         internal override Task<List<WorkflowJob>?> FetchWorkflowJobsAsync(string slug, long runId)

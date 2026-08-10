@@ -15,6 +15,7 @@ public class GitHubListDepthMarkupTests
     [Theory]
     [InlineData("IssuesFooterText")]
     [InlineData("PullRequestsFooterText")]
+    [InlineData("WorkflowRunsFooterText")]
     public void EachListDisclosesItsOwnDepth(string footer)
         => Assert.Contains($"{{Binding {footer}}}", Markup);
 
@@ -22,6 +23,7 @@ public class GitHubListDepthMarkupTests
     [Theory]
     [InlineData("IssuesFooterText")]
     [InlineData("PullRequestsFooterText")]
+    [InlineData("WorkflowRunsFooterText")]
     public void EachFooter_IsAnnouncedWhenItChanges(string footer)
     {
         var block = Regex.Match(Markup, @"<TextBlock Text=""\{Binding " + footer + @"\}""[^>]*?/>",
@@ -32,10 +34,13 @@ public class GitHubListDepthMarkupTests
     }
 
     [Theory]
-    [InlineData("LoadMoreIssuesCommand", "IssuesHasMore", "Load more issues")]
-    [InlineData("LoadMorePullRequestsCommand", "PullRequestsHasMore", "Load more pull requests")]
+    [InlineData("LoadMoreIssuesCommand", "IssuesHasMore", "Load more issues", "GitHubListLoadMoreLabel")]
+    [InlineData("LoadMorePullRequestsCommand", "PullRequestsHasMore", "Load more pull requests",
+        "GitHubListLoadMoreLabel")]
+    [InlineData("LoadMoreWorkflowRunsCommand", "WorkflowRunsHasMore", "Load more workflow runs",
+        "WorkflowRunLoadMoreLabel")]
     public void EachLoadMore_HasANamedButtonOfferedOnlyWhileMoreMayExist(
-        string command, string hasMore, string name)
+        string command, string hasMore, string name, string label)
     {
         var button = Regex.Match(Markup, @"<ui:Button[^>]*?\{Binding " + command + @"\}[^>]*?/>",
             RegexOptions.Singleline);
@@ -44,21 +49,40 @@ public class GitHubListDepthMarkupTests
         Assert.Contains($"{{Binding {hasMore}, Converter={{StaticResource BooleanToVisibilityConverter}}}}",
             button.Value);
         Assert.Contains($@"AutomationProperties.Name=""{name}""", button.Value);
-        Assert.Contains("{x:Static local:ProjectDetailViewModel.GitHubListLoadMoreLabel}", button.Value);
+        // The count in the label and the window the click asks for come from one place.
+        Assert.Contains($"{{x:Static local:ProjectDetailViewModel.{label}}}", button.Value);
     }
 
     [Theory]
-    [InlineData("IssuesState", "Issue state filter")]
-    [InlineData("PullRequestsState", "Pull request state filter")]
-    public void EachStateFilter_IsAnEnumPickerWithAName(string binding, string name)
+    [InlineData("IssuesState", "GitHubListStates", "Issue state filter")]
+    [InlineData("PullRequestsState", "GitHubListStates", "Pull request state filter")]
+    [InlineData("SelectedWorkflowRunStatus", "WorkflowRunStatuses", "Workflow run status filter")]
+    public void EachEnumFilter_IsAnEnumPickerWithAName(string binding, string source, string name)
     {
         var picker = Regex.Match(Markup, @"<ComboBox[^>]*?SelectedItem=""\{Binding " + binding + @"\}""[^>]*?/>",
             RegexOptions.Singleline);
 
-        Assert.True(picker.Success, $"no state picker bound to {binding}");
+        Assert.True(picker.Success, $"no picker bound to {binding}");
         // Enum-bound, so the token that reaches gh is one the builder maps and never typed text.
-        Assert.Contains("{x:Static local:ProjectDetailViewModel.GitHubListStates}", picker.Value);
+        Assert.Contains($"{{x:Static local:ProjectDetailViewModel.{source}}}", picker.Value);
         Assert.Contains($@"AutomationProperties.Name=""{name}""", picker.Value);
+    }
+
+    /// <summary>
+    /// The workflow picker's rows are the loaded runs' workflows, so it binds a choice row rather
+    /// than an enum — and the row that filters to none is one of them, since a combo box with
+    /// nothing selected reads as a picker that failed to load.
+    /// </summary>
+    [Fact]
+    public void TheWorkflowFilter_IsAChoicePickerWithAName()
+    {
+        var picker = Regex.Match(Markup,
+            @"<ComboBox[^>]*?SelectedItem=""\{Binding SelectedWorkflow\}""[^>]*?/>", RegexOptions.Singleline);
+
+        Assert.True(picker.Success, "no picker bound to SelectedWorkflow");
+        Assert.Contains("{Binding WorkflowChoices}", picker.Value);
+        Assert.Contains(@"DisplayMemberPath=""Label""", picker.Value);
+        Assert.Contains(@"AutomationProperties.Name=""Workflow run workflow filter""", picker.Value);
     }
 
     /// <summary>
@@ -68,6 +92,7 @@ public class GitHubListDepthMarkupTests
     [Theory]
     [InlineData("IssuesSearchText", "ApplyIssueFiltersCommand")]
     [InlineData("PullRequestsSearchText", "ApplyPullRequestFiltersCommand")]
+    [InlineData("WorkflowRunsBranchText", "ApplyWorkflowRunFiltersCommand")]
     public void EachSearchBox_AppliesOnEnterAndOnItsButton(string binding, string command)
     {
         var box = Regex.Match(Markup,
@@ -93,19 +118,22 @@ public class GitHubListDepthMarkupTests
     [Theory]
     [InlineData("IssuesEmptyText")]
     [InlineData("PullRequestsEmptyText")]
+    [InlineData("WorkflowRunsEmptyText")]
     public void EachEmptyState_ComesFromTheViewModelThatKnowsTheFacets(string binding)
         => Assert.Contains($"{{Binding {binding}}}", Markup);
 
     [Fact]
-    public void TheHardcodedOpenOnlyEmptyStates_AreGone()
+    public void TheHardcodedUnfilteredEmptyStates_AreGone()
     {
         Assert.DoesNotContain("\"No open issues.\"", Markup);
         Assert.DoesNotContain("\"No open pull requests.\"", Markup);
+        Assert.DoesNotContain("Text=\"No workflow runs.\"", Markup);
     }
 
     [Theory]
     [InlineData("IssuesFacetNotice")]
     [InlineData("PullRequestsFacetNotice")]
+    [InlineData("WorkflowFilterNotice")]
     public void EachFacetNotice_IsRenderedAndAnnounced(string binding)
     {
         var block = Regex.Match(Markup, @"<TextBlock Text=""\{Binding " + binding + @"\}"".*?</TextBlock>",
