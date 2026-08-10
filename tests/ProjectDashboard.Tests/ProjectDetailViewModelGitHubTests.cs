@@ -308,6 +308,50 @@ public class ProjectDetailViewModelGitHubTests
         Assert.Equal(2, vm.LabelFetches);
     }
 
+    /// <summary>
+    /// An empty label picker is what a repository defining no labels looks like. Left unexplained,
+    /// a failed read is read as that answer — and the reader goes looking for the label rather than
+    /// for the sign-in.
+    /// </summary>
+    [Fact]
+    public async Task AFailedLabelFetch_SaysThePickersListNoneBecauseTheReadFailed()
+    {
+        var vm = new DeferredLabelViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.ReleaseLabels(null);
+
+        await vm.ShowNewIssueCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.AvailableLabelNames);
+        Assert.Equal(ProjectDetailViewModel.LabelsUnavailable, vm.IssueLabelsError);
+    }
+
+    [Fact]
+    public async Task ALabelReadThatAnswered_LeavesNoExplanationBehindIt()
+    {
+        var vm = StubVm();
+        await vm.SetProjectAsync(RemoteProject());
+
+        vm.SelectedIssue = new GitHubIssue { Number = 7, Title = "x" };
+
+        Assert.Equal("", vm.IssueLabelsError);
+    }
+
+    /// <summary>The line belongs to the repository it was read for, like the pickers it explains.</summary>
+    [Fact]
+    public async Task AProjectSwitch_ClearsTheLabelExplanation()
+    {
+        var vm = new DeferredLabelViewModel();
+        await vm.SetProjectAsync(RemoteProject());
+        vm.ReleaseLabels(null);
+        await vm.ShowNewIssueCommand.ExecuteAsync(null);
+        Assert.NotEqual("", vm.IssueLabelsError);
+
+        await vm.SetProjectAsync(RemoteProject());
+
+        Assert.Equal("", vm.IssueLabelsError);
+    }
+
     [Fact]
     public async Task AProjectSwitch_DropsTheInFlightLabelFetch_SoTheNewRepoIsFetched()
     {

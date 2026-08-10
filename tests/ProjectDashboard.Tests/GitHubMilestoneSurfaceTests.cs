@@ -420,7 +420,8 @@ public class GitHubMilestoneSurfaceTests
     [Theory]
     [InlineData("IssueMilestoneProgressText")]
     [InlineData("IssueMilestonesError")]
-    public void EachMilestoneLine_IsRenderedAndAnnounced(string binding)
+    [InlineData("IssueLabelsError")]
+    public void EachPickerLine_IsRenderedAndAnnounced(string binding)
     {
         var block = Regex.Match(Markup, @"<TextBlock Text=""\{Binding " + binding + @"\}"".*?</TextBlock>",
             RegexOptions.Singleline);

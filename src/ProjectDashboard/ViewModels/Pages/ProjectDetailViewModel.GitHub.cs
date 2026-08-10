@@ -111,6 +111,7 @@ public partial class ProjectDetailViewModel
         IssuesError = "";
         PullRequestsError = "";
         AvailableLabelNames = [];
+        IssueLabelsError = "";
         _labelsLoaded = false;
         // The in-flight fetch belongs to the project being left; the new one refetches.
         _labelFetch = null;
@@ -219,18 +220,43 @@ public partial class ProjectDetailViewModel
         // first fetch returns would start another gh label list for the same repo.
         // Joining the in-flight one keeps it at a single process per project.
         var fetch = _labelFetch ??= FetchLabelsAsync(slug);
-        var labels = await fetch;
+        List<Label>? labels;
+        try
+        {
+            labels = await fetch;
+        }
+        catch (Exception ex)
+        {
+            // A read that threw and one that answered null establish the same nothing about which
+            // labels this repository defines.
+            Log.Warn($"label read failed for {slug}", ex);
+            labels = null;
+        }
         if (labels is null)
         {
             // null = fetch failed. Dropping the task lets the next open retry rather
             // than caching the failure for the life of the project.
             if (ReferenceEquals(_labelFetch, fetch)) _labelFetch = null;
+            // A picker holding nothing is what a repository defining no labels looks like, so a
+            // failed read that said nothing would be read as an answer about the repository.
+            if (IsCurrent(gen)) IssueLabelsError = LabelsUnavailable;
             return;
         }
         if (!IsCurrent(gen)) return;
         AvailableLabelNames = new ObservableCollection<string>(labels.Select(l => l.Name));
+        IssueLabelsError = "";
         _labelsLoaded = true;
     }
+
+    /// <summary>
+    /// Why the label pickers hold nothing, or "" when their contents are an answer. A repository
+    /// that defines no labels and a label read that failed both leave an empty picker, and only
+    /// this line tells them apart.
+    /// </summary>
+    [ObservableProperty] private string _issueLabelsError = "";
+
+    internal const string LabelsUnavailable =
+        "Labels are unavailable — the read failed, so these pickers list none rather than none existing.";
 
     /// <summary>
     /// The two remote reads the issue detail pane depends on. Both go through the

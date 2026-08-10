@@ -2037,6 +2037,21 @@
                                         <ui:TextBox Text="{Binding NewIssueLabels, UpdateSourceTrigger=PropertyChanged}"
                                                     PlaceholderText="bug, p1" Margin="0,0,0,4"
                                                     AutomationProperties.Name="New issue labels" />
+                                        <TextBlock Text="{Binding IssueLabelsError}" FontSize="11" TextWrapping="Wrap"
+                                                   Margin="0,0,0,6" Foreground="{DynamicResource StatusBadFg}"
+                                                   AutomationProperties.AutomationId="IssueLabelsError"
+                                                   AutomationProperties.LiveSetting="Polite">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IssueLabelsError}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                         <ItemsControl ItemsSource="{Binding AvailableLabelNames}" Margin="0,0,0,10">
                                             <ItemsControl.Style>
                                                 <Style TargetType="ItemsControl">
@@ -2247,6 +2262,20 @@
                                                        Command="{Binding RemoveIssueLabelCommand}"
                                                        AutomationProperties.Name="Remove label" />
                                         </WrapPanel>
+                                        <TextBlock Text="{Binding IssueLabelsError}" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource StatusBadFg}"
+                                                   AutomationProperties.LiveSetting="Polite">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IssueLabelsError}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
                                 </Grid>
                             </Grid>
