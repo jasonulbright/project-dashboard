@@ -468,6 +468,52 @@ public class SafetyDashboardTests
         await running;
     }
 
+    /// <summary>
+    /// A second branch-and-backup run reports as running while it runs. Reading the tier from the
+    /// results on hand instead would show the previous run's answer as this one's for the whole of
+    /// a re-run — the state a tri-state exists to keep apart.
+    /// </summary>
+    [Fact]
+    public async Task ACheapRerun_ReportsAsRunningRatherThanAsThePreviousRunsAnswer()
+    {
+        var host = await NewHostAsync("cheap-rerun", repos: 1);
+        var git = new GateOnBranchReadGitService();
+        var safety = host.NewSafety(git: git);
+
+        await safety.CheckBranchesAndBackupsCommand.ExecuteAsync(null);
+        Assert.Contains("Branches and backups checked", safety.TierText, StringComparison.Ordinal);
+
+        // A second run over a page that already holds an answer.
+        git.Hold = new TaskCompletionSource();
+        var rerun = safety.CheckBranchesAndBackupsCommand.ExecuteAsync(null);
+
+        Assert.Contains("Checking branches and backups…", safety.TierText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Branches and backups checked", safety.TierText, StringComparison.Ordinal);
+
+        git.Hold.SetResult();
+        await rerun;
+        Assert.Contains("Branches and backups checked", safety.TierText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Holds the local-branch read open while <see cref="Hold"/> is set; every other git call, and
+    /// every call made while it is null, runs for real.
+    /// </summary>
+    private sealed class GateOnBranchReadGitService : GitService
+    {
+        public TaskCompletionSource? Hold { get; set; }
+
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var listed = args.ToList();
+            if (Hold is { } gate && listed.Contains("for-each-ref") && listed.Contains("refs/heads"))
+                await gate.Task;
+            return await base.RunAsync(repoPath, listed, environment, ct, timeout);
+        }
+    }
+
     /// <summary>Holds the reflog walk open until released; every other git call is real.</summary>
     private sealed class GateOnReflogWalkGitService(Task gate) : GitService
     {

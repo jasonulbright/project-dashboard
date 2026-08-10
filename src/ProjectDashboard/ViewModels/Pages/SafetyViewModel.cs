@@ -116,6 +116,13 @@ public partial class SafetyViewModel : ObservableObject
     private int _cheapSkipped;
 
     /// <summary>
+    /// True while a cheap-tier run is in flight. Read rather than inferred from the results on
+    /// hand: a re-run over a portfolio that was already checked once has results and is still
+    /// running, and reporting it as finished shows the previous run's answer as this one's.
+    /// </summary>
+    private bool _cheapRunning;
+
+    /// <summary>
     /// Raised to open a project's detail view at one work-area tab. The rollup routes through its
     /// own events rather than the dashboard's navigation so that reaching a surface from here never
     /// writes the shell's pending-project state on this page's behalf: the shell sets it as it
@@ -186,9 +193,13 @@ public partial class SafetyViewModel : ObservableObject
     private static void PostToApplicationDispatcher(Action callback) =>
         _ = Application.Current?.Dispatcher.InvokeAsync(callback);
 
-    /// <summary>Whether the cheap tier has an answer for every repository it was asked about.</summary>
+    /// <summary>
+    /// Where the cheap tier stands. A run in flight outranks the results of the run before it, so a
+    /// re-run reports as running rather than serving the previous answer as though it were this
+    /// one's.
+    /// </summary>
     private SafetyTierState CheapState =>
-        CheckRunning && _cheap.Count == 0 ? SafetyTierState.Running
+        _cheapRunning ? SafetyTierState.Running
         : _cheap.Count > 0 ? SafetyTierState.Ran
         : SafetyTierState.NotRun;
 
@@ -501,6 +512,8 @@ public partial class SafetyViewModel : ObservableObject
         var targets = SafetySurvey.Checkable(_dashboard.Projects);
         if (!BeginCheck(targets.Count, "Checking branches and backups")) return;
 
+        _cheapRunning = true;
+        Rebuild();
         try
         {
             var skipped = 0;
@@ -547,6 +560,7 @@ public partial class SafetyViewModel : ObservableObject
         }
         finally
         {
+            _cheapRunning = false;
             EndCheck();
         }
     }
