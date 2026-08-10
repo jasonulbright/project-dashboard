@@ -169,6 +169,36 @@
                                     </ui:TextBox.InputBindings>
                                 </ui:TextBox>
                             </DockPanel>
+
+                            <!-- Configuration, not verification: the chip reports what the
+                                 repository is set to do, never that a tag was signed. -->
+                            <Border x:Name="TagSigningChip" Background="{DynamicResource StatusInfoBg}"
+                                    CornerRadius="4" Padding="6,1" Margin="0,6,0,0"
+                                    HorizontalAlignment="Left"
+                                    ToolTip="{Binding TagSigningChipTooltip}"
+                                    Visibility="{Binding TagSigningChipVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="{Binding TagSigningChipText}" FontSize="10"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           AutomationProperties.Name="{Binding TagSigningChipTooltip}"
+                                           Foreground="{DynamicResource StatusInfoFg}" />
+                            </Border>
+
+                            <StackPanel x:Name="TagSigningOffer" Margin="0,8,0,0"
+                                        Visibility="{Binding TagSigningOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="{Binding TagSigningOfferText}" FontSize="11" TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           AutomationProperties.Name="{Binding TagSigningOfferText}"
+                                           Foreground="{DynamicResource StatusWarnFg}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <ui:Button Content="Sign as configured" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                                               Command="{Binding CreateTagSignedCommand}"
+                                               AutomationProperties.Name="Create the tag, signing as this repository is configured to" />
+                                    <ui:Button Content="Create without signing" FontSize="11" Padding="8,3"
+                                               Appearance="Caution"
+                                               Command="{Binding CreateTagUnsignedCommand}"
+                                               AutomationProperties.Name="Create the tag with signing turned off for this project's session" />
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
 
                         <StackPanel Grid.Column="1">

@@ -6,20 +6,29 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// Commit signing on the everyday Commit/Amend path: what the repository is read to be
-/// configured as, what each <see cref="SigningChoice"/> puts on git's command line, and what the
-/// Changes tab does with a repository that signs.
+/// Object signing on the everyday paths — Commit/Amend and tag creation: what each repository is
+/// read to be configured as, what each <see cref="SigningChoice"/> puts on git's command line, and
+/// what the Changes tab and the tag viewer do with a repository that signs.
 ///
-/// The fixtures configure signing on and point git at a signing program that does not exist, so
-/// a signed run fails at once. Nothing here needs — or may require — a real key.
+/// The fixtures configure signing on and point git at a signing program that does not exist, so a
+/// signed run fails at once. Nothing here needs — or may require — a real key.
 /// </summary>
-public class CommitSigningTests
+public class SigningChoiceTests
 {
-    /// <summary>Signing configured on, with no signer that can answer for it.</summary>
+    /// <summary>Commit signing configured on, with no signer that can answer for it.</summary>
     private static async Task<TempRepo> SigningRepoAsync()
     {
         var repo = await TempRepo.CreateWithCommitAsync("signing");
         await repo.GitAsync("config", "commit.gpgsign", "true");
+        await repo.GitAsync("config", "gpg.program", "pd-no-such-signing-program");
+        return repo;
+    }
+
+    /// <summary>Tag signing configured on and commit signing off, so the two answers stay apart.</summary>
+    private static async Task<TempRepo> TagSigningRepoAsync()
+    {
+        var repo = await TempRepo.CreateWithCommitAsync("tag-signing");
+        await repo.GitAsync("config", "tag.gpgsign", "true");
         await repo.GitAsync("config", "gpg.program", "pd-no-such-signing-program");
         return repo;
     }
@@ -85,7 +94,7 @@ public class CommitSigningTests
             FullPath = repo.Path
         });
         await vm.WorkingStateRefresh;
-        await vm.CommitSigningRefresh;
+        await vm.SigningRefresh;
     }
 
     /// <summary>Stages a new file so the commit gate has something to commit.</summary>
@@ -415,5 +424,305 @@ public class CommitSigningTests
 
         Assert.True(vm.CommitSigningOfferVisible);
         Assert.Equal("second", await repo.HeadSubjectAsync());
+    }
+
+    // ── Tags: the read and the command line ─────────────────────────────────
+
+    [Fact]
+    public async Task SignsTags_IsReadSeparatelyFromTheCommitSetting()
+    {
+        using var commitsOnly = await SigningRepoAsync();
+        using var tagsOnly = await TagSigningRepoAsync();
+        var git = new GitService();
+
+        Assert.True(await git.SignsCommitsAsync(commitsOnly.Path));
+        Assert.False(await git.SignsTagsAsync(commitsOnly.Path));
+        Assert.False(await git.SignsCommitsAsync(tagsOnly.Path));
+        Assert.True(await git.SignsTagsAsync(tagsOnly.Path));
+    }
+
+    [Theory]
+    [InlineData(SigningChoice.NotChosen)]
+    [InlineData(SigningChoice.KeepSigning)]
+    public async Task ATagThatWasNotToldToProceedUnsigned_CarriesNoSigningOverride(SigningChoice signing)
+    {
+        var git = new ArgvGitService();
+
+        await git.CreateTagAsync(@"C:\repo", "v1", "release", targetCommit: null, signing);
+
+        Assert.Equal(["tag", "-a", "--cleanup=whitespace", "-m", "release", "v1"], git.Runs[0]);
+    }
+
+    /// <summary>
+    /// The override goes ahead of the subcommand, and the message cleanup pin still rides along:
+    /// `tag -a` takes strip as its own default and honours no config, so losing the pin would
+    /// silently delete every message line that opens with the comment character.
+    /// </summary>
+    [Fact]
+    public async Task ATagProceedingUnsigned_PinsTagSigningOffAndKeepsTheMessageCleanupPin()
+    {
+        var git = new ArgvGitService();
+
+        await git.CreateTagAsync(@"C:\repo", "v1", "release", "abc123", SigningChoice.ProceedUnsigned);
+
+        Assert.Equal(
+            ["-c", "tag.gpgsign=false", "tag", "-a", "--cleanup=whitespace", "-m", "release", "v1", "abc123"],
+            git.Runs[0]);
+    }
+
+    [Fact]
+    public async Task ALightweightTagProceedingUnsigned_CarriesTheOverrideAndNoMessageFlags()
+    {
+        var git = new ArgvGitService();
+
+        await git.CreateTagAsync(@"C:\repo", "v1", message: null, null, SigningChoice.ProceedUnsigned);
+
+        Assert.Equal(["-c", "tag.gpgsign=false", "tag", "v1"], git.Runs[0]);
+    }
+
+    [Fact]
+    public async Task OnlyTheSigningTagRun_GetsTheLongerBudget()
+    {
+        var git = new ArgvGitService();
+
+        await git.CreateTagAsync(@"C:\repo", "a", "m", null, SigningChoice.NotChosen);
+        await git.CreateTagAsync(@"C:\repo", "b", "m", null, SigningChoice.KeepSigning);
+
+        Assert.Null(git.Timeouts[0]);
+        Assert.True(git.Timeouts[1] > TimeSpan.FromSeconds(30));
+    }
+
+    // ── Tags: the service against a repository that signs ───────────────────
+
+    [Fact]
+    public async Task ASignedTagWithNoWorkingSigner_CreatesNothingAndIsRecognisedAsASigningFailure()
+    {
+        using var repo = await TagSigningRepoAsync();
+
+        var result = await new GitService().CreateTagAsync(
+            repo.Path, "v1", "release", null, SigningChoice.KeepSigning);
+
+        Assert.False(result.Success);
+        Assert.True(GitService.IsSigningFailure(result));
+        Assert.Empty((await new GitService().GetTagsAsync(repo.Path)).Tags);
+    }
+
+    [Fact]
+    public async Task AnUnsignedAnnotatedTag_IsATagObjectCarryingNoSignature()
+    {
+        using var repo = await TagSigningRepoAsync();
+
+        var result = await new GitService().CreateTagAsync(
+            repo.Path, "v1", "release", null, SigningChoice.ProceedUnsigned);
+
+        Assert.True(result.Success);
+        Assert.Equal("tag", (await repo.GitAsync("cat-file", "-t", "v1")).Trim());
+        Assert.DoesNotContain("-----BEGIN", await repo.GitAsync("cat-file", "-p", "v1"));
+        Assert.Equal("true", (await repo.GitAsync("config", "--get", "tag.gpgsign")).Trim());
+    }
+
+    /// <summary>
+    /// A lightweight request is NOT exempt from tag.gpgsign: git turns a bare `git tag` into a
+    /// signed one, which needs a message the request never carried, and fails outright. The
+    /// override is what makes a lightweight tag lightweight again — a ref with no tag object.
+    /// </summary>
+    [Fact]
+    public async Task ALightweightRequest_FailsUnderTagSigningAndIsGenuinelyLightweightUnderTheOverride()
+    {
+        using var repo = await TagSigningRepoAsync();
+        var head = await repo.HeadShaAsync();
+        var git = new GitService();
+
+        var signed = await git.CreateTagAsync(repo.Path, "v-signed", message: null, null, SigningChoice.KeepSigning);
+        Assert.False(signed.Success);
+
+        var unsigned = await git.CreateTagAsync(repo.Path, "v-light", message: null, null, SigningChoice.ProceedUnsigned);
+
+        Assert.True(unsigned.Success);
+        Assert.Equal("commit", (await repo.GitAsync("cat-file", "-t", "v-light")).Trim());
+        Assert.Equal(head, (await repo.GitAsync("rev-parse", "v-light")).Trim());
+    }
+
+    /// <summary>A repository that signs neither is untouched by the gate on either path.</summary>
+    [Fact]
+    public async Task ARepositoryThatSignsNothing_CreatesBothKindsWithNoChoiceAtAll()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("plain-tags");
+        var git = new GitService();
+
+        Assert.True((await git.CreateTagAsync(repo.Path, "v-light")).Success);
+        Assert.True((await git.CreateTagAsync(repo.Path, "v-annot", "release")).Success);
+        Assert.Equal("commit", (await repo.GitAsync("cat-file", "-t", "v-light")).Trim());
+        Assert.Equal("tag", (await repo.GitAsync("cat-file", "-t", "v-annot")).Trim());
+    }
+
+    // ── Tags: the viewer ────────────────────────────────────────────────────
+
+    private static async Task<ConfirmingViewModel> TagVmForAsync(TempRepo repo, bool confirm = true)
+    {
+        var vm = await VmForAsync(repo, new GitService(), confirm);
+        await vm.OpenTagsCommand.ExecuteAsync(null);
+        return vm;
+    }
+
+    [Fact]
+    public async Task ARepositoryThatSignsTags_ShowsTheTagChip()
+    {
+        using var repo = await TagSigningRepoAsync();
+        await repo.GitAsync("config", "gpg.format", "ssh");
+        var vm = await TagVmForAsync(repo);
+
+        Assert.True(vm.TagSigningChipVisible);
+        Assert.Equal("Signs tags", vm.TagSigningChipText);
+        Assert.Contains("gpg.format is ssh", vm.TagSigningChipTooltip);
+        Assert.Contains("lightweight requests included", vm.TagSigningChipTooltip);
+    }
+
+    /// <summary>
+    /// The two settings are independent and so are the answers: a repository that signs commits
+    /// only must not put a tag chip up, and its tags must create without a question.
+    /// </summary>
+    [Fact]
+    public async Task ARepositoryThatSignsCommitsOnly_LeavesTheTagPathUngated()
+    {
+        using var repo = await SigningRepoAsync();
+        var vm = await TagVmForAsync(repo);
+
+        vm.NewTagName = "v1";
+        vm.NewTagMessage = "release";
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        Assert.True(vm.CommitSigningChipVisible);
+        Assert.False(vm.TagSigningChipVisible);
+        Assert.False(vm.TagSigningOfferVisible);
+        Assert.Equal("tag", (await repo.GitAsync("cat-file", "-t", "v1")).Trim());
+    }
+
+    [Fact]
+    public async Task TheFirstTagOnASigningRepository_AsksBeforeAnythingRuns()
+    {
+        using var repo = await TagSigningRepoAsync();
+        var vm = await TagVmForAsync(repo);
+
+        vm.NewTagName = "v1";
+        vm.NewTagMessage = "release";
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        Assert.True(vm.TagSigningOfferVisible);
+        Assert.Contains("tag.gpgsign", vm.TagSigningOfferText);
+        Assert.Equal("v1", vm.NewTagName);
+        Assert.Equal("release", vm.NewTagMessage);
+        Assert.Empty((await new GitService().GetTagsAsync(repo.Path)).Tags);
+        Assert.False(File.Exists(Path.Combine(repo.Path, ".git", "TAG_EDITMSG")));
+    }
+
+    [Fact]
+    public async Task TheTagOffersUnsignedAnswer_ConfirmsFirstAndThenCreatesAnUnsignedTag()
+    {
+        using var repo = await TagSigningRepoAsync();
+        var vm = await TagVmForAsync(repo);
+        vm.NewTagName = "v1";
+        vm.NewTagMessage = "release";
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        await vm.CreateTagUnsignedCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains("unsigned", vm.LastMessage);
+        Assert.False(vm.TagSigningOfferVisible);
+        Assert.Equal("Signs tags — this session: unsigned", vm.TagSigningChipText);
+        Assert.Equal("tag", (await repo.GitAsync("cat-file", "-t", "v1")).Trim());
+        Assert.DoesNotContain("-----BEGIN", await repo.GitAsync("cat-file", "-p", "v1"));
+    }
+
+    [Fact]
+    public async Task DecliningTheUnsignedTagConfirm_LeavesTheTagUncreatedAndTheOfferStanding()
+    {
+        using var repo = await TagSigningRepoAsync();
+        var vm = await TagVmForAsync(repo, confirm: false);
+        vm.NewTagName = "v1";
+        vm.NewTagMessage = "release";
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        await vm.CreateTagUnsignedCommand.ExecuteAsync(null);
+
+        Assert.True(vm.TagSigningOfferVisible);
+        Assert.Equal("v1", vm.NewTagName);
+        Assert.Empty((await new GitService().GetTagsAsync(repo.Path)).Tags);
+    }
+
+    [Fact]
+    public async Task TheSignedTagAnswerFailing_NamesTheSigningAndPutsTheChoiceBack()
+    {
+        using var repo = await TagSigningRepoAsync();
+        var vm = await TagVmForAsync(repo);
+        vm.NewTagName = "v1";
+        vm.NewTagMessage = "release";
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        await vm.CreateTagSignedCommand.ExecuteAsync(null);
+
+        Assert.Contains("signing key could not sign", vm.SyncStatusText);
+        Assert.True(vm.TagSigningOfferVisible);
+        Assert.Equal("v1", vm.NewTagName);
+        Assert.Empty((await new GitService().GetTagsAsync(repo.Path)).Tags);
+    }
+
+    /// <summary>
+    /// The offer for a lightweight request states what tag.gpgsign does to it, and signing as
+    /// configured is refused before git runs — a signed tag needs a message this one has not been
+    /// given, which is knowable without spawning anything.
+    /// </summary>
+    [Fact]
+    public async Task ALightweightRequestOnASigningRepository_SaysWhatSigningWouldDoToIt()
+    {
+        using var repo = await TagSigningRepoAsync();
+        var vm = await TagVmForAsync(repo);
+        vm.NewTagName = "v-light";
+
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        Assert.True(vm.TagSigningOfferVisible);
+        Assert.Contains("will not create a lightweight", vm.TagSigningOfferText);
+
+        await vm.CreateTagSignedCommand.ExecuteAsync(null);
+
+        Assert.Contains("signed tag needs a message", vm.TagsErrorText);
+        Assert.Empty((await new GitService().GetTagsAsync(repo.Path)).Tags);
+        // Refusing the signed answer must leave the other one reachable, or the lightweight tag
+        // the reader asked for has no route at all.
+        Assert.True(vm.TagSigningOfferVisible);
+
+        await vm.CreateTagUnsignedCommand.ExecuteAsync(null);
+
+        Assert.Equal("commit", (await repo.GitAsync("cat-file", "-t", "v-light")).Trim());
+    }
+
+    /// <summary>
+    /// Answering for one object kind must not answer for the other: a reader who declined signing
+    /// on a working commit has not declined it on a release tag, and inheriting the answer would
+    /// drop a signature nobody was asked about.
+    /// </summary>
+    [Fact]
+    public async Task TheCommitAnswer_DoesNotAnswerForTags()
+    {
+        using var repo = await SigningRepoAsync();
+        await repo.GitAsync("config", "tag.gpgsign", "true");
+        await StageAsync(repo, "second.txt", "two\n");
+        var vm = await TagVmForAsync(repo);
+        await vm.RefreshWorkingStateAsync();
+        vm.CommitMessage = "second";
+        await vm.CommitCommand.ExecuteAsync(null);
+        await vm.CommitUnsignedCommand.ExecuteAsync(null);
+
+        Assert.Equal("second", await repo.HeadSubjectAsync());
+        Assert.Equal("Signs tags", vm.TagSigningChipText);
+
+        vm.NewTagName = "v1";
+        vm.NewTagMessage = "release";
+        await vm.CreateTagCommand.ExecuteAsync(null);
+
+        Assert.True(vm.TagSigningOfferVisible);
+        Assert.Empty((await new GitService().GetTagsAsync(repo.Path)).Tags);
     }
 }

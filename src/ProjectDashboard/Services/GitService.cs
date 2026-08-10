@@ -537,10 +537,11 @@ public class GitService
     private static readonly TimeSpan CommitTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Budget for a commit that signs. The signer can put a passphrase prompt on screen for a
-    /// reader to answer, and killing it at the unsigned budget aborts a commit mid-authorisation.
+    /// Budget for a run that signs the object it writes. The signer can put a passphrase prompt on
+    /// screen for a reader to answer, and killing it at the unsigned budget aborts the write
+    /// mid-authorisation.
     /// </summary>
-    private static readonly TimeSpan SigningCommitTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan SignedObjectTimeout = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// Whether <paramref name="repoPath"/> is configured to sign the commits it creates. An
@@ -550,6 +551,17 @@ public class GitService
     public virtual async Task<bool> SignsCommitsAsync(string repoPath, CancellationToken ct = default)
     {
         var configured = await RunAsync(repoPath, ["config", "--type=bool", "--get", "commit.gpgsign"], ct);
+        return configured.Success && configured.StdOut.Trim() == "true";
+    }
+
+    /// <summary>
+    /// Whether <paramref name="repoPath"/> is configured to sign the tags it creates. Read
+    /// separately from <see cref="SignsCommitsAsync"/> because git's two settings are
+    /// independent: a repository can sign one kind of object and not the other.
+    /// </summary>
+    public virtual async Task<bool> SignsTagsAsync(string repoPath, CancellationToken ct = default)
+    {
+        var configured = await RunAsync(repoPath, ["config", "--type=bool", "--get", "tag.gpgsign"], ct);
         return configured.Success && configured.StdOut.Trim() == "true";
     }
 
@@ -577,21 +589,23 @@ public class GitService
         args.AddRange(["commit", MessageCleanupPin, "-m", message]);
         if (amend) args.Add("--amend");
         return RunAsync(repoPath, args, ct,
-            signing == SigningChoice.KeepSigning ? SigningCommitTimeout : CommitTimeout);
+            signing == SigningChoice.KeepSigning ? SignedObjectTimeout : CommitTimeout);
     }
 
     /// <summary>
-    /// Matches a commit whose signature git could not produce. git words this several ways — the
-    /// openpgp signer's failure, two different ssh missing-key failures, and the fatal it dies
-    /// with once the signature is absent — so the match is on the tokens they share rather than
-    /// on any one sentence. None of the shapes is signing-exclusive, so this is read only where
-    /// signing is already known to be configured on and the run was asked to sign.
+    /// Matches a commit or tag whose signature git could not produce. git words this several ways
+    /// — the openpgp signer's failure, two different ssh missing-key failures, `unable to sign the
+    /// tag`, and the fatal it dies with once a commit's signature is absent — so the match is on
+    /// the tokens they share rather than on any one sentence. None of the shapes is
+    /// signing-exclusive, so this is read only where signing is already known to be configured on
+    /// and the run was asked to sign.
     /// </summary>
     public static bool IsSigningFailure(ProcessResult result) =>
         !result.Success
         && (result.StdErr + "\n" + result.StdOut) is var text
         && (text.Contains("signing", StringComparison.OrdinalIgnoreCase)
             || text.Contains("sign the data", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("sign the tag", StringComparison.OrdinalIgnoreCase)
             || text.Contains("failed to write commit object", StringComparison.OrdinalIgnoreCase));
 
     public async Task<string> GetLastCommitMessageAsync(string repoPath, CancellationToken ct = default)
@@ -926,15 +940,27 @@ public class GitService
         DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.None, out var d) ? d : null;
 
-    /// <summary>Creates a tag: annotated when <paramref name="message"/> is non-null, else lightweight.</summary>
+    /// <summary>
+    /// Creates a tag: annotated when <paramref name="message"/> is non-null, else lightweight.
+    /// <para>
+    /// `tag.gpgsign` reaches BOTH shapes, not only the annotated one: with it on, git treats a
+    /// bare `git tag <name>` as `git tag -s <name>`, so a lightweight request becomes a signed tag
+    /// object and fails outright when no message accompanies it. Only
+    /// <see cref="SigningChoice.ProceedUnsigned"/> turns that off, for the one run, and a
+    /// lightweight tag is genuinely lightweight again under it.
+    /// </para>
+    /// </summary>
     public Task<ProcessResult> CreateTagAsync(string repoPath, string name, string? message = null,
-        string? targetCommit = null, CancellationToken ct = default)
+        string? targetCommit = null, SigningChoice signing = SigningChoice.NotChosen,
+        CancellationToken ct = default)
     {
-        var args = new List<string> { "tag" };
+        var args = new List<string>();
+        if (signing == SigningChoice.ProceedUnsigned) args.AddRange(["-c", "tag.gpgsign=false"]);
+        args.Add("tag");
         if (message is not null) { args.Add("-a"); args.Add(MessageCleanupPin); args.Add("-m"); args.Add(message); }
         args.Add(name);
         if (!string.IsNullOrEmpty(targetCommit)) args.Add(targetCommit);
-        return RunAsync(repoPath, args, ct);
+        return RunAsync(repoPath, args, ct, signing == SigningChoice.KeepSigning ? SignedObjectTimeout : null);
     }
 
     public Task<ProcessResult> DeleteTagAsync(string repoPath, string name, CancellationToken ct = default)

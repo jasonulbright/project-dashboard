@@ -618,6 +618,32 @@ public class TagsSurfaceTests
         Assert.Empty(vm.Tags);
     }
 
+    /// <summary>
+    /// A signing choice with no button is a tag the reader can never create: the gate refuses
+    /// every attempt and the only two answers live on these two commands.
+    /// </summary>
+    [Fact]
+    public async Task TheTagSigningOfferAndChip_AreReachableAndAnnounced()
+    {
+        var markup = await File.ReadAllTextAsync(ViewSource("TagsView.xaml"));
+
+        var offer = System.Text.RegularExpressions.Regex.Match(markup,
+            @"<StackPanel x:Name=""TagSigningOffer"".*?</StackPanel>\s*</StackPanel>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(offer.Success, "the tag signing offer was not found");
+        Assert.Contains("{Binding TagSigningOfferText}", offer.Value);
+        Assert.Contains("{Binding CreateTagSignedCommand}", offer.Value);
+        Assert.Contains("{Binding CreateTagUnsignedCommand}", offer.Value);
+
+        var chip = System.Text.RegularExpressions.Regex.Match(markup,
+            @"<Border x:Name=""TagSigningChip"".*?</Border>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(chip.Success, "the tag signing chip was not found");
+        Assert.Contains("{Binding TagSigningChipText}", chip.Value);
+        Assert.Contains("AutomationProperties.Name=\"{Binding TagSigningChipTooltip}\"", chip.Value);
+        Assert.Contains(@"AutomationProperties.LiveSetting=""Polite""", chip.Value);
+    }
+
     private static string ViewSource(string name, [System.Runtime.CompilerServices.CallerFilePath] string testFile = "")
     {
         var path = Path.GetFullPath(Path.Combine(

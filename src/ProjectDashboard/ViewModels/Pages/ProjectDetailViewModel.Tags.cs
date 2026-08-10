@@ -90,6 +90,9 @@ public partial class ProjectDetailViewModel
         NewTagMessage = "";
         TagBranchName = "";
         SelectedTag = null;
+        // The answer survives the viewer closing; the outstanding offer does not, or reopening
+        // would arm the two buttons with a tag the boxes no longer describe.
+        ClearTagSigningOffer();
         TagsVisible = true;
         OnPropertyChanged(nameof(TagTargetLabel));
         TagsRefresh = LoadTags();
@@ -204,14 +207,47 @@ public partial class ProjectDetailViewModel
         }
 
         TagsErrorText = "";
-        var ok = await RunOp(r => _gitService.CreateTagAsync(r, name, message.Length > 0 ? message : null, target),
-            $"Create tag {name}", repo, gen, category: OperationCategory.Tag);
+
+        // The signing question is answered before the lease is taken: it is a question, not an
+        // operation, and a repository nobody has decided about must not be held busy while the
+        // offer waits for an answer.
+        if (TagSigningChoicePending)
+        {
+            HoldTagSigningOffer(name, message, repo, gen, target, targetLabel);
+            return;
+        }
+
+        await RunCreateTagAsync(name, message, repo, gen, target, targetLabel);
+    }
+
+    /// <summary>
+    /// The tag creation itself, past every gate. Entered from the Create button and from the
+    /// signing offer's two answers. Its inputs are the ones the name gate validated and the offer
+    /// named — re-reading the boxes would create a tag nothing checked, in a repository the
+    /// question may no longer be about.
+    /// </summary>
+    private async Task RunCreateTagAsync(
+        string name, string message, string repo, int gen, string? target, string targetLabel)
+    {
+        var signing = _tagSigning;
+        if (name.Length == 0 || repo.Length == 0) return;
+
+        ProcessResult? outcome = null;
+        var ok = await RunOp(async r =>
+            outcome = await _gitService.CreateTagAsync(
+                r, name, message.Length > 0 ? message : null, target, signing),
+            $"Create tag {name}", repo, gen, category: OperationCategory.Tag,
+            advice: r => TagSigningAdvice(r, signing));
         if (!IsCurrent(gen)) return;
 
         if (!ok)
         {
             TagsErrorText = SyncStatusText;
             TagsStatusText = "The tag was not created.";
+            // A signing run that failed on the signing leaves the other answer unreachable unless
+            // the offer comes back: the choice is already made, so a second Create would repeat it.
+            if (outcome is { } failed && TagSigningTroubled(failed, signing))
+                ReofferTagSigningAfterFailure(name, message, repo, gen, target, targetLabel);
             return;
         }
 
