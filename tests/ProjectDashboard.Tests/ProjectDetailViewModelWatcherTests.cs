@@ -40,7 +40,7 @@ public class ProjectDetailViewModelWatcherTests
 
         // The edit an editor outside the app makes: no command on this page ran.
         repo.WriteFile("file.txt", "edited outside the app\n");
-        vm.OnWatchedReposChanged([project.DirectoryName]);
+        vm.OnWatchedReposChanged([project.FullPath]);
         await vm.WatcherRefresh;
 
         Assert.Single(vm.UnstagedFiles);
@@ -76,7 +76,7 @@ public class ProjectDetailViewModelWatcherTests
         await vm.WorkingStateRefresh;
 
         repo.WriteFile("file.txt", "edited outside the app\n");
-        vm.OnWatchedReposChanged(["some-other-repo"]);
+        vm.OnWatchedReposChanged([Path.Combine(TestEnv.Root, "some-other-repo")]);
         await vm.WatcherRefresh;
 
         Assert.Empty(vm.UnstagedFiles);
@@ -100,7 +100,7 @@ public class ProjectDetailViewModelWatcherTests
 
         var lease = registry.Acquire(repo.Path);
         repo.WriteFile("file.txt", "edited outside the app\n");
-        vm.OnWatchedReposChanged([project.DirectoryName]);
+        vm.OnWatchedReposChanged([project.FullPath]);
         await vm.WatcherRefresh;
 
         Assert.Empty(vm.UnstagedFiles);
@@ -127,7 +127,7 @@ public class ProjectDetailViewModelWatcherTests
 
         vm.IsBusy = true;
         repo.WriteFile("file.txt", "edited outside the app\n");
-        vm.OnWatchedReposChanged([project.DirectoryName]);
+        vm.OnWatchedReposChanged([project.FullPath]);
         await vm.WatcherRefresh;
 
         Assert.Empty(vm.UnstagedFiles);
@@ -157,7 +157,7 @@ public class ProjectDetailViewModelWatcherTests
         vm.CommitMessage = "half-typed subject";
 
         repo.WriteFile("second.txt", "two\n");
-        vm.OnWatchedReposChanged([project.DirectoryName]);
+        vm.OnWatchedReposChanged([project.FullPath]);
         await vm.WatcherRefresh;
 
         Assert.Equal(2, vm.UnstagedFiles.Count);
@@ -185,7 +185,7 @@ public class ProjectDetailViewModelWatcherTests
 
         var lease = registry.Acquire(first.Path);
         first.WriteFile("file.txt", "edited outside the app\n");
-        vm.OnWatchedReposChanged([project.DirectoryName]);
+        vm.OnWatchedReposChanged([project.FullPath]);
         await vm.WatcherRefresh;
 
         await vm.SetProjectAsync(ProjectFor(second));

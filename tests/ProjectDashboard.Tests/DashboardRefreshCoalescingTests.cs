@@ -123,7 +123,7 @@ public class DashboardRefreshCoalescingTests
 
         // A named repository is replayable from disk and the running scan reads it; a
         // full re-scan per save would fan git out over every repository instead.
-        dashboard.OnRepoDirsChanged(["alpha"]);
+        dashboard.OnRepoDirsChanged([Path.Combine(root, "alpha")]);
 
         Assert.False(dashboard.RescanQueued);
 

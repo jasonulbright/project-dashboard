@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 
 namespace ProjectDashboard.Services;
@@ -8,6 +9,11 @@ namespace ProjectDashboard.Services;
 /// for the periodic timer. One recursive watcher, heavily filtered (git internals
 /// and build-output churn ignored) and debounced; a buffer overflow falls back to
 /// a full-refresh signal rather than losing events silently.
+///
+/// The signal names repository PATHS, normalized. A bare directory name is ambiguous
+/// once more than one root is configured — two roots can each hold a "tabkit" — and is
+/// wrong for anything below the first level, where the name of the root's immediate
+/// child is not a repository at all.
 /// </summary>
 public sealed class ProjectWatcherService : IDisposable
 {
@@ -19,18 +25,41 @@ public sealed class ProjectWatcherService : IDisposable
 
     private readonly object _gate = new();
     private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
-    private FileSystemWatcher? _watcher;
+    private RootWatch? _watch;
     private System.Threading.Timer? _debounceTimer;
-    private string _root = "";
     private bool _disposed;
 
-    /// <summary>Repo directory names that changed. Empty set = do a full refresh (overflow / repo add-remove).</summary>
+    /// <summary>
+    /// The repositories the last scan found, consulted before the disk when a changed path is
+    /// resolved. A repository whose folder has just been deleted no longer holds a
+    /// <c>.git</c> to walk up to, and its card is exactly the one that has to hear about it.
+    /// </summary>
+    private volatile HashSet<string> _knownRepos = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Normalized paths of the repos that changed. Empty set = do a full refresh (overflow / repo add-remove).</summary>
     public event Action<IReadOnlyCollection<string>>? Changed;
 
     /// <summary>The root currently being watched; empty while stopped.</summary>
     public string WatchedRoot
     {
-        get { lock (_gate) return _watcher is null ? "" : _root; }
+        get { lock (_gate) return _watch?.Root ?? ""; }
+    }
+
+    /// <summary>
+    /// Points repository resolution at the discovered set. Drops the resolution cache: a
+    /// directory that has since become its own repository, or stopped being one, resolved to
+    /// a different repository before this scan ran.
+    /// </summary>
+    public void SetKnownRepos(IEnumerable<string> repoPaths)
+    {
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in repoPaths)
+        {
+            var normalized = RepoPaths.Normalize(path);
+            if (normalized.Length > 0) known.Add(normalized);
+        }
+        _knownRepos = known;
+        lock (_gate) _watch?.ForgetResolutions();
     }
 
     public void Start(string rootPath)
@@ -38,56 +67,35 @@ public sealed class ProjectWatcherService : IDisposable
         Stop();
         if (!Directory.Exists(rootPath)) return;
 
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
-        lock (_gate) { _root = root; }
-        try
+        var watch = new RootWatch(RepoPaths.Normalize(rootPath), Queue, OnError);
+        lock (_gate)
         {
-            _watcher = new FileSystemWatcher(root)
-            {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
-                InternalBufferSize = 64 * 1024 // headroom against bursty saves before overflow
-            };
-            _watcher.Changed += OnFsEvent;
-            _watcher.Created += OnFsEvent;
-            _watcher.Deleted += OnFsEvent;
-            _watcher.Renamed += OnFsRenamed;
-            _watcher.Error += OnError;
-            _watcher.EnableRaisingEvents = true;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"file watcher could not start for {_root}", ex);
-            _watcher = null;
+            if (_disposed) { watch.Dispose(); return; }
+            _watch = watch;
         }
     }
 
     public void Stop()
     {
+        RootWatch? watch;
         lock (_gate)
         {
-            _watcher?.Dispose();
-            _watcher = null;
+            watch = _watch;
+            _watch = null;
             _debounceTimer?.Dispose();
             _debounceTimer = null;
             _pending.Clear();
         }
+        watch?.Dispose();
     }
 
-    private void OnFsRenamed(object sender, RenamedEventArgs e)
+    private void Queue(RootWatch watch, string fullPath)
     {
-        Queue(e.FullPath);
-        Queue(e.OldFullPath);
-    }
+        if (!Covers(watch.Root, fullPath)) return;
 
-    private void OnFsEvent(object sender, FileSystemEventArgs e) => Queue(e.FullPath);
-
-    private void Queue(string fullPath)
-    {
         // Test the path RELATIVE to the root: an ignored word (bin, packages, .vs, …)
         // in an ANCESTOR of the root must not silently drop every event.
-        if (!fullPath.StartsWith(_root, StringComparison.OrdinalIgnoreCase)) return;
-        var relative = fullPath[_root.Length..];
+        var relative = fullPath[watch.Root.Length..];
 
         // "\segment\" test needs delimiters on both sides; pad so a leading .git catches too.
         var padded = "\\" + relative.TrimStart('\\', '/') + "\\";
@@ -105,7 +113,7 @@ public sealed class ProjectWatcherService : IDisposable
                 return;
             }
 
-        var repo = TopLevelRepo(fullPath);
+        var repo = watch.ResolveRepo(fullPath, _knownRepos);
         if (repo is null) return;
 
         lock (_gate)
@@ -117,15 +125,8 @@ public sealed class ProjectWatcherService : IDisposable
         }
     }
 
-    /// <summary>The immediate child of the root that contains this path (the repo directory name).</summary>
-    private string? TopLevelRepo(string fullPath)
-    {
-        if (!fullPath.StartsWith(_root, StringComparison.OrdinalIgnoreCase)) return null;
-        var rest = fullPath[_root.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (rest.Length == 0) return null;
-        var slash = rest.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
-        return slash < 0 ? rest : rest[..slash];
-    }
+    private static bool Covers(string root, string fullPath) =>
+        fullPath.Length > root.Length && fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
 
     private void OnDebounce(object? _)
     {
@@ -139,11 +140,11 @@ public sealed class ProjectWatcherService : IDisposable
         try { Changed?.Invoke(repos); } catch (Exception ex) { Log.Warn("watcher refresh handler failed", ex); }
     }
 
-    private void OnError(object sender, ErrorEventArgs e)
+    private void OnError(Exception error)
     {
         lock (_gate) { if (_disposed) return; }
         // Buffer overflow: we lost events. Signal a full refresh (empty set).
-        Log.Warn("file watcher buffer overflow — requesting full refresh", e.GetException());
+        Log.Warn("file watcher buffer overflow — requesting full refresh", error);
         try { Changed?.Invoke([]); } catch { }
     }
 
@@ -151,5 +152,101 @@ public sealed class ProjectWatcherService : IDisposable
     {
         lock (_gate) { _disposed = true; }
         Stop();
+    }
+
+    /// <summary>
+    /// One root's recursive watcher, and the walk that turns a changed path into the
+    /// repository that owns it.
+    /// </summary>
+    private sealed class RootWatch : IDisposable
+    {
+        /// <summary>
+        /// Ceiling on remembered directories. The walk runs on every raw filesystem event
+        /// before the debounce, so it has to be cached; a build tree churning under an
+        /// unignored name would otherwise grow the cache without bound.
+        /// </summary>
+        private const int MaxCachedDirectories = 8192;
+
+        private readonly FileSystemWatcher? _fsw;
+        private readonly ConcurrentDictionary<string, string?> _repoOfDirectory = new(StringComparer.OrdinalIgnoreCase);
+
+        public string Root { get; }
+
+        public RootWatch(string root, Action<RootWatch, string> queue, Action<Exception> onError)
+        {
+            Root = root;
+            try
+            {
+                _fsw = new FileSystemWatcher(root)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
+                    InternalBufferSize = 64 * 1024 // headroom against bursty saves before overflow
+                };
+                _fsw.Changed += (_, e) => queue(this, e.FullPath);
+                _fsw.Created += (_, e) => queue(this, e.FullPath);
+                _fsw.Deleted += (_, e) => queue(this, e.FullPath);
+                _fsw.Renamed += (_, e) => { queue(this, e.FullPath); queue(this, e.OldFullPath); };
+                _fsw.Error += (_, e) => onError(e.GetException());
+                _fsw.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"file watcher could not start for {root}", ex);
+                _fsw = null;
+            }
+        }
+
+        public void ForgetResolutions() => _repoOfDirectory.Clear();
+
+        /// <summary>
+        /// The repository that owns a changed path, or null when no repository under this root
+        /// does. Cached per containing directory rather than per path: a build writing a
+        /// thousand files under one directory otherwise pays the walk a thousand times.
+        /// </summary>
+        public string? ResolveRepo(string fullPath, HashSet<string> known)
+        {
+            // The changed path can be the repository directory itself — a rename of the folder
+            // reports the folder, not anything inside it.
+            var self = RepoPaths.Normalize(fullPath);
+            if (known.Contains(self)) return self;
+
+            var directory = Path.GetDirectoryName(fullPath);
+            if (directory is null) return null;
+            directory = RepoPaths.Normalize(directory);
+
+            if (_repoOfDirectory.TryGetValue(directory, out var cached)) return cached;
+
+            var resolved = WalkUp(directory, known);
+            if (_repoOfDirectory.Count >= MaxCachedDirectories) _repoOfDirectory.Clear();
+            _repoOfDirectory[directory] = resolved;
+            return resolved;
+        }
+
+        /// <summary>
+        /// The nearest ancestor the scan reported as a repository, bounded by the root. A
+        /// repository the scan has not reported is used only when no reported one contains the
+        /// path: a repository nested inside another is a leaf the scan deliberately does not
+        /// descend into, and its edits belong to the card that does cover it.
+        /// </summary>
+        private string? WalkUp(string directory, HashSet<string> known)
+        {
+            string? onDisk = null;
+            var current = directory;
+            // Both spellings are normalized, and every reported path lies under the root the
+            // watcher was constructed with, so length alone bounds the walk at that root.
+            while (current.Length > Root.Length)
+            {
+                if (known.Contains(current)) return current;
+                if (onDisk is null && GitService.IsGitRepo(current)) onDisk = current;
+
+                var parent = Path.GetDirectoryName(current);
+                if (parent is null) break;
+                current = RepoPaths.Normalize(parent);
+            }
+            return onDisk;
+        }
+
+        public void Dispose() => _fsw?.Dispose();
     }
 }

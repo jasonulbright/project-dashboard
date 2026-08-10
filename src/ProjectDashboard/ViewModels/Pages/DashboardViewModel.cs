@@ -195,10 +195,10 @@ public partial class DashboardViewModel : ObservableObject
     /// the same UI post every other off-thread signal takes, so a host without an
     /// <see cref="Application"/> still runs the handler instead of dropping it.
     /// </summary>
-    internal void OnRepoDirsChanged(IReadOnlyCollection<string> repoDirs) =>
-        _uiPost(() => _ = HandleRepoDirsChangedAsync(repoDirs));
+    internal void OnRepoDirsChanged(IReadOnlyCollection<string> repoPaths) =>
+        _uiPost(() => _ = HandleRepoDirsChangedAsync(repoPaths));
 
-    private async Task HandleRepoDirsChangedAsync(IReadOnlyCollection<string> repoDirs)
+    private async Task HandleRepoDirsChangedAsync(IReadOnlyCollection<string> repoPaths)
     {
         // A bulk op (sync all / clone) is already writing git state; don't read a repo
         // mid-write (index.lock contention) only to have the op's own refresh clobber it.
@@ -210,20 +210,21 @@ public partial class DashboardViewModel : ObservableObject
             // already re-reading every repository. A failed clone skips that refresh, having
             // changed nothing the gate covers; the periodic reconcile closes that window.
             // The overflow signal names none, so nothing replays it — it queues on the drain.
-            if (repoDirs.Count == 0) RequestRescan();
+            if (repoPaths.Count == 0) RequestRescan();
             return;
         }
         try
         {
-            if (repoDirs.Count == 0)
+            if (repoPaths.Count == 0)
             {
                 await LoadProjectsCommand.ExecuteAsync(null);
                 return;
             }
 
-            var names = new HashSet<string>(repoDirs, StringComparer.OrdinalIgnoreCase);
+            var signalled = DashboardOrdering.KeySet(repoPaths);
             // Never read a repo a destructive op is actively rewriting: its refs are mid-swap.
-            var affected = Projects.Where(p => !p.IsRemoteOnly && names.Contains(p.DirectoryName)
+            var affected = Projects.Where(p => !p.IsRemoteOnly && p.FullPath.Length > 0
+                && signalled.Contains(DashboardOrdering.RepoKey(p.FullPath))
                 && !_busyRegistry.IsBusy(p.FullPath)).ToList();
             var changed = false;
             foreach (var project in affected)
@@ -1945,6 +1946,11 @@ public partial class DashboardViewModel : ObservableObject
     {
         Projects = new ObservableCollection<ProjectInfo>(results);
 
+        // The watcher resolves a changed path against this set before it touches the disk,
+        // which is the only way a repository whose folder has just been deleted still names
+        // itself in a signal.
+        _watcher.SetKnownRepos(results.Where(p => !p.IsRemoteOnly).Select(p => p.FullPath));
+
         // Settings may have changed since the last load (Settings page, another window),
         // and cached ProjectInfo carries whatever IsPinned was serialized with.
         ReloadViewPreferences();
@@ -2221,17 +2227,7 @@ public static class DashboardOrdering
 
     /// <summary>
     /// Comparison key for a repo path: a trailing separator or a relative spelling must
-    /// not make one pinned repo look like two. An unparseable path keys as itself rather
-    /// than throwing — a damaged settings entry is inert, not fatal.
+    /// not make one pinned repo look like two.
     /// </summary>
-    public static string RepoKey(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return "";
-        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
-        catch (Exception ex)
-        {
-            Log.Warn($"unusable repo path in settings: {path}", ex);
-            return path.Trim();
-        }
-    }
+    public static string RepoKey(string path) => RepoPaths.Normalize(path);
 }

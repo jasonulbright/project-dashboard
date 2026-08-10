@@ -42,25 +42,29 @@ public partial class ProjectDetailViewModel
         _busyRegistry.Changed += OnRepoLeaseChanged;
     }
 
-    internal void OnWatchedReposChanged(IReadOnlyCollection<string> repoDirs) =>
-        _uiPost(() => WatcherRefresh = HandleWatchedReposChangedAsync(repoDirs));
+    internal void OnWatchedReposChanged(IReadOnlyCollection<string> repoPaths) =>
+        _uiPost(() => WatcherRefresh = HandleWatchedReposChangedAsync(repoPaths));
 
-    private async Task HandleWatchedReposChangedAsync(IReadOnlyCollection<string> repoDirs)
+    private async Task HandleWatchedReposChangedAsync(IReadOnlyCollection<string> repoPaths)
     {
-        if (!NamesOpenRepo(repoDirs)) return;
+        if (!NamesOpenRepo(repoPaths)) return;
         await RefreshFromWatcherAsync();
     }
 
     /// <summary>
-    /// Whether the signal covers the repository on screen. The empty set is the overflow
-    /// signal: the watcher lost the events and can name nothing, so it covers every
+    /// Whether the signal covers the repository on screen. Matched on path: a folder name is
+    /// shared by a repository in every other root that happens to hold one, and following
+    /// that would re-read a repository the reader is not looking at. The empty set is the
+    /// overflow signal: the watcher lost the events and can name nothing, so it covers every
     /// repository including this one.
     /// </summary>
-    private bool NamesOpenRepo(IReadOnlyCollection<string> repoDirs)
+    private bool NamesOpenRepo(IReadOnlyCollection<string> repoPaths)
     {
-        if (Project is not { } project || project.DirectoryName.Length == 0) return false;
-        return repoDirs.Count == 0 ||
-               repoDirs.Any(dir => string.Equals(dir, project.DirectoryName, StringComparison.OrdinalIgnoreCase));
+        if (Project is not { } project) return false;
+        var open = RepoPaths.Normalize(project.FullPath);
+        if (open.Length == 0) return false;
+        return repoPaths.Count == 0 ||
+               repoPaths.Any(path => string.Equals(RepoPaths.Normalize(path), open, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task RefreshFromWatcherAsync()

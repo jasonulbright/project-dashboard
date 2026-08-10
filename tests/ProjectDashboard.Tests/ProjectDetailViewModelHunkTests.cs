@@ -72,13 +72,13 @@ public class ProjectDetailViewModelHunkTests
     /// the refresh it triggers has finished — the interleave a dialog that holds no busy gate
     /// is open for.
     /// </summary>
-    private sealed class RefreshingConfirmViewModel(GitService git, Action edit, string repoDir)
+    private sealed class RefreshingConfirmViewModel(GitService git, Action edit, string repoPath)
         : ProjectDetailViewModel(null!, git, null!, uiPost: callback => callback())
     {
         internal override async Task<bool> ConfirmAsync(string title, string message, string confirmText)
         {
             edit();
-            OnWatchedReposChanged([repoDir]);
+            OnWatchedReposChanged([repoPath]);
             await WatcherRefresh;
             return true;
         }
@@ -596,7 +596,7 @@ public class ProjectDetailViewModelHunkTests
         var vm = new RefreshingConfirmViewModel(
             new GitService(),
             () => repo.WriteFile("elsewhere.txt", "touched outside the app\n"),
-            Path.GetFileName(repo.Path));
+            repo.Path);
         await vm.SetProjectAsync(ProjectFor(repo));
         await vm.WorkingStateRefresh;
         await SelectUnstagedHunkAsync(vm, 0);
@@ -624,7 +624,7 @@ public class ProjectDetailViewModelHunkTests
         var vm = new RefreshingConfirmViewModel(
             new GitService(),
             () => repo.WriteFile("file.txt", FifteenEditedTail),
-            Path.GetFileName(repo.Path));
+            repo.Path);
         await vm.SetProjectAsync(ProjectFor(repo));
         await vm.WorkingStateRefresh;
         await SelectUnstagedHunkAsync(vm, 0);
@@ -655,7 +655,7 @@ public class ProjectDetailViewModelHunkTests
         var row = vm.SelectedDiffLine;
         var rows = vm.DiffLines;
         repo.WriteFile("elsewhere.txt", "touched outside the app\n");
-        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        vm.OnWatchedReposChanged([repo.Path]);
         await vm.WatcherRefresh;
 
         Assert.Equal(2, vm.UnstagedFiles.Count);
@@ -679,7 +679,7 @@ public class ProjectDetailViewModelHunkTests
         await SelectUnstagedHunkAsync(vm, 1);
 
         await repo.GitAsync("add", "file.txt");
-        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        vm.OnWatchedReposChanged([repo.Path]);
         await vm.WatcherRefresh;
 
         Assert.Empty(vm.UnstagedFiles);
@@ -710,7 +710,7 @@ public class ProjectDetailViewModelHunkTests
         // In place, so the file keeps its status and its row: the first hunk's content changes
         // and every hunk header — the second one's included — is the one already on screen.
         repo.WriteFile("file.txt", FifteenEditedAgain);
-        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        vm.OnWatchedReposChanged([repo.Path]);
         await vm.WatcherRefresh;
 
         // Carried forward by the working-state read, and re-rendered anyway.
@@ -742,7 +742,7 @@ public class ProjectDetailViewModelHunkTests
 
         // Only the last line stays edited, so the hunk the pane is on is gone from the file.
         repo.WriteFile("file.txt", "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nL15\n");
-        vm.OnWatchedReposChanged([Path.GetFileName(repo.Path)]);
+        vm.OnWatchedReposChanged([repo.Path]);
         await vm.WatcherRefresh;
 
         Assert.False(DiffTouches(vm.DiffLines, "L1"));
@@ -799,7 +799,7 @@ public class ProjectDetailViewModelHunkTests
             await SelectUnstagedHunkAsync(vm, 1);
 
             var header = vm.SelectedDiffLine!.Text;
-            var dir = Path.GetFileName(repo.Path);
+            var dir = repo.Path;
             repo.WriteFile("file.txt", FifteenEditedAgain);
             git.Armed = true;
 
@@ -865,7 +865,7 @@ public class ProjectDetailViewModelHunkTests
             vm.SelectedDiffLine = vm.DiffLines.Last(l => l.IsHunkStart);
             var header = vm.SelectedDiffLine.Text;
 
-            var dir = Path.GetFileName(repo.Path);
+            var dir = repo.Path;
             git.Armed = true;
             // In place, so both remaining hunks change content and neither header moves.
             repo.WriteFile("file.txt", TwentyFive('M', 13, 25));
