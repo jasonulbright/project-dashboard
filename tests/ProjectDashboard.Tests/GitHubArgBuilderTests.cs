@@ -470,6 +470,33 @@ public class GitHubListArgBuilderTests
     public void AnythingElse_LeavesTheStatePickerInForce(string search)
         => Assert.False(GitHubService.SearchSetsState(search));
 
+    /// <summary>
+    /// Text inside a quoted phrase is searched for, not interpreted. Read as a qualifier it would
+    /// drop the state flag and put a notice on screen saying the picker was overruled by a phrase
+    /// that never touched the state.
+    /// </summary>
+    [Theory]
+    [InlineData("title:\"a state:closed b\"")]
+    [InlineData("\"is:closed\"")]
+    [InlineData("\"unterminated is:closed")]
+    public void AStateQualifierInsideAQuotedPhrase_IsPartOfThePhrase(string search)
+    {
+        Assert.False(GitHubService.SearchSetsState(search));
+        Assert.Equal("closed", GitHubService.BuildIssueListArgs("o/r", new GitHubService.GitHubListQuery("closed", search))[5]);
+    }
+
+    [Theory]
+    [InlineData("title:\"a b\" state:closed")]
+    [InlineData("state:closed title:\"a b\"")]
+    [InlineData("\"a b\" is:merged")]
+    public void AStateQualifierOutsideThePhrase_StillNamesTheState(string search)
+        => Assert.True(GitHubService.SearchSetsState(search));
+
+    [Fact]
+    public void AQuotedPhrase_IsOneTerm()
+        => Assert.Equal(["title:\"a state:closed b\"", "label:bug"],
+            GitHubService.SearchTerms("  title:\"a state:closed b\"   label:bug "));
+
     [Fact]
     public void PullRequestList_ReadsTheStateFieldItsRowsNowRender()
     {

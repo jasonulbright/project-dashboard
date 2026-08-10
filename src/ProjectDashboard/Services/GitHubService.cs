@@ -238,13 +238,41 @@ public class GitHubService(SettingsService settingsService)
 
     /// <summary>
     /// Whether a search string names the state it wants. GitHub spells that two ways — a
-    /// <c>state:</c> qualifier and the <c>is:</c> forms that select one — and each only as a whole
-    /// term, so a phrase that merely contains one is not a state qualifier.
+    /// <c>state:</c> qualifier and the <c>is:</c> forms that select one — and each only as a term
+    /// of its own. Text inside a quoted phrase is searched for, not interpreted, so
+    /// <c>title:"a state:closed b"</c> names no state.
     /// </summary>
     internal static bool SearchSetsState(string search) =>
-        search.Split(' ', '\t', '\n', '\r')
-            .Any(term => term.StartsWith("state:", StringComparison.OrdinalIgnoreCase) ||
-                         term is "is:open" or "is:closed" or "is:merged" or "is:unmerged");
+        SearchTerms(search).Any(term =>
+            term.StartsWith("state:", StringComparison.OrdinalIgnoreCase) ||
+            term.Equals("is:open", StringComparison.OrdinalIgnoreCase) ||
+            term.Equals("is:closed", StringComparison.OrdinalIgnoreCase) ||
+            term.Equals("is:merged", StringComparison.OrdinalIgnoreCase) ||
+            term.Equals("is:unmerged", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The terms of a search string: whitespace separates them, except inside a double-quoted
+    /// span. An unclosed quote runs to the end of the string, which is how GitHub reads it too.
+    /// </summary>
+    internal static List<string> SearchTerms(string search)
+    {
+        var terms = new List<string>();
+        var term = new System.Text.StringBuilder();
+        var quoted = false;
+        foreach (var c in search)
+        {
+            if (c == '"') quoted = !quoted;
+            if (!quoted && char.IsWhiteSpace(c))
+            {
+                if (term.Length > 0) terms.Add(term.ToString());
+                term.Clear();
+                continue;
+            }
+            term.Append(c);
+        }
+        if (term.Length > 0) terms.Add(term.ToString());
+        return terms;
+    }
 
     internal static List<GitHubIssue>? ParseIssues(string json)
     {
