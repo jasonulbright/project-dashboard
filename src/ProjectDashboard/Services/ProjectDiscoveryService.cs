@@ -295,12 +295,26 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
     // ── Cache ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The shape this build writes and is willing to read back. A cache written by a build that
+    /// recorded fewer facts per project deserializes without complaint and every card comes back
+    /// missing them, so a mismatch is a miss rather than a partial answer.
+    /// </summary>
+    internal const int CacheSchemaVersion = 2;
+
     private sealed class DiscoveryCache
     {
+        public int SchemaVersion { get; set; }
         public DateTimeOffset CachedAt { get; set; }
         public List<ProjectInfo> Projects { get; set; } = [];
     }
 
+    /// <summary>
+    /// The cached scan, or null when there is none to serve. A scan that found no projects is an
+    /// answer and is served as one: counting it as absent sends every load and every timer tick
+    /// down the full-scan path — a gh availability probe and a remote-repo list included — for a
+    /// root that is empty, or that times out because it is unreachable.
+    /// </summary>
     private List<ProjectInfo>? LoadCache(int maxAgeSeconds)
     {
         try
@@ -310,10 +324,10 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
             var json = File.ReadAllText(CachePath);
             var cache = JsonSerializer.Deserialize<DiscoveryCache>(json, JsonOptions);
             if (cache is null) return null;
+            if (cache.SchemaVersion != CacheSchemaVersion) return null;
 
             var age = DateTimeOffset.Now - cache.CachedAt;
             if (age.TotalSeconds > maxAgeSeconds) return null;
-            if (cache.Projects.Count == 0) return null;
 
             // Manifests are the store's truth, never the cache's: a manifest saved
             // after the cache was written must not appear reverted on relaunch.
@@ -351,6 +365,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
 
             var cache = new DiscoveryCache
             {
+                SchemaVersion = CacheSchemaVersion,
                 CachedAt = DateTimeOffset.Now,
                 Projects = projects
             };
