@@ -149,83 +149,152 @@ public class GitHubService(SettingsService settingsService)
     }
 
     /// <summary>
-    /// The repository's issues, or null when the read failed. An empty list is an answer —
-    /// this repository has no open issues — and a failed gh call establishes no such thing,
-    /// so the two are never the same value. gh prints a JSON array whenever it succeeds, so
-    /// blank output is a failure too.
+    /// The server-side facets one issue or pull-request list read carries. State and search go
+    /// to gh rather than being applied to what came back: filtering a capped page would answer
+    /// from an arbitrary subset of the repository and call it the whole answer.
     /// </summary>
-    public async Task<List<GitHubIssue>?> GetIssuesAsync(string repoSlug, string state = "open", CancellationToken ct = default)
+    public sealed record GitHubListQuery(string State = "open", string? Search = null, int Limit = 100);
+
+    /// <summary>
+    /// One read of the issue list. MayHaveMore is true whenever the read came back full: a full
+    /// page cannot distinguish a repository holding exactly that many from one holding more, and
+    /// the next read at a larger limit resolves it against gh rather than guessing again.
+    /// </summary>
+    public sealed record IssuePage(IReadOnlyList<GitHubIssue> Items, bool MayHaveMore, int Limit);
+
+    /// <summary>One read of the pull-request list, on the same terms as <see cref="IssuePage"/>.</summary>
+    public sealed record PullRequestPage(IReadOnlyList<GitHubPullRequest> Items, bool MayHaveMore, int Limit);
+
+    /// <summary>
+    /// Whether a page of <paramref name="loaded"/> rows read at <paramref name="limit"/> may have
+    /// rows behind it.
+    /// </summary>
+    internal static bool PageMayHaveMore(int loaded, int limit) => limit > 0 && loaded >= limit;
+
+    /// <summary>
+    /// The repository's issues under <paramref name="query"/>, or null when the read failed. An
+    /// empty page is an answer — nothing in this repository matches these facets — and a failed
+    /// gh call establishes no such thing, so the two are never the same value. gh prints a JSON
+    /// array whenever it succeeds, so blank output is a failure too.
+    /// </summary>
+    public async Task<IssuePage?> GetIssuePageAsync(string repoSlug, GitHubListQuery query,
+        CancellationToken ct = default)
+    {
+        var run = await RunAsync(BuildIssueListArgs(repoSlug, query), ct, ReadTimeout);
+        if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
+        {
+            Log.Warn($"gh issue list failed for {repoSlug}: {run.FirstError}");
+            return null;
+        }
+        var issues = ParseIssues(run.StdOut);
+        return issues is null ? null : new IssuePage(issues, PageMayHaveMore(issues.Count, query.Limit), query.Limit);
+    }
+
+    /// <summary>
+    /// The repository's pull requests under <paramref name="query"/>. Same terms as
+    /// <see cref="GetIssuePageAsync"/>: an empty page is an answer and a failure is not one.
+    /// </summary>
+    public async Task<PullRequestPage?> GetPullRequestPageAsync(string repoSlug, GitHubListQuery query,
+        CancellationToken ct = default)
+    {
+        var run = await RunAsync(BuildPullRequestListArgs(repoSlug, query), ct, ReadTimeout);
+        if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
+        {
+            Log.Warn($"gh pr list failed for {repoSlug}: {run.FirstError}");
+            return null;
+        }
+        var prs = ParsePullRequests(run.StdOut);
+        return prs is null ? null : new PullRequestPage(prs, PageMayHaveMore(prs.Count, query.Limit), query.Limit);
+    }
+
+    internal static List<string> BuildIssueListArgs(string repoSlug, GitHubListQuery query) =>
+        BuildListArgs("issue", repoSlug, "number,title,state,createdAt,updatedAt,author,labels", query);
+
+    internal static List<string> BuildPullRequestListArgs(string repoSlug, GitHubListQuery query) =>
+        BuildListArgs("pr", repoSlug, "number,title,state,author,isDraft,updatedAt,statusCheckRollup", query);
+
+    /// <summary>
+    /// The argument vector for one list read. The search text travels verbatim — GitHub's search
+    /// syntax is the user's to write and GitHub's to reject.
+    ///
+    /// A search naming a state of its own overrules --state inside gh, which turns the state flag
+    /// into a value the surface shows but the read never applied. The flag is therefore set to the
+    /// one value that adds no qualifier, leaving the search as the only state in force, and the
+    /// surface says the picker is not applied.
+    /// </summary>
+    private static List<string> BuildListArgs(string entity, string repoSlug, string jsonFields,
+        GitHubListQuery query)
+    {
+        var search = query.Search?.Trim() ?? "";
+        var state = search.Length > 0 && SearchSetsState(search) ? "all" : query.State;
+        var args = new List<string>
+        {
+            entity, "list", "--repo", repoSlug, "--state", state,
+            "--json", jsonFields, "--limit", query.Limit.ToString()
+        };
+        if (search.Length > 0) args.AddRange(["--search", search]);
+        return args;
+    }
+
+    /// <summary>
+    /// Whether a search string names the state it wants. GitHub spells that two ways — a
+    /// <c>state:</c> qualifier and the <c>is:</c> forms that select one — and each only as a whole
+    /// term, so a phrase that merely contains one is not a state qualifier.
+    /// </summary>
+    internal static bool SearchSetsState(string search) =>
+        search.Split(' ', '\t', '\n', '\r')
+            .Any(term => term.StartsWith("state:", StringComparison.OrdinalIgnoreCase) ||
+                         term is "is:open" or "is:closed" or "is:merged" or "is:unmerged");
+
+    internal static List<GitHubIssue>? ParseIssues(string json)
     {
         try
         {
-            var output = await RunGhAsync(
-                ["issue", "list", "--repo", repoSlug, "--state", state,
-                 "--json", "number,title,state,createdAt,updatedAt,author,labels", "--limit", "100"], ct);
-
-            if (string.IsNullOrWhiteSpace(output))
-            {
-                Log.Warn($"gh issue list returned nothing for {repoSlug}");
-                return null;
-            }
-
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
             var issues = new List<GitHubIssue>();
-            using var doc = JsonDocument.Parse(output);
             foreach (var el in doc.RootElement.EnumerateArray())
             {
+                // A row with no number addresses nothing: every command on it takes the number.
+                if (el.ValueKind != JsonValueKind.Object || Int(el, "number") is not { } number) continue;
                 issues.Add(new GitHubIssue
                 {
-                    Number = el.GetProperty("number").GetInt32(),
-                    Title = el.GetProperty("title").GetString() ?? "",
-                    State = el.TryGetProperty("state", out var st) ? st.GetString()?.ToLowerInvariant() ?? "" : "",
-                    CreatedAt = el.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default,
-                    UpdatedAt = el.TryGetProperty("updatedAt", out var ua) ? ua.GetDateTimeOffset() : default,
-                    Author = el.TryGetProperty("author", out var au) && au.ValueKind == JsonValueKind.Object &&
-                             au.TryGetProperty("login", out var lg) ? lg.GetString() ?? "" : "",
-                    Labels = el.TryGetProperty("labels", out var lb) && lb.ValueKind == JsonValueKind.Array
-                        ? string.Join(", ", lb.EnumerateArray().Select(l =>
-                            l.TryGetProperty("name", out var n) ? n.GetString() : null).Where(n => n is not null))
-                        : ""
+                    Number = number,
+                    Title = Str(el, "title"),
+                    State = Str(el, "state").ToLowerInvariant(),
+                    CreatedAt = Date(el, "createdAt") ?? default,
+                    UpdatedAt = Date(el, "updatedAt") ?? default,
+                    Author = Login(el, "author"),
+                    Labels = JoinNames(el, "labels", "name")
                 });
             }
             return issues;
         }
         catch (Exception ex)
         {
-            Log.Warn($"gh issue list failed for {repoSlug}", ex);
+            Log.Warn("gh issue list response unparseable", ex);
             return null;
         }
     }
 
-    /// <summary>
-    /// The repository's open pull requests, or null when the read failed. Same terms as
-    /// <see cref="GetIssuesAsync"/>: an empty list is an answer and a failure is not one.
-    /// </summary>
-    public async Task<List<GitHubPullRequest>?> GetPullRequestsAsync(string repoSlug, CancellationToken ct = default)
+    internal static List<GitHubPullRequest>? ParsePullRequests(string json)
     {
         try
         {
-            var output = await RunGhAsync(
-                ["pr", "list", "--repo", repoSlug, "--state", "open",
-                 "--json", "number,title,author,isDraft,updatedAt,statusCheckRollup", "--limit", "100"], ct);
-
-            if (string.IsNullOrWhiteSpace(output))
-            {
-                Log.Warn($"gh pr list returned nothing for {repoSlug}");
-                return null;
-            }
-
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
             var prs = new List<GitHubPullRequest>();
-            using var doc = JsonDocument.Parse(output);
             foreach (var el in doc.RootElement.EnumerateArray())
             {
+                if (el.ValueKind != JsonValueKind.Object || Int(el, "number") is not { } number) continue;
                 prs.Add(new GitHubPullRequest
                 {
-                    Number = el.GetProperty("number").GetInt32(),
-                    Title = el.GetProperty("title").GetString() ?? "",
-                    Author = el.TryGetProperty("author", out var au) && au.ValueKind == JsonValueKind.Object &&
-                             au.TryGetProperty("login", out var lg) ? lg.GetString() ?? "" : "",
-                    IsDraft = el.TryGetProperty("isDraft", out var dr) && dr.GetBoolean(),
-                    UpdatedAt = el.TryGetProperty("updatedAt", out var ua) ? ua.GetDateTimeOffset() : default,
+                    Number = number,
+                    Title = Str(el, "title"),
+                    State = Str(el, "state").ToLowerInvariant(),
+                    Author = Login(el, "author"),
+                    IsDraft = Bool(el, "isDraft"),
+                    UpdatedAt = Date(el, "updatedAt") ?? default,
                     ChecksState = el.TryGetProperty("statusCheckRollup", out var checks)
                         ? SummarizeChecks(checks) : ""
                 });
@@ -234,7 +303,7 @@ public class GitHubService(SettingsService settingsService)
         }
         catch (Exception ex)
         {
-            Log.Warn($"gh pr list failed for {repoSlug}", ex);
+            Log.Warn("gh pr list response unparseable", ex);
             return null;
         }
     }

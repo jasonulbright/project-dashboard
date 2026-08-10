@@ -762,3 +762,97 @@ public class GitHubForkDivergenceParsingTests
     public void AnIncompleteOrFailedComparison_ReadsNullRatherThanZero(string json)
         => Assert.Null(GitHubService.ParseForkDivergence(json));
 }
+
+/// <summary>
+/// The issue and pull-request list payloads. Both lists now carry rows a closed or all filter
+/// selects, so the state each row reports — and the label a row draws from it — is part of what
+/// the parser owes its surface.
+/// </summary>
+public class GitHubListParsingTests
+{
+    [Fact]
+    public void AnIssueRow_CarriesItsStateAuthorAndLabels()
+    {
+        var issues = GitHubService.ParseIssues("""
+            [
+              {"number":41,"title":"Crash on empty repo","state":"CLOSED",
+               "createdAt":"2026-07-30T09:15:00Z","updatedAt":"2026-08-02T11:30:00Z",
+               "author":{"login":"jasonulbright"},
+               "labels":[{"name":"bug"},{"name":"ui"}]},
+              {"number":42,"title":"Bare","state":"OPEN","author":null,"labels":[]}
+            ]
+            """);
+
+        Assert.NotNull(issues);
+        Assert.Equal(2, issues.Count);
+        Assert.Equal("closed", issues[0].State);
+        Assert.Equal("closed", issues[0].StateLabel);
+        Assert.Equal("jasonulbright", issues[0].Author);
+        Assert.Equal("bug, ui", issues[0].Labels);
+        Assert.Equal(new DateTimeOffset(2026, 8, 2, 11, 30, 0, TimeSpan.Zero), issues[0].UpdatedAt);
+        // A deleted author and an empty label set are answers, not failures.
+        Assert.Equal("", issues[1].Author);
+        Assert.Equal("open", issues[1].StateLabel);
+    }
+
+    /// <summary>An empty array is a real answer: nothing in this repository matches those facets.</summary>
+    [Fact]
+    public void AnEmptyArray_ParsesToAnEmptyListRatherThanNull()
+    {
+        Assert.Empty(GitHubService.ParseIssues("[]")!);
+        Assert.Empty(GitHubService.ParsePullRequests("[]")!);
+    }
+
+    /// <summary>Every command on a row addresses it by number; a row without one addresses nothing.</summary>
+    [Fact]
+    public void ARowWithoutANumber_IsDroppedRatherThanNumberedZero()
+    {
+        var issues = GitHubService.ParseIssues("""[{"title":"no number"},{"number":7,"title":"kept"}]""");
+
+        Assert.NotNull(issues);
+        Assert.Equal(7, Assert.Single(issues).Number);
+    }
+
+    [Theory]
+    [InlineData("""{"message":"Bad credentials"}""")]
+    [InlineData("not json")]
+    [InlineData("")]
+    public void AMalformedPayload_ReadsNullRatherThanAsAnEmptyRepository(string json)
+    {
+        Assert.Null(GitHubService.ParseIssues(json));
+        Assert.Null(GitHubService.ParsePullRequests(json));
+    }
+
+    [Fact]
+    public void APullRequestRow_CarriesItsStateDraftFlagAndChecks()
+    {
+        var prs = GitHubService.ParsePullRequests("""
+            [
+              {"number":9,"title":"WIP","state":"OPEN","isDraft":true,"author":{"login":"alice"},
+               "updatedAt":"2026-08-05T10:00:00Z",
+               "statusCheckRollup":[{"conclusion":"SUCCESS"},{"conclusion":"FAILURE"}]},
+              {"number":8,"title":"Shipped","state":"MERGED","isDraft":false,"author":{"login":"bob"},
+               "statusCheckRollup":[]}
+            ]
+            """);
+
+        Assert.NotNull(prs);
+        Assert.Equal("failing", prs[0].ChecksState);
+        Assert.Equal("draft", prs[0].StateLabel);
+        Assert.Equal("merged", prs[1].State);
+        Assert.Equal("", prs[1].ChecksState);
+    }
+
+    /// <summary>
+    /// A merged or closed pull request is never announced as open, and the draft label only
+    /// applies while it still is one.
+    /// </summary>
+    [Theory]
+    [InlineData("open", false, "open")]
+    [InlineData("open", true, "draft")]
+    [InlineData("closed", false, "closed")]
+    [InlineData("merged", true, "merged")]
+    [InlineData("", false, "open")]
+    public void ThePullRequestRowLabel_FollowsTheStateBeforeTheDraftFlag(string state, bool draft, string expected)
+        => Assert.Equal(expected, new Models.GitHubPullRequest { State = state, IsDraft = draft }.StateLabel);
+}

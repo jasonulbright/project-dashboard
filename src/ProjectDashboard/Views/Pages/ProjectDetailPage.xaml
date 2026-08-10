@@ -1783,6 +1783,7 @@
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
@@ -1801,7 +1802,44 @@
                                    AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
-                    <Grid Grid.Row="1">
+                    <StackPanel Grid.Row="1" Margin="0,0,0,8">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="State:" FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <ComboBox DockPanel.Dock="Left" Width="96" FontSize="12" Margin="6,0,10,0"
+                                      ItemsSource="{x:Static local:ProjectDetailViewModel.GitHubListStates}"
+                                      SelectedItem="{Binding IssuesState}"
+                                      AutomationProperties.Name="Issue state filter" />
+                            <ui:Button DockPanel.Dock="Right" Content="Search" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                       Icon="{ui:SymbolIcon Search24}"
+                                       Command="{Binding ApplyIssueFiltersCommand}"
+                                       AutomationProperties.Name="Search issues" />
+                            <ui:TextBox Text="{Binding IssuesSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                        FontSize="12"
+                                        PlaceholderText="Search issues (GitHub search syntax)"
+                                        AutomationProperties.Name="Search issues in GitHub search syntax">
+                                <ui:TextBox.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding ApplyIssueFiltersCommand}" />
+                                </ui:TextBox.InputBindings>
+                            </ui:TextBox>
+                        </DockPanel>
+                        <TextBlock Text="{Binding IssuesFacetNotice}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IssuesFacetNotice}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="380" />
                             <ColumnDefinition Width="*" />
@@ -1811,6 +1849,10 @@
                         <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
                             <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
                                 <TextBlock Text="{Binding IssuesError}" FontSize="12" TextWrapping="Wrap"
                                            VerticalAlignment="Top" Foreground="{DynamicResource StatusBadFg}">
                                     <TextBlock.Style>
@@ -1824,7 +1866,7 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock Text="No open issues." FontSize="12"
+                                <TextBlock Text="{Binding IssuesEmptyText}" FontSize="12"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
@@ -1844,14 +1886,15 @@
                                 <ListBox ItemsSource="{Binding Issues}"
                                          SelectedItem="{Binding SelectedIssue}"
                                          Background="Transparent" BorderThickness="0"
-                                         AutomationProperties.Name="Open issues">
+                                         AutomationProperties.Name="Issues">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Padding" Value="4,4" />
                                             <Setter Property="AutomationProperties.Name">
                                                 <Setter.Value>
-                                                    <MultiBinding StringFormat="{}Issue {0}: {1}">
+                                                    <MultiBinding StringFormat="{}Issue {0}, {1}: {2}">
                                                         <Binding Path="Number" />
+                                                        <Binding Path="StateLabel" />
                                                         <Binding Path="Title" />
                                                     </MultiBinding>
                                                 </Setter.Value>
@@ -1872,6 +1915,23 @@
                                                            VerticalAlignment="Center"
                                                            Text="{Binding UpdatedAt, Converter={StaticResource RelativeTimeConverter}}"
                                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                <!-- state chip: a list filtered to closed or all carries rows nothing else tells apart -->
+                                                <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+                                                        VerticalAlignment="Center"
+                                                        Background="{DynamicResource StatusNeutralBg}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding State}" Value="closed">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding State}" FontSize="10"
+                                                               Foreground="{DynamicResource StatusNeutralFg}" />
+                                                </Border>
                                                 <TextBlock Text="{Binding Title}" FontSize="13"
                                                            TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"
                                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -1879,6 +1939,17 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <DockPanel Grid.Row="1" Margin="0,6,0,0">
+                                    <ui:Button DockPanel.Dock="Right" FontSize="11" Padding="8,2" Margin="8,0,0,0"
+                                               Content="{x:Static local:ProjectDetailViewModel.GitHubListLoadMoreLabel}"
+                                               Command="{Binding LoadMoreIssuesCommand}"
+                                               Visibility="{Binding IssuesHasMore, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                               AutomationProperties.Name="Load more issues" />
+                                    <TextBlock Text="{Binding IssuesFooterText}" FontSize="11" TextWrapping="Wrap"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               AutomationProperties.LiveSetting="Polite" />
+                                </DockPanel>
                             </Grid>
                         </Border>
 
@@ -2131,6 +2202,7 @@
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <DockPanel Grid.Row="0" Margin="0,0,0,8">
@@ -2148,7 +2220,44 @@
                                    AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
 
-                    <Grid Grid.Row="1">
+                    <StackPanel Grid.Row="1" Margin="0,0,0,8">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="State:" FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <ComboBox DockPanel.Dock="Left" Width="96" FontSize="12" Margin="6,0,10,0"
+                                      ItemsSource="{x:Static local:ProjectDetailViewModel.GitHubListStates}"
+                                      SelectedItem="{Binding PullRequestsState}"
+                                      AutomationProperties.Name="Pull request state filter" />
+                            <ui:Button DockPanel.Dock="Right" Content="Search" FontSize="12" Padding="10,4" Margin="8,0,0,0"
+                                       Icon="{ui:SymbolIcon Search24}"
+                                       Command="{Binding ApplyPullRequestFiltersCommand}"
+                                       AutomationProperties.Name="Search pull requests" />
+                            <ui:TextBox Text="{Binding PullRequestsSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                        FontSize="12"
+                                        PlaceholderText="Search pull requests (GitHub search syntax)"
+                                        AutomationProperties.Name="Search pull requests in GitHub search syntax">
+                                <ui:TextBox.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding ApplyPullRequestFiltersCommand}" />
+                                </ui:TextBox.InputBindings>
+                            </ui:TextBox>
+                        </DockPanel>
+                        <TextBlock Text="{Binding PullRequestsFacetNotice}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PullRequestsFacetNotice}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="380" />
                             <ColumnDefinition Width="*" />
@@ -2158,6 +2267,10 @@
                         <Border Grid.Column="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 CornerRadius="8" Padding="10,8" Margin="0,0,12,0">
                             <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
                                 <TextBlock Text="{Binding PullRequestsError}" FontSize="12" TextWrapping="Wrap"
                                            VerticalAlignment="Top" Foreground="{DynamicResource StatusBadFg}">
                                     <TextBlock.Style>
@@ -2171,7 +2284,7 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock Text="No open pull requests." FontSize="12"
+                                <TextBlock Text="{Binding PullRequestsEmptyText}" FontSize="12"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
@@ -2191,7 +2304,7 @@
                                 <ListBox ItemsSource="{Binding PullRequests}"
                                          SelectedItem="{Binding SelectedPullRequest}"
                                          Background="Transparent" BorderThickness="0"
-                                         AutomationProperties.Name="Open pull requests">
+                                         AutomationProperties.Name="Pull requests">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Padding" Value="4,4" />
@@ -2257,6 +2370,26 @@
                                                         </TextBlock.Style>
                                                     </TextBlock>
                                                 </Border>
+                                                <!-- state chip: a list filtered to closed or all carries rows the draft chip cannot describe -->
+                                                <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+                                                        VerticalAlignment="Center"
+                                                        Background="{DynamicResource StatusNeutralBg}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding State}" Value="closed">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding State}" Value="merged">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding State}" FontSize="10"
+                                                               Foreground="{DynamicResource StatusNeutralFg}" />
+                                                </Border>
                                                 <!-- draft chip -->
                                                 <Border DockPanel.Dock="Right" Background="{DynamicResource StatusNeutralBg}"
                                                         CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
@@ -2271,6 +2404,17 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <DockPanel Grid.Row="1" Margin="0,6,0,0">
+                                    <ui:Button DockPanel.Dock="Right" FontSize="11" Padding="8,2" Margin="8,0,0,0"
+                                               Content="{x:Static local:ProjectDetailViewModel.GitHubListLoadMoreLabel}"
+                                               Command="{Binding LoadMorePullRequestsCommand}"
+                                               Visibility="{Binding PullRequestsHasMore, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                               AutomationProperties.Name="Load more pull requests" />
+                                    <TextBlock Text="{Binding PullRequestsFooterText}" FontSize="11" TextWrapping="Wrap"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               AutomationProperties.LiveSetting="Polite" />
+                                </DockPanel>
                             </Grid>
                         </Border>
 

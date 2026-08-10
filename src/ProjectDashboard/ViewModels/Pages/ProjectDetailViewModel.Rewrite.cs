@@ -509,6 +509,7 @@ public partial class ProjectDetailViewModel
         HandleSurgeryPropertyChanged(e);
         HandleHunkPropertyChanged(e);
         HandleHistoryDepthPropertyChanged(e);
+        HandleGitHubListDepthPropertyChanged(e);
     }
 
     // ── Step flags ──────────────────────────────────────────────────────────────

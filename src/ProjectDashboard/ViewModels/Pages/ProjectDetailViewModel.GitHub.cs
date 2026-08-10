@@ -142,6 +142,8 @@ public partial class ProjectDetailViewModel
         SelectedMergeStrategy = MergeStrategy.Squash;
         MergeDeleteBranch = false;
         ReviewBody = "";
+
+        ResetGitHubListDepth();
     }
 
     // ── Issue detail load ───────────────────────────────────────────────────────
@@ -194,27 +196,14 @@ public partial class ProjectDetailViewModel
         if (SelectedIssue is not null) await LoadIssueDetailAsync(SelectedIssue);
     }
 
-    private async Task ReloadIssueListAsync()
+    /// <summary>
+    /// Re-reads the issue list at the depth and facets it is already showing, so a refresh — and
+    /// the reload every issue mutation ends with — does not undo the window the reader paged into.
+    /// </summary>
+    private Task ReloadIssueListAsync()
     {
-        var slug = Slug;
-        if (slug.Length == 0)
-        {
-            IssuesError = NoRemoteStatus;
-            return;
-        }
-        var gen = _generation;
-        var issues = await FetchIssuesAsync(slug);
-        if (!IsCurrent(gen)) return;
-        if (issues is null)
-        {
-            // The list already on screen is left standing: replacing it with nothing would
-            // report a repository emptied, which a read that never completed cannot say.
-            IssuesError = IssuesFetchFailed;
-            return;
-        }
-        IssuesError = "";
-        Issues = new ObservableCollection<GitHubIssue>(issues);
-        if (Project is not null) Project.Issues = issues;
+        IssuesPageLoad = LoadIssuePageAsync(_issuesWindowSize);
+        return IssuesPageLoad;
     }
 
     [RelayCommand]
@@ -256,14 +245,17 @@ public partial class ProjectDetailViewModel
 
     /// <summary>
     /// The two list reads the Issues and Pull Requests tabs stand on. Null is a failed read,
-    /// never rendered as an empty repository. Overridable on the same terms as the other
-    /// remote reads, so both outcomes are reachable without gh.
+    /// never rendered as an empty repository, and the page carries whether the window it filled
+    /// may have rows behind it. Overridable on the same terms as the other remote reads, so both
+    /// outcomes and every facet are reachable without gh.
     /// </summary>
-    internal virtual Task<List<GitHubIssue>?> FetchIssuesAsync(string slug)
-        => _gitHubService.GetIssuesAsync(slug, "open");
+    internal virtual Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+        string slug, GitHubService.GitHubListQuery query)
+        => _gitHubService.GetIssuePageAsync(slug, query);
 
-    internal virtual Task<List<GitHubPullRequest>?> FetchPullRequestsAsync(string slug)
-        => _gitHubService.GetPullRequestsAsync(slug);
+    internal virtual Task<GitHubService.PullRequestPage?> FetchPullRequestPageAsync(
+        string slug, GitHubService.GitHubListQuery query)
+        => _gitHubService.GetPullRequestPageAsync(slug, query);
 
     /// <summary>Shown wherever a list read failed, so a failure never reads as an empty repository.</summary>
     private const string IssuesFetchFailed =

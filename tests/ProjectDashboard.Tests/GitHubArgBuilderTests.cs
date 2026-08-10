@@ -1,3 +1,4 @@
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
 namespace ProjectDashboard.Tests;
@@ -395,6 +396,102 @@ public class GitHubArgBuilderTests
             Assert.Contains(expected, result.FirstError);
         }
     }
+}
+
+/// <summary>
+/// The issue and pull-request list reads. gh exposes no cursor on either command — --limit is
+/// the whole of its depth control — so the window is the argument that has to be exact, and the
+/// facets are asserted as the tokens gh receives rather than as anything applied afterwards.
+/// </summary>
+public class GitHubListArgBuilderTests
+{
+    private static List<string> IssueArgs(GitHubService.GitHubListQuery query) =>
+        GitHubService.BuildIssueListArgs("o/r", query);
+
+    [Fact]
+    public void IssueList_DefaultQuery_ReadsOpenAtTheFirstWindow()
+        => Assert.Equal(
+            ["issue", "list", "--repo", "o/r", "--state", "open",
+             "--json", "number,title,state,createdAt,updatedAt,author,labels", "--limit", "100"],
+            IssueArgs(new GitHubService.GitHubListQuery()));
+
+    [Theory]
+    [InlineData(GitHubListState.Open, "open")]
+    [InlineData(GitHubListState.Closed, "closed")]
+    [InlineData(GitHubListState.All, "all")]
+    public void IssueList_StateRidesOnTheEnumsToken(GitHubListState state, string token)
+        => Assert.Equal(token, IssueArgs(new GitHubService.GitHubListQuery(state.Token()))[5]);
+
+    /// <summary>
+    /// The second window asks for the first one again plus a page. A read that asked only for
+    /// the new rows would need a cursor gh does not have, and the page it returned could not be
+    /// proved to continue the one on screen.
+    /// </summary>
+    [Theory]
+    [InlineData(100)]
+    [InlineData(200)]
+    [InlineData(300)]
+    public void IssueList_WindowTravelsAsTheWholeLimit(int window)
+        => Assert.Equal(["--limit", window.ToString()],
+            IssueArgs(new GitHubService.GitHubListQuery(Limit: window))[^2..]);
+
+    [Fact]
+    public void IssueList_SearchTravelsVerbatim()
+        => Assert.Equal(["--search", "crash in:title label:\"needs triage\""],
+            IssueArgs(new GitHubService.GitHubListQuery(Search: "crash in:title label:\"needs triage\""))[^2..]);
+
+    [Fact]
+    public void IssueList_BlankSearch_CarriesNoSearchFlag()
+        => Assert.DoesNotContain("--search", IssueArgs(new GitHubService.GitHubListQuery(Search: "   ")));
+
+    /// <summary>
+    /// A search that names a state is left as the only state in the query. gh lets such a search
+    /// overrule --state, so any other value would be a facet the surface displays and the read
+    /// never applied; "all" is the value that adds no qualifier of its own.
+    /// </summary>
+    [Theory]
+    [InlineData("state:closed")]
+    [InlineData("crash is:closed sort:created-asc")]
+    [InlineData("is:merged")]
+    [InlineData("STATE:OPEN")]
+    public void IssueList_SearchNamingAState_LeavesTheStateFlagOutOfTheWay(string search)
+    {
+        var args = IssueArgs(new GitHubService.GitHubListQuery("closed", search));
+
+        Assert.Equal("all", args[5]);
+        Assert.Equal(search, args[^1]);
+    }
+
+    [Theory]
+    [InlineData("crash on this: line")]
+    [InlineData("misstate:thing")]
+    [InlineData("label:is:open")]
+    [InlineData("")]
+    public void AnythingElse_LeavesTheStatePickerInForce(string search)
+        => Assert.False(GitHubService.SearchSetsState(search));
+
+    [Fact]
+    public void PullRequestList_ReadsTheStateFieldItsRowsNowRender()
+    {
+        var args = GitHubService.BuildPullRequestListArgs("o/r", new GitHubService.GitHubListQuery("all", Limit: 200));
+
+        Assert.Equal(
+            ["pr", "list", "--repo", "o/r", "--state", "all",
+             "--json", "number,title,state,author,isDraft,updatedAt,statusCheckRollup", "--limit", "200"],
+            args);
+    }
+
+    /// <summary>
+    /// A window that came back full says only that more may be behind it — the next read at a
+    /// larger window is what answers it. Anything short of full is the whole answer.
+    /// </summary>
+    [Theory]
+    [InlineData(100, 100, true)]
+    [InlineData(101, 100, true)]
+    [InlineData(99, 100, false)]
+    [InlineData(0, 100, false)]
+    public void APageIsOnlyOpenEnded_WhenItCameBackFull(int loaded, int limit, bool mayHaveMore)
+        => Assert.Equal(mayHaveMore, GitHubService.PageMayHaveMore(loaded, limit));
 }
 
 /// <summary>

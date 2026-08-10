@@ -264,7 +264,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         catch (Exception ex) { Log.Warn("working-state refresh failed", ex); }
     }
 
-    private async Task LoadIssuesLazilyAsync(ProjectInfo project)
+    private Task LoadIssuesLazilyAsync(ProjectInfo project)
     {
         if (string.IsNullOrEmpty(project.GitHubSlug))
         {
@@ -272,26 +272,13 @@ public partial class ProjectDetailViewModel : ObservableObject
             // repository with no remote nothing ever queried one. Left unmarked, an empty
             // list reads as "no open issues" about a repository that has none to report.
             if (ReferenceEquals(Project, project)) IssuesError = NoRemoteStatus;
-            return;
+            return Task.CompletedTask;
         }
-        try
-        {
-            var issues = await FetchIssuesAsync(project.GitHubSlug);
-            if (!ReferenceEquals(Project, project)) return; // user may have moved on mid-fetch
-            if (issues is null)
-            {
-                IssuesError = IssuesFetchFailed;
-                return;
-            }
-            project.Issues = issues; // cache on the model for the next visit
-            IssuesError = "";
-            Issues = new ObservableCollection<GitHubIssue>(issues);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Issue list load failed for {project.GitHubSlug}", ex);
-            if (ReferenceEquals(Project, project)) IssuesError = IssuesFetchFailed;
-        }
+        // The seeded rows carry no depth of their own; this read is what establishes whether the
+        // repository has more issues than the window holds. A reload of the project already open
+        // re-reads the window it was paged to — a project switch is what resets that window.
+        IssuesPageLoad = LoadIssuePageAsync(_issuesWindowSize);
+        return IssuesPageLoad;
     }
 
     private void ApplyProject(ProjectInfo p)

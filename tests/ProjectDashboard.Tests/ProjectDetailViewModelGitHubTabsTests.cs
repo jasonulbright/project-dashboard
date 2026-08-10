@@ -1112,9 +1112,12 @@ public class ProjectDetailViewModelGitHubTabsTests
     {
         private int _fetches;
 
-        internal override Task<List<GitHubIssue>?> FetchIssuesAsync(string slug) =>
-            Task.FromResult<List<GitHubIssue>?>(
-                _fetches++ == 0 ? [new GitHubIssue { Number = 1, Title = "still open" }] : null);
+        internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+            string slug, GitHubService.GitHubListQuery query) =>
+            Task.FromResult<GitHubService.IssuePage?>(
+                _fetches++ == 0
+                    ? new GitHubService.IssuePage([new GitHubIssue { Number = 1, Title = "still open" }], false, query.Limit)
+                    : null);
     }
 
     [Theory]
@@ -1190,10 +1193,15 @@ public class ProjectDetailViewModelGitHubTabsTests
 
         internal override Task<List<Release>?> FetchReleasesAsync(string slug) => Task.FromResult(SeedReleases);
 
-        internal override Task<List<GitHubIssue>?> FetchIssuesAsync(string slug) => Task.FromResult(SeedIssues);
+        internal override Task<GitHubService.IssuePage?> FetchIssuePageAsync(
+            string slug, GitHubService.GitHubListQuery query)
+            => Task.FromResult<GitHubService.IssuePage?>(
+                SeedIssues is null ? null : new GitHubService.IssuePage(SeedIssues, false, query.Limit));
 
-        internal override Task<List<GitHubPullRequest>?> FetchPullRequestsAsync(string slug)
-            => Task.FromResult(SeedPullRequests);
+        internal override Task<GitHubService.PullRequestPage?> FetchPullRequestPageAsync(
+            string slug, GitHubService.GitHubListQuery query)
+            => Task.FromResult<GitHubService.PullRequestPage?>(
+                SeedPullRequests is null ? null : new GitHubService.PullRequestPage(SeedPullRequests, false, query.Limit));
 
         internal override Task<RepoSettings?> FetchRepoSettingsAsync(string slug)
             => SettingsGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Settings);

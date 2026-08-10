@@ -844,30 +844,16 @@ public partial class ProjectDetailViewModel
 
     // ── Pull requests ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Re-reads the pull-request list at the depth and facets it is already showing. A failed read
+    /// leaves the rows standing and the tab unloaded: marked loaded, the next visit would skip its
+    /// own read and show an empty list as though the repository had no pull requests.
+    /// </summary>
     [RelayCommand]
-    private async Task LoadPullRequests()
+    private Task LoadPullRequests()
     {
-        var gen = _generation;
-        var slug = Project?.GitHubSlug ?? "";
-        if (slug.Length == 0)
-        {
-            PullRequestsError = NoRemoteStatus;
-            return;
-        }
-        var pullRequests = await FetchPullRequestsAsync(slug);
-        // A stale write would also set PullRequestsLoaded, making the new project's
-        // tab skip its own load and open the previous project's PR numbers.
-        if (!IsCurrent(gen)) return;
-        if (pullRequests is null)
-        {
-            // Marked loaded, the next visit would skip its own read and show an empty list
-            // as though the repository had no open pull requests.
-            PullRequestsError = PullRequestsFetchFailed;
-            return;
-        }
-        PullRequestsError = "";
-        PullRequests = new ObservableCollection<GitHubPullRequest>(pullRequests);
-        PullRequestsLoaded = true;
+        PullRequestsPageLoad = LoadPullRequestPageAsync(_pullRequestsWindowSize);
+        return PullRequestsPageLoad;
     }
 
     [RelayCommand]

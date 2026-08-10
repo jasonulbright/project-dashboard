@@ -16,6 +16,14 @@ public enum ReviewAction
     Comment,
 }
 
+/// <summary>Issue/pull-request list state the UI offers; maps to the exact gh flag token.</summary>
+public enum GitHubListState
+{
+    Open,
+    Closed,
+    All,
+}
+
 /// <summary>Repository visibility the UI offers; maps to the exact gh flag token.</summary>
 public enum RepoVisibility
 {
@@ -46,6 +54,14 @@ public static class GitHubActionTokens
         "private" => RepoVisibility.Private,
         "internal" => RepoVisibility.Internal,
         _ => null,
+    };
+
+    public static string Token(this GitHubListState state) => state switch
+    {
+        GitHubListState.Open => "open",
+        GitHubListState.Closed => "closed",
+        GitHubListState.All => "all",
+        _ => throw new ArgumentOutOfRangeException(nameof(state)),
     };
 
     public static string Token(this MergeStrategy strategy) => strategy switch
