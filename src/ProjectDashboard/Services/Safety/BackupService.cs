@@ -96,7 +96,7 @@ public sealed class BackupService
         if (!verify.Verified)
         {
             TryDelete(bundlePath);
-            throw new BackupException($"Backup bundle for '{repoPath}' failed verification: {verify.Detail}");
+            throw new BackupException($"Backup bundle for '{repoPath}' {DescribeUnverified(verify)}");
         }
 
         try
@@ -193,6 +193,17 @@ public sealed class BackupService
     }
 
     /// <summary>
+    /// Why a bundle is not verified, for a caller that refuses on either state. A check that never
+    /// answered did not find the bundle bad, and the two are worded apart everywhere the reader
+    /// meets them — a refusal calling an unanswered check a failed one names a defect the bundle
+    /// may not have.
+    /// </summary>
+    private static string DescribeUnverified(BundleVerifyResult verify) =>
+        verify.State == BundleVerifyState.Unknown
+            ? $"could not be verified: {verify.Detail}"
+            : $"failed verification: {verify.Detail}";
+
+    /// <summary>
     /// A timeout is <see cref="BundleVerifyState.Unknown"/> rather than a failure: the kill says
     /// the question went unanswered, and a bundle called corrupt on that basis would send a reader
     /// to delete a backup that is intact.
@@ -287,7 +298,7 @@ public sealed class BackupService
         // BEFORE mutating anything. A corrupt or truncated bundle stops here.
         var verify = await VerifyBundleAsync(handle.RepoPath, handle.BundlePath, ct);
         if (!verify.Verified)
-            return new RestoreResult(false, $"Bundle failed verification — refusing to restore: {verify.Detail}");
+            return new RestoreResult(false, $"Bundle {DescribeUnverified(verify)} — refusing to restore.");
 
         // Unpack the bundle's objects into the store WITHOUT moving refs: a plain fetch
         // refuses to update a branch that is checked out, so refs are set explicitly below

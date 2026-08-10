@@ -685,6 +685,26 @@ public class BackupServiceTests
         Assert.False(restore.Success);
         Assert.False(restore.RefsRestored);
         Assert.Equal(before, await repo.RefStateAsync());
+
+        // Refused either way, but a check that was killed did not find the bundle bad, and the
+        // refusal a reader gets from the restore says the same thing the verify surface does.
+        Assert.Contains("could not be verified", restore.Message);
+        Assert.DoesNotContain("failed verification", restore.Message);
+    }
+
+    /// <summary>A capture whose verify was killed refuses too, and for the reason it actually had.</summary>
+    [Fact]
+    public async Task CreateBackup_WhenTheVerifyCannotRun_SaysSoRatherThanCallingTheBundleBad()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = new BackupService(new TimesOutOnBundleVerifyGitService(), new SettingsService());
+
+        var thrown = await Assert.ThrowsAsync<BackupException>(
+            () => service.CreateBackupAsync(repo.Path, "History rewrite"));
+
+        Assert.Contains("could not be verified", thrown.Message);
+        Assert.DoesNotContain("failed verification", thrown.Message);
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
     }
 
     // ── Size ────────────────────────────────────────────────────────────────
