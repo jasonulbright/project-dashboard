@@ -18,9 +18,7 @@ public partial class SettingsViewModel : ObservableObject
     private readonly UpdateCheckService? _updateCheck;
 
     [ObservableProperty] private ApplicationTheme _currentTheme = ApplicationTheme.Dark;
-    [ObservableProperty] private string _projectsRootPath = "";
     [ObservableProperty] private int _refreshIntervalSeconds = 300;
-    [ObservableProperty] private string _excludedDirectories = "";
     [ObservableProperty] private string _gitHubStatus = "Checking...";
     [ObservableProperty] private string _ghPath = "";
     [ObservableProperty] private bool _enableGitHubDiscovery = true;
@@ -52,9 +50,8 @@ public partial class SettingsViewModel : ObservableObject
     public void LoadSettings()
     {
         var settings = _settingsService.Load();
-        ProjectsRootPath = settings.ProjectsRootPath;
+        LoadRoots(settings);
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
-        ExcludedDirectories = string.Join(", ", settings.ExcludedDirectories);
         GhPath = settings.GhPath;
         EnableGitHubDiscovery = settings.EnableGitHubDiscovery;
         EnableAutoRefresh = settings.EnableAutoRefresh;
@@ -101,13 +98,16 @@ public partial class SettingsViewModel : ObservableObject
     {
         // Load-then-mutate so window state (and any unseen fields) survive a Settings save.
         var settings = _settingsService.Load();
-        settings.ProjectsRootPath = ProjectsRootPath;
+        EnsureOneDefault();
+        settings.ProjectRoots = RootsFromRows();
+        settings.DefaultRootPath = DefaultRootFromRows();
+        // The singular compatibility fields are re-derived from the list on the way to disk;
+        // leaving them at the values this page loaded would read as an edit to the first root.
+        ProjectRootSettings.SyncLegacyFields(settings);
         // Clamp to a sane floor so a stray tiny/zero/negative value can't spin the timer.
         settings.RefreshIntervalSeconds = SettingsDelta.EffectiveRefreshSeconds(RefreshIntervalSeconds);
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         settings.Theme = CurrentTheme.ToString();
-        settings.ExcludedDirectories = ExcludedDirectories
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         settings.GhPath = GhPath.Trim();
         settings.EnableGitHubDiscovery = EnableGitHubDiscovery;
         settings.EnableAutoRefresh = EnableAutoRefresh;
@@ -181,21 +181,6 @@ public partial class SettingsViewModel : ObservableObject
         SyncStatus = "Syncing...";
         await _dashboardViewModel.ForceRefreshCommand.ExecuteAsync(null);
         SyncStatus = $"Synced at {DateTime.Now:HH:mm:ss}";
-    }
-
-    [RelayCommand]
-    private void BrowseFolder()
-    {
-        var dialog = new Microsoft.Win32.OpenFolderDialog
-        {
-            Title = "Select Projects Root Folder",
-            InitialDirectory = ProjectsRootPath
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-            ProjectsRootPath = dialog.FolderName;
-        }
     }
 
     [RelayCommand]

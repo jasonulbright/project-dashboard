@@ -37,11 +37,16 @@ public static class RepoPaths
         var child = Normalize(candidate);
         var parent = Normalize(ancestor);
         if (parent.Length == 0 || child.Length == 0) return false;
-        if (child.Length == parent.Length)
-            return string.Equals(child, parent, StringComparison.OrdinalIgnoreCase);
-        return child.Length > parent.Length
-            && child.StartsWith(parent, StringComparison.OrdinalIgnoreCase)
-            && (child[parent.Length] == Path.DirectorySeparatorChar
-                || child[parent.Length] == Path.AltDirectorySeparatorChar);
+        if (string.Equals(child, parent, StringComparison.OrdinalIgnoreCase)) return true;
+        if (child.Length <= parent.Length) return false;
+        if (!child.StartsWith(parent, StringComparison.OrdinalIgnoreCase)) return false;
+
+        // A drive root keeps its separator through normalization and so carries the boundary
+        // already; every other path needs one at the join, or C:\projects2 reads as being
+        // under C:\projects.
+        return IsSeparator(parent[^1]) || IsSeparator(child[parent.Length]);
     }
+
+    private static bool IsSeparator(char c) =>
+        c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar;
 }

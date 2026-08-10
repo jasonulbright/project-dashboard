@@ -60,8 +60,10 @@ public class SettingsViewModelTests
 
         vm.LoadSettings();
 
-        Assert.Equal(@"C:\moved-root", vm.ProjectsRootPath);
-        Assert.Equal("alpha, beta", vm.ExcludedDirectories);
+        var root = Assert.Single(vm.ProjectRoots);
+        Assert.Equal(@"C:\moved-root", root.Path);
+        Assert.Equal("alpha, beta", root.ExcludedDirectories);
+        Assert.True(root.IsDefault);
         Assert.Equal(@"C:\tools\gh.exe", vm.GhPath);
         Assert.Equal(900, vm.RefreshIntervalSeconds);
         Assert.False(vm.EnableGitHubDiscovery);

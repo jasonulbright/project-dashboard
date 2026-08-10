@@ -482,6 +482,9 @@ public partial class DashboardViewModel : ObservableObject
     /// </summary>
     private IReadOnlyList<RootStatus> _rootStatuses = [];
 
+    /// <summary>What the last scan found each root to be, for the Settings page's own rows.</summary>
+    public IReadOnlyList<RootStatus> RootStatuses => _rootStatuses;
+
     /// <summary>
     /// The configured roots, whether or not a scan has reported on them yet. Held so the empty
     /// state can tell "no roots configured" from "every root is unreachable" before the first

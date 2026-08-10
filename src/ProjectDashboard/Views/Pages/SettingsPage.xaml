@@ -27,22 +27,106 @@
                          Command="{Binding ChangeThemeCommand}"
                          CommandParameter="Dark" />
 
-            <!-- Projects Root Path -->
-            <TextBlock Text="Projects Root Path" FontSize="16" Margin="0,0,0,4"
+            <!-- Projects Folders -->
+            <TextBlock Text="Projects Folders" FontSize="16" Margin="0,0,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-            <TextBlock Text="Saving rescans the new root straight away. A rescan waits if a repository operation is running, and starts when it finishes."
+            <TextBlock Text="Every folder listed here is scanned, in this order. Order decides which folder wins when two hold a repository of the same name. Saving rescans straight away; a rescan waits if a repository operation is running, and starts when it finishes."
                        FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-            <DockPanel Margin="0,0,0,24">
-                <ui:Button DockPanel.Dock="Right"
-                           Content="Browse"
-                           Command="{Binding BrowseFolderCommand}"
-                           AutomationProperties.Name="Browse for the projects root folder"
-                           Margin="8,0,0,0" />
-                <ui:TextBox Text="{Binding ProjectsRootPath, UpdateSourceTrigger=PropertyChanged}"
-                            AutomationProperties.Name="Projects root path"
-                            PlaceholderText="C:\projects" />
-            </DockPanel>
+
+            <ItemsControl ItemsSource="{Binding ProjectRoots}" Margin="0,0,0,8"
+                          AutomationProperties.Name="Projects folders">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlElevationBorderBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                            <StackPanel>
+                                <DockPanel>
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Enabled}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              AutomationProperties.Name="Scan this projects folder" />
+                                    <ui:Button DockPanel.Dock="Right" Content="Remove" FontSize="12" Padding="8,4"
+                                               Margin="4,0,0,0"
+                                               AutomationProperties.Name="Remove this projects folder"
+                                               Command="{Binding DataContext.RemoveRootCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                               CommandParameter="{Binding}" />
+                                    <ui:Button DockPanel.Dock="Right" Content="Down" FontSize="12" Padding="8,4"
+                                               Margin="4,0,0,0"
+                                               AutomationProperties.Name="Move this projects folder down"
+                                               Command="{Binding DataContext.MoveRootDownCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                               CommandParameter="{Binding}" />
+                                    <ui:Button DockPanel.Dock="Right" Content="Up" FontSize="12" Padding="8,4"
+                                               Margin="4,0,0,0"
+                                               AutomationProperties.Name="Move this projects folder up"
+                                               Command="{Binding DataContext.MoveRootUpCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                               CommandParameter="{Binding}" />
+                                    <ui:Button DockPanel.Dock="Right" Content="Browse" FontSize="12" Padding="8,4"
+                                               Margin="8,0,0,0"
+                                               AutomationProperties.Name="Browse for this projects folder"
+                                               Command="{Binding DataContext.BrowseRootFolderCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                               CommandParameter="{Binding}" />
+                                    <ui:TextBox Text="{Binding Path, UpdateSourceTrigger=PropertyChanged}"
+                                                AutomationProperties.Name="Projects folder path"
+                                                PlaceholderText="C:\projects" />
+                                </DockPanel>
+
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:TextBox Grid.Column="0"
+                                                Text="{Binding Label, UpdateSourceTrigger=PropertyChanged}"
+                                                AutomationProperties.Name="Name for this projects folder"
+                                                PlaceholderText="Name (optional — the folder name is used when blank)" />
+                                    <ComboBox Grid.Column="1" Margin="8,0,0,0" Width="160"
+                                              ItemsSource="{Binding DepthChoices}"
+                                              DisplayMemberPath="Label"
+                                              SelectedValuePath="Value"
+                                              SelectedValue="{Binding ScanDepth}"
+                                              AutomationProperties.Name="How deep to scan this projects folder" />
+                                </Grid>
+
+                                <ui:TextBox Margin="0,8,0,0"
+                                            Text="{Binding ExcludedDirectories, UpdateSourceTrigger=PropertyChanged}"
+                                            AutomationProperties.Name="Folders to skip under this projects folder"
+                                            PlaceholderText="Skip: Internal, games, clients\archive" />
+
+                                <DockPanel Margin="0,8,0,0">
+                                    <RadioButton DockPanel.Dock="Left" GroupName="DefaultProjectsRoot"
+                                                 IsChecked="{Binding IsDefault}"
+                                                 Content="New projects and clones go here"
+                                                 FontSize="12" VerticalAlignment="Center"
+                                                 AutomationProperties.Name="Put new projects and clones in this folder"
+                                                 Command="{Binding DataContext.MakeDefaultRootCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                 CommandParameter="{Binding}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Status}"
+                                               FontSize="12" VerticalAlignment="Center" TextAlignment="Right"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Text="Scanning stops at each repository and does not look inside it. Under &quot;Skip&quot;, a plain name is skipped wherever it appears; an entry with a backslash is one place under this folder."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <ui:Button Content="Add a projects folder"
+                           Icon="{ui:SymbolIcon FolderAdd24}"
+                           AutomationProperties.Name="Add a projects folder"
+                           Command="{Binding AddRootCommand}" />
+                <TextBlock Text="{Binding RootsStatus}"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
+                           MaxWidth="400"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+            </StackPanel>
 
             <!-- Refresh Interval -->
             <TextBlock Text="Refresh Interval (seconds)" FontSize="16" Margin="0,0,0,4"
@@ -64,17 +148,6 @@
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            VerticalAlignment="Center" Margin="12,0,0,0" />
             </StackPanel>
-
-            <!-- Excluded Directories -->
-            <TextBlock Text="Excluded Directories" FontSize="16" Margin="0,0,0,4"
-                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-            <TextBlock Text="Comma-separated list of directory names to skip. Saving rescans so the grid matches the new list."
-                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
-                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-            <ui:TextBox Text="{Binding ExcludedDirectories, UpdateSourceTrigger=PropertyChanged}"
-                        AutomationProperties.Name="Excluded directory names"
-                        PlaceholderText="Internal, games, Archive"
-                        Margin="0,0,0,24" />
 
             <!-- Save -->
             <Grid Margin="0,0,0,24">

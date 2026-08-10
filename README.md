@@ -24,13 +24,13 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Pinning and density** — pin the repos you live in to the top of the grid, and switch the cards between comfortable and compact
 - **Card quick actions** — Fetch / Pull / Push inline on a card, plus click-through from a card chip straight to the matching detail tab
 - **Command palette** — `Ctrl+K` fuzzy-jumps to any project, runs a global action (refresh, new, clone, sync all, settings, filters), runs a verb on a named project without navigating to it (Fetch, Pull, Push, open the folder, open a terminal, copy the path, jump to Changes), and searches text and filenames across every repository
-- **Clone** — pick from your GitHub repositories (type-to-filter) or paste any URL; clones into the projects root
+- **Clone** — pick from your GitHub repositories (type-to-filter) or paste any URL; clones into the projects folder you picked as the default
 - **Sync All** — fetches every clean repo, fast-forwards the ones behind and pushes the ones ahead; dirty, diverged, detached, and conflicted repos are skipped and reported (never a surprise merge)
 - **New Project** — a template picker (empty, documentation, PowerShell script, .NET console app, .NET class library) that names exactly the files it will create, then git init + first commit (metadata stored out-of-source)
 - **Export** — write the whole inventory to CSV, JSON, or a standalone HTML page
 - **Auto-refresh** — a debounced file watcher updates a card within a couple of seconds of an on-disk edit, commit, or branch switch
 - **Shortcut cheat sheet** — `?` lists every keyboard gesture the app registers
-- **Empty states** — a missing projects folder, a folder with no repositories, and a filter that matches nothing each get their own explanation and next step
+- **Empty states** — no projects folder configured yet, every configured folder unreachable, folders with no repositories, and a filter that matches nothing each get their own explanation and next step
 
 ### Per-repository work area (detail view)
 - **Overview** — manifest editor, icon-prefixed notes with Edit/Done toggle, collapsible README/CHANGELOG with native markdown rendering
@@ -74,7 +74,7 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 - **Safety rails** — every destructive operation stands on an automatic backup, a preview, and a confirmation. Whole-history rewrites, force pushes, repository deletion, and remote-branch deletion require the repository name typed out. While a repo is under a long operation the file watcher, refresh timer, discovery scan, and Sync All leave it alone and catch up afterward
 - **Keyboard and screen reader** — full no-mouse operation: `Ctrl+K` palette, `?` cheat sheet, arrow-key pane navigation, Tab/arrows/Enter through the card grid, `Ctrl+1`–`Ctrl+9` and `Ctrl+0` for detail tabs, Alt+Left / Backspace to go back, keyboard-activatable chips and rows, visible focus rings. Every list row, outcome, and state is named for a screen reader, and status colors hold a 4.5:1 contrast floor
 - **Update check** — on launch, at most once a day, the app asks GitHub for this project's latest published release and compares it with the running build. A newer one shows a dismissible notice with a link to its release page; nothing is downloaded, installed, or run. The request carries no account, repository, or usage data, and a Settings toggle turns it off so no request is made at all
-- **Live-apply settings** — theme, refresh interval, watcher toggle, and projects root take effect when you save, not on the next launch
+- **Live-apply settings** — theme, refresh interval, watcher toggle, and the projects-folder list (paths, order, skip lists, scan depth) take effect when you save, not on the next launch
 - **Window state** — size, position, and pane collapse state persisted across restarts, in device pixels so a mixed-DPI setup restores where you left it
 - **Discovery cache** — instant relaunch from cached data; manual Refresh and Settings → Sync Now bypass the cache
 - **Error resilience** — global handlers show a dialog or banner instead of crashing; failures logged to `%LOCALAPPDATA%\ProjectDashboard\log.txt`
@@ -126,9 +126,9 @@ pwsh -File installer\build-portable.ps1
 
 ## Configuration
 
-On first launch, the app scans `C:\projects` for git repositories. Change the root path in Settings.
+On first launch, the app scans `C:\projects` for git repositories. Settings holds the full list of projects folders: add as many as you like, reorder them (order breaks the tie when two folders hold a repository of the same name), switch one off without losing it, and choose which one new projects and clones land in. Each folder carries its own skip list and its own scan depth — top level only by default, up to four levels down. A scan stops at each repository and does not look inside it, and it never follows a junction or symlink out of the folder. A folder that is missing or unreadable says so on the dashboard by name; the repositories in the folders that were read still appear.
 
-Settings also has: theme (light/dark), refresh interval, excluded directories, a `gh.exe` path picker, toggles for GitHub discovery (Cloud cards) and on-disk auto-refresh, the update check with a "Check now" button and the last check's outcome, and the opt-in that puts the danger zone on a project's Repo tab. Saving applies every one of them to the running app.
+Settings also has: theme (light/dark), refresh interval, a `gh.exe` path picker, toggles for GitHub discovery (Cloud cards) and on-disk auto-refresh, the update check with a "Check now" button and the last check's outcome, and the opt-in that puts the danger zone on a project's Repo tab. Saving applies every one of them to the running app.
 
 The update check is the only request the app makes on its own initiative. It is an anonymous public read of `https://api.github.com/repos/jasonulbright/project-dashboard/releases/latest` — no token, no account, no repository or usage data, and no telemetry of any kind. GitHub sees an address, a time, and the app's name and version, the same as visiting the releases page in a browser. Turning the toggle off stops it entirely, on launch and from the button.
 
