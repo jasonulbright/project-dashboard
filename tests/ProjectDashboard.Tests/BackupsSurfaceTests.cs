@@ -38,8 +38,9 @@ public class BackupsSurfaceTests
         BackupService? backups = null,
         RewriteRecoveryService? recovery = null,
         RepoBusyRegistry? busy = null,
-        OperationHistory? history = null) =>
-        new(null!, new GitService(), null!, null, busy, backups: backups, recovery: recovery, history: history);
+        OperationHistory? history = null,
+        SettingsService? settings = null) =>
+        new(null!, new GitService(), null!, null, busy, settings, backups, recovery, history: history);
 
     /// <summary>Answers the delete confirmation without a window, and keeps what it was asked.</summary>
     private sealed class ConfirmingViewModel(
@@ -259,6 +260,150 @@ public class BackupsSurfaceTests
         Assert.False(busy.IsBusy(repo.Path));
         Assert.False(vm.IsBusy);
         Assert.Single(vm.BackupList);
+    }
+
+    // ── Which tier a backup is ──────────────────────────────────────────────
+
+    /// <summary>
+    /// The box starts at what the setting says, so a reader opening the browser sees the tier the
+    /// coordinators' own backups are taking rather than a default this surface chose.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheDeepBox_OpensAtTheSavedSetting(bool configured)
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-deep-box");
+        var settings = new SettingsService();
+        settings.Save(new AppSettings { DeepBackupCapture = configured, BackupRetentionCount = 10 });
+
+        var vm = NewVm(NewBackups(), settings: settings);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        Assert.Equal(configured, vm.DeepBackupRequested);
+    }
+
+    /// <summary>
+    /// Ticking the box takes one deep capture and leaves the setting where it was, and the row and
+    /// the outcome both name the tier that was taken.
+    /// </summary>
+    [Fact]
+    public async Task TickingTheDeepBox_TakesADeepCaptureAndSaysSoOnTheRow()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-deep-once");
+        repo.Write("file.txt", "dirty\n");
+        await repo.GitAsync("stash", "push", "-m", "one");
+        repo.Write("file.txt", "dirtier\n");
+        await repo.GitAsync("stash", "push", "-m", "two");
+        var settings = new SettingsService();
+        settings.Save(new AppSettings { DeepBackupCapture = false, BackupRetentionCount = 10 });
+
+        var backups = NewBackups();
+        var vm = NewVm(backups, settings: settings);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        vm.DeepBackupRequested = true;
+
+        await vm.BackupNowCommand.ExecuteAsync(null);
+
+        var entry = Assert.Single(vm.BackupList);
+        Assert.True(entry.Deep);
+        // The count moves with the clock — `git stash push` writes an index commit, and pushes
+        // inside one second collapse into one object where pushes across a boundary do not — so
+        // the row is asserted to name the tier and a figure, not a particular figure.
+        Assert.Contains("deep capture,", entry.Detail, StringComparison.Ordinal);
+        Assert.Contains("beyond the refs", entry.Detail, StringComparison.Ordinal);
+        Assert.Contains("commits a reflog alone held", vm.BackupsStatusText, StringComparison.Ordinal);
+        Assert.False(settings.Load().DeepBackupCapture);
+        _output.WriteLine($"deep backup: {vm.BackupsStatusText}");
+    }
+
+    /// <summary>
+    /// A standard row says what it is, not merely what it holds. Which tier a backup was is
+    /// unreadable from the bundle later, so a row silent about it would leave a reader browsing
+    /// months-old backups unable to tell one from another.
+    /// </summary>
+    [Fact]
+    public async Task AStandardRow_NamesItsTierAndWhatItLeavesOut()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-standard-row");
+        var settings = new SettingsService();
+        settings.Save(new AppSettings { DeepBackupCapture = false, BackupRetentionCount = 10 });
+
+        var vm = NewVm(NewBackups(), settings: settings);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        await vm.BackupNowCommand.ExecuteAsync(null);
+
+        var entry = Assert.Single(vm.BackupList);
+        Assert.False(entry.Deep);
+        Assert.Contains("standard capture", entry.Detail, StringComparison.Ordinal);
+        Assert.Contains("stash entries below the newest", entry.ScopeText, StringComparison.Ordinal);
+        Assert.Contains("no restore brings them back", entry.ScopeText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The wording for a count, asserted apart from a capture: what a fixture produces moves with
+    /// the clock, and the singular is the case a plural-only string gets wrong.
+    /// </summary>
+    [Theory]
+    [InlineData(false, 0, "standard capture")]
+    [InlineData(true, 1, "deep capture, 1 object beyond the refs")]
+    [InlineData(true, 4, "deep capture, 4 objects beyond the refs")]
+    [InlineData(true, 0, "deep capture, 0 objects beyond the refs")]
+    public void ARowNamesItsTier(bool deep, int extra, string expected) =>
+        Assert.Equal(expected, ProjectDetailViewModel.DescribeTier(
+            new BackupDetails("Manual backup", 2, "refs/heads/main", "abc", 1024, deep, extra)));
+
+    /// <summary>
+    /// A backup whose sidecar cannot be read has no tier to name, and inventing one would describe
+    /// a capture this app cannot read at all.
+    /// </summary>
+    [Fact]
+    public void AnUnreadableRow_ClaimsNoScope()
+    {
+        var entry = new BackupEntry
+        {
+            Handle = new BackupHandle { UtcStamp = "20260808-101112000" },
+            Taken = "2026-08-08 10:11:12",
+            Operation = "Unreadable",
+            Detail = "The refs snapshot beside this bundle is missing or unreadable.",
+            Restorable = false,
+            Deep = false,
+        };
+
+        Assert.Equal("", entry.ScopeText);
+        Assert.Equal("restored", ProjectDetailViewModel.DescribeRestoredScope("restored", entry, landed: true));
+    }
+
+    /// <summary>
+    /// The restore outcome carries what the backup held. "History restored" alone would be read as
+    /// having put back the reflog-only commits and the deeper stash entries a standard capture
+    /// never received — and a restore is the one moment a reader acts on that belief.
+    /// </summary>
+    [Fact]
+    public void ARestoreOutcome_CarriesWhatTheBackupHeld()
+    {
+        var standard = new BackupEntry
+        {
+            Handle = new BackupHandle(), Taken = "t", Operation = "o", Detail = "d",
+            Restorable = true, Deep = false,
+        };
+        var deep = new BackupEntry
+        {
+            Handle = new BackupHandle(), Taken = "t", Operation = "o", Detail = "d",
+            Restorable = true, Deep = true,
+        };
+
+        Assert.Contains("were never in it",
+            ProjectDetailViewModel.DescribeRestoredScope("Restored.", standard, landed: true),
+            StringComparison.Ordinal);
+        Assert.Contains("does not rebuild the reflog or the stash stack",
+            ProjectDetailViewModel.DescribeRestoredScope("Restored.", deep, landed: true),
+            StringComparison.Ordinal);
+        // A restore that changed nothing restored no scope to describe.
+        Assert.Equal("Refused.", ProjectDetailViewModel.DescribeRestoredScope("Refused.", standard, landed: false));
     }
 
     // ── Verify ──────────────────────────────────────────────────────────────
@@ -966,6 +1111,7 @@ public class BackupsSurfaceTests
             Operation = "Manual backup",
             Detail = "2 ref(s) · HEAD refs/heads/main · 1.2 KB",
             Restorable = true,
+            Deep = false,
         };
 
         Assert.Equal(

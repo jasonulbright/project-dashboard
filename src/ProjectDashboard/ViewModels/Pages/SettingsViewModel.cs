@@ -34,12 +34,13 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _syncStatus = "";
     [ObservableProperty] private string _saveStatus = "";
 
-    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null, ManifestStore? manifests = null, ProjectDiscoveryService? discovery = null)
+    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null, ManifestStore? manifests = null, ProjectDiscoveryService? discovery = null, Services.Safety.BackupService? backups = null)
     {
         _settingsService = settingsService;
         _gitHubService = gitHubService;
         _dashboardViewModel = dashboardViewModel;
         _updateCheck = updateCheck;
+        _backups = backups;
         // Defaulted rather than left null: the section reads one file, and a page that showed no
         // records at all would read as a reader having none rather than as a host wiring gap.
         _manifests = manifests ?? new ManifestStore();
@@ -61,6 +62,7 @@ public partial class SettingsViewModel : ObservableObject
         var settings = _settingsService.Load();
         LoadRoots(settings);
         LoadMetadata();
+        LoadBackupSettings(settings);
         RefreshIntervalSeconds = settings.RefreshIntervalSeconds;
         GhPath = settings.GhPath;
         EnableGitHubDiscovery = settings.EnableGitHubDiscovery;
@@ -123,6 +125,7 @@ public partial class SettingsViewModel : ObservableObject
         settings.EnableAutoRefresh = EnableAutoRefresh;
         settings.DangerZoneEnabled = DangerZoneEnabled;
         settings.EnableUpdateCheck = EnableUpdateCheck;
+        SaveBackupSettings(settings);
 
         // The startup probe covers only a location unwritable at launch. A volume that
         // turns read-only mid-session fails here, and an unreported failure loses the

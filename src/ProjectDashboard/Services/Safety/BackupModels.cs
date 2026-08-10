@@ -43,6 +43,20 @@ public sealed class RefsSnapshot
     /// </summary>
     public string Operation { get; set; } = "";
 
+    /// <summary>
+    /// Whether the capture also pinned the objects no ref reaches: commits a reflog alone holds,
+    /// and every stash entry below the newest, which live only in refs/stash's own reflog. False
+    /// in a sidecar written before the deep tier existed, which is the standard capture it
+    /// describes — no other kind could have been taken then.
+    /// </summary>
+    public bool DeepCapture { get; set; }
+
+    /// <summary>
+    /// How many such object ids the capture pinned. Zero under <see cref="DeepCapture"/> means the
+    /// walk ran and found none, which is not the fact a standard capture reports by never looking.
+    /// </summary>
+    public int DeepObjectCount { get; set; }
+
     public List<RefEntry> Refs { get; set; } = [];
 }
 
@@ -56,7 +70,20 @@ public sealed record BackupDetails(
     int RefCount,
     string HeadRef,
     string HeadObjectId,
-    long BundleBytes);
+    long BundleBytes,
+    bool DeepCapture,
+    int DeepObjectCount);
+
+/// <summary>
+/// A count of backups across repositories and what they occupy on disk. Used for what is there,
+/// for what a prune would remove, and for what one did remove — the same shape each time, because
+/// a confirmation quoting one and a result quoting another would be read as the same measurement.
+///
+/// <see cref="Error"/> set means the walk did not finish, or a file could not be sized or removed,
+/// so the counts are a floor rather than a total and a caller says so rather than presenting them
+/// as a measurement.
+/// </summary>
+public sealed record BackupStorageTally(int RepoCount, int BackupCount, long Bytes, string? Error);
 
 /// <summary>
 /// What a delete left on disk. The two partial outcomes are not interchangeable:

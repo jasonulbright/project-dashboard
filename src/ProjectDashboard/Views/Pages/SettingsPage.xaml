@@ -314,6 +314,52 @@
                        FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
 
+            <!-- Backups: what is kept, how far a capture reaches, and what it all occupies.
+                 Both settings are read fresh by each capture, so Save is the whole of applying
+                 them; the retention count is the one whose effect waits for a capture, which is
+                 why the prune action is here. -->
+            <TextBlock Text="Backups" FontSize="16" Margin="0,24,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <TextBlock Text="Every history rewrite and every commit-surgery operation writes a verified backup before it touches a repository, and a project's Backups browser can take one on demand. Backups are kept in this app's data folder — never inside a repository."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+            <TextBlock Text="Backups kept per repository" FontSize="13" Margin="0,4,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <ui:TextBox Text="{Binding BackupRetentionCount, UpdateSourceTrigger=PropertyChanged}"
+                        AutomationProperties.Name="Backups kept per repository"
+                        PlaceholderText="10"
+                        Width="150" HorizontalAlignment="Left" />
+            <TextBlock Text="Minimum 1 — a count that pruned every backup would leave a destructive operation with nothing to undo it. Lowering this takes effect the next time each repository is backed up. To apply it to every repository straight away, save the settings and then use Prune now below, which reads the saved count."
+                       FontSize="12" Margin="0,8,0,12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+            <CheckBox Content="Deep capture: also keep commits only a reflog reaches, and every stash entry"
+                      IsChecked="{Binding DeepBackupCapture}"
+                      Margin="0,0,0,4"
+                      AutomationProperties.Name="Take deep backups" />
+            <TextBlock Text="Off by default. A standard backup holds every ref and the newest stash entry; a deep one also pins the objects no ref reaches, so a later cleanup cannot make them unrecoverable. Bundles are larger and slower to write. It preserves those objects — it does not rebuild the reflog or the stash stack when a backup is restored. Applies to the next backup; a project's Backups browser can override it for one capture."
+                       FontSize="12" Margin="0,0,0,12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+            <TextBlock Text="{Binding BackupStorageSummary}" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       AutomationProperties.AutomationId="SettingsBackupStorage"
+                       AutomationProperties.LiveSetting="Polite"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <ui:Button Content="Prune now"
+                           Icon="{ui:SymbolIcon Delete24}"
+                           AutomationProperties.Name="Prune every repository's backups to the saved count now"
+                           Command="{Binding PruneBackupsNowCommand}" />
+                <TextBlock Text="{Binding BackupPruneStatus}"
+                           AutomationProperties.AutomationId="SettingsBackupPruneStatus"
+                           AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
+                           MaxWidth="400"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+            </StackPanel>
+
             <!-- About -->
             <TextBlock Text="About" FontSize="16" Margin="0,24,0,8"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />

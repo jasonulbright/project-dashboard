@@ -35,6 +35,13 @@ public sealed class AppSettings
     /// <summary>Per-repo backups retained before a history rewrite prunes the oldest.</summary>
     public int BackupRetentionCount { get; set; } = 10;
 
+    /// <summary>
+    /// Whether a backup also captures the objects no ref reaches: commits a reflog alone holds,
+    /// and stash entries below the newest. Off keeps every backup's size and time where they were.
+    /// Read fresh by each capture, so a change applies to the next backup with no relaunch.
+    /// </summary>
+    public bool DeepBackupCapture { get; set; }
+
     /// <summary>Gate for the destructive GitHub-admin surface; off until the user opts in.</summary>
     public bool DangerZoneEnabled { get; set; }
 

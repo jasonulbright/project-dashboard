@@ -19,11 +19,20 @@ public sealed class BackupException : Exception
 /// failure there leaves the refs restored and reports
 /// <see cref="RestoreResult.RefsRestored"/> true. All backups live under AppPaths (never
 /// inside a repo), keyed by <see cref="RepoKey"/>, retained newest-N per repo.
+///
+/// A capture is one of two tiers, recorded in the sidecar. A standard capture holds the refs and
+/// the top refs/stash entry. A deep capture also pins the objects no ref reaches — commits a
+/// reflog alone holds, and every stash entry below the newest — so a later `git gc` cannot make
+/// them unrecoverable. A restore reconciles refs from the sidecar either way: the extra objects
+/// come back as objects, and neither tier replays a reflog or rebuilds a stash stack.
 /// </summary>
 public sealed class BackupService
 {
     private static readonly TimeSpan BundleTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RefTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>The reflog walk is bounded by the reflogs, which no setting bounds; the budget is.</summary>
+    private static readonly TimeSpan ReflogWalkTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// The expected-old value that requires a ref to be absent. `git update-ref --stdin` reads a
@@ -51,9 +60,14 @@ public sealed class BackupService
     /// on any failure — a caller must never proceed with a destructive op believing a backup
     /// exists when it does not. <paramref name="operation"/> is recorded in the sidecar so a reader browsing
     /// backups months later can tell which one preceded which change.
+    ///
+    /// <paramref name="deep"/> null reads AppSettings.DeepBackupCapture, so a caller that has no
+    /// opinion follows the one the user set rather than a default this call chose. The tier is
+    /// recorded in the sidecar either way: which objects a backup holds is not recoverable from
+    /// the bundle later, and a restore that could not name it would have to guess.
     /// </summary>
     public async Task<BackupHandle> CreateBackupAsync(
-        string repoPath, string operation = "", CancellationToken ct = default)
+        string repoPath, string operation = "", bool? deep = null, CancellationToken ct = default)
     {
         if (!GitService.IsGitRepo(repoPath))
             throw new BackupException($"'{repoPath}' is not a git repository — refusing to back up.");
@@ -70,15 +84,23 @@ public sealed class BackupService
         // state, and a bundle with no matching snapshot is useless for a targeted restore.
         var snapshot = await CaptureRefsAsync(repoPath, stamp, operation, ct);
 
+        var deepCapture = deep ?? _settings.Load().DeepBackupCapture;
+        var deepOids = deepCapture ? await CaptureDeepOidsAsync(repoPath, ct) : [];
+        snapshot.DeepCapture = deepCapture;
+        snapshot.DeepObjectCount = deepOids.Count;
+
         // The snapshot's own object ids are fed in as explicit revisions, so a ref moved or
         // deleted between the capture above and this call still has its recorded object in the
         // bundle — the restore reads its refs from the sidecar and would otherwise name an object
         // the bundle never received. `--all` rides along because git refuses a bundle that names
-        // no ref, and it keeps the capture a superset: every ref plus the top refs/stash entry,
-        // but no reflogs and no deeper stash-stack entries, so those older stash states and
-        // reflog-only commits are unreachable in the bundle and are lost on restore.
+        // no ref, and it keeps the capture a superset: every ref plus the top refs/stash entry.
+        // A standard capture stops there, so a commit only a reflog holds and every stash entry
+        // below the newest are unreachable in the bundle and are not in it. A deep capture pins
+        // those object ids through the same list: the objects land in the bundle with their whole
+        // ancestry, under no ref of their own, and no ref is created or moved to put them there.
         var pinned = snapshot.Refs.Select(r => r.ObjectId)
             .Append(snapshot.HeadObjectId)
+            .Concat(deepOids)
             .Where(oid => oid.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -175,7 +197,8 @@ public sealed class BackupService
             Log.Warn($"could not size backup bundle {handle.BundlePath}", ex);
         }
 
-        return new BackupDetails(snapshot.Operation, snapshot.Refs.Count, snapshot.HeadRef, snapshot.HeadObjectId, bytes);
+        return new BackupDetails(snapshot.Operation, snapshot.Refs.Count, snapshot.HeadRef,
+            snapshot.HeadObjectId, bytes, snapshot.DeepCapture, snapshot.DeepObjectCount);
     }
 
     /// <summary>
@@ -221,10 +244,20 @@ public sealed class BackupService
     /// that exists could not be sized, so a caller reports the size as unknown rather than as a
     /// total silently missing whatever the read failed on.
     /// </summary>
-    public long? MeasureBackupBytes(BackupHandle handle)
+    public long? MeasureBackupBytes(BackupHandle handle) =>
+        SumFileBytes([handle.BundlePath, handle.RefsSnapshotPath, handle.RefsSnapshotPath + ".bak"]);
+
+    /// <summary>The same three files, named from the folder and stem a walk has rather than a handle.</summary>
+    private static long? MeasureStampBytes(string dir, string stamp) =>
+        SumFileBytes([
+            Path.Combine(dir, stamp + ".bundle"),
+            Path.Combine(dir, stamp + SnapshotSuffix),
+            Path.Combine(dir, stamp + SnapshotSuffix + ".bak")]);
+
+    private static long? SumFileBytes(IEnumerable<string> paths)
     {
         long total = 0;
-        foreach (var path in new[] { handle.BundlePath, handle.RefsSnapshotPath, handle.RefsSnapshotPath + ".bak" })
+        foreach (var path in paths)
         {
             try
             {
@@ -239,6 +272,100 @@ public sealed class BackupService
         }
         return total;
     }
+
+    /// <summary>
+    /// What every repository's backups occupy right now. A directory read, never a git call, so a
+    /// surface can show it on load and refresh it after anything that changes what is on disk.
+    /// </summary>
+    public BackupStorageTally MeasureStorage() => Tally(null, remove: false);
+
+    /// <summary>
+    /// What a prune to the current retention count would remove, for a confirmation to state
+    /// before anything is deleted. Nothing is written.
+    /// </summary>
+    public BackupStorageTally PreviewPrune() => Tally(RetentionCount(), remove: false);
+
+    /// <summary>
+    /// Prunes every repository's backups to the current retention count, and reports what actually
+    /// went — read from the files afterwards, not from the deletes having been attempted, because a
+    /// bundle another process holds open stays on disk and must not be counted as reclaimed.
+    ///
+    /// Retention is otherwise applied only by the next capture for a repository, so a lowered count
+    /// leaves an untouched repository over its limit until then; this is the action that closes
+    /// that gap on demand.
+    /// </summary>
+    public BackupStorageTally PruneEveryRepository() => Tally(RetentionCount(), remove: true);
+
+    internal const string UnsizedNotice = "some backup files could not be sized";
+
+    internal const string UnremovedNotice =
+        "some backups could not be removed — another process may hold them open";
+
+    /// <summary>
+    /// One traversal behind the storage figure, the prune preview, and the prune itself, so the
+    /// number a confirmation shows and the set a prune removes cannot describe different backups.
+    /// <paramref name="keep"/> null counts every backup; a value counts only those past it, in the
+    /// same newest-first order <see cref="PruneDirectory"/> applies per repository.
+    /// </summary>
+    private BackupStorageTally Tally(int? keep, bool remove)
+    {
+        var repos = 0;
+        var backups = 0;
+        long bytes = 0;
+        string? error = null;
+        try
+        {
+            foreach (var (dir, bundles) in ReadBackupFolders())
+            {
+                var considered = keep is { } n ? bundles.Skip(n).ToList() : bundles;
+                var counted = 0;
+                foreach (var bundle in considered)
+                {
+                    var stamp = Path.GetFileNameWithoutExtension(bundle);
+                    var size = MeasureStampBytes(dir, stamp);
+                    if (size is null) error ??= UnsizedNotice;
+                    if (remove)
+                    {
+                        RemoveStamp(dir, stamp);
+                        if (File.Exists(bundle))
+                        {
+                            error ??= UnremovedNotice;
+                            continue;
+                        }
+                    }
+                    counted++;
+                    bytes += size ?? 0;
+                }
+                if (remove) ReapOrphanedSnapshots(dir);
+                if (counted == 0) continue;
+                repos++;
+                backups += counted;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not walk {SafetyPaths.BackupsRoot}", ex);
+            error = ex.Message;
+        }
+        return new BackupStorageTally(repos, backups, bytes, error);
+    }
+
+    /// <summary>Each repository's backup folder paired with its bundles, newest first.</summary>
+    private static List<(string Dir, List<string> Bundles)> ReadBackupFolders()
+    {
+        var root = SafetyPaths.BackupsRoot;
+        if (!Directory.Exists(root)) return [];
+        return [.. Directory.GetDirectories(root).Select(dir => (dir, BundlesNewestFirst(dir)))];
+    }
+
+    /// <summary>
+    /// The one ordering every prune and every tally reads. Stamp is a fixed-width sortable UTC
+    /// string, so ordinal-descending is newest-first — a second ordering written anywhere else
+    /// could name a different set as the oldest than the one a confirmation counted.
+    /// </summary>
+    private static List<string> BundlesNewestFirst(string dir) =>
+        [.. Directory.GetFiles(dir, "*.bundle")
+            .OrderByDescending(p => Path.GetFileNameWithoutExtension(p), StringComparer.Ordinal)];
 
     /// <summary>
     /// Restores the repo to the backup's ref state. The bundle is verified first; a
@@ -472,6 +599,29 @@ public sealed class BackupService
     }
 
     /// <summary>
+    /// Object ids reachable from a reflog and from no ref. One walk covers both halves of what a
+    /// standard capture misses: `git stash push` keeps its stack as refs/stash's own reflog, so
+    /// stash@{1} and below are reflog entries rather than refs, and are enumerated here with the
+    /// commits an amend or a reset left behind.
+    ///
+    /// A walk that fails throws rather than falling back to a standard capture: a backup recorded
+    /// as deep has to hold what that word claims, and one silently narrowed to the refs would be
+    /// read months later as covering history it never received.
+    /// </summary>
+    private async Task<List<string>> CaptureDeepOidsAsync(string repoPath, CancellationToken ct)
+    {
+        var walk = await _git.RunAsync(
+            repoPath, ["rev-list", "--reflog", "--not", "--all"], ct, ReflogWalkTimeout);
+        if (!walk.Success)
+            throw new BackupException(
+                $"The reflogs of '{repoPath}' could not be read, so no deep backup was written: {walk.FirstError}");
+
+        return [.. walk.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(oid => oid.Length > 0)];
+    }
+
+    /// <summary>
     /// The refs a reconciliation may move, and the symbolic ones it must not.
     /// <see cref="Reconcilable"/> holds name → object id for the rest.
     /// </summary>
@@ -558,32 +708,34 @@ public sealed class BackupService
         }
     }
 
-    private int RetentionCount()
-    {
-        var n = _settings.Load().BackupRetentionCount;
-        return n < 1 ? 1 : n;
-    }
+    /// <summary>
+    /// The retention a configured count actually produces. A count below one keeps one: a value
+    /// that pruned every backup would leave a destructive operation with nothing to undo it.
+    /// </summary>
+    public static int EffectiveRetention(int configured) => configured < 1 ? 1 : configured;
 
-    private void PruneOldBackups(string repoPath, int keep)
+    private int RetentionCount() => EffectiveRetention(_settings.Load().BackupRetentionCount);
+
+    private void PruneOldBackups(string repoPath, int keep) =>
+        PruneDirectory(SafetyPaths.BackupDirFor(RepoKey.For(repoPath)), keep);
+
+    private static void PruneDirectory(string dir, int keep)
     {
-        var dir = SafetyPaths.BackupDirFor(RepoKey.For(repoPath));
         if (!Directory.Exists(dir)) return;
 
-        var bundles = Directory.GetFiles(dir, "*.bundle")
-            .OrderByDescending(p => Path.GetFileNameWithoutExtension(p), StringComparer.Ordinal)
-            .ToList();
-
-        foreach (var bundle in bundles.Skip(keep))
-        {
-            var stamp = Path.GetFileNameWithoutExtension(bundle);
-            TryDelete(bundle);
-            TryDelete(Path.Combine(dir, stamp + ".refs.json"));
-            TryDelete(Path.Combine(dir, stamp + ".refs.json.bak"));
-        }
+        foreach (var bundle in BundlesNewestFirst(dir).Skip(keep))
+            RemoveStamp(dir, Path.GetFileNameWithoutExtension(bundle));
 
         // A prune whose bundle went and whose snapshot did not leaves the same orphan a failed
         // delete does, and this loop enumerates bundles, so it would never revisit it.
         ReapOrphanedSnapshots(dir);
+    }
+
+    private static void RemoveStamp(string dir, string stamp)
+    {
+        TryDelete(Path.Combine(dir, stamp + ".bundle"));
+        TryDelete(Path.Combine(dir, stamp + SnapshotSuffix));
+        TryDelete(Path.Combine(dir, stamp + SnapshotSuffix + ".bak"));
     }
 
     private const string SnapshotSuffix = ".refs.json";

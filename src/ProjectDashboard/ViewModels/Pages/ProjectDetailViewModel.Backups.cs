@@ -26,6 +26,23 @@ public sealed partial class BackupEntry : ObservableObject
 
     public required bool Restorable { get; init; }
 
+    /// <summary>Whether the sidecar recorded this capture as a deep one. False for one it could not read.</summary>
+    public required bool Deep { get; init; }
+
+    /// <summary>
+    /// What this backup holds and what it does not, in the words its tier warrants. Empty for a
+    /// backup whose sidecar could not be read: nothing restores from it, so naming a scope for it
+    /// would describe a capture this app cannot read the tier of.
+    /// </summary>
+    public string ScopeText =>
+        !Restorable ? ""
+        : Deep
+            ? "This backup also holds the objects no ref reaches — commits a reflog alone held, and every stash " +
+              "entry — so they survive here by object id. A restore puts those objects back; it does not rebuild " +
+              "the reflog or the stash stack."
+            : "This backup holds the refs it recorded and the newest stash entry only. Commits reachable from a " +
+              "reflog alone, and stash entries below the newest, were never in it and no restore brings them back.";
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VerificationText))]
     [NotifyPropertyChangedFor(nameof(VerificationSuffix))]
@@ -114,6 +131,13 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private string _backupsConfirmPhrase = "";
 
     /// <summary>
+    /// Which tier the next manual backup takes. Seeded from the saved preference each time the
+    /// browser opens, so the box shows what the coordinators' own backups are doing, and settable
+    /// here for one capture without changing what the setting says.
+    /// </summary>
+    [ObservableProperty] private bool _deepBackupRequested;
+
+    /// <summary>
     /// True when no full-page overlay is up. Bound to the IsEnabled of every page surface they
     /// cover, and read by each pane's open command: a scrim stops the mouse but no keystroke, so
     /// two panes must never be up at once.
@@ -146,6 +170,7 @@ public partial class ProjectDetailViewModel
         BackupsErrorText = "";
         BackupsStatusText = "";
         SelectedBackup = null;
+        DeepBackupRequested = _settingsService?.Load().DeepBackupCapture ?? false;
         BackupsVisible = true;
         await LoadBackups();
     }
@@ -235,6 +260,7 @@ public partial class ProjectDetailViewModel
                 Operation = "Unreadable",
                 Detail = "The refs snapshot beside this bundle is missing or unreadable, so nothing can be restored from it.",
                 Restorable = false,
+                Deep = false,
             };
 
         var operation = details.Operation.Length > 0 ? details.Operation : "Operation not recorded";
@@ -248,10 +274,22 @@ public partial class ProjectDetailViewModel
             Handle = handle,
             Taken = DescribeStamp(handle.UtcStamp),
             Operation = operation,
-            Detail = $"{details.RefCount} ref(s) · HEAD {head} · {DescribeBytes(details.BundleBytes)}",
+            Detail = $"{details.RefCount} ref(s) · HEAD {head} · {DescribeBytes(details.BundleBytes)} · {DescribeTier(details)}",
             Restorable = true,
+            Deep = details.DeepCapture,
         };
     }
+
+    /// <summary>
+    /// Which tier a capture was, named on the row itself. Invisible after the fact otherwise: the
+    /// bundle does not say, and two backups of the same repository can be of different tiers.
+    /// </summary>
+    internal static string DescribeTier(BackupDetails details) =>
+        !details.DeepCapture
+            ? "standard capture"
+            : details.DeepObjectCount == 1
+                ? "deep capture, 1 object beyond the refs"
+                : $"deep capture, {details.DeepObjectCount} objects beyond the refs";
 
     /// <summary>
     /// The capture stamp as local time. Falls back to the raw stamp rather than inventing a date
@@ -266,14 +304,7 @@ public partial class ProjectDetailViewModel
             : utcStamp;
     }
 
-    private static string DescribeBytes(long bytes) => bytes switch
-    {
-        <= 0 => "size unknown",
-        < 1024 => $"{bytes} bytes",
-        < 1024 * 1024 => $"{bytes / 1024.0:N1} KB",
-        < 1024L * 1024 * 1024 => $"{bytes / (1024.0 * 1024):N1} MB",
-        _ => $"{bytes / (1024.0 * 1024 * 1024):N2} GB",
-    };
+    private static string DescribeBytes(long bytes) => ByteSizeText.Describe(bytes);
 
     private string DescribeJournalState(string repo) =>
         _recovery?.PendingFor(repo) is { } entry
@@ -328,16 +359,17 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        var deep = DeepBackupRequested;
         var holder = new object();
         IsBusy = true;
         _busyGateHolder = holder;
         BackupsBusy = true;
         BackupsErrorText = "";
-        BackupsStatusText = "Backing up…";
+        BackupsStatusText = deep ? "Backing up, deep capture…" : "Backing up…";
         BackupHandle? handle = null;
         try
         {
-            handle = await service.CreateBackupAsync(repo, ManualBackupOperation);
+            handle = await service.CreateBackupAsync(repo, ManualBackupOperation, deep);
             RecordBackupOp(repo, OperationCategory.BackupCreate, "Back up now",
                 OperationOutcome.Succeeded, "", started, handle.UtcStamp);
         }
@@ -378,7 +410,8 @@ public partial class ProjectDetailViewModel
         if (handle is null || !IsCurrent(gen)) return;
         await LoadBackups();
         if (!IsCurrent(gen)) return;
-        if (BackupList.FirstOrDefault(e => e.Handle.UtcStamp == handle.UtcStamp) is { } fresh)
+        var fresh = BackupList.FirstOrDefault(e => e.Handle.UtcStamp == handle.UtcStamp);
+        if (fresh is not null)
         {
             SelectedBackup = fresh;
             // Creation runs `git bundle verify` on what it wrote and deletes a bundle that fails,
@@ -386,8 +419,9 @@ public partial class ProjectDetailViewModel
             // row claims, rather than that it still verifies now.
             fresh.Verification = BundleVerifyState.Verified;
         }
-        BackupsStatusText =
-            $"Backed up at {DescribeStamp(handle.UtcStamp)}. The bundle was verified as it was written.";
+        BackupsStatusText = (
+            $"Backed up at {DescribeStamp(handle.UtcStamp)}. The bundle was verified as it was written. " +
+            (fresh?.ScopeText ?? "")).TrimEnd();
     }
 
     /// <summary>What a manual backup's sidecar records it was taken for.</summary>
@@ -647,7 +681,7 @@ public partial class ProjectDetailViewModel
             if (landed && _recovery is not null) await _recovery.ClearAsync(repo);
             if (!IsCurrent(gen)) return;
 
-            BackupsStatusText = DescribeRestore(restore);
+            BackupsStatusText = DescribeRestoredScope(DescribeRestore(restore), entry, landed);
             if (landed)
             {
                 RefreshRecoveryBanner();
@@ -678,6 +712,15 @@ public partial class ProjectDetailViewModel
             }
         }
     }
+
+    /// <summary>
+    /// The restore outcome with what the backup actually held appended. A standard capture never
+    /// received the reflog-only commits or the stash entries below the newest, and an outcome
+    /// reading "history restored" alone would be taken as having put those back too. Appended only
+    /// once refs landed: a restore that changed nothing restored no scope to describe.
+    /// </summary>
+    internal static string DescribeRestoredScope(string outcome, BackupEntry entry, bool landed) =>
+        landed && entry.ScopeText.Length > 0 ? $"{outcome} {entry.ScopeText}" : outcome;
 
     // ── Crash recovery ──────────────────────────────────────────────────────────
 

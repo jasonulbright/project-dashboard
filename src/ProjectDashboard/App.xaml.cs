@@ -227,7 +227,8 @@ public partial class App : Application
                     sp.GetRequiredService<DashboardViewModel>(),
                     sp.GetRequiredService<Services.Update.UpdateCheckService>(),
                     sp.GetRequiredService<ManifestStore>(),
-                    sp.GetRequiredService<ProjectDiscoveryService>()));
+                    sp.GetRequiredService<ProjectDiscoveryService>(),
+                    sp.GetRequiredService<Services.Safety.BackupService>()));
 
                 // The rollup reads the dashboard's own project list rather than scanning again,
                 // and shares the container's busy registry, backup store and ledger — a private

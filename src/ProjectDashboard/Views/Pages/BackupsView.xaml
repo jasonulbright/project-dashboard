@@ -86,15 +86,24 @@
 
                         <!-- Available with an empty list too: it is the one action that changes
                              what the list holds. -->
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                            <ui:Button Content="Back up now" Appearance="Primary" FontSize="13" Padding="14,5"
-                                       Icon="{ui:SymbolIcon Save24}"
-                                       Command="{Binding BackupNowCommand}"
-                                       ToolTip="Bundle every ref in this repository and verify the result"
-                                       AutomationProperties.Name="Take a backup of this repository now" />
-                            <TextBlock Style="{StaticResource BackupsHint}" Margin="12,0,0,0" MaxWidth="600"
-                                       VerticalAlignment="Center"
-                                       Text="Bundles every ref and records the ref layout beside it, the same capture a history rewrite takes before it runs. Nothing in the repository changes." />
+                        <StackPanel Margin="0,0,0,10">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="Back up now" Appearance="Primary" FontSize="13" Padding="14,5"
+                                           Icon="{ui:SymbolIcon Save24}"
+                                           Command="{Binding BackupNowCommand}"
+                                           ToolTip="Bundle every ref in this repository and verify the result"
+                                           AutomationProperties.Name="Take a backup of this repository now" />
+                                <CheckBox Content="Deep capture" Margin="14,0,0,0" VerticalAlignment="Center"
+                                          IsChecked="{Binding DeepBackupRequested}"
+                                          ToolTip="Also pin the objects no ref reaches: commits held only by a reflog, and every stash entry"
+                                          AutomationProperties.Name="Take this backup as a deep capture" />
+                                <TextBlock Style="{StaticResource BackupsHint}" Margin="12,0,0,0" MaxWidth="480"
+                                           VerticalAlignment="Center"
+                                           Text="Bundles every ref and records the ref layout beside it, the same capture a history rewrite takes before it runs. Nothing in the repository changes." />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource BackupsHint}" Margin="0,4,0,0"
+                                       AutomationProperties.AutomationId="BackupsDeepHint"
+                                       Text="A deep capture also holds commits that only a reflog reaches and every stash entry below the newest, which a standard capture leaves out — a larger, slower bundle. It preserves those objects; it does not rebuild the reflog or the stash stack on restore. The box starts at the setting on the Settings page and applies to this backup only." />
                         </StackPanel>
 
                         <!-- The empty state states the limit of what it can claim: no backup on
@@ -192,6 +201,24 @@
                                     <TextBlock FontSize="13" TextWrapping="Wrap"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                                Text="Restoring replaces every ref in this repository with the ones the backup recorded, repositions HEAD, and resets the working tree onto them. Any commit made since the backup was taken is dropped, and the reset discards uncommitted work — so a dirty working tree is refused before anything is written." />
+                                    <!-- What the selected backup holds, before it is restored: the
+                                         two tiers put back different things and the row above says
+                                         which tier this one is, not what that costs. -->
+                                    <TextBlock FontSize="13" TextWrapping="Wrap" Margin="0,10,0,0"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                               AutomationProperties.AutomationId="BackupsRestoreScope"
+                                               Text="{Binding SelectedBackup.ScopeText}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SelectedBackup.ScopeText}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                     <TextBlock FontSize="13" TextWrapping="Wrap" Margin="0,10,0,0"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                                Text="Type this repository's name below to confirm." />

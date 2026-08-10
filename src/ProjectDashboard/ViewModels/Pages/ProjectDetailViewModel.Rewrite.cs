@@ -1627,6 +1627,20 @@ internal static class ByteSizeText
         return bytes > 0;
     }
 
+    /// <summary>
+    /// A byte count in the unit a reader reads it in. Zero and below are reported as unknown
+    /// rather than as "0 bytes": every caller measures files that exist, so the only way to reach
+    /// this with nothing is a size that could not be read.
+    /// </summary>
+    public static string Describe(long bytes) => bytes switch
+    {
+        <= 0 => "size unknown",
+        < Kilo => $"{bytes} bytes",
+        < Kilo * Kilo => $"{bytes / (double)Kilo:N1} KB",
+        < Kilo * Kilo * Kilo => $"{bytes / (double)(Kilo * Kilo):N1} MB",
+        _ => $"{bytes / (double)(Kilo * Kilo * Kilo):N2} GB",
+    };
+
     /// <summary>Why <paramref name="text"/> is not a size, phrased for the field it was typed into.</summary>
     public static string ProblemWith(string text)
     {
