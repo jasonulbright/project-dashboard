@@ -360,6 +360,11 @@ public sealed class RepoSearchService(GitService gitService, RepoBusyRegistry bu
     /// listing is one the listings could not account for, and under the widest scope the honest
     /// reading of that is ignored — the tracked and untracked sets are both explicit, and only the
     /// ignored set is derived.
+    ///
+    /// The listings are separate reads and git offers no single call that returns all three sets
+    /// atomically, so a file staged or ignored between them carries the earlier read's label for
+    /// the length of one search. The label is drawn on the row and nothing keys off it; the next
+    /// search takes fresh listings.
     /// </summary>
     private static SearchFileScope ClassifyPath(
         string path, HashSet<string> tracked, HashSet<string> untracked, SearchContentScope scope)
