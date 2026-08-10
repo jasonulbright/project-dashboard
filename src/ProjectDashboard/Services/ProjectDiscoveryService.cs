@@ -379,8 +379,12 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     /// The shape this build writes and is willing to read back. A cache written by a build that
     /// recorded fewer facts per project deserializes without complaint and every card comes back
     /// missing them, so a mismatch is a miss rather than a partial answer.
+    ///
+    /// Any change to what the cache holds — a field on the record, on a project, or on a root —
+    /// bumps this. The cost of a bump is one extra scan on the first launch after an update; the
+    /// cost of forgetting is a cache served with fields nothing filled in.
     /// </summary>
-    internal const int CacheSchemaVersion = 2;
+    internal const int CacheSchemaVersion = 3;
 
     private sealed class DiscoveryCache
     {
