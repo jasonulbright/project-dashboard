@@ -72,6 +72,8 @@ public class GitServiceGitignoreTests
     [InlineData("star*.txt", @"/star\*.txt")]
     [InlineData("what?.txt", @"/what\?.txt")]
     [InlineData(@"back\slash/x.txt", "/back/slash/x.txt")]
+    [InlineData("trailing ", @"/trailing\ ")]
+    [InlineData("two  ", @"/two\ \ ")]
     public void IgnoreLineForPath_AnchorsAtTheRootAndEscapesEveryGlobCharacter(string path, string expected) =>
         Assert.Equal(expected, GitService.IgnoreLineForPath(path));
 
@@ -99,6 +101,49 @@ public class GitServiceGitignoreTests
         Assert.Equal(IgnoreState.Ignored, (await _git.CheckIgnoreAsync(repo.Path, "a[1].txt")).State);
         // Unescaped, "a[1].txt" is a character class that matches this one instead.
         Assert.Equal(IgnoreState.NotIgnored, (await _git.CheckIgnoreAsync(repo.Path, "a1.txt")).State);
+    }
+
+    /// <summary>
+    /// git strips trailing whitespace from a .gitignore line unless a backslash quotes it, so an
+    /// unescaped rule for a name ending in a space becomes a rule for the trimmed name — it misses
+    /// the file it was written for and catches a different one. The control below is git deciding
+    /// that, not an assumption about it.
+    /// </summary>
+    [Fact]
+    public async Task IgnoreLineForPath_ANameEndingInASpace_IgnoresThatNameAndNotTheTrimmedOne()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-trailing-space");
+        WriteWithExactName(repo.Path, "notes ", "x\n");
+        repo.WriteFile("notes", "x\n");
+
+        await _git.AppendIgnoreEntryAsync(repo.Path, GitService.IgnoreLineForPath("notes "));
+
+        Assert.Equal("/notes\\ \n", await _git.GetGitignoreAsync(repo.Path));
+        Assert.Equal(IgnoreState.Ignored, (await _git.CheckIgnoreAsync(repo.Path, "notes ")).State);
+        Assert.Equal(IgnoreState.NotIgnored, (await _git.CheckIgnoreAsync(repo.Path, "notes")).State);
+    }
+
+    /// <summary>The control: without the escape git reads the same intent as a rule for another file.</summary>
+    [Fact]
+    public async Task AnUnescapedTrailingSpace_IsTheRuleGitStripsIntoADifferentOne()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-trailing-raw");
+        await _git.SaveGitignoreAsync(repo.Path, "/notes \n");
+
+        Assert.Equal(IgnoreState.NotIgnored, (await _git.CheckIgnoreAsync(repo.Path, "notes ")).State);
+        Assert.Equal(IgnoreState.Ignored, (await _git.CheckIgnoreAsync(repo.Path, "notes")).State);
+    }
+
+    /// <summary>
+    /// Win32 strips a trailing space from a path it normalizes, so the extended-length form is the
+    /// only way to put one on disk under the name the test is about.
+    /// </summary>
+    private static void WriteWithExactName(string repoPath, string name, string content)
+    {
+        var full = Path.Combine(repoPath, name);
+        File.WriteAllText(@"\\?\" + Path.GetFullPath(repoPath) + "\\" + name, content);
+        Assert.Contains(name, Directory.GetFiles(repoPath).Select(Path.GetFileName));
+        Assert.False(File.Exists(full) && Path.GetFileName(full) != name);
     }
 
     /// <summary>

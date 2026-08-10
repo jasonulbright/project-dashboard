@@ -1664,8 +1664,8 @@ public class GitService
     {
         var p = Path.Combine(repoPath, ".gitignore");
         var existing = File.Exists(p) ? await File.ReadAllTextAsync(p, ct) : "";
-        var target = pattern.Trim();
-        if (existing.Split('\n').Any(l => l.TrimEnd('\r').Trim() == target)) return false;
+        var target = NormalizeIgnoreLine(pattern);
+        if (existing.Split('\n').Any(l => NormalizeIgnoreLine(l.TrimEnd('\r')) == target)) return false;
 
         var sb = new StringBuilder(existing);
         if (existing.Length > 0 && !existing.EndsWith('\n')) sb.Append('\n');
@@ -1683,11 +1683,13 @@ public class GitService
     /// git records, never the platform's.
     /// </summary>
     public static string IgnoreLineForPath(string path) =>
-        "/" + EscapeIgnoreGlob(path.Replace('\\', '/').TrimStart('/'));
+        "/" + EscapeIgnoreLine(path.Replace('\\', '/').TrimStart('/'));
 
     /// <summary>A .gitignore line matching every file with one extension, with or without its leading dot.</summary>
     public static string IgnoreLineForExtension(string extension) =>
-        "*." + EscapeIgnoreGlob(extension.TrimStart('.'));
+        "*." + EscapeIgnoreLine(extension.TrimStart('.'));
+
+    private static string EscapeIgnoreLine(string value) => EscapeTrailingWhitespace(EscapeIgnoreGlob(value));
 
     private static string EscapeIgnoreGlob(string value)
     {
@@ -1698,6 +1700,46 @@ public class GitService
             sb.Append(c);
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// git drops trailing whitespace from a .gitignore line unless a backslash quotes it, so a
+    /// name ending in one needs every character of that run escaped — unescaped, the rule becomes
+    /// one for the trimmed name, which misses the file it was written for and catches another.
+    /// </summary>
+    private static string EscapeTrailingWhitespace(string value)
+    {
+        var end = value.Length;
+        while (end > 0 && char.IsWhiteSpace(value[end - 1])) end--;
+        if (end == value.Length) return value;
+
+        var sb = new StringBuilder(value[..end]);
+        for (var i = end; i < value.Length; i++) sb.Append('\\').Append(value[i]);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// One .gitignore line as git reads it: leading whitespace and unescaped trailing whitespace
+    /// are not part of the pattern. Trailing whitespace a backslash quotes is, so trimming it
+    /// would turn a rule for a name ending in a space into a rule for a different name.
+    /// </summary>
+    private static string NormalizeIgnoreLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        var end = trimmed.Length;
+        while (end > 0 && char.IsWhiteSpace(trimmed[end - 1]) && !IsBackslashEscaped(trimmed, end - 1)) end--;
+        return trimmed[..end];
+    }
+
+    /// <summary>
+    /// Whether the character at <paramref name="index"/> is quoted. An odd run of backslashes
+    /// before it escapes it; an even run is escaped backslashes and leaves it bare.
+    /// </summary>
+    private static bool IsBackslashEscaped(string value, int index)
+    {
+        var backslashes = 0;
+        for (var i = index - 1; i >= 0 && value[i] == '\\'; i--) backslashes++;
+        return backslashes % 2 == 1;
     }
 
     /// <summary>
