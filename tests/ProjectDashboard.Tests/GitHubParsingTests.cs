@@ -673,25 +673,28 @@ public class GitHubWorkflowJobParsingTests
             """);
 
         Assert.NotNull(jobs);
-        Assert.Equal(2, jobs.Count);
+        Assert.Equal(2, jobs.Items.Count);
+        Assert.Equal(2, jobs.Total);
+        Assert.False(jobs.MayHaveMore);
+        var items = jobs.Items;
 
-        Assert.Equal(47536432101L, jobs[0].Id);
-        Assert.Equal("build", jobs[0].Name);
-        Assert.Equal("completed", jobs[0].Status);
-        Assert.Equal("success", jobs[0].Conclusion);
-        Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 0, 10, TimeSpan.Zero), jobs[0].StartedAt);
-        Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 3, 40, TimeSpan.Zero), jobs[0].CompletedAt);
-        Assert.Equal(2, jobs[0].Steps.Count);
-        Assert.Equal("Run tests", jobs[0].Steps[1].Name);
-        Assert.Equal(2, jobs[0].Steps[1].Number);
-        Assert.Equal("failure", jobs[0].Steps[1].Conclusion);
+        Assert.Equal(47536432101L, items[0].Id);
+        Assert.Equal("build", items[0].Name);
+        Assert.Equal("completed", items[0].Status);
+        Assert.Equal("success", items[0].Conclusion);
+        Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 0, 10, TimeSpan.Zero), items[0].StartedAt);
+        Assert.Equal(new DateTimeOffset(2026, 8, 5, 14, 3, 40, TimeSpan.Zero), items[0].CompletedAt);
+        Assert.Equal(2, items[0].Steps.Count);
+        Assert.Equal("Run tests", items[0].Steps[1].Name);
+        Assert.Equal(2, items[0].Steps[1].Number);
+        Assert.Equal("failure", items[0].Steps[1].Conclusion);
 
-        Assert.Equal("in_progress", jobs[1].Status);
-        Assert.Equal("", jobs[1].Conclusion);
+        Assert.Equal("in_progress", items[1].Status);
+        Assert.Equal("", items[1].Conclusion);
         // Still running: no completion moment, and the label falls back to the status.
-        Assert.Null(jobs[1].CompletedAt);
-        Assert.Equal("in progress", jobs[1].OutcomeLabel);
-        Assert.Empty(jobs[1].Steps);
+        Assert.Null(items[1].CompletedAt);
+        Assert.Equal("in progress", items[1].OutcomeLabel);
+        Assert.Empty(items[1].Steps);
     }
 
     [Fact]
@@ -699,7 +702,7 @@ public class GitHubWorkflowJobParsingTests
     {
         var jobs = GitHubService.ParseWorkflowJobs("""{"total_count":1,"jobs":[{"id":1,"name":"solo","status":"completed"}]}""");
         Assert.NotNull(jobs);
-        Assert.Empty(Assert.Single(jobs).Steps);
+        Assert.Empty(Assert.Single(jobs.Items).Steps);
     }
 
     [Fact]
@@ -707,7 +710,44 @@ public class GitHubWorkflowJobParsingTests
     {
         var jobs = GitHubService.ParseWorkflowJobs("""{"total_count":0,"jobs":[]}""");
         Assert.NotNull(jobs);
-        Assert.Empty(jobs);
+        Assert.Empty(jobs.Items);
+    }
+
+    /// <summary>
+    /// The payload states the run's own job count, so a window that stopped short knows by how
+    /// much. gh cannot merge the pages of an object-wrapped endpoint, so this is the one read here
+    /// that stays at one page — and it is the count that makes saying so honest.
+    /// </summary>
+    [Fact]
+    public void AWindowShorterThanTheStatedTotal_MayHaveMore()
+    {
+        var page = new GitHubService.WorkflowJobPage([new Models.WorkflowJob { Id = 1 }], Total: 137, Limit: 100);
+
+        Assert.True(page.MayHaveMore);
+    }
+
+    /// <summary>
+    /// Without a stated total the window is the only evidence, and a full one cannot tell a run of
+    /// exactly that many jobs from one with more behind it.
+    /// </summary>
+    [Theory]
+    [InlineData(100, true)]
+    [InlineData(99, false)]
+    public void WithoutAStatedTotal_AFullWindowIsTheOnlyEvidence(int shown, bool mayHaveMore)
+    {
+        var page = new GitHubService.WorkflowJobPage(
+            [.. Enumerable.Range(1, shown).Select(n => new Models.WorkflowJob { Id = n })], Total: null, Limit: 100);
+
+        Assert.Equal(mayHaveMore, page.MayHaveMore);
+    }
+
+    [Fact]
+    public void TotalCountAbsent_ReadsAsNoStatedTotal()
+    {
+        var jobs = GitHubService.ParseWorkflowJobs("""{"jobs":[{"id":1,"name":"solo"}]}""");
+
+        Assert.NotNull(jobs);
+        Assert.Null(jobs.Total);
     }
 
     [Theory]

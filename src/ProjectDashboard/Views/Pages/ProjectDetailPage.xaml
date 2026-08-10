@@ -3101,6 +3101,7 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                         <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
                                     <StackPanel Grid.Row="0" Margin="0,0,0,8">
@@ -3208,7 +3209,12 @@
                                         </Grid>
                                     </ScrollViewer>
 
-                                    <WrapPanel Grid.Row="2" Margin="0,8,0,0">
+                                    <TextBlock Grid.Row="2" Text="{Binding WorkflowJobsFooterText}" FontSize="11"
+                                               TextWrapping="Wrap" Margin="0,6,0,0"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               AutomationProperties.LiveSetting="Polite" />
+
+                                    <WrapPanel Grid.Row="3" Margin="0,8,0,0">
                                         <CheckBox Content="Failed jobs only" FontSize="12" VerticalAlignment="Center"
                                                   Margin="0,0,10,6" IsChecked="{Binding RerunFailedJobsOnly}"
                                                   AutomationProperties.Name="Re-run failed jobs only" />

@@ -92,6 +92,43 @@ public class ProjectDetailViewModelGitHubTabsTests
         Assert.Equal("build", job.Name);
         Assert.Single(job.Steps);
         Assert.Equal("", vm.WorkflowJobsError);
+        Assert.Equal("All 1 job shown.", vm.WorkflowJobsFooterText);
+    }
+
+    /// <summary>
+    /// The jobs pane is one page of an endpoint gh cannot merge, so a run with a large matrix is
+    /// shown in part. The payload states the run's own count, so the line names what is missing
+    /// rather than leaving the pane to read as the whole run.
+    /// </summary>
+    [Theory]
+    [InlineData(1, 1, "All 1 job shown.")]
+    [InlineData(4, 4, "All 4 jobs shown.")]
+    [InlineData(100, 137, "Showing the first 100 of 137 jobs — this run's jobs are read one page at a time.")]
+    [InlineData(100, null, "Showing the first 100 jobs — there may be more.")]
+    [InlineData(0, 0, "")]
+    public void TheJobsFooter_NamesWhatTheWindowLeftBehind(int shown, int? total, string expected)
+        => Assert.Equal(expected, ProjectDetailViewModel.WorkflowJobsFooterTextFor(
+            new GitHubService.WorkflowJobPage(
+                [.. Enumerable.Range(1, shown).Select(n => new WorkflowJob { Id = n })], total,
+                GitHubService.WorkflowJobLimit)));
+
+    /// <summary>A pane describing another run's jobs is worse than one describing none.</summary>
+    [Fact]
+    public async Task ChangingTheSelectedRun_ClearsTheJobsFooterBeforeTheNextReadLands()
+    {
+        var vm = new StubTabsViewModel
+        {
+            Runs = [Run(1), Run(2)],
+            Jobs = [new WorkflowJob { Id = 9, Name = "build" }]
+        };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.LoadWorkflowRunsCommand.ExecuteAsync(null);
+        vm.SelectedWorkflowRun = vm.WorkflowRuns[0];
+        Assert.NotEqual("", vm.WorkflowJobsFooterText);
+
+        vm.SelectedWorkflowRun = null;
+
+        Assert.Equal("", vm.WorkflowJobsFooterText);
     }
 
     [Fact]
@@ -1193,8 +1230,18 @@ public class ProjectDetailViewModelGitHubTabsTests
                 Runs is null ? null : new GitHubService.WorkflowRunPage(Runs, false, query.Limit), ""));
         }
 
-        internal override Task<List<WorkflowJob>?> FetchWorkflowJobsAsync(string slug, long runId)
-            => JobGates is { Count: > 0 } gates ? gates.Dequeue().Task : Task.FromResult(Jobs);
+        /// <summary>
+        /// The seeded jobs as a complete page: these cases are about the pane's state transitions,
+        /// and the depth the page discloses has its own tests.
+        /// </summary>
+        internal override async Task<GitHubService.ListRead<GitHubService.WorkflowJobPage>> FetchWorkflowJobsAsync(
+            string slug, long runId)
+        {
+            var jobs = JobGates is { Count: > 0 } gates ? await gates.Dequeue().Task : Jobs;
+            return new GitHubService.ListRead<GitHubService.WorkflowJobPage>(
+                jobs is null ? null : new GitHubService.WorkflowJobPage(jobs, jobs.Count, GitHubService.WorkflowJobLimit),
+                "");
+        }
 
         internal override Task<List<Release>?> FetchReleasesAsync(string slug) => Task.FromResult(SeedReleases);
 

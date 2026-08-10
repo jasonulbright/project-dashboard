@@ -16,6 +16,7 @@ public class GitHubListDepthMarkupTests
     [InlineData("IssuesFooterText")]
     [InlineData("PullRequestsFooterText")]
     [InlineData("WorkflowRunsFooterText")]
+    [InlineData("WorkflowJobsFooterText")]
     public void EachListDisclosesItsOwnDepth(string footer)
         => Assert.Contains($"{{Binding {footer}}}", Markup);
 
@@ -24,9 +25,10 @@ public class GitHubListDepthMarkupTests
     [InlineData("IssuesFooterText")]
     [InlineData("PullRequestsFooterText")]
     [InlineData("WorkflowRunsFooterText")]
+    [InlineData("WorkflowJobsFooterText")]
     public void EachFooter_IsAnnouncedWhenItChanges(string footer)
     {
-        var block = Regex.Match(Markup, @"<TextBlock Text=""\{Binding " + footer + @"\}""[^>]*?/>",
+        var block = Regex.Match(Markup, @"<TextBlock[^>]*?Text=""\{Binding " + footer + @"\}""[^>]*?/>",
             RegexOptions.Singleline);
 
         Assert.True(block.Success, $"no footer text block bound to {footer}");

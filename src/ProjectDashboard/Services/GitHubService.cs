@@ -715,21 +715,42 @@ public class GitHubService(SettingsService settingsService)
     }
 
     /// <summary>
-    /// Jobs and steps of one run, in GitHub's own order. REST — `gh run view --json jobs`
-    /// carries no per-step detail. Null = fetch failed.
+    /// One read of a run's job list. The payload states how many jobs the run has, so a window
+    /// that stopped short says by how much rather than that it may have. <see cref="Total"/> is
+    /// null when the payload did not state one, and the window itself is the only evidence left.
     /// </summary>
-    public async Task<List<WorkflowJob>?> GetWorkflowRunJobsAsync(string repoSlug, long runId, CancellationToken ct = default)
+    public sealed record WorkflowJobPage(IReadOnlyList<WorkflowJob> Items, int? Total, int Limit)
     {
-        var run = await RunAsync(["api", $"repos/{repoSlug}/actions/runs/{runId}/jobs?per_page=100"], ct, ReadTimeout);
+        public bool MayHaveMore =>
+            Total is { } total ? Items.Count < total : PageMayHaveMore(Items.Count, Limit);
+    }
+
+    /// <summary>Rows one read of a run's job list asks for; the endpoint's own maximum.</summary>
+    internal const int WorkflowJobLimit = 100;
+
+    /// <summary>
+    /// Jobs and steps of one run, in GitHub's own order. REST — `gh run view --json jobs`
+    /// carries no per-step detail. The endpoint wraps its rows in an object, which gh cannot merge
+    /// across pages, so this read is one page and says so rather than following them.
+    /// Null page = fetch failed.
+    /// </summary>
+    public async Task<ListRead<WorkflowJobPage>> GetWorkflowRunJobsAsync(string repoSlug, long runId,
+        CancellationToken ct = default)
+    {
+        var run = await RunAsync(BuildRunJobsArgs(repoSlug, runId), ct, ReadTimeout);
         if (!run.Success || string.IsNullOrWhiteSpace(run.StdOut))
         {
             Log.Warn($"gh api run jobs {runId} failed for {repoSlug}: {run.FirstError}");
-            return null;
+            return new ListRead<WorkflowJobPage>(null, FailureText(run));
         }
-        return ParseWorkflowJobs(run.StdOut);
+        var page = ParseWorkflowJobs(run.StdOut);
+        return new ListRead<WorkflowJobPage>(page, page is null ? UnreadableResponse : "");
     }
 
-    internal static List<WorkflowJob>? ParseWorkflowJobs(string json)
+    internal static List<string> BuildRunJobsArgs(string repoSlug, long runId) =>
+        ["api", $"repos/{repoSlug}/actions/runs/{runId}/jobs?per_page={WorkflowJobLimit}"];
+
+    internal static WorkflowJobPage? ParseWorkflowJobs(string json)
     {
         try
         {
@@ -769,7 +790,7 @@ public class GitHubService(SettingsService settingsService)
                     Url = Str(el, "html_url")
                 });
             }
-            return jobs;
+            return new WorkflowJobPage(jobs, Int(doc.RootElement, "total_count"), WorkflowJobLimit);
         }
         catch (Exception ex)
         {

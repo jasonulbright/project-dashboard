@@ -24,7 +24,27 @@ public partial class ProjectDetailViewModel
     [ObservableProperty] private ObservableCollection<WorkflowJob> _workflowJobs = [];
     [ObservableProperty] private bool _workflowJobsLoading;
     [ObservableProperty] private string _workflowJobsError = "";
+    [ObservableProperty] private string _workflowJobsFooterText = "";
     [ObservableProperty] private bool _rerunFailedJobsOnly;
+
+    private const string WorkflowJobsFetchFailed = "Couldn't load this run's jobs.";
+
+    /// <summary>
+    /// What the jobs pane can honestly say about its own depth. The endpoint's payload states how
+    /// many jobs the run has, so a window that stopped short names the count it stopped short of
+    /// rather than guessing that more may exist; without that count the window is the only
+    /// evidence and the line says only that.
+    /// </summary>
+    internal static string WorkflowJobsFooterTextFor(GitHubService.WorkflowJobPage page)
+    {
+        var shown = page.Items.Count;
+        if (shown == 0) return "";
+        var noun = shown == 1 ? "job" : "jobs";
+        if (!page.MayHaveMore) return $"All {shown} {noun} shown.";
+        return page.Total is { } total
+            ? $"Showing the first {shown} of {total} {noun} — this run's jobs are read one page at a time."
+            : $"Showing the first {shown} {noun} — there may be more.";
+    }
 
     // ── Releases tab ────────────────────────────────────────────────────────────
     [ObservableProperty] private ObservableCollection<Release> _releases = [];
@@ -96,6 +116,7 @@ public partial class ProjectDetailViewModel
         WorkflowJobs = [];
         WorkflowJobsLoading = false;
         WorkflowJobsError = "";
+        WorkflowJobsFooterText = "";
         RerunFailedJobsOnly = false;
         ResetWorkflowRunDepth();
 
@@ -158,7 +179,8 @@ public partial class ProjectDetailViewModel
         string slug, GitHubService.WorkflowRunQuery query)
         => _gitHubService.GetWorkflowRunPageAsync(slug, query);
 
-    internal virtual Task<List<WorkflowJob>?> FetchWorkflowJobsAsync(string slug, long runId)
+    internal virtual Task<GitHubService.ListRead<GitHubService.WorkflowJobPage>> FetchWorkflowJobsAsync(
+        string slug, long runId)
         => _gitHubService.GetWorkflowRunJobsAsync(slug, runId);
 
     internal virtual Task<List<Release>?> FetchReleasesAsync(string slug)
@@ -232,6 +254,7 @@ public partial class ProjectDetailViewModel
     {
         WorkflowJobs = [];
         WorkflowJobsError = "";
+        WorkflowJobsFooterText = "";
         if (value is not null) _ = LoadWorkflowJobsAsync(value);
         // No fetch starts for a cleared selection, so nothing else would ever take the
         // spinner back down.
@@ -247,14 +270,15 @@ public partial class ProjectDetailViewModel
         WorkflowJobsLoading = true;
         try
         {
-            var jobs = await FetchWorkflowJobsAsync(slug, run.Id);
+            var read = await FetchWorkflowJobsAsync(slug, run.Id);
             if (!IsCurrent(gen) || !ReferenceEquals(SelectedWorkflowRun, run)) return;
-            if (jobs is null)
+            if (read.Page is not { } page)
             {
-                WorkflowJobsError = "Couldn't load this run's jobs.";
+                WorkflowJobsError = ListFetchFailed(WorkflowJobsFetchFailed, read.Error);
                 return;
             }
-            WorkflowJobs = new ObservableCollection<WorkflowJob>(jobs);
+            WorkflowJobs = new ObservableCollection<WorkflowJob>(page.Items);
+            WorkflowJobsFooterText = WorkflowJobsFooterTextFor(page);
         }
         finally
         {
