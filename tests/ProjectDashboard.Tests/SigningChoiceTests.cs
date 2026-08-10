@@ -24,6 +24,19 @@ public class SigningChoiceTests
         return repo;
     }
 
+    /// <summary>
+    /// Installs a pre-commit hook that rejects every commit, printing the given words to stderr.
+    /// git runs the hook before it writes or signs anything, so the hook's refusal is the whole
+    /// failure — which is what makes it the test for classifying one.
+    /// </summary>
+    private static void RejectCommitsWithHook(TempRepo repo, string stderrLine)
+    {
+        var hooks = Path.Combine(repo.Path, ".git", "hooks");
+        Directory.CreateDirectory(hooks);
+        File.WriteAllText(Path.Combine(hooks, "pre-commit"),
+            $"#!/bin/sh\necho \"{stderrLine}\" >&2\nexit 1\n".Replace("\r\n", "\n"));
+    }
+
     /// <summary>Tag signing configured on and commit signing off, so the two answers stay apart.</summary>
     private static async Task<TempRepo> TagSigningRepoAsync()
     {
@@ -424,6 +437,63 @@ public class SigningChoiceTests
 
         Assert.True(vm.CommitSigningOfferVisible);
         Assert.Equal("second", await repo.HeadSubjectAsync());
+    }
+
+    // ── Classifying a signing failure ───────────────────────────────────────
+
+    /// <summary>
+    /// The wordings git actually emits, pinned literally so a token dropped for being too loose
+    /// cannot take a real one with it.
+    /// </summary>
+    [Theory]
+    [InlineData("error: gpg failed to sign the data:\n(no gpg output)\nfatal: failed to write commit object")]
+    [InlineData("error: user.signingKey needs to be set for ssh signing\nfatal: failed to write commit object")]
+    [InlineData("fatal: either user.signingkey or gpg.ssh.defaultKeyCommand needs to be configured")]
+    [InlineData("error: cannot spawn no-such-program: No such file or directory\nerror: unable to sign the tag")]
+    public void GitsOwnSigningWordings_AreClassifiedAsSigningFailures(string stderr)
+    {
+        Assert.True(GitService.IsSigningFailure(new ProcessResult(128, "", stderr, TimedOut: false)));
+    }
+
+    /// <summary>
+    /// A commit runs arbitrary hooks and their stderr lands in the same text the classifier reads.
+    /// A hook refusing a commit over a signing POLICY is not the signing key failing, and calling
+    /// it one offers an unsigned retry that reruns the same hook and fails identically.
+    /// </summary>
+    [Theory]
+    [InlineData("commits must include a signing acknowledgement")]
+    [InlineData("policy: signing off on this change requires a reviewer")]
+    [InlineData("pre-commit: designing docs must accompany schema changes")]
+    public void AHookRefusingForItsOwnReasons_IsNotASigningFailure(string stderr)
+    {
+        Assert.False(GitService.IsSigningFailure(new ProcessResult(1, "", stderr, TimedOut: false)));
+    }
+
+    /// <summary>
+    /// The same thing end to end: a real hook rejecting a real commit in a repository that really
+    /// does sign. The reader gets the hook's own words and no signing advice, and the offer stays
+    /// down — an unsigned retry would rerun the hook and fail the same way.
+    /// </summary>
+    [Fact]
+    public async Task AHookRejectingACommitInASigningRepository_ReportsTheHookRatherThanTheKey()
+    {
+        using var repo = await SigningRepoAsync();
+        RejectCommitsWithHook(repo, "commits must include a signing acknowledgement");
+        await StageAsync(repo, "second.txt", "two\n");
+        var head = await repo.HeadShaAsync();
+        var vm = await VmForAsync(repo, new GitService());
+        await vm.RefreshWorkingStateAsync();
+        vm.CommitMessage = "second";
+        await vm.CommitCommand.ExecuteAsync(null);
+
+        await vm.CommitSignedCommand.ExecuteAsync(null);
+
+        Assert.Contains("signing acknowledgement", vm.SyncStatusText);
+        Assert.DoesNotContain("signing key could not sign", vm.SyncStatusText);
+        Assert.DoesNotContain("pinentry", vm.SyncStatusText);
+        Assert.False(vm.CommitSigningOfferVisible);
+        Assert.Equal(head, await repo.HeadShaAsync());
+        Assert.Equal("second", vm.CommitMessage);
     }
 
     // ── Tags: the read and the command line ─────────────────────────────────

@@ -593,19 +593,29 @@ public class GitService
     }
 
     /// <summary>
-    /// Matches a commit or tag whose signature git could not produce. git words this several ways
-    /// — the openpgp signer's failure, two different ssh missing-key failures, `unable to sign the
-    /// tag`, and the fatal it dies with once a commit's signature is absent — so the match is on
-    /// the tokens they share rather than on any one sentence. None of the shapes is
-    /// signing-exclusive, so this is read only where signing is already known to be configured on
-    /// and the run was asked to sign.
+    /// Matches a commit or tag whose signature git could not produce: the openpgp signer's
+    /// failure, git's two ssh missing-key wordings, the tag signer's failure, and the fatal git
+    /// dies with once a commit's signature is absent.
+    /// <para>
+    /// Every token here must be a phrase only git's own signing machinery emits. A commit runs
+    /// arbitrary pre-commit and commit-msg hooks whose stderr lands in this same text, so a token
+    /// loose enough to appear in ordinary prose — the bare word "signing", which a hook rejecting
+    /// a commit for a missing signing acknowledgement prints — classifies that hook's refusal as a
+    /// key failure and offers an unsigned retry that reruns the same hook and fails identically.
+    /// That is the acceptance rule for any token added later: exclusivity, not coverage. A genuine
+    /// signing wording no token matches falls to the generic failure path, which shows git's own
+    /// stderr and misdirects nobody.
+    /// </para>
     /// </summary>
     public static bool IsSigningFailure(ProcessResult result) =>
         !result.Success
         && (result.StdErr + "\n" + result.StdOut) is var text
-        && (text.Contains("signing", StringComparison.OrdinalIgnoreCase)
+        && (text.Contains("gpg failed to sign", StringComparison.OrdinalIgnoreCase)
             || text.Contains("sign the data", StringComparison.OrdinalIgnoreCase)
             || text.Contains("sign the tag", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("unable to sign the", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("user.signingkey", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("gpg.ssh.defaultkeycommand", StringComparison.OrdinalIgnoreCase)
             || text.Contains("failed to write commit object", StringComparison.OrdinalIgnoreCase));
 
     public async Task<string> GetLastCommitMessageAsync(string repoPath, CancellationToken ct = default)
