@@ -15,6 +15,13 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
     private static readonly string CachePath = AppPaths.DiscoveryCacheFile;
 
     /// <summary>
+    /// When the project list this service last handed out was read from disk — the cache's own
+    /// stamp when the list was served from cache, the scan's own time when it was not. Null until
+    /// either has happened, which is not the same fact as a list of age zero.
+    /// </summary>
+    public DateTimeOffset? LastDiscoveryAt { get; private set; }
+
+    /// <summary>
     /// Loads from cache if fresh, otherwise runs full discovery and updates cache.
     /// </summary>
     public async Task<List<ProjectInfo>> DiscoverAllAsync(CancellationToken ct = default)
@@ -324,6 +331,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 }
             }
 
+            LastDiscoveryAt = cache.CachedAt;
             return cache.Projects;
         }
         catch (Exception ex)
@@ -333,7 +341,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
         }
     }
 
-    private static void SaveCache(List<ProjectInfo> projects)
+    private void SaveCache(List<ProjectInfo> projects)
     {
         try
         {
@@ -346,6 +354,7 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 CachedAt = DateTimeOffset.Now,
                 Projects = projects
             };
+            LastDiscoveryAt = cache.CachedAt;
 
             // tmp+swap so a crash mid-write cannot truncate the live cache, but no
             // .bak: the cache is fully reconstructible by a re-scan, and LoadCache

@@ -217,6 +217,10 @@ public partial class ProjectDetailPage
         // switched to while a lazy tab was active reset that tab's data.
         ApplyPendingTab(WorkTabs, requested, LoadDataForActiveTab);
 
+        var overlay = RequestedOverlay;
+        RequestedOverlay = null;
+        await ApplyPendingOverlay(_viewModel, overlay);
+
         // Take keyboard focus so the tab hotkeys (Ctrl+digit) and page key handling work
         // immediately — navigation from a card, the sidebar, or the palette leaves focus
         // on the nav item, outside this page's tunnel.
@@ -333,6 +337,26 @@ public partial class ProjectDetailPage
     /// page's own default surface.
     /// </summary>
     public static Models.DetailTab? RequestedTab { get; set; }
+
+    /// <summary>
+    /// The full-page pane a deep link asked for, consumed by the next page to load and travelling
+    /// the same way <see cref="RequestedTab"/> does. Consumed once: a pane left pending would open
+    /// over a later navigation that asked for none.
+    /// </summary>
+    public static Models.DetailOverlay? RequestedOverlay { get; set; }
+
+    /// <summary>
+    /// Opens the pane a deep link named, through that pane's own open command — so it loads its
+    /// contents, states its own refusals, and the page gains no second route into a safety surface.
+    /// </summary>
+    internal static Task ApplyPendingOverlay(ProjectDetailViewModel viewModel, Models.DetailOverlay? requested) =>
+        requested switch
+        {
+            Models.DetailOverlay.Backups => viewModel.OpenBackupsCommand.ExecuteAsync(null),
+            Models.DetailOverlay.RecoveryBackups => viewModel.OpenBackupsForRecoveryCommand.ExecuteAsync(null),
+            Models.DetailOverlay.Reflog => viewModel.OpenReflogCommand.ExecuteAsync(null),
+            _ => Task.CompletedTask,
+        };
 
     /// <summary>
     /// Selects the work-area tab tagged <paramref name="tab"/>, reporting whether the

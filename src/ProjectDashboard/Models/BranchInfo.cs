@@ -23,6 +23,13 @@ public sealed class BranchInfo
         };
 }
 
+/// <summary>
+/// A repository's local branches, or why they could not be read. git reports a ref read it could
+/// not perform as a non-zero exit rather than a throw, so an empty list alone cannot be told apart
+/// from a repository whose branches all track their upstreams.
+/// </summary>
+public sealed record BranchesResult(List<BranchInfo> Branches, bool HasError = false, string ErrorText = "");
+
 /// <summary>Commit counts between two refs: what the first has beyond the second, and the reverse.</summary>
 public sealed record RefComparison(int Ahead, int Behind);
 

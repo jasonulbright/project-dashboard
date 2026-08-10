@@ -569,6 +569,15 @@ public partial class MainWindow : INavigationWindow
         dashVm.NavigateToProjectTabRequested += (project, tab) =>
             Dispatcher.Invoke(() => NavigateToProjectTab(project, tab));
 
+        // The safety rollup is a footer page built on first navigation, so its links are wired
+        // here rather than by the page: a row pressed before the shell had seen the page would
+        // otherwise reach nothing.
+        var safetyVm = _serviceProvider.GetRequiredService<SafetyViewModel>();
+        safetyVm.NavigateToProjectTabRequested += (project, tab) =>
+            Dispatcher.Invoke(() => NavigateToProjectTab(project, tab));
+        safetyVm.NavigateToProjectOverlayRequested += (project, overlay) =>
+            Dispatcher.Invoke(() => NavigateToProjectOverlay(project, overlay));
+
         // The initial load may already have finished before this subscription.
         RefreshSidebarProjects(dashVm);
     }
@@ -1047,6 +1056,13 @@ public partial class MainWindow : INavigationWindow
     private void NavigateToProjectTab(Models.ProjectInfo project, DetailTab tab)
     {
         ProjectDetailPage.RequestedTab = tab;
+        NavigateToProject(project);
+    }
+
+    /// <summary>The pane travels the same way the tab does, and for the same reason.</summary>
+    private void NavigateToProjectOverlay(Models.ProjectInfo project, Models.DetailOverlay overlay)
+    {
+        ProjectDetailPage.RequestedOverlay = overlay;
         NavigateToProject(project);
     }
 

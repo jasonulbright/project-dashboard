@@ -60,6 +60,13 @@
             </local:AppNavigationView.MenuItems>
 
             <local:AppNavigationView.FooterMenuItems>
+                <!-- App-level surfaces live here, not among the main-menu items: those five are
+                     filters over one card grid, and this is a different page with a different
+                     shape. It carries no count badge — the item is inert until it is opened. -->
+                <ui:NavigationViewItem
+                    Content="Safety"
+                    Icon="{ui:SymbolIcon ShieldCheckmark24}"
+                    TargetPageType="{x:Type pages:SafetyPage}" />
                 <ui:NavigationViewItem
                     Content="Settings"
                     Icon="{ui:SymbolIcon Settings24}"

@@ -213,6 +213,20 @@ public partial class App : Application
                 services.AddSingleton<SettingsPage>();
                 services.AddSingleton<SettingsViewModel>();
 
+                // The rollup reads the dashboard's own project list rather than scanning again,
+                // and shares the container's busy registry, backup store and ledger — a private
+                // registry would let a portfolio check read a repository a rewrite is holding.
+                services.AddSingleton<SafetyPage>();
+                services.AddSingleton(sp => new SafetyViewModel(
+                    sp.GetRequiredService<DashboardViewModel>(),
+                    sp.GetRequiredService<Services.Safety.RepoBusyRegistry>(),
+                    sp.GetRequiredService<SettingsService>(),
+                    sp.GetRequiredService<GitService>(),
+                    sp.GetRequiredService<Services.Safety.BackupService>(),
+                    sp.GetRequiredService<Services.Safety.RewriteRecoveryService>(),
+                    sp.GetRequiredService<Services.Safety.OperationHistory>(),
+                    sp.GetRequiredService<ProjectDiscoveryService>()));
+
                 // Hosted services run in registration order: crash-recovery detection must
                 // complete before ApplicationHostService shows the interactive window.
                 services.AddHostedService(sp => sp.GetRequiredService<Services.Safety.RewriteRecoveryService>());

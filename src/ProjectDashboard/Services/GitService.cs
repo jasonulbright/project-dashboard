@@ -553,7 +553,14 @@ public class GitService
 
     // ── Branches ────────────────────────────────────────────────────────────
 
-    public async Task<List<BranchInfo>> GetBranchesAsync(string repoPath, CancellationToken ct = default)
+    public async Task<List<BranchInfo>> GetBranchesAsync(string repoPath, CancellationToken ct = default) =>
+        (await GetBranchesResultAsync(repoPath, ct)).Branches;
+
+    /// <summary>
+    /// The same read as <see cref="GetBranchesAsync"/>, keeping the failure rather than folding it
+    /// into an empty list. A caller reporting on branches it did not read has to be able to say so.
+    /// </summary>
+    public async Task<BranchesResult> GetBranchesResultAsync(string repoPath, CancellationToken ct = default)
     {
         var result = await RunAsync(repoPath,
             ["for-each-ref", "refs/heads",
@@ -561,7 +568,7 @@ public class GitService
         if (!result.Success)
         {
             Log.Warn($"git for-each-ref failed for {repoPath}: {result.FirstError}");
-            return [];
+            return new BranchesResult([], HasError: true, result.FirstError);
         }
 
         var branches = new List<BranchInfo>();
@@ -592,7 +599,7 @@ public class GitService
                     System.Globalization.DateTimeStyles.None, out var d) ? d : null
             });
         }
-        return branches;
+        return new BranchesResult(branches);
     }
 
     public Task<ProcessResult> CreateBranchAsync(string repoPath, string name, CancellationToken ct = default)
