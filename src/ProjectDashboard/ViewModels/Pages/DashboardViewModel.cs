@@ -2135,6 +2135,9 @@ public partial class DashboardViewModel : ObservableObject
 
         try { await proc.WaitForExitAsync(); } catch { }
 
+        // The held account answer was read before this sign-in and cannot name what it added.
+        _gitHubService.InvalidateAuthState();
+
         // Re-evaluate; if signed in now, pull GitHub data.
         await UpdateGhBannerAsync();
         if (!GhBannerVisible)

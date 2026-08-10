@@ -76,6 +76,125 @@ public class GitHubService(SettingsService settingsService)
         }
     }
 
+    private readonly SemaphoreSlim _authStateGate = new(1, 1);
+    private GhAuthState? _authState;
+    private int _authStateEpoch;
+
+    /// <summary>
+    /// Which accounts gh holds, on which hosts, and which one it targets per host. Null is a
+    /// read that failed — a gh too old for the flag, a gh that is not installed, an output shape
+    /// this does not recognise — and callers fall back to <see cref="GetAuthSummaryAsync"/>
+    /// rather than claiming anything about accounts nothing read.
+    ///
+    /// The answer is held for the session: every repository page asks, and one status read per
+    /// page open would spend a process spawn on a fact that changes only when the user runs gh
+    /// themselves. <paramref name="refresh"/> is the explicit re-read behind that; nothing polls.
+    /// Only an answer is held, so a read that failed is retried rather than fixed for the session.
+    /// </summary>
+    public async Task<GhAuthState?> GetAuthStateAsync(bool refresh = false, CancellationToken ct = default)
+    {
+        await _authStateGate.WaitAsync(ct);
+        try
+        {
+            if (_authState is not null && !refresh) return _authState;
+            // An invalidation that lands while this read is in flight describes a machine this
+            // answer was already taken from. Holding it anyway would keep the pre-sign-in answer
+            // for the session; the epoch is what makes the drop win that race rather than the
+            // write that started first.
+            var epoch = Volatile.Read(ref _authStateEpoch);
+            var read = await ReadAuthStateAsync(ct);
+            if (Volatile.Read(ref _authStateEpoch) == epoch) _authState = read;
+            return read;
+        }
+        finally
+        {
+            _authStateGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops the held answer so the next read asks gh again. Called where the app hands the user
+    /// to gh's own sign-in: the account they just added is not in the answer read before it.
+    /// </summary>
+    public void InvalidateAuthState()
+    {
+        Interlocked.Increment(ref _authStateEpoch);
+        _authState = null;
+    }
+
+    private async Task<GhAuthState?> ReadAuthStateAsync(CancellationToken ct)
+    {
+        try
+        {
+            // --json makes gh exit zero whatever it finds, so the exit code decides nothing here:
+            // an account whose token failed its check is reported in the payload, per account.
+            var run = await RunAsync(AuthStatusArgs, ct);
+            if (run.TimedOut || string.IsNullOrWhiteSpace(run.StdOut))
+            {
+                Log.Warn($"gh auth status read failed: {run.FirstError}");
+                return null;
+            }
+            return ParseAuthState(run.StdOut);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh auth status could not be run", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The status read's argument vector. No --show-token: the app has no use for a token value
+    /// and the one way to be sure a token is never logged or rendered is never to receive one.
+    /// </summary>
+    internal static readonly string[] AuthStatusArgs = ["auth", "status", "--json", "hosts"];
+
+    /// <summary>
+    /// Reads gh's structured status. Anything that is not the documented shape — a payload with
+    /// no hosts object, a gh that rejected the flag, malformed JSON — is a failed read rather
+    /// than an empty one, so an unrecognised shape degrades to the summary line and never turns
+    /// into a false "signed in nowhere".
+    /// </summary>
+    internal static GhAuthState? ParseAuthState(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("hosts", out var hosts) ||
+                hosts.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var accounts = new List<GhAccount>();
+            foreach (var host in hosts.EnumerateObject())
+            {
+                if (host.Value.ValueKind != JsonValueKind.Array) continue;
+                foreach (var entry in host.Value.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object) continue;
+                    var name = Str(entry, "host");
+                    accounts.Add(new GhAccount(
+                        name.Length > 0 ? name : host.Name,
+                        Str(entry, "login"),
+                        entry.TryGetProperty("active", out var active) && active.ValueKind == JsonValueKind.True,
+                        ParseScopeList(Str(entry, "scopes")),
+                        Str(entry, "state"),
+                        Str(entry, "error")));
+                }
+            }
+            return new GhAuthState(accounts);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("gh auth status response unparseable", ex);
+            return null;
+        }
+    }
+
+    /// <summary>gh prints one comma-separated string; empty entries are dropped, order is kept.</summary>
+    internal static IReadOnlyList<string> ParseScopeList(string scopes) =>
+        [.. scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
     /// <summary>
     /// Remote facts for one repo from the batch query. Null counts mean "couldn't
     /// fetch" — callers must not render them as zero.
@@ -1857,8 +1976,12 @@ public class GitHubService(SettingsService settingsService)
         ["GH_PROMPT_DISABLED"] = "1"
     };
 
-    /// <summary>Structured run for callers that need exit codes and stderr (no throw on failure).</summary>
-    public async Task<ProcessResult> RunAsync(IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+    /// <summary>
+    /// Structured run for callers that need exit codes and stderr (no throw on failure). Virtual
+    /// on the same terms as <see cref="GitService.RunAsync"/>: the reads built on it are testable
+    /// without a gh on the machine to answer them.
+    /// </summary>
+    public virtual async Task<ProcessResult> RunAsync(IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
         => await ProcessRunner.RunAsync(ResolveGhExe(), args, null, timeout ?? Timeout, GhEnvironment, ct);
 
     private async Task<string> RunGhAsync(IEnumerable<string> args, CancellationToken ct)

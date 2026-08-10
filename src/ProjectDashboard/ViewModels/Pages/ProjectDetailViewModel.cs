@@ -334,6 +334,8 @@ public partial class ProjectDetailViewModel : ObservableObject
         // The signing answer is per repository and deliberately unpersisted, so leaving one
         // takes the answer with it rather than carrying "unsigned" into the next.
         ResetSigningState();
+        // The line named the repository being left, down to which account owns it.
+        ResetGhIdentity();
         // The held signal named the repository being left; the incoming one is read below.
         _watcherRefreshPending = false;
         IsBusy = false;
@@ -405,6 +407,9 @@ public partial class ProjectDetailViewModel : ObservableObject
     {
         WorkingStateRefresh = SafeRefreshWorkingStateAsync();
         SigningRefresh = SafeRefreshSigningAsync();
+        // Off the held status answer: a repository load re-reads which account the remote's host
+        // resolves to, not gh's state, which changes only when the reader runs gh themselves.
+        GhIdentityRefresh = SafeRefreshGhIdentityAsync(false);
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
         // Every reload builds fresh commit objects, so a selection held by reference is lost.

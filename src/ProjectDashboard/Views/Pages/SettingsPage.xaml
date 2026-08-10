@@ -248,8 +248,63 @@
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                 <ui:Button Content="Re-check" FontSize="12" Padding="8,4"
                            Command="{Binding RecheckGitHubCommand}"
+                           AutomationProperties.Name="Re-check the GitHub CLI sign-in and accounts"
                            Margin="12,0,0,0" />
             </StackPanel>
+
+            <!-- What gh holds, per host: the account every GitHub action in this app runs as.
+                 Scopes are the names gh prints; the read never asks for a token value. -->
+            <ItemsControl ItemsSource="{Binding GhAccounts}" Margin="24,0,0,8"
+                          AutomationProperties.Name="GitHub CLI accounts"
+                          Visibility="{Binding GhAccountsVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,0,0,6" AutomationProperties.Name="{Binding AccessibleName}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{Binding Login}" FontSize="13"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Host}" FontSize="13" Margin="8,0,0,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <Border Grid.Column="2" Background="{DynamicResource StatusGoodBg}" CornerRadius="4"
+                                    Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding ActiveLabel}" FontSize="11"
+                                           Foreground="{DynamicResource StatusGoodFg}" />
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ActiveLabel}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
+                            <TextBlock Grid.Column="3" Text="{Binding Scopes}" FontSize="11" Margin="12,0,0,0"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Text="{Binding GhAccountsNotice}" FontSize="12" Margin="24,0,0,8" TextWrapping="Wrap"
+                       AutomationProperties.LiveSetting="Polite"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding GhAccountsNotice}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
             <TextBlock FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        Text="Repos show as &quot;local&quot; until gh is found and signed in (run: gh auth login). gh is delegated to for auth — the app never reads or stores your token. If gh is installed but not detected when launched from the Start Menu, point to gh.exe below." />

@@ -83,16 +83,79 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
-    private async Task CheckGitHubStatusAsync()
+    private async Task CheckGitHubStatusAsync(bool refresh = false)
     {
         try
         {
-            GitHubStatus = await _gitHubService.GetAuthSummaryAsync();
+            GitHubStatus = await FetchAuthSummaryAsync();
         }
         catch
         {
             GitHubStatus = "Unavailable";
         }
+        await ReadGhAccountsAsync(refresh);
+    }
+
+    /// <summary>One row of the account table: what gh holds for a host, and nothing it holds back.</summary>
+    public sealed record GhAccountRow(
+        string Host, string Login, string ActiveLabel, string Scopes, string AccessibleName);
+
+    [ObservableProperty] private ObservableCollection<GhAccountRow> _ghAccounts = [];
+    [ObservableProperty] private bool _ghAccountsVisible;
+
+    /// <summary>
+    /// Why the table below the status line is absent, or "" when its contents are the answer. An
+    /// account read this version of gh answered in a shape the app does not recognise leaves the
+    /// exit-code summary standing alone, and only this line tells that apart from a machine that
+    /// really does hold one account.
+    /// </summary>
+    [ObservableProperty] private string _ghAccountsNotice = "";
+
+    internal const string GhAccountsUnreadable =
+        "The GitHub CLI did not report its accounts in a form this app reads, so the line above is all that "
+        + "was established — no account, host, or scope is claimed here.";
+
+    /// <summary>
+    /// The two status reads the gh section stands on. Overridable so the degrade path and every
+    /// table shape are reachable without gh installed.
+    /// </summary>
+    internal virtual Task<string> FetchAuthSummaryAsync() => _gitHubService.GetAuthSummaryAsync();
+
+    internal virtual Task<GhAuthState?> FetchAuthStateAsync(bool refresh)
+        => _gitHubService.GetAuthStateAsync(refresh);
+
+    /// <summary>
+    /// The account table. The status read carries scopes and hosts as gh names them and no token:
+    /// nothing here asks gh for a token value, so none can reach the screen or the log.
+    /// </summary>
+    private async Task ReadGhAccountsAsync(bool refresh)
+    {
+        GhAuthState? state;
+        try { state = await FetchAuthStateAsync(refresh); }
+        catch { state = null; }
+
+        GhAccounts = [.. (state?.Accounts ?? []).Select(ToRow)];
+        GhAccountsVisible = GhAccounts.Count > 0;
+        // A gh that is absent already explains itself on the line above; repeating it as a parse
+        // failure would name a second fault where there is one.
+        GhAccountsNotice = state is null && GitHubStatus is "Signed in" or "Found, not signed in"
+            ? GhAccountsUnreadable
+            : "";
+    }
+
+    internal static GhAccountRow ToRow(GhAccount account)
+    {
+        var scopes = account.ScopeList;
+        var state = account.IsUsable
+            ? account.Active ? "active" : "not the account gh targets for this host"
+            : $"sign-in state {account.State}";
+        return new GhAccountRow(
+            account.Host,
+            account.Login,
+            account.Active ? "Active" : "",
+            scopes,
+            $"{account.Login} on {account.Host}, {state}"
+            + (scopes.Length > 0 ? $", scopes {scopes}" : ", no scopes reported"));
     }
 
     [RelayCommand]
@@ -209,7 +272,9 @@ public partial class SettingsViewModel : ObservableObject
         {
             GhPath = dialog.FileName;
             SaveSettings();
-            await CheckGitHubStatusAsync();
+            // A different gh is a different account store, so the held answer describes the one
+            // that was just replaced.
+            await CheckGitHubStatusAsync(refresh: true);
         }
     }
 
@@ -218,6 +283,6 @@ public partial class SettingsViewModel : ObservableObject
     {
         GitHubStatus = "Checking...";
         SaveSettings();
-        await CheckGitHubStatusAsync();
+        await CheckGitHubStatusAsync(refresh: true);
     }
 }

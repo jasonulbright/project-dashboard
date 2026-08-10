@@ -262,6 +262,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -447,8 +448,47 @@
             </DockPanel>
         </Border>
 
+        <!-- ═══ GITHUB IDENTITY ═══ -->
+        <!-- Which gh account this repository's remote resolves to. The command beside it is text
+             the reader runs: switching accounts is machine-wide state for every tool, so nothing
+             here runs it. -->
+        <Border Grid.Row="3" x:Name="GhIdentityBar"
+                IsEnabled="{Binding SafetyOverlayHidden}"
+                Visibility="{Binding GhIdentityVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                CornerRadius="8" Padding="12,6" Margin="0,0,0,8">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding GhIdentityWarning}" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource StatusWarnBg}" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <DockPanel>
+                <ui:Button DockPanel.Dock="Right" Content="Re-check" FontSize="12" Padding="10,4"
+                           Margin="10,0,0,0" VerticalAlignment="Center"
+                           Command="{Binding RecheckGhIdentityCommand}"
+                           ToolTip="Ask the GitHub CLI again which accounts it holds"
+                           AutomationProperties.Name="Re-check the GitHub CLI account" />
+                <TextBox DockPanel.Dock="Right" Text="{Binding GhIdentityCommand, Mode=OneWay}"
+                         Visibility="{Binding GhIdentityCommandVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                         IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                         FontFamily="Cascadia Code,Consolas" FontSize="12" Margin="10,0,0,0"
+                         VerticalAlignment="Center"
+                         AutomationProperties.Name="Command that resolves this, to run yourself" />
+                <ui:SymbolIcon Symbol="Person24" FontSize="15" Margin="0,0,6,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="{Binding GhIdentityText}" TextWrapping="Wrap" FontSize="12"
+                           VerticalAlignment="Center"
+                           AutomationProperties.LiveSetting="Polite"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            </DockPanel>
+        </Border>
+
         <!-- ═══ WORK AREA TABS ═══ -->
-        <TabControl Grid.Row="3" x:Name="WorkTabs" Background="Transparent" BorderThickness="0"
+        <TabControl Grid.Row="4" x:Name="WorkTabs" Background="Transparent" BorderThickness="0"
                     IsEnabled="{Binding SafetyOverlayHidden}"
                     AutomationProperties.Name="Work area"
                     SelectionChanged="WorkTabs_SelectionChanged">
