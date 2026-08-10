@@ -4448,8 +4448,8 @@
                                AutomationProperties.Name="Commit graph" />
 
         <!-- ═══ OPERATION HISTORY ═══
-             Last in the Grid: it is reached from the Backups browser as a cross-link and has to
-             draw over it, and the panes it covers are disabled rather than merely scrimmed. -->
+             After the Backups browser in the Grid: it is reached from it as a cross-link and has
+             to draw over it, and the panes it covers are disabled rather than merely scrimmed. -->
         <pages:OperationHistoryView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                                     Visibility="{Binding OperationHistoryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                     AutomationProperties.Name="Operation history" />
@@ -4460,5 +4460,12 @@
         <pages:WorkflowLogView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
                                Visibility="{Binding WorkflowLogVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                AutomationProperties.Name="Workflow run log" />
+
+        <!-- ═══ FIND IN THIS REPOSITORY ═══
+             Read-only, and it refuses to open while any pane above is up, so nothing here can
+             draw over one that is holding an undo. -->
+        <pages:FindInRepoView Grid.Row="0" Grid.RowSpan="4" Margin="-32,-16,-32,-16"
+                              Visibility="{Binding FindVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                              AutomationProperties.Name="Find in this repository" />
     </Grid>
 </Page>

@@ -30,12 +30,15 @@ public static class ShortcutTable
 
         new(PaletteGroup, "Up / Down", "Move the selection"),
         new(PaletteGroup, "Enter", "Open the selected project, result, or action"),
+        new(PaletteGroup, "Alt+1 / Alt+2 / Alt+3", "Search tracked files, add untracked, or add ignored ones too"),
+        new(PaletteGroup, "Ctrl+Shift+S", "Step through those three in turn"),
 
         new(DetailGroup, "Ctrl+1 … Ctrl+9", "Jump to work-area tabs 1–9"),
         new(DetailGroup, "Ctrl+0", "Jump to work-area tab 10"),
         // There are twelve tabs and only ten digits, so the last two are reachable by arrow key
         // alone; a sheet that omitted this would read as though they were unreachable.
         new(DetailGroup, "Left / Right", "Move between all twelve work-area tabs, including the eleventh and twelfth"),
+        new(DetailGroup, "Ctrl+F", "Find text or a filename in this repository"),
         new(DetailGroup, "Ctrl+Enter", "Commit the staged changes"),
         new(DetailGroup, "Enter / Space", "Open the focused list row"),
     ];

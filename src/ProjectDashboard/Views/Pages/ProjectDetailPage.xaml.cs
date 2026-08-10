@@ -299,6 +299,14 @@ public partial class ProjectDetailPage
             return;
         }
 
+        // Reached only with no overlay up, so Find never opens behind another pane's scrim.
+        if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            _viewModel.OpenFindCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         // Reached only with no overlay up, so a refresh never runs behind the wizard's scrim.
         if (e.Key == Key.F5)
         {
@@ -325,7 +333,8 @@ public partial class ProjectDetailPage
     /// which command Esc reaches, never about a stack.
     /// </summary>
     private System.Windows.Input.ICommand? TopmostOverlayClose() =>
-        _viewModel.CommitGraphVisible ? _viewModel.CloseCommitGraphCommand
+        _viewModel.FindVisible ? _viewModel.CloseFindCommand
+        : _viewModel.CommitGraphVisible ? _viewModel.CloseCommitGraphCommand
         : _viewModel.FileHistoryVisible ? _viewModel.CloseFileHistoryCommand
         : _viewModel.ForcePushVisible ? _viewModel.CloseForcePushCommand
         : _viewModel.TagsVisible ? _viewModel.CloseTagsCommand

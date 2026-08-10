@@ -723,17 +723,27 @@ public partial class MainWindow : INavigationWindow
     private const string ActionsGroup = "Actions";
     private const string ProjectsGroup = "Projects";
     private const string VerbsGroup = "Project actions";
-    private const string SearchGroup = "In files";
 
+    private const string SearchGroupPrefix = "In files";
+
+    /// <summary>
+    /// The in-files group's header names the scope in force, so the section a widened scope
+    /// flooded says what widened it. Ranked by prefix for that reason.
+    /// </summary>
     private static int GroupRank(string group) => group switch
     {
         ProjectsGroup => 0,
         VerbsGroup => 1,
-        SearchGroup => 2,
+        _ when group.StartsWith(SearchGroupPrefix, StringComparison.Ordinal) => 2,
         _ => 3,
     };
 
     private List<Models.PaletteItem> _paletteItems = [];
+
+    private readonly SearchScopeSelection _searchScope = new();
+
+    /// <summary>Set while the chips are written from the selection, so the write raises no re-search.</summary>
+    private bool _syncingScopeChips;
 
     private void TogglePalette()
     {
@@ -741,12 +751,70 @@ public partial class MainWindow : INavigationWindow
 
         _paletteItems = BuildPaletteItems();
         PaletteSearch.Text = "";
+        // Every open starts on the tracked scope. A widened scope left in place would read every
+        // repository's ignored tree on the first keystroke of a search nobody widened.
+        _searchScope.Reset();
+        SyncScopeChips();
         // A fresh palette opens on its first row; the re-filter below otherwise carries
         // the previous session's highlight forward.
         PaletteList.SelectedItem = null;
         ApplyPaletteFilter("");
         PaletteOverlay.Visibility = Visibility.Visible;
         PaletteSearch.Focus();
+    }
+
+    /// <summary>
+    /// Draws the chips from the selection rather than the other way round, so the keyboard route
+    /// and the mouse route cannot disagree about which scope is in force. Handlers are detached
+    /// for the write: a chip checked in code raises the same event a click does, and the search
+    /// would be scheduled twice.
+    /// </summary>
+    private void SyncScopeChips()
+    {
+        _syncingScopeChips = true;
+        try
+        {
+            PaletteScopeTracked.IsChecked = _searchScope.Current == SearchContentScope.Tracked;
+            PaletteScopeUntracked.IsChecked = _searchScope.Current == SearchContentScope.WithUntracked;
+            PaletteScopeEverything.IsChecked = _searchScope.Current == SearchContentScope.Everything;
+        }
+        finally
+        {
+            _syncingScopeChips = false;
+        }
+
+        var wide = _searchScope.Current == SearchContentScope.Everything;
+        PaletteScopeNotice.Text = wide ? SearchScopeCopy.EverythingNotice : "";
+        PaletteScopeNotice.Visibility = wide ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void PaletteScope_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_syncingScopeChips || sender is not System.Windows.Controls.RadioButton { Tag: string tag }) return;
+        if (!Enum.TryParse<SearchContentScope>(tag, out var scope)) return;
+        ApplySearchScope(scope);
+    }
+
+    /// <summary>
+    /// Takes a scope and re-runs the fan-out under it. The rows already on screen describe the
+    /// previous scope, so they are dropped rather than left standing under a new header.
+    /// </summary>
+    private void ApplySearchScope(SearchContentScope scope)
+    {
+        if (_searchScope.Select(scope)) AfterScopeChanged();
+    }
+
+    private void CycleSearchScope()
+    {
+        _searchScope.Cycle();
+        AfterScopeChanged();
+    }
+
+    private void AfterScopeChanged()
+    {
+        SyncScopeChips();
+        ScheduleRepoSearch();
+        ApplyPaletteFilter(PaletteSearch.Text);
     }
 
     private void ClosePalette()
@@ -903,6 +971,8 @@ public partial class MainWindow : INavigationWindow
         _repoSearchCts = null;
         _searchRows = [];
         _searchRowsQuery = "";
+        PaletteSearchSummary.Text = "";
+        PaletteSearchSummary.Visibility = Visibility.Collapsed;
     }
 
     private void ScheduleRepoSearch()
@@ -934,13 +1004,17 @@ public partial class MainWindow : INavigationWindow
         try
         {
             var vm = _serviceProvider.GetRequiredService<DashboardViewModel>();
-            var result = await vm.SearchAllReposAsync(term, cts.Token);
+            var scope = _searchScope.Current;
+            var result = await vm.SearchAllReposAsync(term, scope, cts.Token);
 
             // A newer keystroke replaced this fan-out while it ran; its rows are stale.
             if (!ReferenceEquals(_repoSearchCts, cts)) return;
 
-            _searchRows = BuildSearchRows(vm, result);
+            _searchRows = BuildSearchRows(vm, result, scope);
             _searchRowsQuery = term;
+            PaletteSearchSummary.Text =
+                SearchScopeCopy.Summary(result, new SearchScope(scope, SearchBreadth.Portfolio));
+            PaletteSearchSummary.Visibility = Visibility.Visible;
             if (PaletteOverlay.Visibility == Visibility.Visible)
                 ApplyPaletteFilter(PaletteSearch.Text);
         }
@@ -958,8 +1032,15 @@ public partial class MainWindow : INavigationWindow
         }
     }
 
-    private static List<Models.PaletteItem> BuildSearchRows(DashboardViewModel vm, RepoSearchResult result)
+    /// <summary>
+    /// The in-files rows for one fan-out. Each row carries what its file is to git, and the last
+    /// row states what the fan-out left out: a flood produced by widening the scope rather than by
+    /// the term reads as the term's doing unless the scope is named beside the count.
+    /// </summary>
+    private static List<Models.PaletteItem> BuildSearchRows(
+        DashboardViewModel vm, RepoSearchResult result, SearchContentScope scope)
     {
+        var group = SearchScopeCopy.Header(scope);
         var rows = new List<Models.PaletteItem>();
         foreach (var hit in result.Hits)
         {
@@ -967,21 +1048,23 @@ public partial class MainWindow : INavigationWindow
             rows.Add(new Models.PaletteItem
             {
                 Title = hit.IsFileNameMatch ? hit.FilePath : hit.Text,
-                Subtitle = hit.Location,
+                Subtitle = hit.LocationWithScope,
                 Icon = hit.IsFileNameMatch ? SymbolRegular.Document24 : SymbolRegular.Code24,
-                Group = SearchGroup,
+                Group = group,
                 Invoke = project is null ? () => { } : () => vm.OpenProjectCommand.Execute(project)
             });
         }
 
-        if (result.More > 0)
+        if (result.IsPartial)
         {
             rows.Add(new Models.PaletteItem
             {
-                Title = $"{result.More} more matches — narrow the search",
-                Subtitle = $"{result.ReposSearched} repos searched",
+                Title = result.More > 0
+                    ? $"{result.More} more matches — narrow the search"
+                    : "Some repositories did not answer in full",
+                Subtitle = SearchScopeCopy.Summary(result, new SearchScope(scope, SearchBreadth.Portfolio)),
                 Icon = SymbolRegular.MoreHorizontal24,
-                Group = SearchGroup
+                Group = group
             });
         }
 
@@ -990,6 +1073,30 @@ public partial class MainWindow : INavigationWindow
 
     private void PaletteSearch_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // The scope switches are reachable without the mouse: the palette is keyboard-first, and a
+        // chip row a keyboard cannot reach is a scope only a mouse can change. Alt+digit takes the
+        // key the system reports rather than e.Key, which is Key.System while Alt is held.
+        if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0)
+        {
+            var digit = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (digit is >= Key.D1 and <= Key.D9
+                && SearchScopeSelection.ForDigit(digit - Key.D1 + 1) is { } picked)
+            {
+                ApplySearchScope(picked);
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (e.Key == Key.S
+            && (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift))
+                == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            CycleSearchScope();
+            e.Handled = true;
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.Down:

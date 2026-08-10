@@ -1,0 +1,204 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.FindInRepoView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:services="clr-namespace:ProjectDashboard.Services"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseFindCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <Style x:Key="FindHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,8" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <!-- Every navigation mode cycles inside the pane: the scrim stops the mouse but no
+             keystroke, and the tab strip's own controls sit directly behind it. -->
+        <Border MaxWidth="1040" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{DynamicResource StatusInfoFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseFindCommand}"
+                               ToolTip="Close the find pane (Esc)"
+                               AutomationProperties.Name="Close the find pane" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="Search24" FontSize="16" VerticalAlignment="Center"
+                                           Margin="0,0,8,0" Foreground="{DynamicResource StatusInfoFg}" />
+                            <TextBlock Text="Find in this repository" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
+                                       VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                       FontFamily="Cascadia Code,Consolas"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="Filenames and file contents, in this working tree only" FontSize="12"
+                                   Margin="0,2,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- ═══ TERM AND SCOPE ═══
+                     The scope switches open on Tracked every time the pane opens. The widest one
+                     walks ignored trees, and a scope carried across opens would spend that on a
+                     search nobody widened. -->
+                <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                    <DockPanel Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Search" FontSize="12" Padding="12,4"
+                                   Margin="8,0,0,0" Appearance="Primary"
+                                   Command="{Binding RunFindCommand}"
+                                   AutomationProperties.Name="Search this repository" />
+                        <ui:TextBox x:Name="FindTermBox"
+                                    Text="{Binding FindTerm, UpdateSourceTrigger=PropertyChanged}"
+                                    PlaceholderText="Text or part of a filename…"
+                                    Icon="{ui:SymbolIcon Search24}" FontSize="13"
+                                    AutomationProperties.Name="What to find in this repository">
+                            <ui:TextBox.InputBindings>
+                                <KeyBinding Key="Enter" Command="{Binding RunFindCommand}" />
+                            </ui:TextBox.InputBindings>
+                        </ui:TextBox>
+                    </DockPanel>
+
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Search in" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <!-- Checked rather than Click: a reader reaches these through UI Automation,
+                             which selects the switch without ever raising a click, and a scope that
+                             only moved for a mouse would leave that reader on the tracked one. -->
+                        <RadioButton GroupName="FindScope" Content="Tracked" FontSize="12" Margin="0,0,12,0"
+                                     IsChecked="{Binding FindScopeIsTracked, Mode=OneWay}"
+                                     Checked="FindScope_Checked" Tag="Tracked"
+                                     AutomationProperties.Name="Search tracked files only" />
+                        <RadioButton GroupName="FindScope" Content="+ Untracked" FontSize="12" Margin="0,0,12,0"
+                                     IsChecked="{Binding FindScopeIsWithUntracked, Mode=OneWay}"
+                                     Checked="FindScope_Checked" Tag="WithUntracked"
+                                     AutomationProperties.Name="Search tracked and untracked files" />
+                        <RadioButton GroupName="FindScope" Content="All files" FontSize="12"
+                                     IsChecked="{Binding FindScopeIsEverything, Mode=OneWay}"
+                                     Checked="FindScope_Checked" Tag="Everything"
+                                     AutomationProperties.Name="Search all files, including ignored ones" />
+                    </StackPanel>
+
+                    <TextBlock Text="{Binding FindScopeNoticeText}"
+                               AutomationProperties.AutomationId="FindScopeNoticeText"
+                               AutomationProperties.LiveSetting="Polite">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource FindHint}">
+                                <Setter Property="Margin" Value="0,6,0,0" />
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FindScopeNoticeText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+
+                <!-- ═══ RESULTS ═══ -->
+                <Grid Grid.Row="2">
+                    <Border CornerRadius="6" Padding="12,10"
+                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            VerticalAlignment="Top"
+                            Visibility="{Binding FindEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="Nothing in this repository matched."
+                                       FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource FindHint}" Margin="0,6,0,0"
+                                       Text="A wider scope reads files this one did not: untracked files, and then everything the ignore rules exclude." />
+                        </StackPanel>
+                    </Border>
+
+                    <ListBox x:Name="FindRows" ItemsSource="{Binding FindHits}"
+                             Background="Transparent" HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             AutomationProperties.Name="Matches in this repository">
+                        <!-- Without an automation name the row is announced as its type's
+                             name: an item container falls back to the item's ToString. -->
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="AutomationProperties.Name">
+                                    <Setter.Value>
+                                        <MultiBinding StringFormat="{}{0}, {1}">
+                                            <Binding Path="Text" />
+                                            <Binding Path="LocationWithScope" />
+                                        </MultiBinding>
+                                    </Setter.Value>
+                                </Setter>
+                                <Setter Property="Padding" Value="6,4" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type services:RepoSearchHit}">
+                                <DockPanel Margin="0,3">
+                                    <ui:Button DockPanel.Dock="Right" Content="Show file" FontSize="11" Padding="10,3"
+                                               Margin="12,0,0,0" VerticalAlignment="Center"
+                                               Command="{Binding DataContext.RevealFindHitCommand,
+                                                                 RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                               CommandParameter="{Binding}"
+                                               AutomationProperties.Name="{Binding FilePath, StringFormat=Show {0} in Explorer}" />
+                                    <Border DockPanel.Dock="Left" CornerRadius="4" Padding="6,1" Margin="0,0,10,0"
+                                            VerticalAlignment="Center" Width="70"
+                                            Background="{DynamicResource StatusWarnBg}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ScopeLabel}" Value="">
+                                                        <Setter Property="Visibility" Value="Hidden" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding ScopeLabel}" FontSize="10"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{DynamicResource StatusWarnFg}" />
+                                    </Border>
+                                    <TextBlock DockPanel.Dock="Bottom" Text="{Binding Location}" FontSize="11"
+                                               FontFamily="Cascadia Code,Consolas"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <TextBlock Text="{Binding Text}" FontSize="12"
+                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- ═══ FOOTER ═══ -->
+                <TextBlock Grid.Row="3" Text="{Binding FindStatusText}" FontSize="12" TextWrapping="Wrap"
+                           Margin="0,12,0,0"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           AutomationProperties.AutomationId="FindStatusText"
+                           AutomationProperties.LiveSetting="Polite" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

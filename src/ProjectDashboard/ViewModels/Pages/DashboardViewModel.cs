@@ -714,17 +714,19 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Searches every discovered local repo. Remote-only cards carry no working tree,
-    /// so they never reach the fan-out.
+    /// Every discovered local repo the fan-out can reach, in list order. Remote-only cards carry
+    /// no working tree, so they never reach it. The list is what discovery found across every
+    /// configured root, so a search covers each root without knowing there is more than one.
     /// </summary>
-    public Task<RepoSearchResult> SearchAllReposAsync(string term, CancellationToken ct)
-    {
-        var targets = Projects
+    public List<RepoSearchTarget> SearchTargets() =>
+        [.. Projects
             .Where(p => !p.IsRemoteOnly && !string.IsNullOrEmpty(p.FullPath))
-            .Select(p => new RepoSearchTarget(p.DisplayName, p.FullPath))
-            .ToList();
-        return _searchService.SearchAsync(term, targets, ct);
-    }
+            .Select(p => new RepoSearchTarget(p.DisplayName, p.FullPath))];
+
+    /// <summary>Searches every discovered local repo under <paramref name="content"/>.</summary>
+    public Task<RepoSearchResult> SearchAllReposAsync(
+        string term, SearchContentScope content, CancellationToken ct) =>
+        _searchService.SearchAsync(term, SearchTargets(), new SearchScope(content, SearchBreadth.Portfolio), ct);
 
     /// <summary>The loaded project whose working tree is at this path, if any.</summary>
     public ProjectInfo? FindByPath(string repoPath) =>

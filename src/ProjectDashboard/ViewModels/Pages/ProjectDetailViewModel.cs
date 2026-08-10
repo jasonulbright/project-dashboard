@@ -379,6 +379,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         ResetHistoryWindow();
         CloseFileHistoryOnProjectSwitch();
         CloseCommitGraphOnProjectSwitch();
+        CloseFindOnProjectSwitch();
         PullRequests = [];
         PullRequestsLoaded = false;
         StateBannerVisible = false;
