@@ -50,9 +50,6 @@ public sealed record SafetyReflogOnlyScan(int Count, string? Error);
 /// </summary>
 public sealed class SafetyScanner
 {
-    /// <summary>The reflog-only walk is bounded by the reflogs, which no setting bounds; the budget does.</summary>
-    internal static readonly TimeSpan ReflogWalkTimeout = TimeSpan.FromMinutes(5);
-
     private readonly GitService _git;
     private readonly BackupService? _backups;
     private readonly OperationHistory _history;
@@ -176,7 +173,7 @@ public sealed class SafetyScanner
     private async Task<SafetyReflogOnlyScan> CountReflogOnlyCoreAsync(string repoPath, CancellationToken ct)
     {
         var walk = await _git.RunAsync(
-            repoPath, ["rev-list", "--count", "--reflog", "--not", "--all"], ct, ReflogWalkTimeout);
+            repoPath, ["rev-list", "--count", "--reflog", "--not", "--all"], ct, BackupService.ReflogWalkTimeout);
         if (!walk.Success)
             return new SafetyReflogOnlyScan(0, walk.FirstError);
 

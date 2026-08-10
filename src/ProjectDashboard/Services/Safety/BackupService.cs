@@ -31,8 +31,16 @@ public sealed class BackupService
     private static readonly TimeSpan BundleTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RefTimeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>The reflog walk is bounded by the reflogs, which no setting bounds; the budget is.</summary>
-    private static readonly TimeSpan ReflogWalkTimeout = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// The budget for a reflog walk, shared by every caller that runs one. The walk is bounded by
+    /// the reflogs, which no setting bounds, so the budget is what bounds it.
+    ///
+    /// One value, not one per caller: a deep capture and the safety rollup run the same walk over
+    /// the same repository, and separate budgets would let the rollup count reflog-only commits
+    /// that the capture was killed before reaching — two surfaces disagreeing about one fact, with
+    /// nothing on either saying why.
+    /// </summary>
+    internal static readonly TimeSpan ReflogWalkTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// The expected-old value that requires a ref to be absent. `git update-ref --stdin` reads a
