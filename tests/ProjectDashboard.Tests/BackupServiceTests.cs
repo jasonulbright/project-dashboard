@@ -483,11 +483,81 @@ public class BackupServiceTests
         Assert.Equal(2, listed.Count);
         Assert.Equal(second.UtcStamp, listed[0].UtcStamp); // newest first
 
-        Assert.True(await service.DeleteBackupAsync(first));
+        Assert.Equal(BackupDeleteState.Deleted, await service.DeleteBackupAsync(first));
         Assert.False(File.Exists(first.BundlePath));
         Assert.False(File.Exists(first.RefsSnapshotPath));
         Assert.False(service.BackupFilesRemain(first));
         Assert.Single(await service.ListBackupsAsync(repo.Path));
+    }
+
+    /// <summary>
+    /// The other direction of a partial delete: the bundle goes and the snapshot cannot. What is
+    /// left restores nothing, and no listing can reach it — both enumerate bundles — so calling
+    /// this the same thing as a bundle that survived would tell a reader their backup is intact
+    /// when it is destroyed. The leftover is reaped by the next read that can remove it.
+    /// </summary>
+    [Fact]
+    public async Task DeleteBackup_WhenTheSnapshotIsHeldOpen_SaysTheBundleIsGoneAndTheLeftoverIsReaped()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path, "History rewrite");
+
+        using (new FileStream(handle.RefsSnapshotPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Equal(BackupDeleteState.SnapshotRemains, await service.DeleteBackupAsync(handle));
+            Assert.False(File.Exists(handle.BundlePath));
+            Assert.True(File.Exists(handle.RefsSnapshotPath));
+            Assert.True(service.BackupFilesRemain(handle));
+            // Already unreachable through the listing, which is exactly why it needs reaping.
+            Assert.Empty(await service.ListBackupsAsync(repo.Path));
+        }
+
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
+        Assert.False(File.Exists(handle.RefsSnapshotPath));
+        Assert.False(service.BackupFilesRemain(handle));
+    }
+
+    /// <summary>A snapshot with no bundle beside it is not a backup, and nothing else would ever name it.</summary>
+    [Fact]
+    public async Task ListBackups_ReapsASnapshotWhoseBundleIsGone()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path, "History rewrite");
+        var bak = handle.RefsSnapshotPath + ".bak";
+        File.Copy(handle.RefsSnapshotPath, bak, overwrite: true);
+        File.Delete(handle.BundlePath);
+
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
+
+        Assert.False(File.Exists(handle.RefsSnapshotPath));
+        Assert.False(File.Exists(bak));
+    }
+
+    /// <summary>
+    /// A capture writes its bundle before its snapshot, so a snapshot with no bundle never
+    /// describes a backup being created — the reap that follows a prune cannot race one.
+    /// </summary>
+    [Fact]
+    public async Task Prune_ReapsAnOrphanedSnapshotAndLeavesLiveBackupsAlone()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        new SettingsService().Save(new AppSettings { BackupRetentionCount = 10 });
+        var service = NewService();
+        var kept = await service.CreateBackupAsync(repo.Path, "History rewrite");
+
+        var dir = SafetyPaths.BackupDirFor(RepoKey.For(repo.Path));
+        var orphan = Path.Combine(dir, "19990101-000000000.refs.json");
+        await File.WriteAllTextAsync(orphan, "{}");
+
+        // The prune runs at the end of a capture.
+        await service.CreateBackupAsync(repo.Path, "History rewrite");
+
+        Assert.False(File.Exists(orphan));
+        Assert.True(File.Exists(kept.BundlePath));
+        Assert.True(File.Exists(kept.RefsSnapshotPath));
+        Assert.Equal(2, (await service.ListBackupsAsync(repo.Path)).Count);
     }
 
     /// <summary>
@@ -505,7 +575,7 @@ public class BackupServiceTests
 
         using (new FileStream(handle.BundlePath, FileMode.Open, FileAccess.Read, FileShare.None))
         {
-            Assert.False(await service.DeleteBackupAsync(handle));
+            Assert.Equal(BackupDeleteState.BundleRemains, await service.DeleteBackupAsync(handle));
             Assert.True(File.Exists(handle.BundlePath));
             Assert.True(File.Exists(handle.RefsSnapshotPath));
             Assert.True(service.BackupFilesRemain(handle));
@@ -513,7 +583,7 @@ public class BackupServiceTests
         }
 
         // Once the hold is released the same delete finishes.
-        Assert.True(await service.DeleteBackupAsync(handle));
+        Assert.Equal(BackupDeleteState.Deleted, await service.DeleteBackupAsync(handle));
         Assert.Empty(await service.ListBackupsAsync(repo.Path));
     }
 

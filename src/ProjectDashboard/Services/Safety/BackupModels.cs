@@ -59,6 +59,19 @@ public sealed record BackupDetails(
     long BundleBytes);
 
 /// <summary>
+/// What a delete left on disk. The two partial outcomes are not interchangeable:
+/// <see cref="BundleRemains"/> leaves the backup whole and still restorable, because the snapshot
+/// is only removed once the bundle is; <see cref="SnapshotRemains"/> means the bundle is gone and
+/// the backup with it, and what is left restores nothing.
+/// </summary>
+public enum BackupDeleteState
+{
+    Deleted,
+    BundleRemains,
+    SnapshotRemains
+}
+
+/// <summary>
 /// Whether a bundle reads back. <see cref="Unknown"/> is git failing to answer — a kill on
 /// timeout, a launch that produced no verdict — and is never a pass: every caller treats
 /// anything other than <see cref="Verified"/> as a bundle it may not restore from.

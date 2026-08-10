@@ -393,10 +393,46 @@ public class BackupsSurfaceTests
             Assert.True(File.Exists(handle.BundlePath));
             // The refs snapshot went nowhere either: the backup is whole, not stripped.
             Assert.True(File.Exists(handle.RefsSnapshotPath));
-            Assert.Contains("still on disk", vm.BackupsErrorText, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ProjectDetailViewModel.BundleStillOnDiskFailure, vm.BackupsErrorText);
+            Assert.Contains("still restorable", vm.BackupsErrorText);
             Assert.Equal("", vm.BackupsStatusText);
             var still = Assert.Single(vm.BackupList);
             Assert.True(still.Restorable);
+        }
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(OperationCategory.BackupDelete, record.Category);
+        Assert.Equal(OperationOutcome.Failed, record.Outcome);
+    }
+
+    /// <summary>
+    /// The other half of a partial delete. The bundle is gone, so the backup is destroyed — the
+    /// browser must not reuse the sentence written for a bundle that survived, which promises the
+    /// backup is intact and still restorable.
+    /// </summary>
+    [Fact]
+    public async Task ADeleteThatLosesTheBundleButNotItsSnapshot_SaysTheBackupIsGone()
+    {
+        using var repo = await RailsRepo.CreateAsync("backup-delete-snapshot-locked");
+        var history = NewHistory();
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "History rewrite");
+
+        var vm = new ConfirmingViewModel(backups, answer: true, history);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        using (new FileStream(handle.RefsSnapshotPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await vm.DeleteSelectedBackupCommand.ExecuteAsync(null);
+
+            Assert.False(File.Exists(handle.BundlePath));
+            Assert.Equal(ProjectDetailViewModel.SnapshotStillOnDiskFailure, vm.BackupsErrorText);
+            Assert.Contains("cannot be restored", vm.BackupsErrorText);
+            Assert.DoesNotContain("still restorable", vm.BackupsErrorText);
+            Assert.Equal("", vm.BackupsStatusText);
+            // Nothing in the list claims a backup that no longer exists.
+            Assert.Empty(vm.BackupList);
         }
 
         var record = Assert.Single(history.Tail(repo.Path).Records);

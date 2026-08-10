@@ -487,10 +487,11 @@ public partial class ProjectDetailViewModel
         {
             // The delete is best effort and never throws, so what it reports is read from the
             // files themselves afterwards, not from the call having returned.
-            var gone = await service.DeleteBackupAsync(entry.Handle);
-            if (!gone) failure = BackupStillOnDiskFailure;
+            var state = await service.DeleteBackupAsync(entry.Handle);
+            failure = DeleteFailureNotice(state);
             RecordBackupOp(repo, OperationCategory.BackupDelete, $"Delete backup {stamp}",
-                gone ? OperationOutcome.Succeeded : OperationOutcome.Failed, failure, started, stamp);
+                state == BackupDeleteState.Deleted ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+                failure, started, stamp);
         }
         catch (Exception ex)
         {
@@ -525,9 +526,26 @@ public partial class ProjectDetailViewModel
             BackupsErrorText = RecordedBackupGoneNotice;
     }
 
-    internal const string BackupStillOnDiskFailure =
+    /// <summary>
+    /// What a partial delete left, in the words that case actually warrants. The two are not
+    /// interchangeable: one leaves the backup restorable and one means it is gone, and a single
+    /// message covering both would be false in whichever case it was not written for.
+    /// </summary>
+    internal static string DeleteFailureNotice(BackupDeleteState state) => state switch
+    {
+        BackupDeleteState.BundleRemains => BundleStillOnDiskFailure,
+        BackupDeleteState.SnapshotRemains => SnapshotStillOnDiskFailure,
+        _ => ""
+    };
+
+    internal const string BundleStillOnDiskFailure =
         "This backup's bundle is still on disk after the delete — another process may hold it open. Its refs " +
         "snapshot was left alone, so the backup is intact and still restorable; nothing was removed.";
+
+    internal const string SnapshotStillOnDiskFailure =
+        "This backup's bundle was removed but its refs snapshot could not be — another process may hold it " +
+        "open. The backup is gone and cannot be restored. What is left is not a backup on its own, and the " +
+        "next read of this repository's backups that can remove it will.";
 
     /// <summary>
     /// What the confirmation says: the same detail the row carries — the refs the sidecar recorded

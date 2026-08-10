@@ -132,6 +132,8 @@ public sealed class BackupService
         var handles = new List<BackupHandle>();
         if (!Directory.Exists(dir)) return Task.FromResult(handles);
 
+        ReapOrphanedSnapshots(dir);
+
         foreach (var bundle in Directory.GetFiles(dir, "*.bundle"))
         {
             var stamp = Path.GetFileNameWithoutExtension(bundle);
@@ -394,21 +396,23 @@ public sealed class BackupService
     }
 
     /// <summary>
-    /// Removes a backup's bundle and sidecar (with its .bak) and reports whether every file it
-    /// owns is gone. Best-effort and never throws; missing files are not an error.
+    /// Removes a backup's bundle and refs snapshot (with its .bak) and reports what survived.
+    /// Best-effort and never throws; missing files are not an error.
     ///
-    /// The sidecar is removed only once the bundle is. A bundle another process holds open
-    /// therefore leaves the pair intact and still restorable, rather than stripping the refs
-    /// snapshot a restore needs off a bundle that stayed behind — which
-    /// <see cref="ListBackupsAsync"/> would then skip, hiding the bytes still on disk.
+    /// The snapshot is removed only once the bundle is, so a bundle another process holds open
+    /// leaves the pair intact and still restorable. The reverse — the bundle gone and the snapshot
+    /// held — destroys the backup, and the two are reported apart because a caller wording them
+    /// alike would tell a reader their backup survived while it did not.
     /// </summary>
-    public Task<bool> DeleteBackupAsync(BackupHandle handle, CancellationToken ct = default)
+    public Task<BackupDeleteState> DeleteBackupAsync(BackupHandle handle, CancellationToken ct = default)
     {
         TryDelete(handle.BundlePath);
-        if (File.Exists(handle.BundlePath)) return Task.FromResult(false);
+        if (File.Exists(handle.BundlePath)) return Task.FromResult(BackupDeleteState.BundleRemains);
         TryDelete(handle.RefsSnapshotPath);
         TryDelete(handle.RefsSnapshotPath + ".bak");
-        return Task.FromResult(!BackupFilesRemain(handle));
+        return Task.FromResult(BackupFilesRemain(handle)
+            ? BackupDeleteState.SnapshotRemains
+            : BackupDeleteState.Deleted);
     }
 
     /// <summary>
@@ -564,6 +568,48 @@ public sealed class BackupService
             TryDelete(bundle);
             TryDelete(Path.Combine(dir, stamp + ".refs.json"));
             TryDelete(Path.Combine(dir, stamp + ".refs.json.bak"));
+        }
+
+        // A prune whose bundle went and whose snapshot did not leaves the same orphan a failed
+        // delete does, and this loop enumerates bundles, so it would never revisit it.
+        ReapOrphanedSnapshots(dir);
+    }
+
+    private const string SnapshotSuffix = ".refs.json";
+
+    /// <summary>
+    /// Removes refs snapshots with no bundle beside them. A snapshot alone restores nothing, and
+    /// no surface can reach one: both <see cref="ListBackupsAsync"/> and
+    /// <see cref="PruneOldBackups"/> enumerate bundles, so an orphan left by a half-finished
+    /// delete would hold disk that nothing would ever name again.
+    ///
+    /// A capture writes its bundle before its snapshot, so this pairing never describes a backup
+    /// being created and the reap cannot race one. Best effort: a file that cannot be removed is
+    /// logged and left for the next read.
+    /// </summary>
+    private static void ReapOrphanedSnapshots(string dir)
+    {
+        try
+        {
+            foreach (var path in Directory.GetFiles(dir, "*" + SnapshotSuffix + "*"))
+            {
+                // A wildcard is matched against short file names too, so the suffix decides rather
+                // than the pattern — and a .tmp mid-write belongs to neither case, so it is left.
+                var name = Path.GetFileName(path);
+                var stem =
+                    name.EndsWith(SnapshotSuffix, StringComparison.OrdinalIgnoreCase)
+                        ? name[..^SnapshotSuffix.Length]
+                        : name.EndsWith(SnapshotSuffix + ".bak", StringComparison.OrdinalIgnoreCase)
+                            ? name[..^(SnapshotSuffix.Length + 4)]
+                            : null;
+                if (stem is null || File.Exists(Path.Combine(dir, stem + ".bundle"))) continue;
+                Log.Warn($"Discarding a refs snapshot with no bundle beside it: {path}");
+                TryDelete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not scan {dir} for refs snapshots with no bundle", ex);
         }
     }
 
