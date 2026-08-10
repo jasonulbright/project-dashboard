@@ -58,8 +58,6 @@ public static class PortfolioExport
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
-
     /// <summary>
     /// One row per project, ordered by display name so two exports of one inventory agree
     /// byte for byte whatever order discovery returned.
@@ -128,29 +126,9 @@ public static class PortfolioExport
         _ => ToCsv(projects),
     };
 
-    /// <summary>
-    /// Writes the inventory as UTF-8 without a byte-order mark, matching every other file
-    /// this app produces. The content lands in a sibling temporary file that replaces the
-    /// destination once it is whole: a write that fails part way through would otherwise
-    /// leave the reader with a truncated file where a previous export used to be.
-    /// </summary>
-    public static async Task WriteAsync(
+    public static Task WriteAsync(
         string path, PortfolioFormat format, IEnumerable<ProjectInfo> projects, CancellationToken ct = default)
-    {
-        var staged = path + ".tmp";
-        try
-        {
-            await File.WriteAllTextAsync(staged, Render(projects, format), Utf8NoBom, ct);
-            File.Move(staged, path, overwrite: true);
-        }
-        catch
-        {
-            try { File.Delete(staged); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            throw;
-        }
-    }
+        => AtomicFile.WriteAllTextAsync(path, Render(projects, format), ct);
 
     /// <summary>
     /// The format a chosen destination gets. A named extension outranks the picker's filter:
