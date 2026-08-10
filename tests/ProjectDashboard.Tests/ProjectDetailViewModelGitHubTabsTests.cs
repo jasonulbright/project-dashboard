@@ -422,6 +422,8 @@ public class ProjectDetailViewModelGitHubTabsTests
 
         Assert.False(vm.IsBusy);
         Assert.Equal("", vm.GitHubStatusText);
+        // One dialog serves every save on this page; the caption is what names the artefact.
+        Assert.Equal(ProjectDetailViewModel.SaveReleaseAssetTitle, vm.SaveTitle);
     }
 
     [Theory]
@@ -1235,7 +1237,14 @@ public class ProjectDetailViewModelGitHubTabsTests
             return Task.FromResult(TypedConfirmation);
         }
 
-        internal override Task<string?> PromptForSavePathAsync(string suggestedName) => Task.FromResult(SavePath);
+        /// <summary>The caption the save dialog would carry — the only thing naming what is written.</summary>
+        public string? SaveTitle { get; private set; }
+
+        internal override Task<string?> PromptForSavePathAsync(string suggestedName, string title)
+        {
+            SaveTitle = title;
+            return Task.FromResult(SavePath);
+        }
 
         internal override Task<bool> ConfirmAsync(string title, string message, string confirmText)
         {

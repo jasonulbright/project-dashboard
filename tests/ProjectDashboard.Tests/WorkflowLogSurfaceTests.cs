@@ -41,6 +41,9 @@ public class WorkflowLogSurfaceTests
 
         public string? SuggestedName { get; private set; }
 
+        /// <summary>The caption the save dialog would carry — the only thing naming what is written.</summary>
+        public string? SaveTitle { get; private set; }
+
         public string? Clipboard { get; private set; }
 
         internal override Task<WorkflowRunLog?> FetchWorkflowRunLogAsync(string slug, long runId)
@@ -63,9 +66,10 @@ public class WorkflowLogSurfaceTests
         internal override Task<List<Milestone>?> FetchMilestonesAsync(string slug)
             => Task.FromResult<List<Milestone>?>([]);
 
-        internal override Task<string?> PromptForSavePathAsync(string suggestedName)
+        internal override Task<string?> PromptForSavePathAsync(string suggestedName, string title)
         {
             SuggestedName = suggestedName;
+            SaveTitle = title;
             return Task.FromResult(SavePath);
         }
 
@@ -363,6 +367,23 @@ public class WorkflowLogSurfaceTests
         await vm.SaveWorkflowLogCommand.ExecuteAsync(null);
 
         Assert.Equal("build and test-77.log", vm.SuggestedName);
+    }
+
+    /// <summary>
+    /// One save dialog serves every save on this page, and its caption is the only thing on screen
+    /// naming what the reader is about to commit a filename to. A run log offered under the release
+    /// asset caption describes a different artefact entirely.
+    /// </summary>
+    [Fact]
+    public async Task Save_CaptionsTheDialogWithWhatIsBeingWritten()
+    {
+        var vm = await WithLines("first");
+        vm.SavePath = null;
+
+        await vm.SaveWorkflowLogCommand.ExecuteAsync(null);
+
+        Assert.Equal(ProjectDetailViewModel.SaveWorkflowLogTitle, vm.SaveTitle);
+        Assert.NotEqual(ProjectDetailViewModel.SaveReleaseAssetTitle, vm.SaveTitle);
     }
 
     /// <summary>A workflow name arrives from GitHub and may hold anything a path may not.</summary>

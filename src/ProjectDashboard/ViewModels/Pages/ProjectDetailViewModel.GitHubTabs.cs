@@ -185,18 +185,26 @@ public partial class ProjectDetailViewModel
     internal virtual Task<string?> PromptForTextAsync(string title, string message, string confirmLabel)
         => Views.Windows.TextPromptWindow.ShowAsync(title, message, confirmLabel);
 
-    /// <summary>Destination chosen by the reader, or null when the save dialog was cancelled.</summary>
-    internal virtual Task<string?> PromptForSavePathAsync(string suggestedName)
+    /// <summary>
+    /// Destination chosen by the reader, or null when the save dialog was cancelled.
+    /// <paramref name="title"/> names what is being written: one dialog serves every save on this
+    /// page, and a caption naming the wrong artefact is the only thing on screen describing what
+    /// the reader is about to commit a filename to.
+    /// </summary>
+    internal virtual Task<string?> PromptForSavePathAsync(string suggestedName,
+        string title = SaveReleaseAssetTitle)
     {
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Title = "Save release asset",
+            Title = title,
             FileName = suggestedName,
             Filter = "All files (*.*)|*.*",
             OverwritePrompt = true
         };
         return Task.FromResult(dialog.ShowDialog() == true ? dialog.FileName : null);
     }
+
+    internal const string SaveReleaseAssetTitle = "Save release asset";
 
     // ── Actions tab ─────────────────────────────────────────────────────────────
 

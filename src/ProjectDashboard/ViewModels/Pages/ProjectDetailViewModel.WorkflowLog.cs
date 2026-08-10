@@ -268,6 +268,8 @@ public partial class ProjectDetailViewModel
     /// <summary>Overridable so a headless test observes the copy without a clipboard.</summary>
     internal virtual void SetClipboardText(string text) => Clipboard.SetText(text);
 
+    internal const string SaveWorkflowLogTitle = "Save workflow log";
+
     /// <summary>The file name a save opens with: the run and its id, so two saves never collide.</summary>
     internal string WorkflowLogFileName =>
         WorkflowLogRun is { } run ? $"{SafeFileStem(run.Name)}-{run.Id}.log" : "workflow-run.log";
@@ -290,7 +292,7 @@ public partial class ProjectDetailViewModel
         var gen = _generation;
         var text = WorkflowLogText;
         var lines = WorkflowLogLines.Count;
-        var destination = await PromptForSavePathAsync(WorkflowLogFileName);
+        var destination = await PromptForSavePathAsync(WorkflowLogFileName, SaveWorkflowLogTitle);
         if (string.IsNullOrWhiteSpace(destination)) return;
         if (!IsCurrent(gen))
         {
