@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using ProjectDashboard.Models;
+using ProjectDashboard.Services.Surgery;
 
 namespace ProjectDashboard.Services;
 
@@ -532,12 +533,66 @@ public class GitService
         return batches;
     }
 
-    public Task<ProcessResult> CommitAsync(string repoPath, string message, bool amend, CancellationToken ct = default)
+    /// <summary>Budget for a commit that writes no signature: local work, waiting on nothing.</summary>
+    private static readonly TimeSpan CommitTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Budget for a commit that signs. The signer can put a passphrase prompt on screen for a
+    /// reader to answer, and killing it at the unsigned budget aborts a commit mid-authorisation.
+    /// </summary>
+    private static readonly TimeSpan SigningCommitTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Whether <paramref name="repoPath"/> is configured to sign the commits it creates. An
+    /// unreadable or unset value reads as off, which is git's own default; a repository that does
+    /// sign always has the setting to say so.
+    /// </summary>
+    public virtual async Task<bool> SignsCommitsAsync(string repoPath, CancellationToken ct = default)
     {
-        var args = new List<string> { "commit", MessageCleanupPin, "-m", message };
-        if (amend) args.Add("--amend");
-        return RunAsync(repoPath, args, ct, TimeSpan.FromSeconds(30));
+        var configured = await RunAsync(repoPath, ["config", "--type=bool", "--get", "commit.gpgsign"], ct);
+        return configured.Success && configured.StdOut.Trim() == "true";
     }
+
+    /// <summary>
+    /// The configured <c>gpg.format</c>, or empty when it is unset or unreadable. git's own
+    /// default there is openpgp, but reporting that as the repository's setting would name a
+    /// value nothing read.
+    /// </summary>
+    public virtual async Task<string> GetSigningFormatAsync(string repoPath, CancellationToken ct = default)
+    {
+        var configured = await RunAsync(repoPath, ["config", "--get", "gpg.format"], ct);
+        return configured.Success ? configured.StdOut.Trim() : "";
+    }
+
+    /// <summary>
+    /// The everyday commit. <see cref="SigningChoice.ProceedUnsigned"/> is the only thing that
+    /// turns signing off — never this layer's own initiative — and it does so for the one run
+    /// rather than by writing the repository's configuration.
+    /// </summary>
+    public Task<ProcessResult> CommitAsync(string repoPath, string message, bool amend,
+        SigningChoice signing = SigningChoice.NotChosen, CancellationToken ct = default)
+    {
+        var args = new List<string>();
+        if (signing == SigningChoice.ProceedUnsigned) args.AddRange(["-c", "commit.gpgsign=false"]);
+        args.AddRange(["commit", MessageCleanupPin, "-m", message]);
+        if (amend) args.Add("--amend");
+        return RunAsync(repoPath, args, ct,
+            signing == SigningChoice.KeepSigning ? SigningCommitTimeout : CommitTimeout);
+    }
+
+    /// <summary>
+    /// Matches a commit whose signature git could not produce. git words this several ways — the
+    /// openpgp signer's failure, two different ssh missing-key failures, and the fatal it dies
+    /// with once the signature is absent — so the match is on the tokens they share rather than
+    /// on any one sentence. None of the shapes is signing-exclusive, so this is read only where
+    /// signing is already known to be configured on and the run was asked to sign.
+    /// </summary>
+    public static bool IsSigningFailure(ProcessResult result) =>
+        !result.Success
+        && (result.StdErr + "\n" + result.StdOut) is var text
+        && (text.Contains("signing", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("sign the data", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("failed to write commit object", StringComparison.OrdinalIgnoreCase));
 
     public async Task<string> GetLastCommitMessageAsync(string repoPath, CancellationToken ct = default)
     {

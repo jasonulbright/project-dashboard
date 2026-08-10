@@ -183,17 +183,6 @@ public sealed class SurgeryCoordinator
         }, ct);
 
     /// <summary>
-    /// Whether <paramref name="repoPath"/> is configured to sign the commits it creates. An
-    /// unreadable or unset value reads as off, which is git's own default; a repository that does
-    /// sign always has the setting to say so.
-    /// </summary>
-    private async Task<bool> SignsCommitsAsync(string repoPath, CancellationToken ct)
-    {
-        var configured = await _git.RunAsync(repoPath, ["config", "--type=bool", "--get", "commit.gpgsign"], ct);
-        return configured.Success && configured.StdOut.Trim() == "true";
-    }
-
-    /// <summary>
     /// Runs the gated operation and records the attempt, refusals included: a gate that turned the
     /// operation away is exactly the outcome a reader later cannot reconstruct from the repository.
     /// A failed record write never changes what the operation reports.
@@ -263,7 +252,7 @@ public sealed class SurgeryCoordinator
             // decision is required rather than defaulted: signing off silently would strip
             // signatures the user asked for.
             var unsigned = false;
-            if (signing is { } choice && await SignsCommitsAsync(repoPath, ct))
+            if (signing is { } choice && await _git.SignsCommitsAsync(repoPath, ct))
             {
                 if (choice == SigningChoice.NotChosen)
                     return SurgeryResult.Refused(

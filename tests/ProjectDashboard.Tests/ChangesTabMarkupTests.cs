@@ -145,6 +145,40 @@ public class ChangesTabMarkupTests
         Assert.Contains(@"ItemsSource=""{Binding RecentSubjects}""", Markup);
     }
 
+    /// <summary>
+    /// A signing choice with no button is a commit the reader can never complete: the gate
+    /// refuses every attempt and the only two answers live on these two commands.
+    /// </summary>
+    [Fact]
+    public void TheCommitSigningOffer_CarriesBothAnswersAndItsExplanation()
+    {
+        var offer = Regex.Match(Markup,
+            @"<StackPanel x:Name=""CommitSigningOffer"".*?</StackPanel>\s*</StackPanel>", RegexOptions.Singleline);
+
+        Assert.True(offer.Success, "the commit signing offer was not found");
+        Assert.Contains("{Binding CommitSigningOfferText}", offer.Value);
+        Assert.Contains("{Binding CommitSignedCommand}", offer.Value);
+        Assert.Contains("{Binding CommitUnsignedCommand}", offer.Value);
+        Assert.Contains(@"Visibility=""{Binding CommitSigningOfferVisible", offer.Value);
+    }
+
+    /// <summary>
+    /// The chip is the only place the session's unsigned answer is visible, so its text has to
+    /// reach a reader who cannot see the tint it sits on.
+    /// </summary>
+    [Fact]
+    public void TheCommitSigningChip_IsAnnouncedAndSaysWhatItReports()
+    {
+        var chip = Regex.Match(Markup,
+            @"<Border x:Name=""CommitSigningChip"".*?</Border>", RegexOptions.Singleline);
+
+        Assert.True(chip.Success, "the commit signing chip was not found");
+        Assert.Contains("{Binding CommitSigningChipText}", chip.Value);
+        Assert.Contains("AutomationProperties.Name=\"{Binding CommitSigningChipTooltip}\"", chip.Value);
+        Assert.Contains(@"AutomationProperties.LiveSetting=""Polite""", chip.Value);
+        Assert.Contains(@"Visibility=""{Binding CommitSigningChipVisible", chip.Value);
+    }
+
     private static string SourceFile(string name, [CallerFilePath] string testFile = "")
     {
         var path = Path.GetFullPath(Path.Combine(

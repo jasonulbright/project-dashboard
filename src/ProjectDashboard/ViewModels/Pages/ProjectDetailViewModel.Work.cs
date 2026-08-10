@@ -474,9 +474,31 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        // The signing question is answered before the lease is taken: it is a question, not an
+        // operation, and a repository nobody has decided about must not be held busy while the
+        // offer waits for an answer.
+        if (CommitSigningChoicePending)
+        {
+            ShowCommitSigningOffer(AmendMode ? "Amend" : "Commit");
+            return;
+        }
+
+        await RunCommitAsync();
+    }
+
+    /// <summary>
+    /// The commit itself, past every gate. Entered from the Commit button and from the signing
+    /// offer's two answers, which are the same commit under a choice the reader has now made.
+    /// </summary>
+    private async Task RunCommitAsync()
+    {
         var gen = _generation;
-        var result = await RunOp(repo => _gitService.CommitAsync(repo, CommitMessage.Trim(), AmendMode),
-            AmendMode ? "Amend" : "Commit", RepoPath, gen);
+        var signing = _commitSigning;
+        ProcessResult? outcome = null;
+        var result = await RunOp(async repo =>
+            outcome = await _gitService.CommitAsync(repo, CommitMessage.Trim(), AmendMode, signing),
+            AmendMode ? "Amend" : "Commit", RepoPath, gen,
+            advice: r => CommitSigningAdvice(r, signing));
         // A stale success must not clear a draft typed on the project switched to.
         if (result && IsCurrent(gen))
         {
@@ -484,6 +506,10 @@ public partial class ProjectDetailViewModel
             AmendMode = false;
             await ReloadCommitsAsync();
         }
+        // A signing run that failed on the signing leaves the other answer unreachable unless the
+        // offer comes back: the choice is already made, so a second Commit would repeat it.
+        else if (IsCurrent(gen) && outcome is { } failed && CommitSigningTroubled(failed, signing))
+            ReofferCommitSigningAfterFailure(AmendMode ? "Amend" : "Commit");
     }
 
     partial void OnAmendModeChanged(bool value)

@@ -331,6 +331,9 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedDiffLine = null;
         CommitMessage = "";
         AmendMode = false;
+        // The signing answer is per repository and deliberately unpersisted, so leaving one
+        // takes the answer with it rather than carrying "unsigned" into the next.
+        ResetCommitSigningState();
         // The held signal named the repository being left; the incoming one is read below.
         _watcherRefreshPending = false;
         IsBusy = false;
@@ -401,6 +404,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     private void ApplyProjectContent(ProjectInfo p)
     {
         WorkingStateRefresh = SafeRefreshWorkingStateAsync();
+        CommitSigningRefresh = SafeRefreshCommitSigningAsync();
         ReadmeText = p.ReadmeContent ?? "";
         ChangelogText = p.ChangelogContent ?? "";
         // Every reload builds fresh commit objects, so a selection held by reference is lost.
