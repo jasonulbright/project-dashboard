@@ -171,6 +171,83 @@ public class ProjectDetailViewModelGitHubListDepthTests
         Assert.Equal("All 120 open issues shown.", vm.IssuesFooterText);
     }
 
+    /// <summary>
+    /// The reader's scroll position lives on the collection the list is bound to. Replacing it on
+    /// every page sends them back to the top of the rows they just paged past, which is the whole
+    /// point of loading more.
+    /// </summary>
+    [Fact]
+    public async Task LoadMore_KeepsTheListTheReaderIsScrolledThrough()
+    {
+        var vm = new ListViewModel { IssueAnswer = (query, _) => IssuePage(query.Limit, query.Limit) };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.IssuesPageLoad;
+        var shown = vm.Issues;
+        var firstRow = vm.Issues[0];
+
+        await vm.LoadMoreIssuesCommand.ExecuteAsync(null);
+
+        Assert.Same(shown, vm.Issues);
+        Assert.Same(firstRow, vm.Issues[0]);
+        Assert.Equal(200, vm.Issues.Count);
+        Assert.Equal(101, vm.Issues[100].Number);
+    }
+
+    /// <summary>
+    /// The rows are re-read, not only extended: an edit made since the last read belongs on screen.
+    /// </summary>
+    [Fact]
+    public async Task ARefresh_UpdatesAChangedRowInTheListItKeeps()
+    {
+        var vm = new ListViewModel { IssueAnswer = (query, _) => new GitHubService.IssuePage(NumberedIssues(2, 1), false, query.Limit) };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.IssuesPageLoad;
+        var shown = vm.Issues;
+
+        vm.IssueAnswer = (query, _) => new GitHubService.IssuePage(
+            [new GitHubIssue { Number = 2, Title = "renamed", State = "open" }, NumberedIssues(1)[0]],
+            false, query.Limit);
+        await vm.RefreshIssuesCommand.ExecuteAsync(null);
+
+        Assert.Same(shown, vm.Issues);
+        Assert.Equal("renamed", vm.Issues[0].Title);
+    }
+
+    /// <summary>
+    /// Both list reads are newest-first, so an issue opened between two window reads prepends and
+    /// every loaded row shifts. That is a different list, not a deeper view of the one on screen:
+    /// it is replaced, and the reader is re-anchored at its top rather than left at an offset that
+    /// now points at other rows.
+    /// </summary>
+    [Fact]
+    public async Task ARowThatArrivedBetweenTwoReads_ReAnchorsTheList()
+    {
+        var vm = new ListViewModel { IssueAnswer = (query, _) => new GitHubService.IssuePage(NumberedIssues(2, 1), true, query.Limit) };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.IssuesPageLoad;
+        var shown = vm.Issues;
+
+        vm.IssueAnswer = (query, _) => new GitHubService.IssuePage(NumberedIssues(3, 2, 1), false, query.Limit);
+        await vm.LoadMoreIssuesCommand.ExecuteAsync(null);
+
+        Assert.NotSame(shown, vm.Issues);
+        Assert.Equal([3, 2, 1], vm.Issues.Select(i => i.Number));
+    }
+
+    [Fact]
+    public async Task ThePullRequestList_IsKeptAcrossAPageToo()
+    {
+        var vm = new ListViewModel { PullRequestAnswer = (query, _) => PullRequestPage(query.Limit, query.Limit) };
+        await vm.SetProjectAsync(RemoteProject());
+        await vm.LoadPullRequestsCommand.ExecuteAsync(null);
+        var shown = vm.PullRequests;
+
+        await vm.LoadMorePullRequestsCommand.ExecuteAsync(null);
+
+        Assert.Same(shown, vm.PullRequests);
+        Assert.Equal(200, vm.PullRequests.Count);
+    }
+
     /// <summary>A second click while a page is in flight is a no-op, not a second gh spawn.</summary>
     [Fact]
     public async Task ASecondLoadMore_WhileOneIsInFlight_ReadsOnce()

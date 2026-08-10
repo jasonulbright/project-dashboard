@@ -244,6 +244,45 @@ public partial class ProjectDetailViewModel
         return PullRequestsPageLoad;
     }
 
+    // ── Writing a page onto a list ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Writes <paramref name="rows"/> into the list on screen, keeping the collection the view is
+    /// bound to whenever the rows already loaded are still the head of the read.
+    ///
+    /// Both list reads are newest-first, so a deeper read of an unchanged repository repeats the
+    /// loaded rows and adds behind them: the head matches, the delta is appended, and the reader
+    /// keeps their scroll position and their place in the list. A row created or removed between
+    /// the two reads shifts that head, and the result is a different list rather than a deeper view
+    /// of the same one — it replaces the collection, which returns the reader to the top. That is
+    /// the case where a preserved scroll offset would point at rows it no longer describes.
+    /// </summary>
+    private static ObservableCollection<T> MergeRows<T>(ObservableCollection<T> shown, IReadOnlyList<T> rows,
+        Func<T, int> number, Func<T, T, bool> unchanged)
+    {
+        if (shown.Count == 0 || rows.Count < shown.Count) return new ObservableCollection<T>(rows);
+        for (var i = 0; i < shown.Count; i++)
+            if (number(shown[i]) != number(rows[i]))
+                return new ObservableCollection<T>(rows);
+
+        var overlap = shown.Count;
+        // The rows are re-read, not only extended: a title edited or a check that finished since
+        // the last read belongs on screen, and only the rows that actually changed are replaced.
+        for (var i = 0; i < overlap; i++)
+            if (!unchanged(shown[i], rows[i])) shown[i] = rows[i];
+        for (var i = overlap; i < rows.Count; i++) shown.Add(rows[i]);
+        return shown;
+    }
+
+    /// <summary>Whether two reads of one row would draw and announce the same thing.</summary>
+    private static bool SameIssueRow(GitHubIssue a, GitHubIssue b) =>
+        a.Number == b.Number && a.Title == b.Title && a.State == b.State &&
+        a.Author == b.Author && a.Labels == b.Labels && a.UpdatedAt == b.UpdatedAt;
+
+    private static bool SamePullRequestRow(GitHubPullRequest a, GitHubPullRequest b) =>
+        a.Number == b.Number && a.Title == b.Title && a.State == b.State && a.IsDraft == b.IsDraft &&
+        a.Author == b.Author && a.ChecksState == b.ChecksState && a.UpdatedAt == b.UpdatedAt;
+
     // ── The reads ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -325,7 +364,8 @@ public partial class ProjectDetailViewModel
         // A selection held by reference would keep the detail pane on a row the list no longer
         // holds, and a facet that dropped the row must clear it.
         var keep = SelectedIssue?.Number;
-        Issues = new ObservableCollection<GitHubIssue>(page.Items);
+        var merged = MergeRows(Issues, page.Items, i => i.Number, SameIssueRow);
+        if (!ReferenceEquals(merged, Issues)) Issues = merged;
         if (keep is { } number) SelectedIssue = Issues.FirstOrDefault(i => i.Number == number);
         IssuesHasMore = page.MayHaveMore;
         IssuesEmptyText = ListEmptyText(state, IssuesNoun, searching);
@@ -396,7 +436,8 @@ public partial class ProjectDetailViewModel
         var searching = query.Search is not null;
         var state = GitHubActionTokens.ParseListState(query.State);
         var keep = SelectedPullRequest?.Number;
-        PullRequests = new ObservableCollection<GitHubPullRequest>(page.Items);
+        var merged = MergeRows(PullRequests, page.Items, p => p.Number, SamePullRequestRow);
+        if (!ReferenceEquals(merged, PullRequests)) PullRequests = merged;
         if (keep is { } number) SelectedPullRequest = PullRequests.FirstOrDefault(p => p.Number == number);
         PullRequestsLoaded = true;
         PullRequestsHasMore = page.MayHaveMore;
