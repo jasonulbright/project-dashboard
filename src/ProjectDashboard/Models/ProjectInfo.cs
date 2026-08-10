@@ -12,6 +12,17 @@ public partial class ProjectInfo : ObservableObject
     /// </summary>
     public string RootPath { get; set; } = "";
 
+    /// <summary>
+    /// Where this repository is, shown only when another discovered repository carries the same
+    /// display name. Two identical-looking cards for two different working trees is the failure
+    /// recursion and multiple roots both make ordinary.
+    /// </summary>
+    [ObservableProperty] private string _locationHint = "";
+
+    public bool HasLocationHint => LocationHint.Length > 0;
+
+    partial void OnLocationHintChanged(string value) => OnPropertyChanged(nameof(HasLocationHint));
+
     public string DisplayName { get; set; } = "";
     public string Description { get; set; } = "";
     public string LatestVersion { get; set; } = "";

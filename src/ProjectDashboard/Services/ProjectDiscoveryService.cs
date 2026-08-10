@@ -132,9 +132,43 @@ public class ProjectDiscoveryService(GitService gitService, GitHubService gitHub
                 await AppendRemoteOnlyAsync(results, ct);
         }
 
+        ApplyLocationHints(results);
+
         return results
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// Marks the cards whose display name another card also carries. Recursion and multiple roots
+    /// both make duplicate names ordinary, and two cards that read identically describe two
+    /// different working trees with nothing on screen to tell them apart. The hint is the
+    /// repository's place relative to its root, which is the shortest thing that distinguishes
+    /// them; a name nothing else shares gets none, so the grid stays quiet in the common case.
+    /// </summary>
+    internal static void ApplyLocationHints(IReadOnlyList<ProjectInfo> projects)
+    {
+        foreach (var sharing in projects.GroupBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            var shared = sharing.Count() > 1;
+            foreach (var project in sharing)
+                project.LocationHint = shared ? LocationOf(project) : "";
+        }
+    }
+
+    private static string LocationOf(ProjectInfo project)
+    {
+        if (project.IsRemoteOnly) return project.RemoteSlug;
+        if (project.FullPath.Length == 0) return "";
+
+        var root = RepoPaths.Normalize(project.RootPath);
+        var full = RepoPaths.Normalize(project.FullPath);
+        if (root.Length > 0 && full.Length > root.Length + 1 && RepoPaths.IsAtOrUnder(full, root))
+        {
+            var relative = Path.GetDirectoryName(full[(root.Length + 1)..]) ?? "";
+            return relative.Length > 0 ? $"{Path.GetFileName(root)}\\{relative}" : Path.GetFileName(root);
+        }
+        return Path.GetDirectoryName(full) ?? full;
     }
 
     /// <summary>

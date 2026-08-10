@@ -746,6 +746,13 @@
                                                    ToolTip="Pinned to the top of the grid"
                                                    Foreground="{DynamicResource StatusInfoFg}"
                                                    Visibility="{Binding IsPinned, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <!-- Only ever filled when a second card carries the same name -->
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding LocationHint}"
+                                               FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="180"
+                                               ToolTip="{Binding FullPath}"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                               Visibility="{Binding HasLocationHint, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <TextBlock Text="{Binding DisplayName}"
                                                FontWeight="Bold" FontSize="14"
                                                TextTrimming="CharacterEllipsis"

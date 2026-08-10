@@ -324,6 +324,51 @@ public class MultipleRootDiscoveryTests
         Assert.Equal(RepoPaths.Normalize(second), kept.RootPath);
     }
 
+    /// <summary>
+    /// Recursion reaching the discovery pipeline, not just the walk: the nested repository gets a
+    /// card, and it carries the root it was found under.
+    /// </summary>
+    [Fact]
+    public async Task ANestedRepository_IsDiscoveredAtTheConfiguredDepth()
+    {
+        var root = TestEnv.NewDir("deep-root");
+        await InitRepoAsync(root, @"clients\acme\site");
+
+        var settings = new SettingsService();
+        settings.Save(BaseSettings(new ProjectRoot { Path = root, MaxDepth = 3 }));
+
+        var card = Assert.Single(await NewService(settings).ForceRefreshAllAsync());
+        Assert.Equal("site", card.DirectoryName);
+        Assert.Equal(RepoPaths.Normalize(root), card.RootPath);
+    }
+
+    /// <summary>
+    /// Two cards that read identically describe two different working trees. Recursion and
+    /// multiple roots both make that ordinary, so the grid has to say which is which.
+    /// </summary>
+    [Fact]
+    public async Task CardsSharingADisplayName_AreEachToldApartByWhereTheyAre()
+    {
+        var first = TestEnv.NewDir("hint-first");
+        var second = TestEnv.NewDir("hint-second");
+        await InitRepoAsync(first, "tabkit");
+        await InitRepoAsync(second, "tabkit");
+        await InitRepoAsync(first, "unique");
+
+        var results = await ScanAsync(first, second);
+
+        Assert.All(results.Where(p => p.DirectoryName == "tabkit"), p => Assert.True(p.HasLocationHint));
+        Assert.Equal(
+            2,
+            results.Where(p => p.DirectoryName == "tabkit")
+                .Select(p => p.LocationHint)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count());
+
+        // A name nothing else shares stays quiet.
+        Assert.False(results.Single(p => p.DirectoryName == "unique").HasLocationHint);
+    }
+
     private static async Task InitRepoAsync(string root, string name)
     {
         var path = Path.Combine(root, name);

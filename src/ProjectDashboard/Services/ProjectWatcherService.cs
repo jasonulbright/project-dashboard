@@ -19,10 +19,6 @@ namespace ProjectDashboard.Services;
 /// </summary>
 public sealed class ProjectWatcherService : IDisposable
 {
-    // Path segments whose churn never changes what a card shows.
-    private static readonly string[] IgnoredSegments =
-        [@"\.git\", @"\node_modules\", @"\bin\", @"\obj\", @"\.vs\", @"\packages\", @"\publish\"];
-
     private static readonly TimeSpan Debounce = TimeSpan.FromSeconds(2);
 
     private readonly object _gate = new();
@@ -119,7 +115,7 @@ public sealed class ProjectWatcherService : IDisposable
 
         // "\segment\" test needs delimiters on both sides; pad so a leading .git catches too.
         var padded = "\\" + relative.TrimStart('\\', '/') + "\\";
-        foreach (var seg in IgnoredSegments)
+        foreach (var seg in ScanSkips.Segments)
             if (padded.Contains(seg, StringComparison.OrdinalIgnoreCase))
             {
                 // .git/HEAD and .git/index DO matter (branch switch, stage/commit) —

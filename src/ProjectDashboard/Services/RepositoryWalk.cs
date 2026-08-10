@@ -1,7 +1,35 @@
+using System.Diagnostics;
 using System.IO;
 using ProjectDashboard.Models;
 
 namespace ProjectDashboard.Services;
+
+/// <summary>
+/// Directory names that hold no project and whose churn changes no card: git internals, package
+/// caches, and build output. One list, read by the scan that decides where not to look and by
+/// the watcher that decides which events to drop — two lists would drift, and the pair would
+/// then disagree about which directories the app even believes in.
+/// </summary>
+public static class ScanSkips
+{
+    public static readonly string[] Names =
+        [".git", "node_modules", "bin", "obj", ".vs", "packages", "publish", "target", "dist", ".gradle", "vendor"];
+
+    /// <summary>The same names as <c>\name\</c> segments, for matching inside a path.</summary>
+    public static readonly string[] Segments = [.. Names.Select(n => $"\\{n}\\")];
+
+    public static bool IsSkipped(string directoryName) =>
+        Names.Contains(directoryName, StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// How far a single root's walk may go before it reports a floor instead of a total. An
+/// unbounded walk over a large drive is how discovery becomes a hang.
+/// </summary>
+public sealed record WalkLimits(int MaxDirectories, TimeSpan Budget)
+{
+    public static WalkLimits Default { get; } = new(10_000, TimeSpan.FromSeconds(10));
+}
 
 /// <summary>What one root's walk found, and whether it finished.</summary>
 public sealed record RootWalkResult(
@@ -15,11 +43,16 @@ public sealed record RootWalkResult(
 /// that root: a root that is gone, or that threw while being read, yields no repositories and
 /// says so, because a scan that quietly returns nothing for an unreachable drive is
 /// indistinguishable from a drive with nothing on it.
+///
+/// An explicit breadth-first walk rather than <see cref="SearchOption.AllDirectories"/>, which
+/// throws on the first denied subdirectory and loses the whole walk with it.
 /// </summary>
 public static class RepositoryWalk
 {
-    public static RootWalkResult Run(ProjectRoot root, CancellationToken ct)
+    public static RootWalkResult Run(ProjectRoot root, CancellationToken ct, WalkLimits? limits = null)
     {
+        limits ??= WalkLimits.Default;
+
         var rootPath = RepoPaths.Normalize(root.Path);
         if (rootPath.Length == 0)
             return new RootWalkResult([], RootAvailability.Missing, false, "no path configured");
@@ -35,27 +68,122 @@ public static class RepositoryWalk
         }
 
         var exclusions = new RootExclusions(rootPath, root.ExcludedDirectories);
-        var found = new List<string>();
+        var maxDepth = ProjectRootSettings.ClampDepth(root.MaxDepth);
 
-        try
+        var found = new List<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Identity(rootPath) };
+        var queue = new Queue<(string Path, int Depth)>();
+        queue.Enqueue((rootPath, 0));
+
+        var clock = Stopwatch.StartNew();
+        var examined = 0;
+        var truncated = false;
+        var deniedSubtrees = 0;
+        var truncationReason = "";
+        var firstDenial = "";
+
+        while (queue.Count > 0 && !truncated)
         {
-            foreach (var directory in Directory.EnumerateDirectories(rootPath))
+            ct.ThrowIfCancellationRequested();
+            var (directory, depth) = queue.Dequeue();
+            if (depth >= maxDepth) continue;
+
+            List<string> children;
+            try
             {
+                children = [.. Directory.EnumerateDirectories(directory)];
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // One denied subtree is not a failed root: the rest of the walk is still a
+                // better answer than nothing, provided the skip travels with it.
+                deniedSubtrees++;
+                if (firstDenial.Length == 0) firstDenial = $"{directory} ({ex.Message})";
+                if (depth == 0) return new RootWalkResult(found, RootAvailability.Unreadable, false, ex.Message);
+                continue;
+            }
+
+            foreach (var child in children)
+            {
+                // Per directory, not per root: a token honoured only between roots leaves a
+                // pathological one running to completion after the reader navigated away.
                 ct.ThrowIfCancellationRequested();
-                if (exclusions.Excludes(directory)) continue;
-                if (GitService.IsGitRepo(directory)) found.Add(RepoPaths.Normalize(directory));
+
+                if (++examined > limits.MaxDirectories)
+                {
+                    truncated = true;
+                    truncationReason = $"stopped after {limits.MaxDirectories} directories";
+                    break;
+                }
+                if (clock.Elapsed > limits.Budget)
+                {
+                    truncated = true;
+                    truncationReason = $"stopped after {limits.Budget.TotalSeconds:0.#}s";
+                    break;
+                }
+
+                if (ScanSkips.IsSkipped(Path.GetFileName(child))) continue;
+                if (exclusions.Excludes(child)) continue;
+
+                // A repository is a leaf. Not descending into one is what keeps the walk cheap
+                // — no git internals, no vendored trees — and a repository nested inside another
+                // belongs to the card that already covers it.
+                if (GitService.IsGitRepo(child))
+                {
+                    found.Add(RepoPaths.Normalize(child));
+                    continue;
+                }
+
+                // Junctions and symlinks make the tree a graph. Walking THROUGH one is how a
+                // link back to an ancestor becomes an unbounded walk; a repository AT one is
+                // still recorded above.
+                if (IsReparsePoint(child)) continue;
+                if (!visited.Add(Identity(child))) continue;
+
+                queue.Enqueue((RepoPaths.Normalize(child), depth + 1));
             }
         }
-        catch (OperationCanceledException)
+
+        var detail = string.Join("; ", new[]
         {
-            throw;
+            truncationReason,
+            deniedSubtrees > 0 ? $"{deniedSubtrees} folder(s) could not be read, first {firstDenial}" : "",
+        }.Where(part => part.Length > 0));
+
+        return new RootWalkResult(found, RootAvailability.Available, truncated, detail);
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint);
         }
         catch (Exception ex)
         {
-            return new RootWalkResult(found, RootAvailability.Unreadable, true, ex.Message);
+            // Unreadable attributes cannot be shown to be safe to walk through.
+            Log.Warn($"could not read attributes of {path}", ex);
+            return true;
         }
+    }
 
-        return new RootWalkResult(found, RootAvailability.Available, false, "");
+    /// <summary>
+    /// A directory's identity for the visited set: the final target of any link, so two paths
+    /// that resolve to one directory are counted once.
+    /// </summary>
+    private static string Identity(string path)
+    {
+        try
+        {
+            var resolved = new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true);
+            return RepoPaths.Normalize(resolved?.FullName ?? path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not resolve {path}", ex);
+            return RepoPaths.Normalize(path);
+        }
     }
 }
 
