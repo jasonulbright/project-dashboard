@@ -495,4 +495,138 @@ public class ProjectDetailViewModelSelectionTests
 
         Assert.Equal("Enter a branch name first.", vm.SyncStatusText);
     }
+
+    // ── Ignoring a working file ─────────────────────────────────────────────
+
+    /// <summary>A repository with one untracked file of each kind the ignore actions distinguish.</summary>
+    private static async Task<TempRepo> UntrackedFilesAsync(string prefix)
+    {
+        var repo = await TempRepo.CreateWithCommitAsync(prefix);
+        repo.WriteFile("debug.log", "noise\n");
+        repo.WriteFile("trace.log", "more noise\n");
+        repo.WriteFile("Makefile", "all:\n");
+        return repo;
+    }
+
+    private static void SelectOneUnstaged(ProjectDetailViewModel vm, string path) =>
+        vm.SetUnstagedSelection([vm.UnstagedFiles.Single(f => f.Path == path)], null);
+
+    [Fact]
+    public async Task IgnoringAnUntrackedFile_WritesTheRuleAndTheFileLeavesTheList()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-file");
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await vm.IgnoreSelectedFileCommand.ExecuteAsync(null);
+
+        Assert.Contains("/debug.log\n", await File.ReadAllTextAsync(Path.Combine(repo.Path, ".gitignore")));
+        Assert.DoesNotContain(vm.UnstagedFiles, f => f.Path == "debug.log");
+        // Only that file: the rule names one path, not a shape.
+        Assert.Contains(vm.UnstagedFiles, f => f.Path == "trace.log");
+        Assert.Contains("/debug.log", vm.SyncStatusText);
+    }
+
+    [Fact]
+    public async Task IgnoringByExtension_WritesTheGlobAndEveryFileOfThatKindLeaves()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-ext");
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await vm.IgnoreSelectedExtensionCommand.ExecuteAsync(null);
+
+        Assert.Contains("*.log\n", await File.ReadAllTextAsync(Path.Combine(repo.Path, ".gitignore")));
+        Assert.DoesNotContain(vm.UnstagedFiles, f => f.Path == "debug.log");
+        Assert.DoesNotContain(vm.UnstagedFiles, f => f.Path == "trace.log");
+        Assert.Contains(vm.UnstagedFiles, f => f.Path == "Makefile");
+    }
+
+    [Fact]
+    public async Task IgnoringByExtension_AFileWithoutOne_IsRefused()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-noext");
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+        SelectOneUnstaged(vm, "Makefile");
+
+        await vm.IgnoreSelectedExtensionCommand.ExecuteAsync(null);
+
+        Assert.Contains("no extension", vm.SyncStatusText);
+        Assert.False(File.Exists(Path.Combine(repo.Path, ".gitignore")));
+    }
+
+    /// <summary>
+    /// git keeps tracking a file already in the index whatever .gitignore says, so the rule would
+    /// change nothing and the row would stay where it is. The refusal names that, rather than
+    /// writing a line and leaving the reader to work out why the file did not move.
+    /// </summary>
+    [Fact]
+    public async Task IgnoringATrackedFile_IsRefusedAndSaysTheFileStaysUntilItIsUntracked()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("vm-ignore-tracked");
+        repo.WriteFile("kept.log", "one\n");
+        await repo.CommitAllAsync("track a log");
+        repo.WriteFile("kept.log", "two\n");
+
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+        SelectOneUnstaged(vm, "kept.log");
+
+        await vm.IgnoreSelectedFileCommand.ExecuteAsync(null);
+
+        Assert.Contains("tracked", vm.SyncStatusText);
+        Assert.Contains("untrack", vm.SyncStatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(repo.Path, ".gitignore")));
+        Assert.Contains(vm.UnstagedFiles, f => f.Path == "kept.log");
+    }
+
+    /// <summary>
+    /// The list is a read taken at some earlier moment; a rule added since covers the row before
+    /// the click lands. A second identical line is not written, and the reader is told why.
+    /// </summary>
+    [Fact]
+    public async Task IgnoringAFileARuleAlreadyCovers_IsRefusedRatherThanAppendingASecondLine()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-already");
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, ".gitignore"), "*.log\n");
+
+        await vm.IgnoreSelectedFileCommand.ExecuteAsync(null);
+
+        Assert.Contains("already ignored", vm.SyncStatusText);
+        Assert.Equal("*.log\n", await File.ReadAllTextAsync(Path.Combine(repo.Path, ".gitignore")));
+    }
+
+    [Fact]
+    public async Task IgnoringWithNothingSelected_SaysSoRatherThanDoingNothing()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-none");
+        var vm = await OpenAsync(new ProjectDetailViewModel(null!, new GitService(), null!), repo);
+
+        await vm.IgnoreSelectedFileCommand.ExecuteAsync(null);
+
+        Assert.Equal("Select a file to ignore first.", vm.SyncStatusText);
+    }
+
+    /// <summary>
+    /// The append is a working-tree write and goes through the same runner every other one does,
+    /// so the ledger gets it without the command recording anything of its own.
+    /// </summary>
+    [Fact]
+    public async Task IgnoringAFile_IsRecordedByTheSameRunnerEveryWorkingWriteUses()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-ledger");
+        var history = new Services.Safety.OperationHistory(TestEnv.NewDir("ignore-ops"));
+        var vm = await OpenAsync(
+            new ProjectDetailViewModel(null!, new GitService(), null!, history: history), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await vm.IgnoreSelectedFileCommand.ExecuteAsync(null);
+
+        var record = Assert.Single(history.Tail(repo.Path).Records);
+        Assert.Equal(Services.Safety.OperationCategory.Working, record.Category);
+        Assert.Equal(Services.Safety.OperationOutcome.Succeeded, record.Outcome);
+        Assert.Contains("/debug.log", record.Label);
+    }
 }

@@ -1655,18 +1655,49 @@ public class GitService
     public Task SaveGitignoreAsync(string repoPath, string content, CancellationToken ct = default)
         => File.WriteAllTextAsync(Path.Combine(repoPath, ".gitignore"), content, ct);
 
-    /// <summary>Appends a pattern to the root .gitignore unless it already appears as a whole-line entry.</summary>
-    public async Task AppendIgnoreEntryAsync(string repoPath, string pattern, CancellationToken ct = default)
+    /// <summary>
+    /// Appends a pattern to the root .gitignore unless it already appears as a whole-line entry,
+    /// and reports whether anything was written. The dedupe leaves no trace in the file, so a
+    /// caller that read only the absence of an exception would report a rule it did not add.
+    /// </summary>
+    public async Task<bool> AppendIgnoreEntryAsync(string repoPath, string pattern, CancellationToken ct = default)
     {
         var p = Path.Combine(repoPath, ".gitignore");
         var existing = File.Exists(p) ? await File.ReadAllTextAsync(p, ct) : "";
         var target = pattern.Trim();
-        if (existing.Split('\n').Any(l => l.TrimEnd('\r').Trim() == target)) return;
+        if (existing.Split('\n').Any(l => l.TrimEnd('\r').Trim() == target)) return false;
 
         var sb = new StringBuilder(existing);
         if (existing.Length > 0 && !existing.EndsWith('\n')) sb.Append('\n');
         sb.Append(target).Append('\n');
         await File.WriteAllTextAsync(p, sb.ToString(), ct);
+        return true;
+    }
+
+    /// <summary>
+    /// A .gitignore line matching exactly one path and nothing else. The leading slash anchors the
+    /// entry to the repository root, without which a bare name also matches every namesake in
+    /// every subdirectory; '*', '?' and '[' are escaped, without which a path holding one is read
+    /// as a pattern and matches files other than the one it was written for — or misses it.
+    /// The separator is normalized because .gitignore is matched against the forward-slash paths
+    /// git records, never the platform's.
+    /// </summary>
+    public static string IgnoreLineForPath(string path) =>
+        "/" + EscapeIgnoreGlob(path.Replace('\\', '/').TrimStart('/'));
+
+    /// <summary>A .gitignore line matching every file with one extension, with or without its leading dot.</summary>
+    public static string IgnoreLineForExtension(string extension) =>
+        "*." + EscapeIgnoreGlob(extension.TrimStart('.'));
+
+    private static string EscapeIgnoreGlob(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        foreach (var c in value)
+        {
+            if (c is '*' or '?' or '[') sb.Append('\\');
+            sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     /// <summary>

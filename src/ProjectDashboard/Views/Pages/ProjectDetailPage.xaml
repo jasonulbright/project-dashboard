@@ -762,6 +762,16 @@
                                                       Command="{Binding DiscardSelectedCommand}"
                                                       AutomationProperties.Name="Discard every selected file" />
                                             <Separator />
+                                            <!-- Both act on the focused row alone, never the
+                                                 selection: one .gitignore line per click is what
+                                                 the reader can read back afterwards. -->
+                                            <MenuItem Header="Ignore this file"
+                                                      Command="{Binding IgnoreSelectedFileCommand}"
+                                                      AutomationProperties.Name="Add this file to the repository's gitignore" />
+                                            <MenuItem Header="Ignore by extension"
+                                                      Command="{Binding IgnoreSelectedExtensionCommand}"
+                                                      AutomationProperties.Name="Add this file's extension to the repository's gitignore" />
+                                            <Separator />
                                             <MenuItem Header="History and blame for this file…"
                                                       Command="{Binding OpenFileHistoryCommand}"
                                                       CommandParameter="{Binding SelectedUnstagedFile.Path}"

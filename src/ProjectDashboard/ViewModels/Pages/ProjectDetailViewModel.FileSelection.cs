@@ -65,6 +65,92 @@ public partial class ProjectDetailViewModel
     [RelayCommand]
     private Task DiscardSelected() => DiscardFilesAsync(UnstagedSelection());
 
+    // ── Ignoring a working file ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Adds a rule for the focused unstaged file to the repository's own .gitignore. Only that
+    /// file — the global excludes file lives outside every repository, where an accidental append
+    /// leaves no trace in `git status` or `git diff` to notice it by, and it is not written here.
+    /// </summary>
+    [RelayCommand]
+    private Task IgnoreSelectedFile()
+    {
+        var file = SelectedUnstagedFile;
+        return file is null
+            ? NoFileToIgnore()
+            : IgnoreAsync(file, GitService.IgnoreLineForPath(file.Path));
+    }
+
+    /// <summary>
+    /// Adds a rule for every file sharing the focused file's extension. Refused for a file that
+    /// has none: there is no pattern to derive, and a bare name would ignore that one file under
+    /// a menu entry promising a kind.
+    /// </summary>
+    [RelayCommand]
+    private Task IgnoreSelectedExtension()
+    {
+        var file = SelectedUnstagedFile;
+        if (file is null) return NoFileToIgnore();
+
+        var extension = System.IO.Path.GetExtension(file.Path).TrimStart('.');
+        if (extension.Length == 0)
+        {
+            SyncStatusText = $"{file.Path} has no extension, so there is no rule of that kind to add.";
+            return Task.CompletedTask;
+        }
+        return IgnoreAsync(file, GitService.IgnoreLineForExtension(extension));
+    }
+
+    private Task NoFileToIgnore()
+    {
+        SyncStatusText = "Select a file to ignore first.";
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Asks git what it already makes of the path before writing anything, because two of the
+    /// three answers make the write pointless in a way the reader would otherwise have to infer
+    /// from a file that did not move: a tracked path stays tracked and stays listed whatever
+    /// .gitignore says, and a path an existing rule already covers needs no second rule.
+    /// </summary>
+    private async Task IgnoreAsync(WorkingFile file, string pattern)
+    {
+        if (IsBusy) { SyncStatusText = BusyNotice("Ignore"); return; }
+        var repo = RepoPath;
+        var gen = _generation;
+        if (repo.Length == 0) return;
+
+        var answer = await _gitService.CheckIgnoreAsync(repo, file.Path);
+        if (!IsCurrent(gen)) return;
+        switch (answer.State)
+        {
+            case IgnoreState.Unknown:
+                SyncStatusText =
+                    $"Could not tell whether {file.Path} is already ignored, so nothing was written: {answer.Error}";
+                return;
+            case IgnoreState.Ignored:
+                SyncStatusText = $"{file.Path} is already ignored by an existing rule — nothing was written.";
+                return;
+            case IgnoreState.NotIgnored when answer.Tracked:
+                SyncStatusText =
+                    $"{file.Path} is tracked, so an ignore rule changes nothing for it: git keeps tracking a file " +
+                    "already in the index, and it stays in this list until it is untracked.";
+                return;
+        }
+
+        var wrote = false;
+        var ok = await RunOp(async r =>
+        {
+            wrote = await _gitService.AppendIgnoreEntryAsync(r, pattern);
+            return new ProcessResult(0, "", "", TimedOut: false);
+        }, $"Ignore {pattern}", repo, gen);
+        if (!ok || !IsCurrent(gen)) return;
+
+        SyncStatusText = wrote
+            ? $"Added {pattern} to .gitignore. It is an ordinary edit — commit it like any other file."
+            : $"{pattern} is already in .gitignore — nothing was written.";
+    }
+
     private async Task StageFilesAsync(IReadOnlyList<WorkingFile> files)
     {
         if (files.Count == 0) { SyncStatusText = "Select a file to stage first."; return; }

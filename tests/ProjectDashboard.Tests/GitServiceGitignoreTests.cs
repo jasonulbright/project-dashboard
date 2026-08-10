@@ -46,6 +46,78 @@ public class GitServiceGitignoreTests
         Assert.Equal("node_modules/\n", await _git.GetGitignoreAsync(repo.Path));
     }
 
+    /// <summary>
+    /// The dedupe is silent in the file, so the call is what has to say whether anything was
+    /// written — a caller reporting "ignored" over a no-op would tell a reader a rule was added
+    /// that was already there.
+    /// </summary>
+    [Fact]
+    public async Task AppendIgnoreEntry_SaysWhetherItWrote()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-append-reports");
+
+        Assert.True(await _git.AppendIgnoreEntryAsync(repo.Path, "*.log"));
+        Assert.False(await _git.AppendIgnoreEntryAsync(repo.Path, "*.log"));
+        Assert.False(await _git.AppendIgnoreEntryAsync(repo.Path, "  *.log  "));
+    }
+
+    // ── Composing a line for one path ───────────────────────────────────────
+
+    [Theory]
+    [InlineData("notes.txt", "/notes.txt")]
+    [InlineData("src/inner.txt", "/src/inner.txt")]
+    [InlineData(@"src\inner.txt", "/src/inner.txt")]
+    // Only '[' opens a class, so ']' is literal and is left alone.
+    [InlineData("a[1].txt", @"/a\[1].txt")]
+    [InlineData("star*.txt", @"/star\*.txt")]
+    [InlineData("what?.txt", @"/what\?.txt")]
+    [InlineData(@"back\slash/x.txt", "/back/slash/x.txt")]
+    public void IgnoreLineForPath_AnchorsAtTheRootAndEscapesEveryGlobCharacter(string path, string expected) =>
+        Assert.Equal(expected, GitService.IgnoreLineForPath(path));
+
+    [Theory]
+    [InlineData("log", "*.log")]
+    [InlineData(".log", "*.log")]
+    [InlineData("c[1]", @"*.c\[1]")]
+    public void IgnoreLineForExtension_IsAGlobOverTheExtensionAlone(string extension, string expected) =>
+        Assert.Equal(expected, GitService.IgnoreLineForExtension(extension));
+
+    /// <summary>
+    /// A path holding a bracket is a character class when it is written to .gitignore verbatim,
+    /// so the rule would miss the file it was added for and catch a different one. git itself is
+    /// the judge of whether the escaping worked.
+    /// </summary>
+    [Fact]
+    public async Task IgnoreLineForPath_APathHoldingGlobCharacters_IgnoresThatPathAndNoOther()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-escape");
+        repo.WriteFile("a[1].txt", "x\n");
+        repo.WriteFile("a1.txt", "x\n");
+
+        await _git.AppendIgnoreEntryAsync(repo.Path, GitService.IgnoreLineForPath("a[1].txt"));
+
+        Assert.Equal(IgnoreState.Ignored, (await _git.CheckIgnoreAsync(repo.Path, "a[1].txt")).State);
+        // Unescaped, "a[1].txt" is a character class that matches this one instead.
+        Assert.Equal(IgnoreState.NotIgnored, (await _git.CheckIgnoreAsync(repo.Path, "a1.txt")).State);
+    }
+
+    /// <summary>
+    /// Without the leading slash a bare name matches at every depth, so ignoring one file would
+    /// also ignore its namesakes in subdirectories the reader never looked at.
+    /// </summary>
+    [Fact]
+    public async Task IgnoreLineForPath_IgnoresTheNamedFileAndNotItsNamesakeInASubdirectory()
+    {
+        using var repo = await TempRepo.CreateWithCommitAsync("ignore-anchor");
+        repo.WriteFile("notes.txt", "x\n");
+        repo.WriteFile("sub/notes.txt", "x\n");
+
+        await _git.AppendIgnoreEntryAsync(repo.Path, GitService.IgnoreLineForPath("notes.txt"));
+
+        Assert.Equal(IgnoreState.Ignored, (await _git.CheckIgnoreAsync(repo.Path, "notes.txt")).State);
+        Assert.Equal(IgnoreState.NotIgnored, (await _git.CheckIgnoreAsync(repo.Path, "sub/notes.txt")).State);
+    }
+
     [Fact]
     public async Task CheckIgnore_ReflectsPatterns()
     {
