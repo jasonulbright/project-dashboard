@@ -1,3 +1,4 @@
+using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 using ProjectDashboard.Services.Safety;
 using ProjectDashboard.Services.Surgery;
@@ -21,7 +22,7 @@ public class SurgeryCoordinatorTests
         TestSandbox.ResetDataDir();
     }
 
-    private static SurgeryCoordinator NewCoordinator(RepoBusyRegistry? busy = null)
+    private static SurgeryCoordinator NewCoordinator(RepoBusyRegistry? busy = null, ManifestStore? manifests = null)
     {
         var git = new GitService();
         var driver = new RebaseDriver(git, Path.Combine(TestEnv.NewDir("surgery-work"), "work"));
@@ -29,7 +30,8 @@ public class SurgeryCoordinatorTests
             new BackupService(git, new SettingsService()),
             busy ?? new RepoBusyRegistry(),
             git,
-            driver);
+            driver,
+            manifests: manifests);
     }
 
     // ── the signing gate ──────────────────────────────────────────────────
@@ -549,6 +551,88 @@ public class SurgeryCoordinatorTests
         Assert.Equal(["root", "alpha"], (await repo.SubjectsAsync()).AsEnumerable().Reverse());
         // Still the only parentless commit: the --root replay did not graft a parent onto it.
         Assert.Equal(after[0], (await repo.GitAsync("rev-list", "--max-parents=0", "HEAD")).Trim());
+    }
+
+    /// <summary>
+    /// A surgery that reaches the root commit replaces it, so the root object ids a repository's
+    /// saved metadata was fingerprinted from are gone. Left describing them, the record would not
+    /// recognise its own repository if the folder moved before the next full scan — metadata
+    /// stranded by an operation this app performed itself.
+    /// </summary>
+    [Fact]
+    public async Task ASurgeryThatReachesTheRootCommit_ReReadsWhatTheRepositoryIs()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("root", "alpha");
+        var git = new GitService();
+        var store = new ManifestStore();
+        store.Save(repo.Path, new ProjectManifest { Description = "a surgical project" });
+        var before = RepoFingerprint.For("root", await git.GetRootCommitsAsync(repo.Path), "");
+        Assert.NotEmpty(before.RootCommitOids);
+        store.ApplyScan([], new Dictionary<string, RepoFingerprint> { [repo.Path] = before }, DateTimeOffset.UtcNow);
+
+        var root = (await repo.RangeShasAsync(2))[0];
+        repo.Write("root.txt", "root content\nroot fix\n");
+        await repo.GitAsync("add", "-A");
+
+        var result = await NewCoordinator(manifests: store).InjectStagedIntoAsync(repo.Path, root);
+        Assert.True(result.Success, result.FailureReason);
+
+        // The premise, measured rather than assumed: the root commit this repository has is not
+        // the one the record was fingerprinted from.
+        var now = RepoFingerprint.For("root", await git.GetRootCommitsAsync(repo.Path), "");
+        Assert.NotEqual(before.RootCommitOids, now.RootCommitOids);
+
+        var recorded = store.Snapshot()[RepoPaths.Normalize(repo.Path)].Fingerprint;
+        Assert.NotNull(recorded);
+        Assert.Equal(now.RootCommitOids, recorded!.RootCommitOids);
+        Assert.True(store.TryGet(repo.Path, out var manifest));
+        Assert.Equal("a surgical project", manifest!.Description);
+        _output.WriteLine($"root moved {before.RootCommitOids[0][..8]} -> {now.RootCommitOids[0][..8]}; record re-read");
+    }
+
+    /// <summary>
+    /// A reorder that lifts a later commit ahead of the root replaces the root as well: every
+    /// commit in the replayed range is rewritten, the parentless one included.
+    /// </summary>
+    [Fact]
+    public async Task AReorderAcrossTheRoot_ReReadsWhatTheRepositoryIs()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("root", "alpha");
+        var git = new GitService();
+        var store = new ManifestStore();
+        store.Save(repo.Path, new ProjectManifest { Description = "a surgical project" });
+        var before = RepoFingerprint.For("root", await git.GetRootCommitsAsync(repo.Path), "");
+        store.ApplyScan([], new Dictionary<string, RepoFingerprint> { [repo.Path] = before }, DateTimeOffset.UtcNow);
+
+        var shas = await repo.RangeShasAsync(2);
+        var result = await NewCoordinator(manifests: store).ReorderAsync(repo.Path, 2, [shas[1], shas[0]]);
+        Assert.True(result.Success, result.FailureReason);
+
+        var now = RepoFingerprint.For("root", await git.GetRootCommitsAsync(repo.Path), "");
+        Assert.NotEqual(before.RootCommitOids, now.RootCommitOids);
+        Assert.Equal(now.RootCommitOids, store.Snapshot()[RepoPaths.Normalize(repo.Path)].Fingerprint!.RootCommitOids);
+    }
+
+    /// <summary>
+    /// A refused surgery changed nothing, so there is nothing to re-read. The record keeps the
+    /// stamp the last scan gave it rather than being rewritten by every gate that turned an
+    /// operation away.
+    /// </summary>
+    [Fact]
+    public async Task ASurgeryThatWasRefused_LeavesTheRecordAlone()
+    {
+        using var repo = await SurgeryRepo.CreateAsync("seed", "alpha");
+        var git = new GitService();
+        var store = new ManifestStore();
+        store.Save(repo.Path, new ProjectManifest { Description = "a surgical project" });
+        var before = RepoFingerprint.For("root", await git.GetRootCommitsAsync(repo.Path), "");
+        store.ApplyScan([], new Dictionary<string, RepoFingerprint> { [repo.Path] = before }, DateTimeOffset.UtcNow);
+
+        var shas = await repo.RangeShasAsync(2);
+        var result = await NewCoordinator(manifests: store).InjectStagedIntoAsync(repo.Path, shas[0]);
+
+        Assert.False(result.Success);
+        Assert.Equal(before.RootCommitOids, store.Snapshot()[RepoPaths.Normalize(repo.Path)].Fingerprint!.RootCommitOids);
     }
 
     [Fact]

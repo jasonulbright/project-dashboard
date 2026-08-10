@@ -209,6 +209,10 @@ public sealed class SurgeryCoordinator
     {
         var started = DateTimeOffset.UtcNow;
         var result = await RunGatedCoreAsync(repoPath, requirement, backup, phase, signing, operate, ct);
+        // An operation reaching the root commit replaces it, so the root object ids this
+        // repository's saved metadata was fingerprinted from are gone. The lease is released by
+        // the time the core returns, so this read is safe.
+        if (result.Success) await RepoIdentityRefresh.RecordAsync(_git, _manifests, repoPath);
         _history.Append(OperationRecord.For(
             repoPath, OperationCategory.Surgery, $"Commit surgery ({phase})",
             result.Success ? OperationOutcome.Succeeded
