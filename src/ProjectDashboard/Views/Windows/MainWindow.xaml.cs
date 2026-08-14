@@ -169,6 +169,17 @@ public partial class MainWindow : INavigationWindow
         ApplyPalette(Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme());
         Wpf.Ui.Appearance.ApplicationThemeManager.Changed += (theme, _) => ApplyPalette(theme);
 
+        // High contrast and animation preferences can change while the app runs; SystemParameters
+        // raises static change notifications for both, and each re-apply re-reads the live value.
+        ApplyMotionPreference();
+        SystemParameters.StaticPropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(SystemParameters.HighContrast))
+                ApplyPalette(Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme());
+            if (args.PropertyName == nameof(SystemParameters.ClientAreaAnimation))
+                ApplyMotionPreference();
+        };
+
         Closing += (_, _) =>
         {
             var s = settingsService.Load();
@@ -206,10 +217,17 @@ public partial class MainWindow : INavigationWindow
 
     private const string PaletteSourcePrefix = "pack://application:,,,/ProjectDashboard;component/Views/Themes/StatusPalette.";
 
-    /// <summary>The status-palette dictionary a theme is rendered with.</summary>
-    public static Uri PaletteSourceFor(Wpf.Ui.Appearance.ApplicationTheme theme) =>
-        new(PaletteSourcePrefix +
-            (theme == Wpf.Ui.Appearance.ApplicationTheme.Light ? "Light" : "Dark") + ".xaml");
+    /// <summary>
+    /// The status-palette dictionary a theme is rendered with. Under a Windows high-contrast
+    /// theme the fixed light/dark palettes must yield: their hex values are tuned against
+    /// surfaces that theme replaces, so the high-contrast palette resolves every key through
+    /// SystemColors instead, whatever app theme is applied.
+    /// </summary>
+    public static Uri PaletteSourceFor(Wpf.Ui.Appearance.ApplicationTheme theme, bool highContrast) =>
+        new(PaletteSourcePrefix + (
+            highContrast ? "HighContrast"
+            : theme == Wpf.Ui.Appearance.ApplicationTheme.Light ? "Light"
+            : "Dark") + ".xaml");
 
     /// <summary>
     /// Swaps the status palette to match the applied theme. The entry is removed and re-appended
@@ -217,6 +235,9 @@ public partial class MainWindow : INavigationWindow
     /// palette that is not last is outranked by the theme dictionary's own keys.
     /// </summary>
     internal static void ApplyPalette(Wpf.Ui.Appearance.ApplicationTheme theme)
+        => ApplyPalette(theme, SystemParameters.HighContrast);
+
+    internal static void ApplyPalette(Wpf.Ui.Appearance.ApplicationTheme theme, bool highContrast)
     {
         var merged = Application.Current?.Resources.MergedDictionaries;
         if (merged is null) return;
@@ -227,7 +248,45 @@ public partial class MainWindow : INavigationWindow
                     PaletteSourcePrefix, StringComparison.OrdinalIgnoreCase) == true)
                 merged.RemoveAt(i);
         }
-        merged.Add(new ResourceDictionary { Source = PaletteSourceFor(theme) });
+        merged.Add(new ResourceDictionary { Source = PaletteSourceFor(theme, highContrast) });
+    }
+
+    // ── Reduced motion ───────────────────────────────────────────────────────
+
+    internal static readonly Uri ReducedMotionSource =
+        new("pack://application:,,,/ProjectDashboard;component/Views/Themes/ReducedMotion.xaml");
+
+    private Wpf.Ui.Animations.Transition? _defaultTransition;
+
+    /// <summary>
+    /// Honors the OS animation preference: with animations off, the navigation transition is
+    /// suppressed and every progress ring renders as a static glyph via the merged dictionary.
+    /// Re-run whenever the preference changes, in either direction, so a toggle mid-session
+    /// takes effect without a restart.
+    /// </summary>
+    private void ApplyMotionPreference()
+    {
+        _defaultTransition ??= RootNavigation.Transition;
+        var reduced = !SystemParameters.ClientAreaAnimation;
+        RootNavigation.Transition = reduced ? Wpf.Ui.Animations.Transition.None : _defaultTransition.Value;
+        ApplyReducedMotionDictionary(reduced);
+    }
+
+    internal static void ApplyReducedMotionDictionary(bool reduced)
+    {
+        var merged = Application.Current?.Resources.MergedDictionaries;
+        if (merged is null) return;
+
+        for (var i = merged.Count - 1; i >= 0; i--)
+        {
+            if (merged[i].Source == ReducedMotionSource)
+            {
+                if (reduced) return;
+                merged.RemoveAt(i);
+                return;
+            }
+        }
+        if (reduced) merged.Add(new ResourceDictionary { Source = ReducedMotionSource });
     }
 
     // ── Saved-position restore ───────────────────────────────────────────────

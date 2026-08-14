@@ -44,6 +44,9 @@
                     <Style TargetType="ListBoxItem">
                         <Setter Property="Padding" Value="4,0" />
                         <Setter Property="MinHeight" Value="18" />
+                        <!-- The custom template drops the themed focus feedback, so the ring is
+                             declared here or a keyboard reader tabs onto an invisible stop. -->
+                        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}" />
                         <!-- Without this the row is announced as its type's name: an item container
                              takes the item's ToString when it carries no automation name. -->
                         <Setter Property="AutomationProperties.Name"
@@ -181,6 +184,7 @@
                         <Setter Property="Padding" Value="4,0" />
                         <Setter Property="MinHeight" Value="18" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}" />
                         <Setter Property="AutomationProperties.Name"
                                 Value="{Binding Converter={StaticResource SideBySideRowNarrator}}" />
                         <Setter Property="Template">

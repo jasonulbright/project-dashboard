@@ -1,0 +1,23 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+
+    <!-- Merged only while the OS reports animations disabled. The ring's default template spins
+         a storyboard whenever it is indeterminate, with no switch to hold it still, so the whole
+         template is replaced by a static glyph; every local property on a ring — size,
+         visibility bindings, automation name — is untouched by a template swap. No BasedOn: a
+         style basing itself on the implicit key it also defines resolves to the base and the
+         template swap silently loses. The glyph draws in the inherited text foreground, which
+         both fixed palettes and a high-contrast theme keep readable. -->
+    <Style TargetType="{x:Type ui:ProgressRing}">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type ui:ProgressRing}">
+                    <Ellipse Stroke="{TemplateBinding Foreground}" StrokeThickness="3"
+                             StrokeDashArray="2.4 1.6" SnapsToDevicePixels="False" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

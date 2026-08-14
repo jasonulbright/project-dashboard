@@ -41,9 +41,66 @@ public class DetailPageMarkupTests
             ListRows_AreAnnouncedAsTheirContentAndNotAsTheirTypeName(page);
             StatusLines_CarryTheirValueAndAreAnnouncedAsTheyChange(page);
             WizardChoices_SurviveASecondPageBoundToTheSameViewModel();
-            // Last: it applies a theme, and the assertions above read the brushes in force.
+            // Last: these apply themes and palettes, and the assertions above read the brushes
+            // in force.
             TheStatusPalette_OutranksTheThemeDictionary();
+            TheHighContrastPalette_YieldsEveryKeyToSystemColors();
+            ReducedMotion_RendersARingAsAStaticGlyph();
         });
+
+    /// <summary>
+    /// Under a Windows high-contrast theme the fixed palettes must yield: their hex values are
+    /// tuned against surfaces that theme replaces. Every key resolves through SystemColors then —
+    /// this is the one sanctioned exception to the palette-outranks-theme contract above.
+    /// </summary>
+    private static void TheHighContrastPalette_YieldsEveryKeyToSystemColors()
+    {
+        Assert.EndsWith("StatusPalette.HighContrast.xaml",
+            ProjectDashboard.Views.Windows.MainWindow.PaletteSourceFor(
+                Wpf.Ui.Appearance.ApplicationTheme.Light, highContrast: true).OriginalString);
+
+        ProjectDashboard.Views.Windows.MainWindow.ApplyPalette(
+            Wpf.Ui.Appearance.ApplicationTheme.Light, highContrast: true);
+        try
+        {
+            foreach (var key in new[] { "StatusBadFg", "StatusGoodFg", "TextFillColorSecondaryBrush" })
+                Assert.Equal(SystemColors.WindowTextColor,
+                    ((SolidColorBrush)Application.Current.Resources[key]).Color);
+            Assert.Equal(SystemColors.HighlightColor,
+                ((SolidColorBrush)Application.Current.Resources["FocusRingBrush"]).Color);
+            Assert.Equal(SystemColors.WindowColor,
+                ((SolidColorBrush)Application.Current.Resources["DiffRemovedCellBg"]).Color);
+        }
+        finally
+        {
+            ProjectDashboard.Views.Windows.MainWindow.ApplyPalette(
+                Wpf.Ui.Appearance.ApplicationTheme.Light, highContrast: false);
+        }
+    }
+
+    /// <summary>
+    /// With the OS animation preference off, the merged dictionary retemplates every ring as a
+    /// static glyph — the default template spins whenever it is indeterminate, with no switch to
+    /// hold it still, and a busy cue must survive the swap as something visible.
+    /// </summary>
+    private static void ReducedMotion_RendersARingAsAStaticGlyph()
+    {
+        ProjectDashboard.Views.Windows.MainWindow.ApplyReducedMotionDictionary(true);
+        try
+        {
+            var ring = new Wpf.Ui.Controls.ProgressRing { IsIndeterminate = true, Width = 32, Height = 32 };
+            var window = new Window { Content = ring, Width = 100, Height = 100, ShowActivated = false };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                ring.ApplyTemplate();
+                Assert.NotEmpty(Descendants<System.Windows.Shapes.Ellipse>(ring));
+            }
+            finally { window.Close(); }
+        }
+        finally { ProjectDashboard.Views.Windows.MainWindow.ApplyReducedMotionDictionary(false); }
+    }
 
     /// <summary>
     /// Applying a theme rebuilds the merged dictionaries, so the palette has to be re-appended
