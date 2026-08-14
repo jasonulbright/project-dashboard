@@ -598,6 +598,75 @@ public class ProjectDetailViewModelSelectionTests
         Assert.Equal("*.log\n", await File.ReadAllTextAsync(Path.Combine(repo.Path, ".gitignore")));
     }
 
+    /// <summary>
+    /// Routes the global-excludes location to a test-owned file and answers the confirmation
+    /// without a window — the real global config must never be read or written by a test.
+    /// </summary>
+    private sealed class FixedExcludesGitService(string? excludesPath) : GitService
+    {
+        public override Task<string?> GetGlobalExcludesPathAsync(string repoPath, CancellationToken ct = default)
+            => Task.FromResult(excludesPath);
+    }
+
+    private sealed class GlobalIgnoreViewModel(GitService git, bool answer) : ProjectDetailViewModel(null!, git, null!)
+    {
+        public int Confirmations { get; private set; }
+
+        public string LastMessage { get; private set; } = "";
+
+        internal override Task<bool> ConfirmAsync(string title, string message, string confirmText)
+        {
+            Confirmations++;
+            LastMessage = message;
+            return Task.FromResult(answer);
+        }
+    }
+
+    [Fact]
+    public async Task IgnoringANameEverywhere_ConfirmsThenWritesTheUnanchoredNameToTheExcludesFile()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-global");
+        var excludes = Path.Combine(TestEnv.NewDir("global-excludes"), "git", "ignore");
+        var vm = await OpenAsync(new GlobalIgnoreViewModel(new FixedExcludesGitService(excludes), answer: true), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await vm.IgnoreSelectedFileEverywhereCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.Contains(excludes, vm.LastMessage);
+        // The name, unanchored — the global file has no repository root for a path to anchor to.
+        Assert.Equal("debug.log\n", await File.ReadAllTextAsync(excludes));
+        Assert.Contains(excludes, vm.SyncStatusText);
+    }
+
+    [Fact]
+    public async Task IgnoringEverywhere_Declined_WritesNothing()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-global-no");
+        var excludes = Path.Combine(TestEnv.NewDir("global-excludes-no"), "git", "ignore");
+        var vm = await OpenAsync(new GlobalIgnoreViewModel(new FixedExcludesGitService(excludes), answer: false), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await vm.IgnoreSelectedExtensionEverywhereCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, vm.Confirmations);
+        Assert.False(File.Exists(excludes));
+    }
+
+    /// <summary>An unanswerable location refuses before the confirmation — there is nothing to name in one.</summary>
+    [Fact]
+    public async Task IgnoringEverywhere_WhenTheExcludesLocationCannotBeRead_RefusesAndSaysSo()
+    {
+        using var repo = await UntrackedFilesAsync("vm-ignore-global-unknown");
+        var vm = await OpenAsync(new GlobalIgnoreViewModel(new FixedExcludesGitService(null), answer: true), repo);
+        SelectOneUnstaged(vm, "debug.log");
+
+        await vm.IgnoreSelectedFileEverywhereCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.Confirmations);
+        Assert.Contains("could not be read", vm.SyncStatusText);
+    }
+
     [Fact]
     public async Task IgnoringWithNothingSelected_SaysSoRatherThanDoingNothing()
     {

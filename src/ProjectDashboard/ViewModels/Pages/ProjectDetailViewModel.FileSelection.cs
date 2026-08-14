@@ -68,9 +68,10 @@ public partial class ProjectDetailViewModel
     // ── Ignoring a working file ─────────────────────────────────────────────
 
     /// <summary>
-    /// Adds a rule for the focused unstaged file to the repository's own .gitignore. Only that
-    /// file — the global excludes file lives outside every repository, where an accidental append
-    /// leaves no trace in `git status` or `git diff` to notice it by, and it is not written here.
+    /// Adds a rule for the focused unstaged file to the repository's own .gitignore. The global
+    /// excludes file is written only by the two "everywhere" commands below, behind a confirmation
+    /// — it lives outside every repository, where an accidental append leaves no trace in
+    /// `git status` or `git diff` to notice it by.
     /// </summary>
     [RelayCommand]
     private Task IgnoreSelectedFile()
@@ -79,6 +80,37 @@ public partial class ProjectDetailViewModel
         return file is null
             ? NoFileToIgnore()
             : IgnoreAsync(file, GitService.IgnoreLineForPath(file.Path));
+    }
+
+    /// <summary>
+    /// Adds a rule for the focused file's NAME to the global excludes file. The name rather than
+    /// the path: the global file has no repository root to anchor a path to, and matching every
+    /// namesake in every repository is what "everywhere" offers.
+    /// </summary>
+    [RelayCommand]
+    private Task IgnoreSelectedFileEverywhere()
+    {
+        var file = SelectedUnstagedFile;
+        if (file is null) return NoFileToIgnore();
+        var name = System.IO.Path.GetFileName(file.Path.Replace('\\', '/').TrimEnd('/'));
+        return IgnoreGloballyAsync(file, GitService.IgnoreLineForName(name),
+            $"every file named '{name}'");
+    }
+
+    [RelayCommand]
+    private Task IgnoreSelectedExtensionEverywhere()
+    {
+        var file = SelectedUnstagedFile;
+        if (file is null) return NoFileToIgnore();
+
+        var extension = System.IO.Path.GetExtension(file.Path).TrimStart('.');
+        if (extension.Length == 0)
+        {
+            SyncStatusText = $"{file.Path} has no extension, so there is no rule of that kind to add.";
+            return Task.CompletedTask;
+        }
+        return IgnoreGloballyAsync(file, GitService.IgnoreLineForExtension(extension),
+            $"every .{extension} file");
     }
 
     /// <summary>
@@ -149,6 +181,67 @@ public partial class ProjectDetailViewModel
         SyncStatusText = wrote
             ? $"Added {pattern} to .gitignore. It is an ordinary edit — commit it like any other file."
             : $"{pattern} is already in .gitignore — nothing was written.";
+    }
+
+    /// <summary>
+    /// The global variant runs the same pre-checks, then confirms before writing: the excludes
+    /// file lives outside every repository, so the append shows up in no `git status` or
+    /// `git diff` anywhere, and the rule reaches repositories this app has never opened. The
+    /// confirmation names the exact file and line so what to revert, and where, is on screen
+    /// before anything is written.
+    /// </summary>
+    private async Task IgnoreGloballyAsync(WorkingFile file, string pattern, string reach)
+    {
+        if (IsBusy) { SyncStatusText = BusyNotice("Ignore everywhere"); return; }
+        var repo = RepoPath;
+        var gen = _generation;
+        if (repo.Length == 0) return;
+
+        var answer = await _gitService.CheckIgnoreAsync(repo, file.Path);
+        if (!IsCurrent(gen)) return;
+        switch (answer.State)
+        {
+            case IgnoreState.Unknown:
+                SyncStatusText =
+                    $"Could not tell whether {file.Path} is already ignored, so nothing was written: {answer.Error}";
+                return;
+            case IgnoreState.Ignored:
+                SyncStatusText = $"{file.Path} is already ignored by an existing rule — nothing was written.";
+                return;
+            case IgnoreState.NotIgnored when answer.Tracked:
+                SyncStatusText =
+                    $"{file.Path} is tracked, so an ignore rule changes nothing for it: git keeps tracking a file " +
+                    "already in the index, and it stays in this list until it is untracked.";
+                return;
+        }
+
+        var excludesPath = await _gitService.GetGlobalExcludesPathAsync(repo);
+        if (!IsCurrent(gen)) return;
+        if (excludesPath is null)
+        {
+            SyncStatusText =
+                "Where global ignore rules live could not be read from git config, so nothing was written.";
+            return;
+        }
+
+        var confirmed = await ConfirmAsync("Ignore everywhere?",
+            $"Add this line to the global ignore file?\n\n    {pattern}\n    in {excludesPath}\n\n" +
+            $"It ignores {reach} in every repository on this machine, not only this one. The file is " +
+            "outside every repository, so the edit appears in no repository's status or diff — reverting " +
+            "it later means removing that line from that file by hand.", "Add the rule");
+        if (!confirmed || !IsCurrent(gen)) return;
+
+        var wrote = false;
+        var ok = await RunOp(async _ =>
+        {
+            wrote = await _gitService.AppendGlobalIgnoreEntryAsync(excludesPath, pattern);
+            return new ProcessResult(0, "", "", TimedOut: false);
+        }, $"Ignore {pattern} everywhere", repo, gen);
+        if (!ok || !IsCurrent(gen)) return;
+
+        SyncStatusText = wrote
+            ? $"Added {pattern} to {excludesPath}. It applies to every repository on this machine."
+            : $"{pattern} is already in {excludesPath} — nothing was written.";
     }
 
     private async Task StageFilesAsync(IReadOnlyList<WorkingFile> files)

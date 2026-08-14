@@ -244,4 +244,56 @@ public class GitServiceGitignoreTests
         Assert.Equal(IgnoreState.Unknown, answer.State);
         Assert.NotEqual("", answer.Error);
     }
+
+    // ── The global excludes file ────────────────────────────────────────────
+
+    /// <summary>Answers the config read with a canned result; nothing touches the real global config.</summary>
+    private sealed class CannedConfigGitService(ProcessResult answer) : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+            => Task.FromResult(answer);
+    }
+
+    private static Task<string?> ExcludesPathFor(ProcessResult answer) =>
+        new CannedConfigGitService(answer).GetGlobalExcludesPathAsync("unused");
+
+    [Fact]
+    public async Task GlobalExcludesPath_AConfiguredTildePath_IsExpandedToTheProfile()
+    {
+        var path = await ExcludesPathFor(new ProcessResult(0, "~/gitignore_global\n", "", TimedOut: false));
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.Equal(profile + "/gitignore_global", path);
+    }
+
+    /// <summary>Unset is exit 1 with silence, and the answer is git's own default location.</summary>
+    [Fact]
+    public async Task GlobalExcludesPath_Unset_IsGitsDefaultLocation()
+    {
+        var path = await ExcludesPathFor(new ProcessResult(1, "", "", TimedOut: false));
+
+        Assert.NotNull(path);
+        Assert.EndsWith(Path.Combine("git", "ignore"), path);
+    }
+
+    /// <summary>A config read that failed or was killed is no answer — a default returned then could shadow a configured location.</summary>
+    [Fact]
+    public async Task GlobalExcludesPath_WhenGitCannotAnswer_IsNullNotADefault()
+    {
+        Assert.Null(await ExcludesPathFor(new ProcessResult(128, "", "fatal: unreadable config", TimedOut: false)));
+        Assert.Null(await ExcludesPathFor(new ProcessResult(-1, "", "", TimedOut: true)));
+    }
+
+    [Fact]
+    public async Task AppendGlobalIgnoreEntry_CreatesTheParentDirectoryAndDedupes()
+    {
+        var excludes = Path.Combine(TestEnv.NewDir("excludes-append"), "git", "ignore");
+
+        Assert.True(await _git.AppendGlobalIgnoreEntryAsync(excludes, "*.log"));
+        Assert.False(await _git.AppendGlobalIgnoreEntryAsync(excludes, "*.log"));
+
+        Assert.Equal("*.log\n", await File.ReadAllTextAsync(excludes));
+    }
 }

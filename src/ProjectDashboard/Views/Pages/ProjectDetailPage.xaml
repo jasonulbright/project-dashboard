@@ -811,6 +811,12 @@
                                             <MenuItem Header="Ignore by extension"
                                                       Command="{Binding IgnoreSelectedExtensionCommand}"
                                                       AutomationProperties.Name="Add this file's extension to the repository's gitignore" />
+                                            <MenuItem Header="Ignore this name everywhere…"
+                                                      Command="{Binding IgnoreSelectedFileEverywhereCommand}"
+                                                      AutomationProperties.Name="Add this file's name to the global ignore file for every repository" />
+                                            <MenuItem Header="Ignore by extension everywhere…"
+                                                      Command="{Binding IgnoreSelectedExtensionEverywhereCommand}"
+                                                      AutomationProperties.Name="Add this file's extension to the global ignore file for every repository" />
                                             <Separator />
                                             <MenuItem Header="History and blame for this file…"
                                                       Command="{Binding OpenFileHistoryCommand}"

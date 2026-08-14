@@ -1806,19 +1806,63 @@ public class GitService
     /// and reports whether anything was written. The dedupe leaves no trace in the file, so a
     /// caller that read only the absence of an exception would report a rule it did not add.
     /// </summary>
-    public async Task<bool> AppendIgnoreEntryAsync(string repoPath, string pattern, CancellationToken ct = default)
+    public Task<bool> AppendIgnoreEntryAsync(string repoPath, string pattern, CancellationToken ct = default)
+        => AppendIgnoreLineAsync(Path.Combine(repoPath, ".gitignore"), pattern, ct);
+
+    /// <summary>
+    /// The same append-if-absent against the global excludes file, whose parent directory may not
+    /// exist yet — git's default location is only created when something writes there.
+    /// </summary>
+    public Task<bool> AppendGlobalIgnoreEntryAsync(string excludesPath, string pattern, CancellationToken ct = default)
     {
-        var p = Path.Combine(repoPath, ".gitignore");
-        var existing = File.Exists(p) ? await File.ReadAllTextAsync(p, ct) : "";
+        var dir = Path.GetDirectoryName(excludesPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        return AppendIgnoreLineAsync(excludesPath, pattern, ct);
+    }
+
+    private static async Task<bool> AppendIgnoreLineAsync(string path, string pattern, CancellationToken ct)
+    {
+        var existing = File.Exists(path) ? await File.ReadAllTextAsync(path, ct) : "";
         var target = NormalizeIgnoreLine(pattern);
         if (existing.Split('\n').Any(l => NormalizeIgnoreLine(l.TrimEnd('\r')) == target)) return false;
 
         var sb = new StringBuilder(existing);
         if (existing.Length > 0 && !existing.EndsWith('\n')) sb.Append('\n');
         sb.Append(target).Append('\n');
-        await File.WriteAllTextAsync(p, sb.ToString(), ct);
+        await File.WriteAllTextAsync(path, sb.ToString(), ct);
         return true;
     }
+
+    /// <summary>
+    /// Where global ignore rules live: core.excludesFile when configured, with a leading "~"
+    /// expanded the way git expands it, otherwise git's own default of
+    /// $XDG_CONFIG_HOME/git/ignore falling back to ~/.config/git/ignore. The default is returned
+    /// whether or not the file exists — git reads it without any configuration, so a rule
+    /// appended there takes effect with nothing else written. Null when git could not answer
+    /// whether the setting exists, which is not the same as it being unset.
+    /// </summary>
+    public virtual async Task<string?> GetGlobalExcludesPathAsync(string repoPath, CancellationToken ct = default)
+    {
+        var read = await RunAsync(repoPath, ["config", "--global", "--get", "core.excludesFile"], ct,
+            TimeSpan.FromSeconds(10));
+        if (read.TimedOut) return null;
+        var configured = read.StdOut.Trim();
+        if (read.Success && configured.Length > 0) return ExpandTilde(configured);
+        // Exit 1 with nothing on stderr is `--get` reporting the key unset; anything else is git
+        // failing to answer, and a default returned then could shadow a configured location.
+        if (!read.Success && read.StdErr.Trim().Length > 0) return null;
+
+        var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        var configHome = string.IsNullOrEmpty(xdg)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config")
+            : xdg;
+        return Path.Combine(configHome, "git", "ignore");
+    }
+
+    private static string ExpandTilde(string path) =>
+        path == "~" || path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + path[1..]
+            : path;
 
     /// <summary>
     /// A .gitignore line matching exactly one path and nothing else. The leading slash anchors the
@@ -1834,6 +1878,12 @@ public class GitService
     /// <summary>A .gitignore line matching every file with one extension, with or without its leading dot.</summary>
     public static string IgnoreLineForExtension(string extension) =>
         "*." + EscapeIgnoreLine(extension.TrimStart('.'));
+
+    /// <summary>
+    /// A line matching every file carrying one name, in any directory. Unanchored by intent — the
+    /// global excludes file has no repository root to anchor to, and the name is the rule.
+    /// </summary>
+    public static string IgnoreLineForName(string fileName) => EscapeIgnoreLine(fileName);
 
     private static string EscapeIgnoreLine(string value) => EscapeTrailingWhitespace(EscapeIgnoreGlob(value));
 
