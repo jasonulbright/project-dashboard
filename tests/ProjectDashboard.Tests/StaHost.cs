@@ -68,6 +68,15 @@ internal sealed class StaHost : IDisposable
     internal static string WedgedMessage(string caller) =>
         $"STA host wedged by {caller} — that body never returned, so no later body can run on it.";
 
+    /// <summary>
+    /// The last landmark the running body reported, carried into the timeout message. A wedge on
+    /// a CI runner leaves no thread stack to read — the overrun body names the step it never got
+    /// past, or the report says only that a two-second body took the whole budget somewhere.
+    /// </summary>
+    private static volatile string _checkpoint = "";
+
+    public static void Checkpoint(string landmark) => _checkpoint = landmark;
+
     private readonly BlockingCollection<WorkItem> _queue = new();
     private readonly Lazy<Thread> _worker;
     private readonly TimeSpan _budget;
@@ -103,13 +112,17 @@ internal sealed class StaHost : IDisposable
         _ = _worker.Value;
 
         var item = new WorkItem(body, new ManualResetEventSlim());
+        _checkpoint = "";
         _queue.Add(item);
         if (!item.Done.Wait(_budget))
         {
             // First writer wins: the poison names the body that stopped the thread, not
             // whichever later body happened to give up waiting for it first.
             Interlocked.CompareExchange(ref _wedgedBy, caller, null);
-            throw new TimeoutException($"STA test body from {caller} did not complete within {_budget}");
+            var landmark = _checkpoint;
+            throw new TimeoutException(
+                $"STA test body from {caller} did not complete within {_budget}" +
+                (landmark.Length > 0 ? $"; last landmark: {landmark}" : "; no landmark was reported"));
         }
         if (item.Error is not null)
             ExceptionDispatchInfo.Capture(item.Error).Throw();

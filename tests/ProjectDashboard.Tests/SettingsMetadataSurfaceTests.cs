@@ -208,16 +208,20 @@ public class SettingsMetadataSurfaceTests : IDisposable
     public void ARowRendersWithItsForgetButtonNamedForAReader()
         => StaHost.Run(() =>
         {
+            StaHost.Checkpoint("saving settings");
             var service = new SettingsService();
             service.Save(new AppSettings { ProjectRoots = [new ProjectRoot { Path = @"C:\one" }] });
 
+            StaHost.Checkpoint("building the view model");
             var viewModel = new SettingsViewModel(service, null!, null!);
             // The page's own load runs on this dispatcher and refills the list; seeding a row
             // before it settles would have it cleared out from under the layout below.
+            StaHost.Checkpoint("pumping the metadata load");
             Pump(viewModel.MetadataLoad);
             viewModel.MetadataOrphans.Add(ProjectMetadataRow.From(
                 new ManifestOrphan(@"C:\gone\alpha", "alpha", "a departed project", DateTimeOffset.UtcNow)));
 
+            StaHost.Checkpoint("building the page");
             var window = new System.Windows.Window
             {
                 Content = new ProjectDashboard.Views.Pages.SettingsPage(viewModel),
@@ -227,8 +231,11 @@ public class SettingsMetadataSurfaceTests : IDisposable
             };
             try
             {
+                StaHost.Checkpoint("showing the window");
                 window.Show();
+                StaHost.Checkpoint("laying the window out");
                 window.UpdateLayout();
+                StaHost.Checkpoint("reading the rendered buttons");
 
                 var buttons = Descendants(window)
                     .OfType<Wpf.Ui.Controls.Button>()
