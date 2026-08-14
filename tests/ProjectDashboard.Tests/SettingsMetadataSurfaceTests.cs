@@ -205,22 +205,21 @@ public class SettingsMetadataSurfaceTests : IDisposable
     /// that the reader is told what the button beside it drops.
     /// </summary>
     [Fact]
-    public void ARowRendersWithItsForgetButtonNamedForAReader()
-        => StaHost.Run(() =>
+    public async Task ARowRendersWithItsForgetButtonNamedForAReader()
+    {
+        // Built and settled OFF the STA host, like every other view model in this class: the
+        // load's continuation then completes on the pool, and nothing here ever pumps a nested
+        // dispatcher frame. The pump this replaced could block for the host's whole budget on a
+        // loaded runner, and a wedge inside it took every markup test behind it down too.
+        var service = new SettingsService();
+        service.Save(new AppSettings { ProjectRoots = [new ProjectRoot { Path = @"C:\one" }] });
+        var viewModel = new SettingsViewModel(service, null!, null!);
+        await viewModel.MetadataLoad;
+        viewModel.MetadataOrphans.Add(ProjectMetadataRow.From(
+            new ManifestOrphan(@"C:\gone\alpha", "alpha", "a departed project", DateTimeOffset.UtcNow)));
+
+        StaHost.Run(() =>
         {
-            StaHost.Checkpoint("saving settings");
-            var service = new SettingsService();
-            service.Save(new AppSettings { ProjectRoots = [new ProjectRoot { Path = @"C:\one" }] });
-
-            StaHost.Checkpoint("building the view model");
-            var viewModel = new SettingsViewModel(service, null!, null!);
-            // The page's own load runs on this dispatcher and refills the list; seeding a row
-            // before it settles would have it cleared out from under the layout below.
-            StaHost.Checkpoint("pumping the metadata load");
-            Pump(viewModel.MetadataLoad);
-            viewModel.MetadataOrphans.Add(ProjectMetadataRow.From(
-                new ManifestOrphan(@"C:\gone\alpha", "alpha", "a departed project", DateTimeOffset.UtcNow)));
-
             StaHost.Checkpoint("building the page");
             var window = new System.Windows.Window
             {
@@ -251,16 +250,6 @@ public class SettingsMetadataSurfaceTests : IDisposable
             }
             finally { window.Close(); }
         });
-
-    /// <summary>Runs the dispatcher's queue until <paramref name="work"/> has settled on it.</summary>
-    private static void Pump(Task work)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!work.IsCompleted && DateTime.UtcNow < deadline)
-            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
-                () => { }, System.Windows.Threading.DispatcherPriority.Background);
-
-        Assert.True(work.IsCompleted, "the page's metadata load never settled on the dispatcher");
     }
 
     private static IEnumerable<System.Windows.DependencyObject> Descendants(System.Windows.DependencyObject root)
