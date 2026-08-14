@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using ProjectDashboard.Services;
 using ProjectDashboard.Services.Safety;
 
@@ -102,6 +103,7 @@ public partial class ProjectDetailViewModel
     [NotifyCanExecuteChangedFor(nameof(RestoreSelectedBackupCommand))]
     [NotifyCanExecuteChangedFor(nameof(VerifySelectedBackupCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteSelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportSelectedBackupCommand))]
     private BackupEntry? _selectedBackup;
 
     [ObservableProperty] private string _backupsStatusText = "";
@@ -112,6 +114,8 @@ public partial class ProjectDetailViewModel
     [NotifyCanExecuteChangedFor(nameof(BackupNowCommand))]
     [NotifyCanExecuteChangedFor(nameof(VerifySelectedBackupCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteSelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportSelectedBackupCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ImportBackupCommand))]
     private bool _backupsBusy;
 
     /// <summary>True when the browser has finished a load and found nothing — the empty state must not show before that.</summary>
@@ -595,6 +599,142 @@ public partial class ProjectDetailViewModel
         $"    {(entry.VerificationText.Length > 0 ? entry.VerificationText : "Not verified in this session.")}\n\n" +
         "This removes the bundle and its refs snapshot from this app's backup folder. Nothing in the " +
         "repository changes, and no other backup is affected. It cannot be undone.";
+
+    // ── Export, import ──────────────────────────────────────────────────────────
+
+    private bool CanExportSelectedBackup() => SelectedBackup is not null && !BackupsBusy;
+
+    /// <summary>
+    /// Copies the selected backup's files to a folder the reader picks. Read-only toward the
+    /// backup store and the repository, so no confirmation and no repository lease.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanExportSelectedBackup))]
+    private async Task ExportSelectedBackup()
+    {
+        var service = _backups;
+        var entry = SelectedBackup;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (entry is null || BackupsBusy || repo.Length == 0) return;
+        if (service is null)
+        {
+            BackupsErrorText = BackupsUnavailableRefusal;
+            return;
+        }
+
+        var destination = PromptForDirectory("Export this backup to…");
+        if (destination is null) return;
+        if (!IsCurrent(gen))
+        {
+            BackupsStatusText = ProjectSwitchedNotice("Backup export");
+            return;
+        }
+
+        var started = DateTimeOffset.UtcNow;
+        var stamp = entry.Handle.UtcStamp;
+        BackupsBusy = true;
+        BackupsErrorText = "";
+        BackupsStatusText = "Exporting…";
+        BackupExportResult result;
+        try
+        {
+            result = await service.ExportBackupAsync(entry.Handle, destination);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"export of backup {stamp} failed", ex);
+            result = new BackupExportResult(false, $"The backup could not be exported: {ex.Message}");
+        }
+        finally
+        {
+            if (IsCurrent(gen)) BackupsBusy = false;
+        }
+        RecordBackupOp(repo, OperationCategory.BackupExport, $"Export backup {stamp}",
+            result.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+            result.Success ? "" : result.Message, started, stamp);
+        if (!IsCurrent(gen)) return;
+
+        BackupsStatusText = result.Success ? result.Message : "";
+        BackupsErrorText = result.Success ? "" : result.Message;
+    }
+
+    private bool CanImportBackup() => !BackupsBusy && RepoPath.Length > 0;
+
+    /// <summary>
+    /// Brings an exported bundle/sidecar pair into this repository's backup folder. Additive:
+    /// nothing in the repository or in any existing backup changes, and a stamp collision stores
+    /// the import under a disambiguated name rather than touching what holds the stamp.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanImportBackup))]
+    private async Task ImportBackup()
+    {
+        var service = _backups;
+        var repo = RepoPath;
+        var gen = _generation;
+        if (BackupsBusy || repo.Length == 0) return;
+        if (service is null)
+        {
+            BackupsErrorText = BackupsUnavailableRefusal;
+            return;
+        }
+
+        var bundlePath = PromptForBundleFile();
+        if (bundlePath is null) return;
+        if (!IsCurrent(gen))
+        {
+            BackupsStatusText = ProjectSwitchedNotice("Backup import");
+            return;
+        }
+
+        var started = DateTimeOffset.UtcNow;
+        BackupsBusy = true;
+        BackupsErrorText = "";
+        BackupsStatusText = "Importing…";
+        BackupImportResult result;
+        try
+        {
+            result = await service.ImportBackupAsync(repo, bundlePath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"import of bundle {bundlePath} failed", ex);
+            result = new BackupImportResult(false, $"The backup could not be imported: {ex.Message}");
+        }
+        finally
+        {
+            if (IsCurrent(gen)) BackupsBusy = false;
+        }
+        RecordBackupOp(repo, OperationCategory.BackupImport,
+            $"Import backup {Path.GetFileNameWithoutExtension(bundlePath)}",
+            result.Success ? OperationOutcome.Succeeded : OperationOutcome.Failed,
+            result.Success ? "" : result.Message, started, result.Handle?.UtcStamp);
+        if (!IsCurrent(gen)) return;
+
+        if (!result.Success)
+        {
+            BackupsStatusText = "";
+            BackupsErrorText = result.Message;
+            return;
+        }
+
+        await LoadBackups();
+        if (!IsCurrent(gen)) return;
+        if (result.Handle is { } imported)
+            SelectedBackup = BackupList.FirstOrDefault(e => e.Handle.UtcStamp == imported.UtcStamp);
+        BackupsStatusText = result.Message;
+    }
+
+    /// <summary>Bundle chosen by the reader, or null when the picker was cancelled.</summary>
+    internal virtual string? PromptForBundleFile()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import a backup bundle",
+            Filter = "Git bundle (*.bundle)|*.bundle",
+            CheckFileExists = true
+        };
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
 
     /// <summary>
     /// One record for a backup this page created or deleted. The backups a coordinator takes are

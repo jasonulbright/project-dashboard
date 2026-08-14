@@ -1125,6 +1125,66 @@ public class BackupsSurfaceTests
             MarkupName.From(multiBinding, entry));
     }
 
+    /// <summary>Answers both pickers without a window: a folder for export, a bundle for import.</summary>
+    private sealed class PickingViewModel(BackupService backups, OperationHistory? history = null)
+        : ProjectDetailViewModel(null!, new GitService(), null!, null, null,
+            backups: backups, history: history)
+    {
+        public string? Directory { get; set; }
+        public string? BundleFile { get; set; }
+
+        internal override string? PromptForDirectory(string title) => Directory;
+
+        internal override string? PromptForBundleFile() => BundleFile;
+    }
+
+    [Fact]
+    public async Task ExportThenImport_ThroughTheBrowser_ListsAndSelectsTheImport()
+    {
+        using var repo = await RailsRepo.CreateAsync("backups-exp-imp");
+        var backups = NewBackups();
+        var handle = await backups.CreateBackupAsync(repo.Path, "Manual backup");
+        var destination = TestEnv.NewDir("backups-exported");
+
+        var vm = new PickingViewModel(backups) { Directory = destination };
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+
+        await vm.ExportSelectedBackupCommand.ExecuteAsync(null);
+        Assert.Equal("", vm.BackupsErrorText);
+        Assert.Contains("Exported", vm.BackupsStatusText);
+        Assert.True(File.Exists(Path.Combine(destination, handle.UtcStamp + ".bundle")));
+
+        vm.BundleFile = Path.Combine(destination, handle.UtcStamp + ".bundle");
+        await vm.ImportBackupCommand.ExecuteAsync(null);
+        Assert.Equal("", vm.BackupsErrorText);
+        // The original stamp is taken, so the import lands beside it under a suffixed stem.
+        Assert.Equal(2, vm.BackupList.Count);
+        Assert.Equal(handle.UtcStamp + "-01", vm.SelectedBackup?.Handle.UtcStamp);
+        Assert.Contains("stored as", vm.BackupsStatusText);
+    }
+
+    /// <summary>A cancelled picker changes nothing and says nothing — the reader backed out.</summary>
+    [Fact]
+    public async Task ACancelledPicker_LeavesTheBrowserUntouched()
+    {
+        using var repo = await RailsRepo.CreateAsync("backups-cancel");
+        var backups = NewBackups();
+        await backups.CreateBackupAsync(repo.Path, "Manual backup");
+
+        var vm = new PickingViewModel(backups);
+        await vm.SetProjectAsync(ProjectFor(repo));
+        await vm.OpenBackupsCommand.ExecuteAsync(null);
+        var statusBefore = vm.BackupsStatusText;
+
+        await vm.ExportSelectedBackupCommand.ExecuteAsync(null);
+        await vm.ImportBackupCommand.ExecuteAsync(null);
+
+        Assert.Equal(statusBefore, vm.BackupsStatusText);
+        Assert.Equal("", vm.BackupsErrorText);
+        Assert.Single(vm.BackupList);
+    }
+
     private static string ViewSource(string name, [System.Runtime.CompilerServices.CallerFilePath] string testFile = "")
     {
         var path = Path.GetFullPath(Path.Combine(

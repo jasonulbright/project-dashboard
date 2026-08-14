@@ -25,7 +25,11 @@ public enum OperationCategory
     /// </summary>
     BackupCreate,
 
-    BackupDelete
+    BackupDelete,
+
+    BackupExport,
+
+    BackupImport
 }
 
 /// <summary>

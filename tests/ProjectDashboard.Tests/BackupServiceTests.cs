@@ -735,4 +735,72 @@ public class BackupServiceTests
 
         Assert.Equal(0L, service.MeasureBackupBytes(handle));
     }
+
+    // ── Export, import ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExportThenImport_RoundTripsToARestorableBackup()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        var destination = Path.Combine(Path.GetDirectoryName(handle.BundlePath)!, "exported-out");
+
+        var export = await service.ExportBackupAsync(handle, destination);
+        Assert.True(export.Success, export.Message);
+        Assert.Equal(handle.UtcStamp, export.Stem);
+
+        await service.DeleteBackupAsync(handle);
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
+
+        var import = await service.ImportBackupAsync(
+            repo.Path, Path.Combine(destination, export.Stem + ".bundle"));
+        Assert.True(import.Success, import.Message);
+        Assert.NotNull(import.Handle);
+
+        var listed = Assert.Single(await service.ListBackupsAsync(repo.Path));
+        Assert.Equal(handle.UtcStamp, listed.UtcStamp);
+        var restore = await service.RestoreAsync(listed, allowDirty: false);
+        Assert.True(restore.Success, restore.Message);
+    }
+
+    [Fact]
+    public async Task Import_WithNoReadableSidecarBesideTheBundle_RefusesWhole()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        var destination = Path.Combine(Path.GetDirectoryName(handle.BundlePath)!, "exported-out");
+        var export = await service.ExportBackupAsync(handle, destination);
+        File.Delete(Path.Combine(destination, export.Stem + ".refs.json"));
+        await service.DeleteBackupAsync(handle);
+
+        var import = await service.ImportBackupAsync(
+            repo.Path, Path.Combine(destination, export.Stem + ".bundle"));
+
+        Assert.False(import.Success);
+        Assert.Null(import.Handle);
+        Assert.Contains("refs snapshot", import.Message);
+        Assert.Empty(await service.ListBackupsAsync(repo.Path));
+    }
+
+    /// <summary>A stamp already held stores the import under a suffixed stem, touching neither pair.</summary>
+    [Fact]
+    public async Task Import_OntoAnExistingStamp_RenamesRatherThanOverwriting()
+    {
+        using var repo = await RailsRepo.CreateAsync();
+        var service = NewService();
+        var handle = await service.CreateBackupAsync(repo.Path);
+        var destination = Path.Combine(Path.GetDirectoryName(handle.BundlePath)!, "exported-out");
+        var export = await service.ExportBackupAsync(handle, destination);
+        var originalBytes = File.ReadAllBytes(handle.BundlePath);
+
+        var import = await service.ImportBackupAsync(
+            repo.Path, Path.Combine(destination, export.Stem + ".bundle"));
+
+        Assert.True(import.Success, import.Message);
+        Assert.Equal(handle.UtcStamp + "-01", import.Handle!.UtcStamp);
+        Assert.Equal(originalBytes, File.ReadAllBytes(handle.BundlePath));
+        Assert.Equal(2, (await service.ListBackupsAsync(repo.Path)).Count);
+    }
 }

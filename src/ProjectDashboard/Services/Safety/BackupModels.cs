@@ -86,6 +86,20 @@ public sealed record BackupDetails(
 public sealed record BackupStorageTally(int RepoCount, int BackupCount, long Bytes, string? Error);
 
 /// <summary>
+/// Outcome of copying one backup's files out to a reader-chosen folder. <see cref="Stem"/> is the
+/// file stem the pair landed under there, which differs from the backup's own stamp when the
+/// destination already held that name; empty on failure.
+/// </summary>
+public sealed record BackupExportResult(bool Success, string Message, string Stem = "");
+
+/// <summary>
+/// Outcome of bringing an exported pair into a repository's backup folder. <see cref="Handle"/>
+/// locates the imported backup exactly as a listing would, and is null on refusal — nothing
+/// half-imported carries a handle.
+/// </summary>
+public sealed record BackupImportResult(bool Success, string Message, BackupHandle? Handle = null);
+
+/// <summary>
 /// What a delete left on disk. The two partial outcomes are not interchangeable:
 /// <see cref="BundleRemains"/> leaves the backup whole and still restorable, because the snapshot
 /// is only removed once the bundle is; <see cref="SnapshotRemains"/> means the bundle is gone and

@@ -542,6 +542,169 @@ public sealed class BackupService
     }
 
     /// <summary>
+    /// Copies a backup's bundle and refs snapshot (with the sidecar's .bak when present) to a
+    /// reader-chosen folder. Read-only toward the backup store and the repository. A backup whose
+    /// sidecar cannot be read is refused whole: the exported pair exists to be imported, and a
+    /// pair this method could not read is one <see cref="ImportBackupAsync"/> would refuse.
+    /// </summary>
+    public async Task<BackupExportResult> ExportBackupAsync(
+        BackupHandle handle, string destinationDir, CancellationToken ct = default)
+    {
+        if (!File.Exists(handle.BundlePath))
+            return new BackupExportResult(false, $"Bundle missing: {handle.BundlePath}");
+        if (ReadSnapshot(handle.RefsSnapshotPath) is null)
+            return new BackupExportResult(false,
+                $"Refs snapshot missing or unreadable: {handle.RefsSnapshotPath} — an exported backup " +
+                "must be importable elsewhere, so nothing was copied.");
+
+        try
+        {
+            Directory.CreateDirectory(destinationDir);
+            var (stem, renamed) = await CopyPairAsync(
+                handle.BundlePath, handle.RefsSnapshotPath, destinationDir, handle.UtcStamp, ct);
+            var renamedNote = renamed
+                ? $" The destination already held '{handle.UtcStamp}', so the copy is named '{stem}'."
+                : "";
+            return new BackupExportResult(true,
+                $"Exported the backup {handle.UtcStamp} to '{destinationDir}'.{renamedNote}", stem);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return new BackupExportResult(false, $"The backup could not be exported: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Brings an exported bundle/sidecar pair into <paramref name="repoPath"/>'s backup folder,
+    /// where a listing and a restore find it like any backup taken here. The sidecar must sit
+    /// beside the chosen bundle under the same stem; an unreadable sidecar refuses the whole
+    /// import — a bundle without its recorded ref layout restores to no known state. The bundle
+    /// is verified against this repository first, because a bundle whose prerequisite objects this
+    /// repository lacks would register as a backup that its own restore then refuses.
+    ///
+    /// Retention is not applied: pruning keeps the newest N, and an imported stamp can be the
+    /// oldest on disk — a prune here could remove exactly what was just brought in.
+    /// </summary>
+    public async Task<BackupImportResult> ImportBackupAsync(
+        string repoPath, string bundlePath, CancellationToken ct = default)
+    {
+        if (!GitService.IsGitRepo(repoPath))
+            return new BackupImportResult(false, $"'{repoPath}' is not a git repository — refusing to import.");
+        if (!File.Exists(bundlePath))
+            return new BackupImportResult(false, $"Bundle missing: {bundlePath}");
+
+        var sidecarPath = Path.ChangeExtension(bundlePath, null) + SnapshotSuffix;
+        var snapshot = ReadSnapshot(sidecarPath);
+        if (snapshot is null)
+            return new BackupImportResult(false,
+                $"No readable refs snapshot sits beside the bundle (expected '{sidecarPath}') — a bundle " +
+                "without its recorded ref layout restores to no known state, so nothing was imported.");
+
+        var verify = await VerifyBundleAsync(repoPath, bundlePath, ct);
+        if (!verify.Verified)
+            return new BackupImportResult(false,
+                $"The bundle {DescribeUnverified(verify)} — against '{repoPath}' it would not restore, " +
+                "so nothing was imported.");
+
+        var repoKey = RepoKey.For(repoPath);
+        var dir = SafetyPaths.BackupDirFor(repoKey);
+        string stem;
+        bool renamed;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            (stem, renamed) = await CopyPairAsync(
+                bundlePath, sidecarPath, dir, Path.GetFileNameWithoutExtension(bundlePath), ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return new BackupImportResult(false, $"The backup could not be imported: {ex.Message}");
+        }
+
+        var handle = new BackupHandle
+        {
+            RepoPath = repoPath,
+            RepoKey = repoKey,
+            UtcStamp = stem,
+            BundlePath = Path.Combine(dir, stem + ".bundle"),
+            RefsSnapshotPath = Path.Combine(dir, stem + SnapshotSuffix)
+        };
+        var renamedNote = renamed
+            ? $" A backup already held its stamp, so it is stored as '{stem}'."
+            : "";
+        return new BackupImportResult(true,
+            $"Imported the backup as {stem} — it verified against this repository and is restorable " +
+            $"from the Backups browser.{renamedNote}", handle);
+    }
+
+    /// <summary>
+    /// Copies a bundle and its sidecar under one destination stem. FileMode.CreateNew on the
+    /// bundle is the claim on the stem — a name that appears between any existence check and the
+    /// copy fails the create itself, and the loop moves to the next "-NN" suffix (ordinal order
+    /// preserved) rather than overwriting either file. A stem whose bundle claim succeeds but
+    /// whose sidecar name is taken is released and skipped whole: the sidecar there belongs to
+    /// something else, and a pair must land under one stem. The sidecar's .bak rides along best
+    /// effort — the source sidecar was already read successfully, so the .bak carries no data the
+    /// pair needs.
+    /// </summary>
+    private static async Task<(string Stem, bool Renamed)> CopyPairAsync(
+        string bundleSrc, string sidecarSrc, string destDir, string baseStem, CancellationToken ct)
+    {
+        for (var n = 0; ; n++)
+        {
+            var stem = n == 0 ? baseStem : $"{baseStem}-{n:D2}";
+            var bundleDst = Path.Combine(destDir, stem + ".bundle");
+            var sidecarDst = Path.Combine(destDir, stem + SnapshotSuffix);
+
+            FileStream claim;
+            try
+            {
+                claim = new FileStream(bundleDst, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            }
+            catch (IOException) when (File.Exists(bundleDst))
+            {
+                continue;
+            }
+
+            try
+            {
+                await using (claim)
+                await using (var bundleIn = File.OpenRead(bundleSrc))
+                    await bundleIn.CopyToAsync(claim, ct);
+
+                try
+                {
+                    await using var sidecarOut = new FileStream(
+                        sidecarDst, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    await using var sidecarIn = File.OpenRead(sidecarSrc);
+                    await sidecarIn.CopyToAsync(sidecarOut, ct);
+                }
+                catch (IOException) when (File.Exists(sidecarDst))
+                {
+                    TryDelete(bundleDst);
+                    continue;
+                }
+            }
+            catch
+            {
+                TryDelete(sidecarDst);
+                TryDelete(bundleDst);
+                throw;
+            }
+
+            var bakSrc = sidecarSrc + ".bak";
+            if (File.Exists(bakSrc))
+            {
+                try { File.Copy(bakSrc, sidecarDst + ".bak", overwrite: false); }
+                catch (Exception ex) { Log.Warn($"could not copy sidecar backup {bakSrc}", ex); }
+            }
+            return (stem, n > 0);
+        }
+    }
+
+    /// <summary>
     /// Removes a backup's bundle and refs snapshot (with its .bak) and reports what survived.
     /// Best-effort and never throws; missing files are not an error.
     ///

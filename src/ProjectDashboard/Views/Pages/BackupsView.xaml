@@ -101,6 +101,16 @@
                                            VerticalAlignment="Center"
                                            Text="Bundles every ref and records the ref layout beside it, the same capture a history rewrite takes before it runs. Nothing in the repository changes." />
                             </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <ui:Button Content="Import a backup…" FontSize="12" Padding="12,4"
+                                           Icon="{ui:SymbolIcon ArrowDownload24}"
+                                           Command="{Binding ImportBackupCommand}"
+                                           ToolTip="Bring an exported bundle and its refs snapshot into this repository's backups"
+                                           AutomationProperties.Name="Import an exported backup into this repository's backups" />
+                                <TextBlock Style="{StaticResource BackupsHint}" Margin="12,0,0,0" MaxWidth="480"
+                                           VerticalAlignment="Center"
+                                           Text="Pick a .bundle exported from this app; its refs snapshot must sit beside it. The bundle is verified against this repository before anything is stored, and nothing existing is overwritten." />
+                            </StackPanel>
                             <TextBlock Style="{StaticResource BackupsHint}" Margin="0,4,0,0"
                                        AutomationProperties.AutomationId="BackupsDeepHint"
                                        Text="A deep capture also holds commits that only a reflog reaches and every stash entry below the newest, which a standard capture leaves out — a larger, slower bundle. It preserves those objects; it does not rebuild the reflog or the stash stack on restore. The box starts at the setting on the Settings page and applies to this backup only." />
@@ -186,6 +196,11 @@
                                        Command="{Binding VerifySelectedBackupCommand}"
                                        ToolTip="Check that the selected bundle still reads back, without restoring it"
                                        AutomationProperties.Name="Verify the selected backup without restoring it" />
+                            <ui:Button Content="Export this backup…" FontSize="12" Padding="12,4" Margin="0,0,8,0"
+                                       Icon="{ui:SymbolIcon ArrowUpload24}"
+                                       Command="{Binding ExportSelectedBackupCommand}"
+                                       ToolTip="Copy the selected bundle and its refs snapshot to a folder you pick"
+                                       AutomationProperties.Name="Export the selected backup to a folder" />
                             <ui:Button Content="Delete this backup…" FontSize="12" Padding="12,4"
                                        Icon="{ui:SymbolIcon Delete24}"
                                        Command="{Binding DeleteSelectedBackupCommand}"

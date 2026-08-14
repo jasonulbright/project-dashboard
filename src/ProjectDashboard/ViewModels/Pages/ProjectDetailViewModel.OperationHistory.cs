@@ -393,6 +393,8 @@ public partial class ProjectDetailViewModel
         OperationCategory.BackupRestore => "Backup restore",
         OperationCategory.BackupCreate => "Backup created",
         OperationCategory.BackupDelete => "Backup deleted",
+        OperationCategory.BackupExport => "Backup exported",
+        OperationCategory.BackupImport => "Backup imported",
         _ => category.ToString()
     };
 
