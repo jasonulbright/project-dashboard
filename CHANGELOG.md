@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0] - 2026-08-14
+
+Backups that travel, and ignore rules that reach every repository.
+
+### Added
+- **Backup export and import** -- copy a backup's bundle and refs snapshot to a folder you pick, and bring an exported pair back into any repository's backups; an import is verified against the target repository before anything is stored, a missing or unreadable refs snapshot refuses the whole import, and a name collision stores the import under a disambiguated name rather than overwriting anything
+- **Ignore everywhere** -- add a file's name or extension to git's global excludes file from the working list, behind a confirmation that names the exact file and line; the configured `core.excludesFile` is honored (with `~` expanded) and git's own default location is used when none is set
+
 ## [2.1.2] - 2026-08-14
 
 The 2.1.0 notes described account identity before any build carried it; this release delivers that feature.
