@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3] - 2026-08-14
+
+Ahead/behind counts that stop aging silently.
+
+### Added
+- **Background fetch (opt-in, off by default)** -- fetch each repository's remote-tracking refs on a schedule (interval configurable, 15-minute floor) so ahead/behind counts stay current without pressing Sync All. The fetch is read-only on the remote and writes only remote-tracking refs locally -- never the working tree, index, local branches, or stashes, and nothing is ever pushed. Repositories busy with another operation are skipped, an unreachable host backs off exponentially on its own, a credential refusal or deleted remote parks that repository with the reason shown on its card rather than retrying forever, and going offline skips the whole tick without spawning anything
+- The ahead/behind count on every card now names when the remote was last actually read, so a stale count is never presented as live
+
 ## [2.3.2] - 2026-08-14
 
 The 2.3.1 release build failed in its test gate and published nothing; this release carries the same product with the suite corrected.
