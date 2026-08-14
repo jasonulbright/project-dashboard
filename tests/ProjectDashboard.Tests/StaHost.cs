@@ -139,6 +139,12 @@ internal sealed class StaHost : IDisposable
         {
             try
             {
+                // The whole test process renders in software. On a runner with no GPU, the
+                // hardware path's render-thread channel can stall a first Window.Show inside
+                // WaitForNextMessage forever — a wedge that no budget distinguishes from a
+                // deadlocked body, and that a machine with a real GPU never reproduces.
+                System.Windows.Media.RenderOptions.ProcessRenderMode =
+                    System.Windows.Interop.RenderMode.SoftwareOnly;
                 if (_hostsApplication)
                 {
                     var app = Application.Current as ProjectDashboard.App ?? new ProjectDashboard.App();
