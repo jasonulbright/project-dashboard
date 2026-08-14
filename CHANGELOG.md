@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.2] - 2026-08-14
+
+The 2.3.1 release build failed in its test gate and published nothing; this release carries the same product with the suite corrected.
+
+### Fixed
+- On a build runner with no GPU, the first test window shown could stall forever inside the hardware rendering path's render-thread handshake, wedging the suite's shared UI thread and failing the release gate; the test process now renders in software, and a body that overruns its budget names the last step it got past
+
 ## [2.3.1] - 2026-08-14
 
 The 2.3.0 release build failed in its test gate and published nothing; this release carries the same product with the suite corrected.
