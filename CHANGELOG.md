@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2] - 2026-08-14
+
+The 2.1.0 notes described account identity before any build carried it; this release delivers that feature.
+
+### Added
+- **Account identity** -- the GitHub CLI account a repository's actions would run as, named on the repository page with its host; mismatches and sign-outs flagged with the exact `gh` command shown as text and never run; a per-host account table in Settings
+
 ## [2.1.1] - 2026-08-10
 
 The 2.1.0 release build failed in its test gate and published nothing; this release carries the same product with the suite corrected.
