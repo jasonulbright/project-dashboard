@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -11,6 +10,7 @@ namespace ProjectDashboard.Tests;
 /// page's shape — a focusable root holding a list whose items are replaced wholesale — because
 /// the loss is a property of that arrangement, not of what the list contains.
 /// </summary>
+[Collection("shipped-markup")]
 public class ListFocusRestoreTests
 {
     private sealed record Row(string Path);
@@ -187,26 +187,19 @@ public class ListFocusRestoreTests
         list.UpdateLayout();
     }
 
-    /// <summary>WPF focus needs an STA thread; no Application is needed for a bare replica.</summary>
-    private static void RunSta(Action action)
+    /// <summary>
+    /// Runs on the shared STA host: a replica window created on a private STA thread still
+    /// resolves implicit styles through the process-wide Application, whose unfrozen brushes
+    /// belong to the shared thread — read across threads under suite load, that throws inside
+    /// style application and poisons every later view test.
+    /// </summary>
+    private static void RunSta(Action action) => StaHost.Run(() =>
     {
-        Exception? error = null;
-        var thread = new Thread(() =>
+        try { action(); }
+        finally
         {
-            try { action(); }
-            catch (Exception ex) { error = ex; }
-            finally
-            {
-                foreach (var window in _windows.Value!) window.Close();
-                _windows.Value!.Clear();
-            }
-        });
-        thread.IsBackground = true;
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (!thread.Join(TimeSpan.FromSeconds(30)))
-            throw new TimeoutException("STA test body did not complete");
-        if (error is not null)
-            ExceptionDispatchInfo.Capture(error).Throw();
-    }
+            foreach (var window in _windows.Value!) window.Close();
+            _windows.Value!.Clear();
+        }
+    });
 }
