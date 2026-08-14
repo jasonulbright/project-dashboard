@@ -7,7 +7,7 @@ Unicode true
 
 !define APPNAME   "Project Dashboard"
 !define COMPANY   "Jason Ulbright"
-!define VERSION   "2.2.0"
+!define VERSION   "2.3.0"
 !define EXE       "ProjectDashboard.exe"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectDashboard"
 

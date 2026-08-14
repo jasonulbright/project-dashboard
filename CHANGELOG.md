@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.0] - 2026-08-14
+
+The 2.2.0 release build failed in its test gate and published nothing; this release carries everything it described, the suite corrected, and the accessibility pass.
+
+### Added
+- **High contrast** -- under a Windows high-contrast theme the app's fixed status palette yields to the system colors: status foregrounds, badge tints, diff row tints, and the focus ring all resolve through the theme the user chose, and a high-contrast toggle mid-session takes effect without a restart
+- **Reduced motion** -- with the OS animation preference off, page-navigation transitions are suppressed and every busy spinner renders as a static glyph instead of animating
+- **Focus visibility** -- diff rows in both layouts now draw the keyboard focus ring their custom row chrome had dropped
+
+### Fixed
+- Six focus-restore tests built WPF windows on private threads and could read the suite's shared theme brushes across threads under load, failing the release runner; they now run on the shared UI thread with the rest of the view tests
+
 ## [2.2.0] - 2026-08-14
 
 Backups that travel, and ignore rules that reach every repository.
