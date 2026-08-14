@@ -32,6 +32,14 @@ public sealed class AppSettings
     /// <summary>Refresh a repo's card automatically when its working tree changes on disk.</summary>
     public bool EnableAutoRefresh { get; set; } = true;
 
+    /// <summary>
+    /// Fetch each repository's remote-tracking refs on a timer so ahead/behind counts stay
+    /// current. Off by default: it is the one feature that talks to the network unprompted.
+    /// </summary>
+    public bool EnableScheduledFetch { get; set; }
+
+    public int ScheduledFetchIntervalMinutes { get; set; } = 60;
+
     /// <summary>Per-repo backups retained before a history rewrite prunes the oldest.</summary>
     public int BackupRetentionCount { get; set; } = 10;
 

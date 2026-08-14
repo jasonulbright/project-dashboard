@@ -34,6 +34,19 @@ public static class SettingsDelta
     public static bool RefreshIntervalChanged(SettingsChange change) =>
         EffectiveRefreshSeconds(change.Previous) != EffectiveRefreshSeconds(change.Current);
 
+    /// <summary>Floor for the background-fetch interval; the feature is a trickle, never a poll.</summary>
+    public const int MinimumFetchMinutes = 15;
+
+    public static int EffectiveFetchMinutes(int configuredMinutes) =>
+        Math.Max(MinimumFetchMinutes, configuredMinutes);
+
+    public static int EffectiveFetchMinutes(AppSettings settings) =>
+        EffectiveFetchMinutes(settings.ScheduledFetchIntervalMinutes);
+
+    public static bool ScheduledFetchChanged(SettingsChange change) =>
+        change.Previous.EnableScheduledFetch != change.Current.EnableScheduledFetch
+        || EffectiveFetchMinutes(change.Previous) != EffectiveFetchMinutes(change.Current);
+
     public static bool WatcherTargetChanged(SettingsChange change) =>
         !NamesEqual(WatcherRoots(change.Previous), WatcherRoots(change.Current));
 

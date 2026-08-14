@@ -335,6 +335,29 @@
                        FontSize="12" Margin="0,0,0,24" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
 
+            <!-- Background fetch -->
+            <TextBlock Text="Background fetch" FontSize="16" Margin="0,0,0,4"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            <CheckBox Content="Fetch each repository's remote on a schedule"
+                      IsChecked="{Binding EnableScheduledFetch}"
+                      Margin="0,0,0,4"
+                      AutomationProperties.Name="Fetch each repository's remote on a schedule" />
+            <TextBlock Text="Runs git fetch --prune per repository so ahead/behind counts stay current without pressing Sync All. The fetch is read-only on the remote; locally it writes only remote-tracking refs — it never touches your working tree, index, local branches, or stashes, and it never pushes. Repositories busy with another operation are skipped, an unreachable host backs off on its own, and a credential refusal parks that repository with the reason shown on its card until you act. Metered connections are not distinguished — leave this off on one that matters."
+                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="Interval (minutes, minimum 15)" FontSize="12" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <ui:TextBox Text="{Binding ScheduledFetchIntervalMinutes, UpdateSourceTrigger=PropertyChanged}"
+                            AutomationProperties.Name="Background fetch interval in minutes, minimum fifteen"
+                            PlaceholderText="60"
+                            Width="120" Margin="8,0,0,0" />
+            </StackPanel>
+            <TextBlock Text="{Binding ScheduledFetchStatus}"
+                       AutomationProperties.LiveSetting="Polite" FontSize="12" TextWrapping="Wrap"
+                       Margin="0,0,0,24"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
             <!-- Update check -->
             <TextBlock Text="Updates" FontSize="16" Margin="0,24,0,4"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />

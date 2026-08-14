@@ -101,7 +101,7 @@ public partial class DashboardViewModel : ObservableObject
     /// dispatcher to marshal through, and a default that silently drops the callback there
     /// would drop the re-scan that a released repository lease is supposed to start.
     /// </summary>
-    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null, UpdateCheckService? updateCheck = null, OperationHistory? history = null)
+    public DashboardViewModel(ProjectDiscoveryService discoveryService, INavigationService navigationService, SettingsService settingsService, GitHubService gitHubService, GitService gitService, ProjectWatcherService watcher, RepoBusyRegistry busyRegistry, Action<Action>? uiPost = null, RewriteRecoveryService? recovery = null, ProjectTemplateService? templateService = null, UpdateCheckService? updateCheck = null, OperationHistory? history = null, ScheduledFetchService? scheduledFetch = null)
     {
         // Defaulted rather than left null: these are the same fetch, pull, and push the detail page
         // records, and a repository would otherwise hold a record of one and not the other
@@ -163,6 +163,101 @@ public partial class DashboardViewModel : ObservableObject
         // Auto-refresh timer (periodic full reconcile) + file watcher (immediate, per-repo)
         StartRefreshTimer();
         StartWatcher();
+
+        _scheduledFetch = scheduledFetch;
+        if (scheduledFetch is not null)
+        {
+            scheduledFetch.RepoFetched += OnScheduledFetchCompleted;
+            StartScheduledFetchTimer();
+        }
+    }
+
+    // ── Scheduled background fetch ──────────────────────────────────────────
+
+    private readonly ScheduledFetchService? _scheduledFetch;
+    private DispatcherTimer? _scheduledFetchTimer;
+
+    /// <summary>
+    /// How often eligibility is re-read. Finer than the fetch interval on purpose: each
+    /// repository's own last-fetched stamp decides whether it is due, so a portfolio spreads
+    /// across pumps instead of fetching as one burst every interval.
+    /// </summary>
+    internal static readonly TimeSpan ScheduledFetchPump = TimeSpan.FromMinutes(5);
+
+    /// <summary>The tick the timer last started and did not await, so a caller can wait for the read itself.</summary>
+    internal Task ScheduledFetchTick { get; private set; } = Task.CompletedTask;
+
+    private void StartScheduledFetchTimer()
+    {
+        _scheduledFetchTimer = new DispatcherTimer { Interval = ScheduledFetchPump };
+        _scheduledFetchTimer.Tick += (_, _) => ScheduledFetchTick = RunScheduledFetchTickAsync();
+        _scheduledFetchTimer.Start();
+    }
+
+    internal async Task RunScheduledFetchTickAsync()
+    {
+        var service = _scheduledFetch;
+        if (service is null) return;
+        var settings = _settingsService.Load();
+        if (!settings.EnableScheduledFetch) return;
+        // The same gates the periodic reconcile honors: a bulk op or a scan in flight owns the
+        // repositories this tick would read.
+        if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning) return;
+
+        var candidates = Projects
+            .Where(p => !p.IsRemoteOnly && p.FullPath.Length > 0 && p.GitStatus.RemoteUrl.Length > 0)
+            .Select(p => new FetchCandidate(p.FullPath, p.GitStatus.RemoteUrl))
+            .ToList();
+        if (candidates.Count == 0) return;
+
+        try
+        {
+            await service.RunTickAsync(candidates,
+                TimeSpan.FromMinutes(SettingsDelta.EffectiveFetchMinutes(settings)));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("scheduled background fetch tick failed", ex);
+        }
+        StampSyncFreshness();
+    }
+
+    /// <summary>Card refresh after a background fetch: local-only, never under the released lease.</summary>
+    internal Task ScheduledFetchRefresh { get; private set; } = Task.CompletedTask;
+
+    private void OnScheduledFetchCompleted(string repoPath) =>
+        _uiPost(() => ScheduledFetchRefresh = RefreshAfterScheduledFetchAsync(repoPath));
+
+    private async Task RefreshAfterScheduledFetchAsync(string repoPath)
+    {
+        if (_bulkOpRunning || LoadProjectsCommand.IsRunning || ForceRefreshCommand.IsRunning) return;
+        var project = Projects.FirstOrDefault(p => !p.IsRemoteOnly
+            && string.Equals(p.FullPath, repoPath, StringComparison.OrdinalIgnoreCase));
+        if (project is null || _busyRegistry.IsBusy(repoPath)) return;
+        try
+        {
+            var refreshed = await _discoveryService.RefreshProjectLocalAsync(repoPath);
+            if (refreshed is null) return;
+            if (project.GitStatus.Visibility is "public" or "private" or "internal" or "unknown")
+                refreshed.GitStatus.Visibility = project.GitStatus.Visibility;
+            project.GitStatus = refreshed.GitStatus;
+            project.RecentCommits = refreshed.RecentCommits;
+            ApplyFilters();
+            NotifySummary();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"card refresh after a background fetch failed for {repoPath}", ex);
+        }
+    }
+
+    private void StampSyncFreshness()
+    {
+        var service = _scheduledFetch;
+        if (service is null) return;
+        foreach (var project in Projects.Concat(_hiddenSnapshot))
+            if (!project.IsRemoteOnly && project.FullPath.Length > 0)
+                project.SyncFreshnessText = service.DescribeRepo(project.FullPath);
     }
 
     private void StartWatcher()
@@ -663,6 +758,7 @@ public partial class DashboardViewModel : ObservableObject
                 Record(OperationOutcome.Failed, fetch.FirstError);
                 return;
             }
+            _scheduledFetch?.RecordManualFetch(repo);
             if (action == CardAction.Fetch)
             {
                 OpStatusText = $"{name}: fetched.";
@@ -1836,6 +1932,11 @@ public partial class DashboardViewModel : ObservableObject
         if (SettingsDelta.RefreshIntervalChanged(change) && _refreshTimer is not null)
             _refreshTimer.Interval = TimeSpan.FromSeconds(SettingsDelta.EffectiveRefreshSeconds(change.Current));
 
+        // Turning the feature on is the user acting: repositories parked on a credential or
+        // not-found verdict get one fresh verdict rather than staying frozen on the old one.
+        if (SettingsDelta.ScheduledFetchChanged(change) && change.Current.EnableScheduledFetch)
+            _scheduledFetch?.ClearParked();
+
         if (SettingsDelta.WatcherTargetChanged(change))
             SyncWatcherToSettings();
 
@@ -2193,6 +2294,7 @@ public partial class DashboardViewModel : ObservableObject
 
     private void ApplyFilters()
     {
+        StampSyncFreshness();
         // The Hidden view has its own source list — without this, ANY ApplyFilters
         // call (search keystroke, sort change, timer refresh) silently replaced the
         // hidden list with the normal project set while "Hidden" stayed selected.

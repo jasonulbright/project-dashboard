@@ -147,6 +147,7 @@ public partial class App : Application
 
                 // Safety rails: shared singletons for the destructive stages.
                 services.AddSingleton<Services.Safety.RepoBusyRegistry>();
+                services.AddSingleton<ScheduledFetchService>();
                 services.AddSingleton<Services.Safety.RewriteJournal>();
                 // The durable record of what was attempted, separate from the journal's
                 // "what is pending now". Every writer shares one instance so appends against
@@ -228,7 +229,8 @@ public partial class App : Application
                     sp.GetRequiredService<Services.Update.UpdateCheckService>(),
                     sp.GetRequiredService<ManifestStore>(),
                     sp.GetRequiredService<ProjectDiscoveryService>(),
-                    sp.GetRequiredService<Services.Safety.BackupService>()));
+                    sp.GetRequiredService<Services.Safety.BackupService>(),
+                    sp.GetRequiredService<ScheduledFetchService>()));
 
                 // The rollup reads the dashboard's own project list rather than scanning again,
                 // and shares the container's busy registry, backup store and ledger — a private

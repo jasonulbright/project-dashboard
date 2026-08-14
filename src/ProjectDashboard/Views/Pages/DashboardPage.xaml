@@ -946,7 +946,7 @@
                                         </TextBlock>
                                         <TextBlock FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"
                                                    Text="{Binding GitStatus.AheadBehindLabel}"
-                                                   Cursor="Hand" ToolTip="Open the Branches tab"
+                                                   Cursor="Hand" ToolTip="{Binding AheadBehindToolTip}"
                                                    Foreground="{DynamicResource StatusInfoFg}">
                                             <TextBlock.InputBindings>
                                                 <MouseBinding MouseAction="LeftClick"

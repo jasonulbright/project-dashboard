@@ -31,11 +31,17 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _dangerZoneEnabled;
     [ObservableProperty] private bool _enableUpdateCheck = true;
     [ObservableProperty] private string _updateCheckStatus = "";
+    [ObservableProperty] private bool _enableScheduledFetch;
+    [ObservableProperty] private int _scheduledFetchIntervalMinutes = 60;
+    [ObservableProperty] private string _scheduledFetchStatus = "";
+
+    private readonly ScheduledFetchService? _scheduledFetch;
     [ObservableProperty] private string _syncStatus = "";
     [ObservableProperty] private string _saveStatus = "";
 
-    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null, ManifestStore? manifests = null, ProjectDiscoveryService? discovery = null, Services.Safety.BackupService? backups = null)
+    public SettingsViewModel(SettingsService settingsService, GitHubService gitHubService, DashboardViewModel dashboardViewModel, UpdateCheckService? updateCheck = null, ManifestStore? manifests = null, ProjectDiscoveryService? discovery = null, Services.Safety.BackupService? backups = null, ScheduledFetchService? scheduledFetch = null)
     {
+        _scheduledFetch = scheduledFetch;
         _settingsService = settingsService;
         _gitHubService = gitHubService;
         _dashboardViewModel = dashboardViewModel;
@@ -70,6 +76,9 @@ public partial class SettingsViewModel : ObservableObject
         DangerZoneEnabled = settings.DangerZoneEnabled;
         EnableUpdateCheck = settings.EnableUpdateCheck;
         UpdateCheckStatus = DescribeLastCheck(settings);
+        EnableScheduledFetch = settings.EnableScheduledFetch;
+        ScheduledFetchIntervalMinutes = settings.ScheduledFetchIntervalMinutes;
+        ScheduledFetchStatus = _scheduledFetch?.StatusLine ?? "";
 
         if (Enum.TryParse<ApplicationTheme>(settings.Theme, out var theme))
         {
@@ -188,6 +197,9 @@ public partial class SettingsViewModel : ObservableObject
         settings.EnableAutoRefresh = EnableAutoRefresh;
         settings.DangerZoneEnabled = DangerZoneEnabled;
         settings.EnableUpdateCheck = EnableUpdateCheck;
+        settings.EnableScheduledFetch = EnableScheduledFetch;
+        settings.ScheduledFetchIntervalMinutes = SettingsDelta.EffectiveFetchMinutes(ScheduledFetchIntervalMinutes);
+        ScheduledFetchIntervalMinutes = settings.ScheduledFetchIntervalMinutes;
         SaveBackupSettings(settings);
 
         // The startup probe covers only a location unwritable at launch. A volume that

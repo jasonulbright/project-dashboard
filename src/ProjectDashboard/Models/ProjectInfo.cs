@@ -54,6 +54,19 @@ public partial class ProjectInfo : ObservableObject
     public string RemoteSlug { get; set; } = "";
 
     [ObservableProperty] private GitStatus _gitStatus = new();
+
+    /// <summary>
+    /// When this repository's remote was last actually read, or why the background fetch has
+    /// parked it. Ahead/behind counts age between fetches, and a count with no timestamp reads
+    /// as live; empty when no fetch has ever been recorded.
+    /// </summary>
+    [ObservableProperty] private string _syncFreshnessText = "";
+
+    /// <summary>The ahead/behind affordance carries the staleness a bare count would hide.</summary>
+    public string AheadBehindToolTip =>
+        SyncFreshnessText.Length == 0 ? "Open the Branches tab" : $"Open the Branches tab. {SyncFreshnessText}";
+
+    partial void OnSyncFreshnessTextChanged(string value) => OnPropertyChanged(nameof(AheadBehindToolTip));
     [ObservableProperty] private ProjectManifest _manifest = new();
     // Null = "couldn't fetch" — rendered as absent, never as zero.
     [ObservableProperty] private int? _openIssueCount;

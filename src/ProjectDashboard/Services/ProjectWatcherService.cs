@@ -108,26 +108,7 @@ public sealed class ProjectWatcherService : IDisposable
     private void Queue(RootWatch watch, string fullPath)
     {
         if (!Covers(watch.Root, fullPath)) return;
-
-        // Test the path RELATIVE to the root: an ignored word (bin, packages, .vs, …)
-        // in an ANCESTOR of the root must not silently drop every event.
-        var relative = fullPath[watch.Root.Length..];
-
-        // "\segment\" test needs delimiters on both sides; pad so a leading .git catches too.
-        var padded = "\\" + relative.TrimStart('\\', '/') + "\\";
-        foreach (var seg in ScanSkips.Segments)
-            if (padded.Contains(seg, StringComparison.OrdinalIgnoreCase))
-            {
-                // .git/HEAD and .git/index DO matter (branch switch, stage/commit) —
-                // let those through even though the rest of .git is ignored.
-                if (seg == @"\.git\" &&
-                    (fullPath.EndsWith(@"\.git\HEAD", StringComparison.OrdinalIgnoreCase) ||
-                     fullPath.EndsWith(@"\.git\index", StringComparison.OrdinalIgnoreCase) ||
-                     fullPath.EndsWith(@"\.git\ORIG_HEAD", StringComparison.OrdinalIgnoreCase) ||
-                     fullPath.EndsWith(@"\.git\MERGE_HEAD", StringComparison.OrdinalIgnoreCase)))
-                    break;
-                return;
-            }
+        if (!SignalsRefresh(watch.Root, fullPath)) return;
 
         var repo = watch.ResolveRepo(fullPath, _knownRepos);
         if (repo is null) return;
@@ -143,6 +124,34 @@ public sealed class ProjectWatcherService : IDisposable
 
     private static bool Covers(string root, string fullPath) =>
         fullPath.Length > root.Length && fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a filesystem event at this path should refresh a card. Everything under .git is
+    /// ignored except HEAD, index, ORIG_HEAD, and MERGE_HEAD (branch switch, stage, commit,
+    /// merge) — in particular refs/remotes/* stays ignored, which is what keeps a background
+    /// fetch from turning into a refresh per repository per tick.
+    /// </summary>
+    internal static bool SignalsRefresh(string root, string fullPath)
+    {
+        // Test the path RELATIVE to the root: an ignored word (bin, packages, .vs, …)
+        // in an ANCESTOR of the root must not silently drop every event.
+        var relative = fullPath[root.Length..];
+
+        // "\segment\" test needs delimiters on both sides; pad so a leading .git catches too.
+        var padded = "\\" + relative.TrimStart('\\', '/') + "\\";
+        foreach (var seg in ScanSkips.Segments)
+            if (padded.Contains(seg, StringComparison.OrdinalIgnoreCase))
+            {
+                if (seg == @"\.git\" &&
+                    (fullPath.EndsWith(@"\.git\HEAD", StringComparison.OrdinalIgnoreCase) ||
+                     fullPath.EndsWith(@"\.git\index", StringComparison.OrdinalIgnoreCase) ||
+                     fullPath.EndsWith(@"\.git\ORIG_HEAD", StringComparison.OrdinalIgnoreCase) ||
+                     fullPath.EndsWith(@"\.git\MERGE_HEAD", StringComparison.OrdinalIgnoreCase)))
+                    return true;
+                return false;
+            }
+        return true;
+    }
 
     private void OnDebounce(object? _)
     {
