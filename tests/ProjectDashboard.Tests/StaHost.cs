@@ -24,8 +24,13 @@ internal sealed class StaHost : IDisposable
     /// The host every markup test queues onto, and the only one that owns an Application. Never
     /// disposed: markup tests in many classes queue onto it and none of them can know it is the
     /// last, so the thread is process-lifetime by design and ends with the test host.
+    ///
+    /// The budget exists to catch a wedged body, not a slow one, and it has to hold on a
+    /// contended two-core CI runner where a first body also pays for the Application build and
+    /// the first full-page parse — 60 seconds was crossed there by a body that runs in two
+    /// seconds locally, and the poison then failed every markup test behind it.
     /// </summary>
-    private static readonly StaHost Shared = new(TimeSpan.FromSeconds(60), hostsApplication: true);
+    private static readonly StaHost Shared = new(TimeSpan.FromMinutes(5), hostsApplication: true);
 
     public static void Run(Action body, [CallerMemberName] string caller = "") =>
         Shared.Execute(body, caller);
