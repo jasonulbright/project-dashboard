@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1] - 2026-08-14
+
+The 2.3.0 release build failed in its test gate and published nothing; this release carries the same product with the suite corrected.
+
+### Fixed
+- The test suite's shared UI thread gave each body 60 seconds, which a contended CI runner crossed on a body that runs in two seconds locally, failing the release gate; the budget now holds under that load while still catching a genuinely wedged body
+
 ## [2.3.0] - 2026-08-14
 
 The 2.2.0 release build failed in its test gate and published nothing; this release carries everything it described, the suite corrected, and the accessibility pass.
