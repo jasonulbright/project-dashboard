@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ProjectDashboard.Models;
 using ProjectDashboard.Services;
 
@@ -236,5 +237,52 @@ public class GhAuthStatusParsingTests
         await gh.GetAuthStateAsync();
 
         Assert.Equal(2, gh.Runs.Count);
+    }
+
+    /// <summary>Invalidates from inside the read, which is where the two can interleave.</summary>
+    private sealed class GhSignedIntoMidRead(string payload) : GitHubService(new SettingsService())
+    {
+        public List<string> Runs { get; } = [];
+
+        public override Task<ProcessResult> RunAsync(
+            IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            Runs.Add(string.Join(" ", args));
+            if (Runs.Count == 1) InvalidateAuthState();
+            return Task.FromResult(new ProcessResult(0, payload, "", TimedOut: false));
+        }
+    }
+
+    /// <summary>
+    /// The read that loses the race hands its answer to the caller that asked for it and holds it
+    /// for nobody: it describes the machine as it was before the sign-in that overtook it, so the
+    /// next caller reads gh again rather than being told what the overtaken read found.
+    /// </summary>
+    [Fact]
+    public async Task AnAnswerOvertakenByASignIn_IsNotHeldForTheNextCaller()
+    {
+        var gh = new GhSignedIntoMidRead(OneAccount);
+
+        Assert.NotNull(await gh.GetAuthStateAsync());
+        await gh.GetAuthStateAsync();
+
+        Assert.Equal(2, gh.Runs.Count);
+    }
+
+    /// <summary>
+    /// The drop above holds only because the answer and the epoch that governs it are one value
+    /// swapped in one operation. A test cannot stage the losing interleaving of a check and a
+    /// separate write — the reads are serialized by the gate, and the only concurrent writer is
+    /// the invalidation — so what the shape is, is asserted at the source.
+    /// </summary>
+    [Fact]
+    public void TheHeldAnswerIsReplacedAtomically_NeverTestedThenAssigned()
+    {
+        var source = RepoSource.Read("src/ProjectDashboard/Services/GitHubService.cs");
+
+        Assert.Contains("Interlocked.CompareExchange(ref _authSlot", source);
+        Assert.Contains("Interlocked.Exchange(ref _authSlot", source);
+        // The field initializer is the one plain write; any other would be a check-then-act again.
+        Assert.Single(Regex.Matches(source, @"_authSlot\s*=[^=]"));
     }
 }

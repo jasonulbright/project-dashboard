@@ -77,8 +77,17 @@ public class GitHubService(SettingsService settingsService)
     }
 
     private readonly SemaphoreSlim _authStateGate = new(1, 1);
-    private GhAuthState? _authState;
-    private int _authStateEpoch;
+
+    /// <summary>
+    /// One held answer, or the absence of one. Immutable, and replaced only as a whole: its
+    /// reference identity is what tells a read whether the slot it started from is still the slot
+    /// it is finishing into. A separate flag beside the answer could be tested and then written
+    /// across an invalidation that landed between the two.
+    /// </summary>
+    private sealed record AuthSlot(GhAuthState? Answer);
+
+    /// <summary>Never null: an emptied slot is a new instance, which is what makes a drop visible.</summary>
+    private AuthSlot _authSlot = new((GhAuthState?)null);
 
     /// <summary>
     /// Which accounts gh holds, on which hosts, and which one it targets per host. Null is a
@@ -96,14 +105,16 @@ public class GitHubService(SettingsService settingsService)
         await _authStateGate.WaitAsync(ct);
         try
         {
-            if (_authState is not null && !refresh) return _authState;
-            // An invalidation that lands while this read is in flight describes a machine this
-            // answer was already taken from. Holding it anyway would keep the pre-sign-in answer
-            // for the session; the epoch is what makes the drop win that race rather than the
-            // write that started first.
-            var epoch = Volatile.Read(ref _authStateEpoch);
+            var started = Volatile.Read(ref _authSlot);
+            if (started.Answer is not null && !refresh) return started.Answer;
+
             var read = await ReadAuthStateAsync(ct);
-            if (Volatile.Read(ref _authStateEpoch) == epoch) _authState = read;
+            // An invalidation that landed while this read was in flight describes a machine the
+            // answer was already taken from, and holding it would keep the pre-sign-in answer for
+            // the session. The slot is replaced only if it is still the one this read started
+            // from, so the drop wins the race rather than the write that started first — testing
+            // a flag and then assigning would let an invalidation land between the two.
+            Interlocked.CompareExchange(ref _authSlot, new AuthSlot(read), started);
             return read;
         }
         finally
@@ -115,12 +126,11 @@ public class GitHubService(SettingsService settingsService)
     /// <summary>
     /// Drops the held answer so the next read asks gh again. Called where the app hands the user
     /// to gh's own sign-in: the account they just added is not in the answer read before it.
+    /// Runs off the gate deliberately — a caller must not wait behind an in-flight read to say
+    /// that read is stale.
     /// </summary>
     public void InvalidateAuthState()
-    {
-        Interlocked.Increment(ref _authStateEpoch);
-        _authState = null;
-    }
+        => Interlocked.Exchange(ref _authSlot, new AuthSlot((GhAuthState?)null));
 
     private async Task<GhAuthState?> ReadAuthStateAsync(CancellationToken ct)
     {
