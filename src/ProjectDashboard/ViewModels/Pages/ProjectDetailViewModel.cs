@@ -490,8 +490,7 @@ public partial class ProjectDetailViewModel : ObservableObject
     /// </summary>
     private async Task<bool> PersistManifestAsync(ProjectInfo project, ProjectManifest manifest)
     {
-        if (_discoveryService?.Manifests is { } manifests
-            && manifests.TryGet(project.FullPath, out var stored) && stored is not null)
+        if (_discoveryService.Manifests.TryGet(project.FullPath, out var stored) && stored is not null)
         {
             foreach (var field in Taxonomy.Fields)
             {
