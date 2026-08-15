@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.4] - 2026-08-15
+
+The four metadata lists are yours now.
+
+### Added
+- **Your own metadata lists** -- the type, status, category, and schedule values are editable in Settings: add a value, rename one, reorder them, give one a colored card chip or turn its chip off. Renaming cascades onto every project already holding the value in one write; a value still in use cannot be removed, and the refusal names the count; a value outside your lists (hand-edited, imported) keeps showing, marked as unrecognised rather than silently replaced, and existing values are taken into the lists on first launch after upgrading
+- **Select mode** -- put the card grid into multi-select, tick cards, and set one metadata field on all of them at once, with every failed write named; while selecting, clicking a card ticks it -- nothing opens or clones until you leave select mode
+
 ## [2.3.3] - 2026-08-14
 
 Ahead/behind counts that stop aging silently.
