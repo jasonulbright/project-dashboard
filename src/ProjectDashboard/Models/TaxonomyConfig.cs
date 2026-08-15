@@ -37,6 +37,26 @@ public sealed class TaxonomyEntry
 /// <summary>One value's old and new spelling, as a cascade over the stored records reads it.</summary>
 public sealed record TaxonomyRename(TaxonomyField Field, string From, string To);
 
+/// <summary>A value an edit removes from its list outright, to be refused while any record holds it.</summary>
+public sealed record TaxonomyDrop(TaxonomyField Field, string Value);
+
+/// <summary>A dropped value some record still holds, with the count the refusal names.</summary>
+public sealed record TaxonomyValueInUse(TaxonomyField Field, string Value, int Count);
+
+/// <summary>
+/// One whole taxonomy apply. Exactly one of the failure signals is set on a refusal:
+/// <see cref="InUse"/> non-empty means nothing was written at all;
+/// <see cref="RecordsWriteFailed"/> means the cascade never reached disk and no list changed;
+/// <see cref="ListsWriteFailed"/> means the cascade (of <see cref="Cascaded"/> fields) is on
+/// disk while the lists are not, and applying again finishes the job.
+/// </summary>
+public sealed record TaxonomyApplyResult(
+    bool Applied,
+    int Cascaded,
+    IReadOnlyList<TaxonomyValueInUse> InUse,
+    bool RecordsWriteFailed,
+    bool ListsWriteFailed);
+
 /// <summary>The allowed values for each of the four manifest taxonomies, in display order.</summary>
 public sealed class TaxonomyConfig
 {

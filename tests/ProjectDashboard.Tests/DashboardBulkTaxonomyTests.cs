@@ -301,4 +301,42 @@ public class DashboardBulkTaxonomyTests
         Assert.DoesNotContain("repo6", line);
         Assert.Contains("and 2 more", line);
     }
+
+    // ── Selection mode intercepts activation ────────────────────────────────
+
+    /// <summary>
+    /// Every route that activates a card — click, Enter, Space — runs the open command, so the
+    /// mode has to be decided there: a reader assembling a selection who clicks a card body must
+    /// tick it, never be navigated away or have a clone fired at a cloud card.
+    /// </summary>
+    [Fact]
+    public void InSelectionMode_ActivatingACard_TicksItInsteadOfOpeningIt()
+    {
+        var settings = SavedSettings();
+        using var watcher = new ProjectWatcherService();
+        var store = new ManifestStore();
+        var alpha = Card("alpha");
+        var cloud = new ProjectInfo { DirectoryName = "cloud", DisplayName = "cloud", IsRemoteOnly = true };
+        var grid = Grid(settings, watcher, new PartlyRefusingDiscovery(settings, store), null, alpha, cloud);
+        var navigated = false;
+        grid.NavigateToProjectRequested += _ => navigated = true;
+        grid.IsSelectionMode = true;
+
+        grid.OpenProjectCommand.Execute(alpha);
+        Assert.True(alpha.IsSelected);
+        Assert.Equal(1, grid.SelectedCount);
+        Assert.False(navigated);
+
+        grid.OpenProjectCommand.Execute(alpha);
+        Assert.False(alpha.IsSelected);
+
+        // A cloud card is not selectable — and activating one must not clone it either.
+        grid.OpenProjectCommand.Execute(cloud);
+        Assert.False(cloud.IsSelected);
+        Assert.False(navigated);
+
+        grid.IsSelectionMode = false;
+        grid.OpenProjectCommand.Execute(alpha);
+        Assert.True(navigated);
+    }
 }

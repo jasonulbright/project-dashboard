@@ -70,32 +70,43 @@ public partial class SettingsViewModel
                 .Where(r => r.IsRename)
                 .Select(r => new TaxonomyRename(list.Field, r.OriginalName, r.Name.Trim())))
             .ToList();
+        var dropped = edited
+            .SelectMany(list => list.Dropped().Select(value => new TaxonomyDrop(list.Field, value)))
+            .ToList();
 
-        if (_manifests.RenameValues(renames) is not { } cascaded)
+        // One store call carries the in-use recount, the cascade, and the list write, so a
+        // manifest saved between a count and the write cannot slip a value out from under its
+        // own deletion. The list write runs as the store's callback for exactly that reason.
+        var outcome = _manifests.ApplyTaxonomy(renames, dropped, () =>
+        {
+            var settings = _settingsService.Load();
+            var config = settings.Taxonomy ?? new TaxonomyConfig();
+            foreach (var list in edited)
+                Taxonomy.Replace(config, list.Field, list.Rows.Select(r => r.ToEntry()).ToList());
+            settings.Taxonomy = config;
+            return _settingsService.Save(settings);
+        });
+
+        if (outcome.InUse.Count > 0)
+        {
+            TaxonomyStatus = DescribeInUse(outcome.InUse);
+            return;
+        }
+        if (outcome.RecordsWriteFailed)
         {
             TaxonomyStatus = "Nothing was saved — the metadata file could not be written, so no list changed either. See the log for details.";
             return;
         }
-
-        var settings = _settingsService.Load();
-        var config = settings.Taxonomy ?? new TaxonomyConfig();
-        foreach (var list in edited)
-            Taxonomy.Replace(config, list.Field, list.Rows.Select(r => r.ToEntry()).ToList());
-        settings.Taxonomy = config;
-
-        if (!_settingsService.Save(settings))
+        if (outcome.ListsWriteFailed)
         {
-            TaxonomyStatus = cascaded == 0
+            TaxonomyStatus = outcome.Cascaded == 0
                 ? $"Lists not saved — could not write {AppPaths.SettingsFile}. See the log for details."
                 : $"Lists not saved — could not write {AppPaths.SettingsFile}. " +
-                  $"{(cascaded == 1 ? "1 stored value was" : $"{cascaded} stored values were")} already renamed; " +
+                  $"{(outcome.Cascaded == 1 ? "1 stored value was" : $"{outcome.Cascaded} stored values were")} already renamed; " +
                   "applying again finishes the job.";
             return;
         }
-
-        // The cascade rewrote the index, not the models the grid is holding. The settings write
-        // above re-derives every chip's colour; only this carries the new value itself across.
-        if (_dashboardViewModel is { } dashboard) dashboard.ApplyTaxonomyRenames(renames);
+        var cascaded = outcome.Cascaded;
 
         LoadTaxonomy(_settingsService.Load());
         TaxonomyStatus = DescribeApplied(renames.Count, cascaded);
@@ -112,9 +123,12 @@ public partial class SettingsViewModel
     }
 
     /// <summary>
-    /// Everything wrong with the edited lists, in one message, or empty when they can be applied.
-    /// Reported together rather than one at a time: a reader fixing four names should not have to
-    /// press Save four times to find the fourth.
+    /// Everything wrong with the edited lists, in one message, or empty when they can be offered
+    /// to the store. Reported together rather than one at a time: a reader fixing four names
+    /// should not have to press Save four times to find the fourth. The in-use counts here are
+    /// advisory wording only — the count that gates the write is retaken by
+    /// <see cref="ManifestStore.ApplyTaxonomy"/> under the same lock as the write itself, so a
+    /// manifest saved after this read still refuses there rather than orphaning its value.
     /// </summary>
     internal static string DescribeRefusals(
         IReadOnlyList<TaxonomyListEditor> edited, ManifestStore manifests)
@@ -145,9 +159,7 @@ public partial class SettingsViewModel
             {
                 var used = manifests.CountUsing(list.Field, dropped);
                 if (used == 0) continue;
-                problems.Add(
-                    $"\"{dropped}\" is still the {Taxonomy.Label(list.Field)} of {used} " +
-                    $"{(used == 1 ? "project" : "projects")} — set {(used == 1 ? "it" : "them")} to something else first");
+                problems.Add(InUseProblem(new TaxonomyValueInUse(list.Field, dropped, used)));
             }
         }
 
@@ -155,6 +167,14 @@ public partial class SettingsViewModel
             ? ""
             : $"Nothing was saved. {string.Join("; ", problems)}.";
     }
+
+    /// <summary>The store's refusal, in the same voice: which values are still held, and by how many.</summary>
+    internal static string DescribeInUse(IReadOnlyList<TaxonomyValueInUse> inUse) =>
+        $"Nothing was saved. {string.Join("; ", inUse.Select(InUseProblem))}.";
+
+    private static string InUseProblem(TaxonomyValueInUse u) =>
+        $"\"{u.Value}\" is still the {Taxonomy.Label(u.Field)} of {u.Count} " +
+        $"{(u.Count == 1 ? "project" : "projects")} — set {(u.Count == 1 ? "it" : "them")} to something else first";
 }
 
 /// <summary>One of the four editable lists, with the rows a reader is arranging.</summary>

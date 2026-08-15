@@ -134,4 +134,62 @@ public class ManifestStoreTaxonomyTests : IDisposable
         Assert.True(new ManifestStore().TryGet(PathFor(0), out var stored));
         Assert.Equal("MECM", stored!.Category);
     }
+
+    /// <summary>
+    /// The drop decision and its count share one lock with the write. A count read before the
+    /// apply answers a store a manifest save may since have changed — here the value gains a user
+    /// after the advisory read, and the apply still refuses with the count it took itself.
+    /// </summary>
+    [Fact]
+    public void ApplyTaxonomy_RecountsDropsAtTheWrite_AndRefusesWithoutCallingTheListCommit()
+    {
+        var store = Seeded(0, "unused");
+        Assert.Equal(0, store.CountUsing(TaxonomyField.Category, "MECM"));
+
+        // The window the lock closes: a record adopts the value after the advisory count.
+        store.Save(PathFor(9), new ProjectManifest { Category = "MECM" });
+
+        var committed = false;
+        var outcome = store.ApplyTaxonomy(
+            [], [new TaxonomyDrop(TaxonomyField.Category, "MECM")], () => committed = true);
+
+        Assert.False(outcome.Applied);
+        var inUse = Assert.Single(outcome.InUse);
+        Assert.Equal(1, inUse.Count);
+        Assert.False(committed);
+    }
+
+    [Fact]
+    public void ApplyTaxonomy_CascadesThenCommitsTheLists_AndRaisesTheRenameEvent()
+    {
+        var store = Seeded(2, "MECM");
+        IReadOnlyList<TaxonomyRename>? announced = null;
+        store.ValuesRenamed += renames => announced = renames;
+
+        var outcome = store.ApplyTaxonomy(
+            [new TaxonomyRename(TaxonomyField.Category, "MECM", "SCCM")], [], () => true);
+
+        Assert.True(outcome.Applied);
+        Assert.Equal(2, outcome.Cascaded);
+        Assert.NotNull(announced);
+        Assert.True(store.TryGet(PathFor(0), out var live));
+        Assert.Equal("SCCM", live!.Category);
+    }
+
+    /// <summary>A cascade that reached disk is announced even when the list write then fails: open pages must still follow it.</summary>
+    [Fact]
+    public void ApplyTaxonomy_AListWriteFailure_StillAnnouncesTheCascadeThatLanded()
+    {
+        var store = Seeded(1, "MECM");
+        IReadOnlyList<TaxonomyRename>? announced = null;
+        store.ValuesRenamed += renames => announced = renames;
+
+        var outcome = store.ApplyTaxonomy(
+            [new TaxonomyRename(TaxonomyField.Category, "MECM", "SCCM")], [], () => false);
+
+        Assert.False(outcome.Applied);
+        Assert.True(outcome.ListsWriteFailed);
+        Assert.Equal(1, outcome.Cascaded);
+        Assert.NotNull(announced);
+    }
 }

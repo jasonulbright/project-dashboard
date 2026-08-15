@@ -18,6 +18,9 @@ public class ProjectDiscoveryService(
         PropertyNameCaseInsensitive = true
     };
 
+    /// <summary>The store this discovery writes manifests through, for surfaces that follow its events.</summary>
+    public ManifestStore Manifests => manifestStore;
+
     private static readonly string CachePath = AppPaths.DiscoveryCacheFile;
 
     /// <summary>

@@ -125,4 +125,71 @@ public class ProjectDetailTaxonomyTests
 
         Assert.Same(before, page.Categories);
     }
+
+    /// <summary>
+    /// A page open across a rename cascade holds selections read before it. Left as they were,
+    /// this page's next Save would write the old name back over every record the cascade renamed
+    /// — the reader's Settings apply undone by an editor they never touched.
+    /// </summary>
+    [Fact]
+    public async Task APageOpenAcrossARename_FollowsItAndItsSaveDoesNotRevertTheCascade()
+    {
+        var settings = SavedSettings();
+        var store = new ManifestStore();
+        store.Save(RepoPath, new ProjectManifest { Category = "Tools" });
+        var discovery = new ProjectDiscoveryService(null!, null!, null!, store);
+        var page = new ProjectDetailViewModel(discovery, new GitService(), null!, settingsService: settings);
+        await page.SetProjectAsync(new ProjectInfo
+        {
+            DirectoryName = "detail-taxonomy",
+            DisplayName = "detail-taxonomy",
+            FullPath = RepoPath,
+            HasManifest = true,
+            Manifest = new ProjectManifest { Category = "Tools" },
+        });
+
+        var outcome = store.ApplyTaxonomy(
+            [new TaxonomyRename(TaxonomyField.Category, "Tools", "Tooling")], [], () => true);
+        Assert.True(outcome.Applied);
+        Assert.Equal("Tooling", page.SelectedCategory);
+
+        await page.SaveManifestCommand.ExecuteAsync(null);
+
+        Assert.True(store.TryGet(RepoPath, out var saved));
+        Assert.Equal("Tooling", saved!.Category);
+    }
+
+    /// <summary>
+    /// The remap covers a page whose selection the cascade named; the defensive merge covers one
+    /// that never heard the event — a field held at its loaded value defers to the store's newer
+    /// one, while a field the reader actually edited wins.
+    /// </summary>
+    [Fact]
+    public async Task ASaveMergesUntouchedFieldsFromTheStore_AndKeepsTheReadersOwnEdits()
+    {
+        var settings = SavedSettings();
+        var store = new ManifestStore();
+        store.Save(RepoPath, new ProjectManifest { Category = "Tools", Status = "active" });
+        var discovery = new ProjectDiscoveryService(null!, null!, null!, store);
+        var page = new ProjectDetailViewModel(discovery, new GitService(), null!, settingsService: settings);
+        await page.SetProjectAsync(new ProjectInfo
+        {
+            DirectoryName = "detail-taxonomy",
+            DisplayName = "detail-taxonomy",
+            FullPath = RepoPath,
+            HasManifest = true,
+            Manifest = new ProjectManifest { Category = "Tools", Status = "active" },
+        });
+
+        // The store moves under the page without the event (the cascade of another session's
+        // write, a hand-edit); the reader meanwhile edits a different field.
+        store.Save(RepoPath, new ProjectManifest { Category = "Tooling", Status = "active" });
+        page.SelectedStatus = "archived";
+
+        await page.SaveManifestCommand.ExecuteAsync(null);
+
+        Assert.True(store.TryGet(RepoPath, out var saved));
+        Assert.Equal("Tooling", saved!.Category);
+        Assert.Equal("archived", saved.Status);
+    }
 }

@@ -403,20 +403,78 @@ public class ManifestStore
     }
 
     /// <summary>
-    /// How many stored records hold <paramref name="value"/> in <paramref name="field"/>. Read
-    /// before a taxonomy value is dropped, so the refusal can name the count rather than the
-    /// deletion discovering the orphans afterwards.
+    /// How many stored records hold <paramref name="value"/> in <paramref name="field"/>. A
+    /// display read; a deletion decision must go through <see cref="ApplyTaxonomy"/>, whose
+    /// recount happens under the same lock as the write it guards.
     /// </summary>
     public int CountUsing(TaxonomyField field, string value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return 0;
-
         var state = Current();
+        lock (_lock) return CountLocked(state, field, value);
+    }
+
+    private static int CountLocked(State state, TaxonomyField field, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        return state.Entries.Values.Count(entry =>
+            string.Equals(Taxonomy.ValueOf(entry.Manifest, field), value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Raised after a rename cascade reaches disk, naming every rename it applied.</summary>
+    public event Action<IReadOnlyList<TaxonomyRename>>? ValuesRenamed;
+
+    /// <summary>
+    /// Applies a whole taxonomy edit — dropped-value refusals, the rename cascade over stored
+    /// records, and the caller's own list write — under ONE lock. A count read before this call
+    /// answers a question about a store a concurrent manifest save may since have changed; here
+    /// the recount, the cascade, and <paramref name="commitLists"/> run with every other write
+    /// held out, so a value counted unused cannot gain a user before the lists stop offering it.
+    ///
+    /// Records are written before lists on purpose: a cascade that lands without its list write
+    /// repeats harmlessly on the next apply, where the reverse order would leave stored records
+    /// holding a name no list still offers.
+    /// </summary>
+    public TaxonomyApplyResult ApplyTaxonomy(
+        IReadOnlyList<TaxonomyRename> renames,
+        IReadOnlyList<TaxonomyDrop> dropped,
+        Func<bool> commitLists)
+    {
+        var wanted = WantedRenames(renames);
+        var state = Current();
+        IReadOnlyList<TaxonomyRename>? applied = null;
+        TaxonomyApplyResult result;
         lock (_lock)
         {
-            return state.Entries.Values.Count(entry =>
-                string.Equals(Taxonomy.ValueOf(entry.Manifest, field), value, StringComparison.OrdinalIgnoreCase));
+            var inUse = dropped
+                .Select(d => new TaxonomyValueInUse(d.Field, d.Value, CountLocked(state, d.Field, d.Value)))
+                .Where(u => u.Count > 0)
+                .ToList();
+            if (inUse.Count > 0)
+            {
+                result = new TaxonomyApplyResult(false, 0, inUse, false, false);
+            }
+            else
+            {
+                var candidate = Clone(state);
+                var cascaded = CascadeLocked(candidate, wanted);
+                if (cascaded > 0 && !Persist(candidate))
+                {
+                    result = new TaxonomyApplyResult(false, 0, [], RecordsWriteFailed: true, false);
+                }
+                else
+                {
+                    if (cascaded > 0) Adopt(state, candidate);
+                    if (!commitLists())
+                        result = new TaxonomyApplyResult(false, cascaded, [], false, ListsWriteFailed: true);
+                    else
+                        result = new TaxonomyApplyResult(true, cascaded, [], false, false);
+                    if (cascaded > 0) applied = wanted;
+                }
+            }
         }
+        // Outside the lock: a handler reading this store back must not re-enter it mid-write.
+        if (applied is not null) ValuesRenamed?.Invoke(applied);
+        return result;
     }
 
     /// <summary>
@@ -433,33 +491,40 @@ public class ManifestStore
     /// </summary>
     public int? RenameValues(IReadOnlyList<TaxonomyRename> renames)
     {
-        var wanted = renames
-            .Where(r => r.From.Trim().Length > 0 && r.To.Trim().Length > 0)
-            .Where(r => !string.Equals(r.From, r.To, StringComparison.Ordinal))
-            .ToList();
+        var wanted = WantedRenames(renames);
         if (wanted.Count == 0) return 0;
 
         var state = Current();
         lock (_lock)
         {
             var candidate = Clone(state);
-            var changed = 0;
-            foreach (var entry in candidate.Entries.Values)
-            {
-                var before = Taxonomy.Fields.ToDictionary(f => f, f => Taxonomy.ValueOf(entry.Manifest, f));
-                foreach (var rename in wanted)
-                {
-                    if (!string.Equals(before[rename.Field], rename.From, StringComparison.OrdinalIgnoreCase)) continue;
-                    Taxonomy.SetValue(entry.Manifest, rename.Field, rename.To);
-                    changed++;
-                }
-            }
-
+            var changed = CascadeLocked(candidate, wanted);
             if (changed == 0) return 0;
             if (!Persist(candidate)) return null;
             Adopt(state, candidate);
             return changed;
         }
+    }
+
+    private static List<TaxonomyRename> WantedRenames(IReadOnlyList<TaxonomyRename> renames) =>
+        [.. renames
+            .Where(r => r.From.Trim().Length > 0 && r.To.Trim().Length > 0)
+            .Where(r => !string.Equals(r.From, r.To, StringComparison.Ordinal))];
+
+    private static int CascadeLocked(State candidate, IReadOnlyList<TaxonomyRename> wanted)
+    {
+        var changed = 0;
+        foreach (var entry in candidate.Entries.Values)
+        {
+            var before = Taxonomy.Fields.ToDictionary(f => f, f => Taxonomy.ValueOf(entry.Manifest, f));
+            foreach (var rename in wanted)
+            {
+                if (!string.Equals(before[rename.Field], rename.From, StringComparison.OrdinalIgnoreCase)) continue;
+                Taxonomy.SetValue(entry.Manifest, rename.Field, rename.To);
+                changed++;
+            }
+        }
+        return changed;
     }
 
     private static State Clone(State state)

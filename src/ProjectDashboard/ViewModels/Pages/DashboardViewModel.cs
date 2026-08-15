@@ -154,6 +154,10 @@ public partial class DashboardViewModel : ObservableObject
 
         _settingsService.Changed += OnSettingsChanged;
         _busyRegistry.Changed += OnRepoBusyChanged;
+        // The cascade rewrote the index, not the models this grid is holding; the store's event
+        // is the one signal every open surface follows, so none can be left showing the old name.
+        discoveryService.Manifests.ValuesRenamed += renames =>
+            _uiPost(() => ApplyTaxonomyRenames(renames));
 
         ReloadViewPreferences();
 
@@ -1575,6 +1579,18 @@ public partial class DashboardViewModel : ObservableObject
     private void OpenProject(ProjectInfo? project)
     {
         if (project is null) return;
+        // In selection mode a card activation is the tick, from every route that activates one —
+        // mouse, Enter, and Space all land here. Opening or cloning from under a reader who is
+        // assembling a selection would fire the one action the mode exists to hold back.
+        if (IsSelectionMode)
+        {
+            if (Selectable(project))
+            {
+                project.IsSelected = !project.IsSelected;
+                NotifySelection();
+            }
+            return;
+        }
         // Remote-only cards have no local repo to open — clicking clones instead.
         if (project.IsRemoteOnly)
         {

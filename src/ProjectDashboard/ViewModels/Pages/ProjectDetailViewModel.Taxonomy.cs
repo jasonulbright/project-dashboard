@@ -74,4 +74,35 @@ public partial class ProjectDetailViewModel
     {
         if (SettingsDelta.TaxonomyChanged(change)) RefreshTaxonomyChoices();
     }
+
+    /// <summary>
+    /// Carries a rename cascade onto the selections this page is already holding. The store
+    /// rewrote its records, but these fields were read before that — left as they were, the next
+    /// Save would write the old names back over the cascade, and the reader would see a rename
+    /// they applied in Settings quietly undone by a page they never edited.
+    /// </summary>
+    internal void OnTaxonomyValuesRenamed(IReadOnlyList<TaxonomyRename> renames)
+    {
+        var before = new Dictionary<TaxonomyField, string>
+        {
+            [TaxonomyField.Type] = SelectedProjectType,
+            [TaxonomyField.Status] = SelectedStatus,
+            [TaxonomyField.Category] = SelectedCategory,
+            [TaxonomyField.Schedule] = ValidationSchedule,
+        };
+        foreach (var rename in renames)
+        {
+            // Matched against the values as they were read: two values trading names must swap.
+            if (!string.Equals(before[rename.Field], rename.From, StringComparison.OrdinalIgnoreCase)) continue;
+            switch (rename.Field)
+            {
+                case TaxonomyField.Type: SelectedProjectType = rename.To; break;
+                case TaxonomyField.Status: SelectedStatus = rename.To; break;
+                case TaxonomyField.Category: SelectedCategory = rename.To; break;
+                default: ValidationSchedule = rename.To; break;
+            }
+            Taxonomy.SetValue(_manifestBaseline, rename.Field, rename.To);
+        }
+        RefreshTaxonomyChoices();
+    }
 }

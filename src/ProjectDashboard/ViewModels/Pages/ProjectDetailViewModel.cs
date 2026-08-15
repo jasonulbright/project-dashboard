@@ -83,6 +83,8 @@ public partial class ProjectDetailViewModel : ObservableObject
             _settingsService.Changed += OnSettingsChangedForDiffLayout;
             _settingsService.Changed += OnSettingsChangedForTaxonomy;
         }
+        if (discoveryService?.Manifests is { } manifestEvents)
+            manifestEvents.ValuesRenamed += OnTaxonomyValuesRenamed;
 
         SaveManifestCommand = new AsyncRelayCommand(SaveManifestAsync);
         LoadDetailsCommand = new AsyncRelayCommand(LoadDetailsAsync);
@@ -432,6 +434,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         SelectedStatus = p.Manifest.Status;
         SelectedCategory = p.Manifest.Category;
         ValidationSchedule = p.Manifest.ValidationSchedule;
+        _manifestBaseline = p.Manifest.Copy();
         RefreshTaxonomyChoices();
         // A reload of the project already open re-reads the stored notes. While the editor is
         // open it holds text nothing has written yet, and the stored value is what that text is
@@ -471,14 +474,36 @@ public partial class ProjectDetailViewModel : ObservableObject
         Notes = Notes
     };
 
+    /// <summary>The manifest as this page last loaded or saved it, for telling an edit from a hold.</summary>
+    private ProjectManifest _manifestBaseline = new();
+
     /// <summary>
     /// Persists a manifest, adopting it onto the project only once the store reports the write
     /// durable. The project is passed rather than read from <see cref="Project"/>: a write started
     /// on the way out of a project outlives the swap, and reading the live one would adopt the
     /// outgoing project's manifest onto the repository that took the screen.
+    ///
+    /// Taxonomy fields the reader did not touch are re-read from the store on the way out: this
+    /// page writes the whole manifest, and a rename cascade that landed while it was open left
+    /// the store holding a newer value under a field this editor is still showing at its loaded
+    /// one — written back untouched, that stale hold would silently revert the cascade.
     /// </summary>
     private async Task<bool> PersistManifestAsync(ProjectInfo project, ProjectManifest manifest)
     {
+        if (_discoveryService?.Manifests is { } manifests
+            && manifests.TryGet(project.FullPath, out var stored) && stored is not null)
+        {
+            foreach (var field in Taxonomy.Fields)
+            {
+                var edited = Taxonomy.ValueOf(manifest, field);
+                var baseline = Taxonomy.ValueOf(_manifestBaseline, field);
+                var current = Taxonomy.ValueOf(stored, field);
+                if (string.Equals(edited, baseline, StringComparison.Ordinal)
+                    && !string.Equals(current, baseline, StringComparison.Ordinal))
+                    Taxonomy.SetValue(manifest, field, current);
+            }
+        }
+
         // The project's identity travels with the path: a scan that re-keyed this record while the
         // editor was open leaves this page holding a path the record moved off, and a write by
         // path alone would create an empty record there instead of reaching the edited one.
@@ -486,6 +511,7 @@ public partial class ProjectDetailViewModel : ObservableObject
 
         project.Manifest = manifest;
         project.HasManifest = true;
+        _manifestBaseline = manifest.Copy();
         return true;
     }
 
