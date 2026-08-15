@@ -322,21 +322,30 @@ public class DashboardBulkTaxonomyTests
         grid.NavigateToProjectRequested += _ => navigated = true;
         grid.IsSelectionMode = true;
 
-        grid.OpenProjectCommand.Execute(alpha);
-        Assert.True(alpha.IsSelected);
-        Assert.Equal(1, grid.SelectedCount);
-        Assert.False(navigated);
+        try
+        {
+            grid.OpenProjectCommand.Execute(alpha);
+            Assert.True(alpha.IsSelected);
+            Assert.Equal(1, grid.SelectedCount);
+            Assert.False(navigated);
 
-        grid.OpenProjectCommand.Execute(alpha);
-        Assert.False(alpha.IsSelected);
+            grid.OpenProjectCommand.Execute(alpha);
+            Assert.False(alpha.IsSelected);
 
-        // A cloud card is not selectable — and activating one must not clone it either.
-        grid.OpenProjectCommand.Execute(cloud);
-        Assert.False(cloud.IsSelected);
-        Assert.False(navigated);
+            // A cloud card is not selectable — and activating one must not clone it either.
+            grid.OpenProjectCommand.Execute(cloud);
+            Assert.False(cloud.IsSelected);
+            Assert.False(navigated);
 
-        grid.IsSelectionMode = false;
-        grid.OpenProjectCommand.Execute(alpha);
-        Assert.True(navigated);
+            grid.IsSelectionMode = false;
+            grid.OpenProjectCommand.Execute(alpha);
+            Assert.True(navigated);
+        }
+        finally
+        {
+            // The dashboard-to-detail handoff is a static; a card left in it would be adopted by
+            // the next detail page any test in this process shows.
+            DashboardViewModel.SelectedProject = null;
+        }
     }
 }
