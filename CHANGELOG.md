@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.8] - 2026-08-16
+
+Two capabilities that existed under the surface reach it.
+
+### Added
+- **Search history** -- the History tab gains a search over the whole branch: message text, author, path, and a date range (a bare date covers its whole day), with paged results, an unreadable date refused rather than silently ignored, and each match selectable in the history list above -- or named as deeper than the loaded window, with paging as the way down to it. The history list itself stays an unfiltered contiguous walk, so a planned history edit is always measured against commits that are actually on screen
+- **Remote operations narrate** -- clone, fetch, pull, and push now show git's own progress line as it happens (counting, compressing, receiving, resolving), redraw by redraw, instead of an activity line that only changes when the operation ends
+
 ## [2.3.7] - 2026-08-16
 
 A hardening pass over 2.3.6's two new surfaces, from an external review of the release.
