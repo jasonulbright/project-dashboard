@@ -235,6 +235,9 @@ public partial class App : Application
                 // The rollup reads the dashboard's own project list rather than scanning again,
                 // and shares the container's busy registry, backup store and ledger — a private
                 // registry would let a portfolio check read a repository a rewrite is holding.
+                services.AddSingleton<AlertsService>();
+                services.AddSingleton<AlertsPage>();
+                services.AddSingleton<AlertsViewModel>();
                 services.AddSingleton<SafetyPage>();
                 services.AddSingleton(sp => new SafetyViewModel(
                     sp.GetRequiredService<DashboardViewModel>(),

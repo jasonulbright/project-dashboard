@@ -64,6 +64,10 @@
                      filters over one card grid, and this is a different page with a different
                      shape. It carries no count badge — the item is inert until it is opened. -->
                 <ui:NavigationViewItem
+                    Content="Alerts"
+                    Icon="{ui:SymbolIcon Alert24}"
+                    TargetPageType="{x:Type pages:AlertsPage}" />
+                <ui:NavigationViewItem
                     Content="Safety"
                     Icon="{ui:SymbolIcon ShieldCheckmark24}"
                     TargetPageType="{x:Type pages:SafetyPage}" />

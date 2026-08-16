@@ -22,6 +22,18 @@ namespace ProjectDashboard.Tests;
 public class DashboardPageMarkupTests
 {
     /// <summary>
+    /// The alerts page's markup, loaded for real: every StaticResource and binding path in it
+    /// resolves at parse time and by nothing the compiler checks.
+    /// </summary>
+    [Fact]
+    public void TheAlertsPage_ResolvesItsMarkup()
+        => StaHost.Run(() =>
+        {
+            var alerts = new AlertsViewModel(NewViewModel(), new AlertsService(new GitHubService(new SettingsService())));
+            Assert.NotNull(new AlertsPage(alerts).Content);
+        });
+
+    /// <summary>
     /// The export dialog's markup, loaded for real: every StaticResource and binding path in it
     /// resolves at parse time and by nothing the compiler checks.
     /// </summary>
