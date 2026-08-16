@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.7] - 2026-08-16
+
+A hardening pass over 2.3.6's two new surfaces, from an external review of the release.
+
+### Fixed
+- **An export can no longer carry a credential.** Git accepts remotes of the form `https://user:token@host/…`, and the optional RemoteUrl column exported them verbatim; userinfo is now stripped from http(s) URLs before any format sees them (ssh's conventional `git@` is addressing, not a secret, and stays)
+- The export's sensitive-repository warning now also counts `internal` repositories, and the visibility filter offers `internal`
+- **Opening the Alerts page no longer starts a crawl.** It opens from the cache with zero requests — refreshing is the Refresh button's job, it runs a few repositories at a time, and a Cancel button stops it at any point with everything already taken kept
+- **The Alerts refresh now actually refreshes all five sources.** Issue and pull request counts are conditional reads like the security sources, with the scan's snapshot shown only until a refresh has answered, labelled as the snapshot it is; the as-of stamp covers all five
+- **Silence is no longer reported as confirmation.** An answer that never arrived — a dead network, a failed gh launch, a rate limit — is reported as unanswered with the held answer kept and its stamp untouched, never as "confirmed unchanged"; a rate-limited 403 keeps the last-known count instead of replacing it with a permission refusal
+- **Refusal reasons are on the row, not only in a tooltip**, the cell says "unreadable" instead of "?", and each row's screen-reader name carries the reasons and updates as cells change
+- One repository is one row: multiple clones and worktrees of the same owner/repo share a row and are asked about once, not once per checkout
+- A resolved alert now leaves the "only rows with something open" filter on the next refresh instead of sticking until the page was rebuilt
+- The alerts cache records which GitHub account read it and is dropped whole when a different account takes over, so one account's answers are never shown as another's
+
 ## [2.3.6] - 2026-08-16
 
 Everything open against your repositories, on one page.
