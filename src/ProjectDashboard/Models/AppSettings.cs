@@ -53,6 +53,9 @@ public sealed class AppSettings
 
     public int ScheduledFetchIntervalMinutes { get; set; } = 60;
 
+    /// <summary>Last-used export choices; null until the first customized export.</summary>
+    public ExportPreferences? Export { get; set; }
+
     /// <summary>Per-repo backups retained before a history rewrite prunes the oldest.</summary>
     public int BackupRetentionCount { get; set; } = 10;
 
@@ -126,3 +129,20 @@ public sealed class AppSettings
 
 /// <summary>A window rect in device pixels: the unit monitor rectangles are also in.</summary>
 public sealed record SavedWindowRect(int Left, int Top, int Width, int Height);
+
+/// <summary>
+/// The export dialog's remembered choices. Column keys no registry entry names any more are
+/// dropped on load rather than kept as dead selections; an empty list means the defaults.
+/// </summary>
+public sealed class ExportPreferences
+{
+    public List<string> Columns { get; set; } = [];
+    public string PathMode { get; set; } = "";
+    public bool ExcludeHidden { get; set; }
+    public bool ExcludeRemoteOnly { get; set; }
+    public bool CurrentViewOnly { get; set; }
+    public string VisibilityFilter { get; set; } = "";
+    public string TypeFilter { get; set; } = "";
+    public string StatusFilter { get; set; } = "";
+    public string CategoryFilter { get; set; } = "";
+}

@@ -7,28 +7,54 @@ using ProjectDashboard.ViewModels.Pages;
 namespace ProjectDashboard.Tests;
 
 /// <summary>
-/// The inventory file. A row's cells have to stay under the headings they were written for,
-/// so the column list and the cell list are asserted against each other rather than trusted;
-/// a project path is the field most likely to carry a comma, a quote, or a line break, and
-/// an unescaped one silently shifts every following column of that row.
+/// The inventory file. One column registry feeds every format, so the headings, keys, and
+/// header cells are asserted as the same list; a project path is the field most likely to
+/// carry a comma, a quote, or a line break, and an unescaped one silently shifts every
+/// following column of that row.
 /// </summary>
 public class PortfolioExportTests
 {
-    [Fact]
-    public void TheHeaderRow_IsTheDeclaredColumnsInOrder()
-    {
-        var csv = PortfolioExport.ToCsv([NewProject("alpha")]);
+    /// <summary>The original fixed export: default columns, full paths.</summary>
+    internal static ExportChoices Legacy => ExportChoices.Default with { PathMode = ExportPathMode.Full };
 
-        Assert.Equal(string.Join(',', PortfolioExport.Columns), csv.Split("\r\n")[0]);
+    private static List<string> SelectedKeys(ExportChoices choices) =>
+        [.. PortfolioExport.Selected(choices).Select(c => c.Key)];
+
+    [Fact]
+    public void TheDefaultSelection_IsTheOriginalFourteenColumnsInTheirOriginalOrder()
+    {
+        Assert.Equal(
+            ["Name", "Path", "Type", "Status", "Category", "Version",
+             "LastCommitDate", "LastCommitSha", "Branch", "Dirty", "Ahead", "Behind",
+             "RemoteSlug", "NoteCount"],
+            SelectedKeys(Legacy));
+    }
+
+    /// <summary>
+    /// The pinned shape of the pre-registry export: same headings, same cell values, same
+    /// escaping. The rewrite must not move a byte of what a default full-path export writes.
+    /// </summary>
+    [Fact]
+    public void TheDefaultFullPathExport_MatchesThePinnedLegacyBytes()
+    {
+        var project = NewProject("alpha");
+        project.LatestVersion = "1.0";
+        project.Manifest = new ProjectManifest { ProjectType = "dotnet", Status = "active", Category = "Tools" };
+        project.GitStatus = new GitStatus { Branch = "main", IsDirty = true, AheadBy = 2, BehindBy = 0 };
+
+        Assert.Equal(
+            "Name,Path,Type,Status,Category,Version,LastCommitDate,LastCommitSha,Branch,Dirty,Ahead,Behind,RemoteSlug,NoteCount\r\n"
+            + @"alpha,C:\projects\alpha,dotnet,active,Tools,1.0,,,main,true,2,0,,0" + "\r\n",
+            PortfolioExport.ToCsv([project], Legacy));
     }
 
     [Fact]
     public void EveryRow_HasExactlyOneCellPerColumn()
     {
-        var csv = PortfolioExport.ToCsv([NewProject("alpha"), NewProject("bravo")]);
+        var csv = PortfolioExport.ToCsv([NewProject("alpha"), NewProject("bravo")], Legacy);
 
         foreach (var line in csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries))
-            Assert.Equal(PortfolioExport.Columns.Count, SplitCsvLine(line).Count);
+            Assert.Equal(SelectedKeys(Legacy).Count, SplitCsvLine(line).Count);
     }
 
     [Fact]
@@ -38,19 +64,159 @@ public class PortfolioExportTests
         var project = NewProject("awkward");
         project.FullPath = awkward;
 
-        var csv = PortfolioExport.ToCsv([project]);
+        var csv = PortfolioExport.ToCsv([project], Legacy);
         var cells = SplitCsvLine(csv.Split("\r\n")[1]);
 
-        Assert.Equal(awkward, cells[PortfolioExport.Columns.ToList().IndexOf("Path")]);
+        Assert.Equal(awkward, cells[SelectedKeys(Legacy).IndexOf("Path")]);
+    }
+
+    // ── Column selection ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whatever subset is picked, the CSV headings, JSON keys, and HTML header cells are the
+    /// same list in the same order — the registry's order, not the click order.
+    /// </summary>
+    [Fact]
+    public void ASelectedSubset_WritesTheSameColumnsInTheSameOrderInEveryFormat()
+    {
+        var choices = Legacy with { ColumnKeys = ["Visibility", "Name", "Branch"] };
+        var project = NewProject("alpha");
+
+        var csvHeader = SplitCsvLine(PortfolioExport.ToCsv([project], choices).Split("\r\n")[0]);
+        var jsonKeys = JsonRows(PortfolioExport.ToJson([project], choices)).Single().Keys.ToList();
+        var htmlHeads = System.Text.RegularExpressions.Regex
+            .Matches(PortfolioExport.ToHtml([project], choices), "<th>(.*?)</th>")
+            .Select(m => m.Groups[1].Value).ToList();
+
+        Assert.Equal(["Name", "Branch", "Visibility"], csvHeader);
+        Assert.Equal(csvHeader, jsonKeys);
+        Assert.Equal(csvHeader, htmlHeads);
     }
 
     [Fact]
-    public void AValueWithoutASeparator_IsLeftUnquoted()
+    public void TheNewColumns_CarryTheFactsTheOldExportLeftOut()
     {
-        var csv = PortfolioExport.ToCsv([NewProject("alpha")]);
+        var project = NewProject("rich");
+        project.Manifest = new ProjectManifest { Description = "the flagship" };
+        project.GitStatus = new GitStatus
+        {
+            Visibility = "private",
+            RemoteUrl = "https://github.com/acme/rich.git",
+            ModifiedCount = 3,
+            UntrackedCount = 1,
+            HasConflicts = true,
+            ActivityLabel = "rebase",
+        };
+        project.OpenIssueCount = 4;
+        project.IsPinned = true;
+        var choices = Legacy with
+        {
+            ColumnKeys = ["Description", "Visibility", "RemoteUrl", "OpenIssueCount",
+                          "ModifiedCount", "UntrackedCount", "HasConflicts", "Activity", "IsPinned", "IsHidden"],
+        };
 
-        Assert.StartsWith("alpha,", csv.Split("\r\n")[1]);
+        var row = JsonRows(PortfolioExport.ToJson([project], choices)).Single();
+
+        Assert.Equal("the flagship", row["Description"].GetString());
+        Assert.Equal("private", row["Visibility"].GetString());
+        Assert.Equal("https://github.com/acme/rich.git", row["RemoteUrl"].GetString());
+        Assert.Equal(4, row["OpenIssueCount"].GetInt32());
+        Assert.Equal(3, row["ModifiedCount"].GetInt32());
+        Assert.Equal(1, row["UntrackedCount"].GetInt32());
+        Assert.True(row["HasConflicts"].GetBoolean());
+        Assert.Equal("rebase", row["Activity"].GetString());
+        Assert.True(row["IsPinned"].GetBoolean());
+        Assert.False(row["IsHidden"].GetBoolean());
     }
+
+    /// <summary>Null is a count nothing fetched; written as zero it would claim an answer.</summary>
+    [Fact]
+    public void AnUnfetchedIssueCount_ExportsEmptyInEveryFormatAndNeverZero()
+    {
+        var project = NewProject("quiet");
+        var choices = Legacy with { ColumnKeys = ["Name", "OpenIssueCount", "OpenPrCount"] };
+
+        var csvCells = SplitCsvLine(PortfolioExport.ToCsv([project], choices).Split("\r\n")[1]);
+        Assert.Equal(["quiet", "", ""], csvCells);
+
+        var row = JsonRows(PortfolioExport.ToJson([project], choices)).Single();
+        Assert.Equal("", row["OpenIssueCount"].GetString());
+
+        Assert.Equal(["quiet", "", ""], HtmlBodyRows(PortfolioExport.ToHtml([project], choices)).Single());
+    }
+
+    // ── Path modes ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TheThreePathModes_WriteTheFullPathTheFolderNameOrNoColumnAtAll()
+    {
+        var project = NewProject("alpha");
+
+        var full = PortfolioExport.ToCsv([project], Legacy with { PathMode = ExportPathMode.Full });
+        Assert.Contains(@"C:\projects\alpha", full);
+
+        var folder = PortfolioExport.ToCsv([project], Legacy with { PathMode = ExportPathMode.FolderName });
+        Assert.DoesNotContain(@"C:\projects", folder);
+        var cells = SplitCsvLine(folder.Split("\r\n")[1]);
+        Assert.Equal("alpha", cells[1]);
+
+        var omitted = PortfolioExport.ToCsv([project], Legacy with { PathMode = ExportPathMode.Omit });
+        Assert.DoesNotContain("Path", omitted.Split("\r\n")[0]);
+        Assert.Equal(SelectedKeys(Legacy).Count - 1, SplitCsvLine(omitted.Split("\r\n")[0]).Count);
+    }
+
+    [Fact]
+    public void TheOmittedPathColumn_IsAbsentFromEveryFormatNotBlankUnderItsHeading()
+    {
+        var project = NewProject("alpha");
+        var choices = Legacy with { PathMode = ExportPathMode.Omit };
+
+        Assert.False(JsonRows(PortfolioExport.ToJson([project], choices)).Single().ContainsKey("Path"));
+        Assert.DoesNotContain("<th>Path</th>", PortfolioExport.ToHtml([project], choices));
+    }
+
+    [Fact]
+    public void AFolderNameHoldingACommaOrQuote_IsStillEscapedInCsv()
+    {
+        var project = NewProject("alpha");
+        project.DirectoryName = "a,b \"c\"";
+
+        var csv = PortfolioExport.ToCsv([project], Legacy with { PathMode = ExportPathMode.FolderName });
+
+        Assert.Equal("a,b \"c\"", SplitCsvLine(csv.Split("\r\n")[1])[1]);
+    }
+
+    // ── Filters ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TheFilters_NarrowTheExportedSetToExactlyTheMatchingRows()
+    {
+        var visible = NewProject("visible");
+        var hidden = NewProject("hidden");
+        hidden.IsHidden = true;
+        var cloud = new ProjectInfo { DirectoryName = "cloud", DisplayName = "cloud", IsRemoteOnly = true };
+        var priv = NewProject("locked");
+        priv.GitStatus = new GitStatus { Visibility = "private" };
+        var tooled = NewProject("tooled");
+        tooled.Manifest = new ProjectManifest { Category = "Tools" };
+        var all = new[] { visible, hidden, cloud, priv, tooled };
+
+        Assert.Equal(["cloud", "locked", "tooled", "visible"],
+            PortfolioExport.Filtered(all, Legacy with { ExcludeHidden = true }).Select(p => p.DisplayName));
+        Assert.Equal(["hidden", "locked", "tooled", "visible"],
+            PortfolioExport.Filtered(all, Legacy with { ExcludeRemoteOnly = true }).Select(p => p.DisplayName));
+        Assert.Equal(["locked"],
+            PortfolioExport.Filtered(all, Legacy with { VisibilityFilter = "private" }).Select(p => p.DisplayName));
+        Assert.Equal(["tooled"],
+            PortfolioExport.Filtered(all, Legacy with { CategoryFilter = "Tools" }).Select(p => p.DisplayName));
+        Assert.Equal(["tooled"],
+            PortfolioExport.Filtered(all, Legacy with
+            {
+                ExcludeHidden = true, ExcludeRemoteOnly = true, CategoryFilter = "Tools",
+            }).Select(p => p.DisplayName));
+    }
+
+    // ── The facts a row carries (unchanged from the fixed export) ───────────
 
     [Fact]
     public void TheRows_CarryTheFactsDiscoveryAlreadyHolds()
@@ -75,32 +241,32 @@ public class PortfolioExportTests
         };
         project.RecentCommits = [new GitCommit { Hash = new string('a', 40), ShortHash = "aaaaaaa" }];
 
-        var row = PortfolioExport.Rows([project]).Single();
+        var row = JsonRows(PortfolioExport.ToJson([project], Legacy)).Single();
 
-        Assert.Equal("trackr", row.Name);
-        Assert.Equal("dotnet", row.Type);
-        Assert.Equal("active", row.Status);
-        Assert.Equal("Tools", row.Category);
-        Assert.Equal("1.4.2", row.Version);
-        Assert.Equal("2026-03-04T05:06:07-05:00", row.LastCommitDate);
-        Assert.Equal(new string('a', 40), row.LastCommitSha);
-        Assert.Equal("main", row.Branch);
-        Assert.True(row.Dirty);
-        Assert.Equal(2, row.Ahead);
-        Assert.Equal(3, row.Behind);
-        Assert.Equal("acme/trackr", row.RemoteSlug);
-        Assert.Equal(2, row.NoteCount);
+        Assert.Equal("trackr", row["Name"].GetString());
+        Assert.Equal("dotnet", row["Type"].GetString());
+        Assert.Equal("active", row["Status"].GetString());
+        Assert.Equal("Tools", row["Category"].GetString());
+        Assert.Equal("1.4.2", row["Version"].GetString());
+        Assert.Equal("2026-03-04T05:06:07-05:00", row["LastCommitDate"].GetString());
+        Assert.Equal(new string('a', 40), row["LastCommitSha"].GetString());
+        Assert.Equal("main", row["Branch"].GetString());
+        Assert.True(row["Dirty"].GetBoolean());
+        Assert.Equal(2, row["Ahead"].GetInt32());
+        Assert.Equal(3, row["Behind"].GetInt32());
+        Assert.Equal("acme/trackr", row["RemoteSlug"].GetString());
+        Assert.Equal(2, row["NoteCount"].GetInt32());
     }
 
     [Fact]
     public void ARepositoryWithNoCommitsOrRemote_ExportsBlanksRatherThanInventedValues()
     {
-        var row = PortfolioExport.Rows([NewProject("bare")]).Single();
+        var row = JsonRows(PortfolioExport.ToJson([NewProject("bare")], Legacy)).Single();
 
-        Assert.Equal("", row.LastCommitDate);
-        Assert.Equal("", row.LastCommitSha);
-        Assert.Equal("", row.RemoteSlug);
-        Assert.Equal(0, row.NoteCount);
+        Assert.Equal("", row["LastCommitDate"].GetString());
+        Assert.Equal("", row["LastCommitSha"].GetString());
+        Assert.Equal("", row["RemoteSlug"].GetString());
+        Assert.Equal(0, row["NoteCount"].GetInt32());
     }
 
     [Fact]
@@ -109,7 +275,8 @@ public class PortfolioExportTests
         var project = NewProject("internal-tool");
         project.GitStatus = new GitStatus { RemoteUrl = "git@gitlab.example.com:platform/team/internal-tool.git" };
 
-        Assert.Equal("platform/team/internal-tool", PortfolioExport.Rows([project]).Single().RemoteSlug);
+        Assert.Equal("platform/team/internal-tool",
+            JsonRows(PortfolioExport.ToJson([project], Legacy)).Single()["RemoteSlug"].GetString());
     }
 
     [Fact]
@@ -124,59 +291,58 @@ public class PortfolioExportTests
             RemoteSlug = "acme/sketchpad",
         };
 
-        var row = PortfolioExport.Rows([cloud]).Single();
+        var row = JsonRows(PortfolioExport.ToJson([cloud], Legacy)).Single();
 
-        Assert.Equal("", row.Path);
-        Assert.Equal("acme/sketchpad", row.RemoteSlug);
+        Assert.Equal("", row["Path"].GetString());
+        Assert.Equal("acme/sketchpad", row["RemoteSlug"].GetString());
     }
 
     [Fact]
     public void TheRowOrder_IsByNameRatherThanDiscoveryOrder()
     {
-        var rows = PortfolioExport.Rows([NewProject("charlie"), NewProject("alpha"), NewProject("bravo")]);
+        var rows = JsonRows(PortfolioExport.ToJson(
+            [NewProject("charlie"), NewProject("alpha"), NewProject("bravo")], Legacy));
 
-        Assert.Equal(["alpha", "bravo", "charlie"], rows.Select(r => r.Name));
+        Assert.Equal(["alpha", "bravo", "charlie"], rows.Select(r => r["Name"].GetString()));
     }
 
     [Fact]
     public void TheJsonCsvAndHtmlExports_DescribeTheSameRowsInTheSameOrder()
     {
         var projects = new[] { NewProject("charlie"), NewProject("alpha") };
-        var expected = PortfolioExport.Rows(projects);
 
-        var fromJson = JsonSerializer.Deserialize<List<PortfolioRow>>(PortfolioExport.ToJson(projects))!;
-        Assert.Equal(expected, fromJson);
-
-        var name = PortfolioExport.Columns.ToList().IndexOf("Name");
-        var path = PortfolioExport.Columns.ToList().IndexOf("Path");
-
-        var fromCsv = PortfolioExport.ToCsv(projects)
+        var fromJson = JsonRows(PortfolioExport.ToJson(projects, Legacy));
+        var name = SelectedKeys(Legacy).IndexOf("Name");
+        var path = SelectedKeys(Legacy).IndexOf("Path");
+        var fromCsv = PortfolioExport.ToCsv(projects, Legacy)
             .Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
             .Skip(1)
             .Select(SplitCsvLine)
             .ToList();
-        var fromHtml = HtmlBodyRows(PortfolioExport.ToHtml(projects));
+        var fromHtml = HtmlBodyRows(PortfolioExport.ToHtml(projects, Legacy));
 
-        Assert.Equal(expected.Count, fromCsv.Count);
-        Assert.Equal(expected.Count, fromHtml.Count);
-        for (var i = 0; i < expected.Count; i++)
+        Assert.Equal(2, fromJson.Count);
+        Assert.Equal(2, fromCsv.Count);
+        Assert.Equal(2, fromHtml.Count);
+        for (var i = 0; i < fromJson.Count; i++)
         {
-            Assert.Equal(expected[i].Name, fromCsv[i][name]);
-            Assert.Equal(expected[i].Name, fromHtml[i][name]);
-            Assert.Equal(expected[i].Path, fromCsv[i][path]);
-            Assert.Equal(expected[i].Path, fromHtml[i][path]);
+            Assert.Equal(fromJson[i]["Name"].GetString(), fromCsv[i][name]);
+            Assert.Equal(fromJson[i]["Name"].GetString(), fromHtml[i][name]);
+            Assert.Equal(fromJson[i]["Path"].GetString(), fromCsv[i][path]);
+            Assert.Equal(fromJson[i]["Path"].GetString(), fromHtml[i][path]);
         }
     }
 
     [Fact]
     public void TheHtmlTable_HasOneCellPerColumnForEveryProject()
     {
-        var html = PortfolioExport.ToHtml([NewProject("alpha"), NewProject("bravo"), NewProject("charlie")]);
+        var html = PortfolioExport.ToHtml([NewProject("alpha"), NewProject("bravo"), NewProject("charlie")], Legacy);
+        var columns = SelectedKeys(Legacy).Count;
 
-        Assert.Equal(PortfolioExport.Columns.Count, CountOccurrences(html, "<th>"));
-        Assert.Equal(3 * PortfolioExport.Columns.Count, CountOccurrences(html, "<td>"));
+        Assert.Equal(columns, CountOccurrences(html, "<th>"));
+        Assert.Equal(3 * columns, CountOccurrences(html, "<td>"));
         foreach (var row in HtmlBodyRows(html))
-            Assert.Equal(PortfolioExport.Columns.Count, row.Count);
+            Assert.Equal(columns, row.Count);
     }
 
     [Fact]
@@ -185,7 +351,7 @@ public class PortfolioExportTests
         var hostile = "<script>alert(\"x\")</script> & co";
         var project = NewProject(hostile);
 
-        var html = PortfolioExport.ToHtml([project]);
+        var html = PortfolioExport.ToHtml([project], Legacy);
 
         Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("&lt;script&gt;", html, StringComparison.Ordinal);
@@ -193,14 +359,14 @@ public class PortfolioExportTests
         Assert.Contains("&quot;", html, StringComparison.Ordinal);
 
         var cells = HtmlBodyRows(html).Single();
-        Assert.Equal(PortfolioExport.Columns.Count, cells.Count);
-        Assert.Equal(hostile, cells[PortfolioExport.Columns.ToList().IndexOf("Name")]);
+        Assert.Equal(SelectedKeys(Legacy).Count, cells.Count);
+        Assert.Equal(hostile, cells[SelectedKeys(Legacy).IndexOf("Name")]);
     }
 
     [Fact]
     public void TheHtmlPage_CarriesItsOwnStylesAndReferencesNoOtherFile()
     {
-        var html = PortfolioExport.ToHtml([NewProject("alpha")]);
+        var html = PortfolioExport.ToHtml([NewProject("alpha")], Legacy);
 
         Assert.Contains("<style>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("<link", html, StringComparison.OrdinalIgnoreCase);
@@ -215,7 +381,7 @@ public class PortfolioExportTests
     [Fact]
     public void TheHtmlPage_NamesTheAppAndWhenItWasExported()
     {
-        var html = PortfolioExport.ToHtml([NewProject("alpha")]);
+        var html = PortfolioExport.ToHtml([NewProject("alpha")], Legacy);
 
         Assert.Contains("Project Dashboard", html, StringComparison.Ordinal);
         // A literal date would fail on a run that straddles midnight; the shape is the claim.
@@ -234,14 +400,13 @@ public class PortfolioExportTests
     {
         var project = NewProject("alpha");
         project.GitStatus = new GitStatus { Branch = branch };
-        var column = PortfolioExport.Columns.ToList().IndexOf("Branch");
+        var column = SelectedKeys(Legacy).IndexOf("Branch");
 
-        var csvCell = SplitCsvLine(PortfolioExport.ToCsv([project]).Split("\r\n")[1])[column];
+        var csvCell = SplitCsvLine(PortfolioExport.ToCsv([project], Legacy).Split("\r\n")[1])[column];
         Assert.Equal("'" + branch, csvCell);
 
-        var fromJson = JsonSerializer.Deserialize<List<PortfolioRow>>(PortfolioExport.ToJson([project]))!;
-        Assert.Equal(branch, fromJson.Single().Branch);
-        Assert.Equal(branch, HtmlBodyRows(PortfolioExport.ToHtml([project])).Single()[column]);
+        Assert.Equal(branch, JsonRows(PortfolioExport.ToJson([project], Legacy)).Single()["Branch"].GetString());
+        Assert.Equal(branch, HtmlBodyRows(PortfolioExport.ToHtml([project], Legacy)).Single()[column]);
     }
 
     [Fact]
@@ -250,9 +415,9 @@ public class PortfolioExportTests
         var project = NewProject("alpha");
         project.GitStatus = new GitStatus { Branch = "main" };
 
-        var cells = SplitCsvLine(PortfolioExport.ToCsv([project]).Split("\r\n")[1]);
+        var cells = SplitCsvLine(PortfolioExport.ToCsv([project], Legacy).Split("\r\n")[1]);
 
-        Assert.Equal("main", cells[PortfolioExport.Columns.ToList().IndexOf("Branch")]);
+        Assert.Equal("main", cells[SelectedKeys(Legacy).IndexOf("Branch")]);
     }
 
     [Fact]
@@ -260,7 +425,7 @@ public class PortfolioExportTests
     {
         var project = NewProject("caf\u00e9");
 
-        Assert.Contains("caf\u00e9", PortfolioExport.ToJson([project]));
+        Assert.Contains("caf\u00e9", PortfolioExport.ToJson([project], Legacy));
     }
 
     [Theory]
@@ -283,12 +448,15 @@ public class PortfolioExportTests
         Assert.Equal(expected, PortfolioExport.FormatFor(path, filterIndex));
     }
 
-    private static ProjectInfo NewProject(string name) => new()
+    internal static ProjectInfo NewProject(string name) => new()
     {
         DirectoryName = name,
         DisplayName = name,
         FullPath = $@"C:\projects\{name}",
     };
+
+    internal static List<Dictionary<string, JsonElement>> JsonRows(string json) =>
+        JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(json)!;
 
     private static int CountOccurrences(string text, string token)
     {
@@ -324,7 +492,7 @@ public class PortfolioExportTests
              .Replace("&amp;", "&", StringComparison.Ordinal);
 
     /// <summary>A minimal RFC 4180 reader, so the escaping is asserted by reading it back.</summary>
-    private static List<string> SplitCsvLine(string line)
+    internal static List<string> SplitCsvLine(string line)
     {
         var cells = new List<string>();
         var cell = new System.Text.StringBuilder();
@@ -348,56 +516,45 @@ public class PortfolioExportTests
 }
 
 /// <summary>
-/// The export as the dashboard runs it: the file that lands on disk, its encoding, and what
-/// the reader is told is in it before a destination is chosen.
+/// The export as the dashboard runs it: the file that lands on disk, its encoding, and the
+/// preferences that survive between exports.
 /// </summary>
 [Collection("app-data-sandbox")]
 public class DashboardPortfolioExportTests
 {
     public DashboardPortfolioExportTests() => TestSandbox.ResetDataDir();
 
+    private static ExportChoices Legacy => PortfolioExportTests.Legacy;
+
     [Fact]
     public async Task AnExportedCsv_IsUtf8WithoutAByteOrderMarkAndCoversEveryProject()
     {
         var (dashboard, root) = await NewDashboardAsync("export-csv");
-        dashboard.Projects.Add(NewProject("alpha"));
-        dashboard.Projects.Add(NewProject("bravo"));
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("alpha"));
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("bravo"));
         var target = Path.Combine(root, "projects.csv");
 
-        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv);
+        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv, [.. dashboard.Projects], Legacy);
 
         var bytes = await File.ReadAllBytesAsync(target);
         Assert.False(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF,
             "the export was written with a byte-order mark");
 
         var text = await File.ReadAllTextAsync(target);
-        Assert.Equal(PortfolioExport.ToCsv(dashboard.Projects), text);
+        Assert.Equal(PortfolioExport.ToCsv(dashboard.Projects, Legacy), text);
         Assert.Equal(3, text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);
         Assert.Equal($"Exported 2 projects to {target}", dashboard.OpStatusText);
-    }
-
-    [Fact]
-    public async Task AnExportedJsonFile_ParsesBackIntoTheSameRows()
-    {
-        var (dashboard, root) = await NewDashboardAsync("export-json");
-        dashboard.Projects.Add(NewProject("alpha"));
-        var target = Path.Combine(root, "projects.json");
-
-        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Json);
-
-        var rows = JsonSerializer.Deserialize<List<PortfolioRow>>(await File.ReadAllTextAsync(target))!;
-        Assert.Equal(PortfolioExport.Rows(dashboard.Projects), rows);
     }
 
     [Fact]
     public async Task AnExportedHtmlPage_HoldsARowPerProjectAndStandsAlone()
     {
         var (dashboard, root) = await NewDashboardAsync("export-html");
-        dashboard.Projects.Add(NewProject("alpha"));
-        dashboard.Projects.Add(NewProject("bravo"));
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("alpha"));
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("bravo"));
         var target = Path.Combine(root, "projects.html");
 
-        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Html);
+        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Html, [.. dashboard.Projects], Legacy);
 
         var html = await File.ReadAllTextAsync(target);
         Assert.StartsWith("<!DOCTYPE html>", html);
@@ -410,47 +567,21 @@ public class DashboardPortfolioExportTests
     }
 
     [Fact]
-    public async Task AnExportOfASingleProject_CountsItInTheSingular()
-    {
-        var (dashboard, root) = await NewDashboardAsync("export-one");
-        dashboard.Projects.Add(NewProject("alpha"));
-        var target = Path.Combine(root, "projects.csv");
-
-        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv);
-
-        Assert.Equal($"Exported 1 project to {target}", dashboard.OpStatusText);
-    }
-
-    [Fact]
     public async Task AnExportThatFailsToWrite_LeavesThePreviousFileIntactAndStagesNothing()
     {
         var (dashboard, root) = await NewDashboardAsync("export-atomic");
-        dashboard.Projects.Add(NewProject("alpha"));
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("alpha"));
         var target = Path.Combine(root, "projects.csv");
         await File.WriteAllTextAsync(target, "an earlier export\r\n");
 
         // Opened without sharing: the staged file cannot replace it, which is the failure a
         // direct write would have met only after truncating the destination.
         using (new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.None))
-            await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv);
+            await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv, [.. dashboard.Projects], Legacy);
 
         Assert.StartsWith("Export failed — ", dashboard.OpStatusText);
         Assert.Equal("an earlier export\r\n", await File.ReadAllTextAsync(target));
         Assert.False(File.Exists(target + ".tmp"), "the staged file was left beside the destination");
-    }
-
-    [Fact]
-    public async Task AnExportThatCannotBeWritten_ReportsInsteadOfThrowing()
-    {
-        var (dashboard, root) = await NewDashboardAsync("export-fail");
-        dashboard.Projects.Add(NewProject("alpha"));
-        // A directory at the destination: the write cannot replace it.
-        var target = Path.Combine(root, "taken");
-        Directory.CreateDirectory(target);
-
-        await dashboard.WritePortfolioAsync(target, PortfolioFormat.Csv);
-
-        Assert.StartsWith("Export failed — ", dashboard.OpStatusText);
     }
 
     [Fact]
@@ -463,17 +594,61 @@ public class DashboardPortfolioExportTests
         Assert.Equal("Export: no projects have been discovered to export.", dashboard.OpStatusText);
     }
 
-    [Fact]
-    public void TheNoticeShownBeforeTheFileDialog_NamesEveryColumnAndWhereTheValuesCameFrom()
+    /// <summary>Accepts the dialog without a window, keeping the view model it was shown.</summary>
+    private sealed class AcceptingDashboard : DashboardViewModel
     {
-        var notice = DashboardViewModel.ExportNotice(7);
+        private readonly bool _accept;
 
-        Assert.Contains("Exports 7 projects", notice);
-        foreach (var column in PortfolioExport.Columns)
-            Assert.Contains(column, notice);
-        Assert.Contains("Nothing is re-read from git", notice);
-        Assert.Contains("(= + - @)", notice);
-        Assert.Contains("apostrophe", notice);
+        public AcceptingDashboard(
+            ProjectDiscoveryService discovery, SettingsService settings, GitHubService gitHub,
+            ProjectWatcherService watcher, bool accept)
+            : base(discovery, null!, settings, gitHub, new GitService(), watcher,
+                new RepoBusyRegistry(), uiPost: callback => callback())
+            => _accept = accept;
+
+        public ViewModels.Windows.ExportDialogViewModel? Shown { get; private set; }
+
+        internal override Task<bool> ShowExportDialogAsync(ViewModels.Windows.ExportDialogViewModel dialog)
+        {
+            Shown = dialog;
+            return Task.FromResult(_accept);
+        }
+
+        internal override (string Path, PortfolioFormat Format)? PromptForExportDestination() => null;
+    }
+
+    /// <summary>
+    /// The dialog's accepted choices survive to the next export — including through the save
+    /// dialog being cancelled, which must not cost the reader the columns they just picked.
+    /// </summary>
+    [Fact]
+    public async Task AcceptedChoices_AreRememberedEvenWhenTheSaveDialogIsCancelled()
+    {
+        var (settings, discovery, gitHub, watcher) = await ServicesAsync("export-prefs");
+        var dashboard = new AcceptingDashboard(discovery, settings, gitHub, watcher, accept: true);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("alpha"));
+
+        await dashboard.ExportPortfolioCommand.ExecuteAsync(null);
+
+        Assert.NotNull(dashboard.Shown);
+        var saved = settings.Load().Export;
+        Assert.NotNull(saved);
+        Assert.Equal("FolderName", saved!.PathMode);
+        Assert.Equal(dashboard.Shown!.Choices().ColumnKeys, saved.Columns);
+    }
+
+    [Fact]
+    public async Task ACancelledDialog_WritesNothingAndRemembersNothing()
+    {
+        var (settings, discovery, gitHub, watcher) = await ServicesAsync("export-cancel");
+        var dashboard = new AcceptingDashboard(discovery, settings, gitHub, watcher, accept: false);
+        await dashboard.LoadProjectsCommand.ExecutionTask!;
+        dashboard.Projects.Add(PortfolioExportTests.NewProject("alpha"));
+
+        await dashboard.ExportPortfolioCommand.ExecuteAsync(null);
+
+        Assert.Null(settings.Load().Export);
     }
 
     [Fact]
@@ -496,31 +671,31 @@ public class DashboardPortfolioExportTests
         Assert.Contains("Export project inventory", xaml);
     }
 
-    private static ProjectInfo NewProject(string name) => new()
-    {
-        DirectoryName = name,
-        DisplayName = name,
-        FullPath = $@"C:\projects\{name}",
-    };
-
-    private static async Task<(DashboardViewModel Dashboard, string Root)> NewDashboardAsync(string prefix)
+    private static async Task<(SettingsService, ProjectDiscoveryService, GitHubService, ProjectWatcherService)>
+        ServicesAsync(string prefix)
     {
         var root = TestEnv.NewDir(prefix);
         var settings = new SettingsService();
         settings.Save(new AppSettings
         {
             ProjectsRootPath = root,
-            // gh pointed at a nonexistent executable: discovery stays local and spawns no network.
             GhPath = Path.Combine(root, "no-such-gh.exe"),
             EnableGitHubDiscovery = false,
             ExcludedDirectories = [],
             RefreshIntervalSeconds = 7200,
         });
-
         var gitHub = new GitHubService(settings);
-        var watcher = new ProjectWatcherService();
-        var dashboard = new DashboardViewModel(
+        return (settings,
             new ProjectDiscoveryService(new GitService(), gitHub, settings, new ManifestStore()),
+            gitHub,
+            new ProjectWatcherService());
+    }
+
+    private static async Task<(DashboardViewModel Dashboard, string Root)> NewDashboardAsync(string prefix)
+    {
+        var (settings, discovery, gitHub, watcher) = await ServicesAsync(prefix);
+        var dashboard = new DashboardViewModel(
+            discovery,
             navigationService: null!,
             settings,
             gitHub,
@@ -531,6 +706,7 @@ public class DashboardPortfolioExportTests
             // and would drop every callback the drain runs through.
             uiPost: callback => callback());
         await dashboard.LoadProjectsCommand.ExecutionTask!;
+        var root = ProjectRootSettings.Scannable(settings.Load()).First().Path;
         return (dashboard, root);
     }
 }

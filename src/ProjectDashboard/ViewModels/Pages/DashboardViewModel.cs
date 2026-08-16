@@ -1179,21 +1179,6 @@ public partial class DashboardViewModel : ObservableObject
         }
     }
 
-    /// <summary>
-    /// Exactly what an export file will hold, shown before the reader picks a destination.
-    /// It names every column and says where the values come from: the export re-reads no
-    /// repository, so a tree changed since the last scan is described as it was scanned.
-    /// </summary>
-    internal static string ExportNotice(int projectCount) =>
-        $"Exports {projectCount} {(projectCount == 1 ? "project" : "projects")} — everything the last scan discovered, "
-        + "including repositories that exist only on the remote.\n\n"
-        + "Columns: " + string.Join(", ", PortfolioExport.Columns) + ".\n\n"
-        + "These are the values already on the cards. Nothing is re-read from git for the export, "
-        + "so a repository changed since the last scan is exported as it was scanned — refresh first "
-        + "if you need it current.\n\n"
-        + "CSV, JSON or a standalone HTML page. In CSV, spreadsheet-hostile leading characters "
-        + "(= + - @) are quoted with an apostrophe so a cell is read as text rather than run as a formula.";
-
     [RelayCommand]
     private async Task ExportPortfolio()
     {
@@ -1203,32 +1188,25 @@ public partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        var confirmed = await new Wpf.Ui.Controls.MessageBox
-        {
-            Title = "Export project inventory",
-            // Wrapped rather than set as the content directly: a lone text block becomes the
-            // window's own automation name, which then replaces the title a reader is
-            // announced on focus.
-            Content = new System.Windows.Controls.StackPanel
-            {
-                Children =
-                {
-                    new System.Windows.Controls.TextBlock
-                    {
-                        Text = ExportNotice(Projects.Count),
-                        TextWrapping = System.Windows.TextWrapping.Wrap,
-                        MaxWidth = 520
-                    }
-                }
-            },
-            PrimaryButtonText = "Choose file…",
-            CloseButtonText = "Cancel"
-        }.ShowDialogAsync();
-        if (confirmed != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+        var settings = _settingsService.Load();
+        var dialog = new ViewModels.Windows.ExportDialogViewModel(
+            [.. Projects], [.. FilteredProjects],
+            settings.Taxonomy ?? Taxonomy.Seed(),
+            settings.Export);
+        if (!await ShowExportDialogAsync(dialog)) return;
+
+        // Remembered before the save dialog, not after the write: a cancelled destination
+        // should still keep the columns the reader just spent time picking.
+        var updated = _settingsService.Load();
+        updated.Export = dialog.ToPreferences();
+        _settingsService.Save(updated);
 
         if (PromptForExportDestination() is not { } destination) return;
-        await WritePortfolioAsync(destination.Path, destination.Format);
+        await WritePortfolioAsync(destination.Path, destination.Format, dialog.ExportSet(), dialog.Choices());
     }
+
+    internal virtual Task<bool> ShowExportDialogAsync(ViewModels.Windows.ExportDialogViewModel dialog)
+        => Views.Windows.ExportDialogWindow.ShowAsync(dialog);
 
     /// <summary>
     /// Save-dialog filter. Entry order is the one-based filter index
@@ -1257,12 +1235,13 @@ public partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>Writes the inventory and reports the outcome, whichever it is.</summary>
-    internal async Task WritePortfolioAsync(string path, PortfolioFormat format)
+    internal async Task WritePortfolioAsync(
+        string path, PortfolioFormat format, IReadOnlyList<ProjectInfo> projects, ExportChoices choices)
     {
         try
         {
-            await PortfolioExport.WriteAsync(path, format, Projects);
-            OpStatusText = $"Exported {Projects.Count} {(Projects.Count == 1 ? "project" : "projects")} to {path}";
+            await PortfolioExport.WriteAsync(path, format, projects, choices);
+            OpStatusText = $"Exported {projects.Count} {(projects.Count == 1 ? "project" : "projects")} to {path}";
         }
         catch (Exception ex)
         {

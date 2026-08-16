@@ -22,6 +22,32 @@ namespace ProjectDashboard.Tests;
 public class DashboardPageMarkupTests
 {
     /// <summary>
+    /// The export dialog's markup, loaded for real: every StaticResource and binding path in it
+    /// resolves at parse time and by nothing the compiler checks.
+    /// </summary>
+    [Fact]
+    public void TheExportDialog_ResolvesItsMarkupAndRendersThePreview()
+        => StaHost.Run(() =>
+        {
+            var dialog = new ViewModels.Windows.ExportDialogViewModel(
+                [new ProjectInfo { DirectoryName = "alpha", DisplayName = "alpha", FullPath = @"C:\projects\alpha" }],
+                [], Taxonomy.Seed(), null);
+            var window = (Window)System.Activator.CreateInstance(
+                typeof(ProjectDashboard.Views.Windows.ExportDialogWindow),
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+                null, [dialog], null)!;
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                Assert.NotNull(window.Content);
+                var previews = Descendants<TextBox>(window).Where(t => t.Text.Contains("alpha")).ToList();
+                Assert.NotEmpty(previews);
+            }
+            finally { window.Close(); }
+        });
+
+    /// <summary>
     /// One test rather than one per surface: an Application and the brushes in its dictionaries
     /// belong to the thread that built them, and the page is laid out once for all of them.
     /// </summary>

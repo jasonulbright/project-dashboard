@@ -1,0 +1,178 @@
+<ui:FluentWindow
+    x:Class="ProjectDashboard.Views.Windows.ExportDialogWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:vmw="clr-namespace:ProjectDashboard.ViewModels.Windows"
+    Title="Export project inventory"
+    Width="980"
+    Height="680"
+    FontFamily="Segoe UI"
+    ShowInTaskbar="False"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    WindowBackdropType="Mica">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="Export project inventory" ShowMaximize="False" ShowMinimize="False" />
+
+        <Grid Grid.Row="1" Margin="16,8,16,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="330" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Choices -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,12,0">
+                <StackPanel>
+                    <TextBlock Text="Columns" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                    <ItemsControl ItemsSource="{Binding Columns}"
+                                  AutomationProperties.Name="Columns to export">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vmw:ExportColumnRow}">
+                                <CheckBox Content="{Binding Key}" IsChecked="{Binding Selected}"
+                                          FontSize="12" Margin="0,1"
+                                          AutomationProperties.Name="{Binding Key, StringFormat='Export the {0} column'}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="Path column" FontSize="13" FontWeight="SemiBold" Margin="0,14,0,2"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               Text="The full path names this machine's drive layout and Windows account name. Folder name alone still lets a reader match a row to their checkout." />
+                    <RadioButton Content="Folder name only" GroupName="ExportPathMode" FontSize="12"
+                                 IsChecked="{Binding PathModeFolderName}"
+                                 AutomationProperties.Name="Path column carries the folder name only" />
+                    <RadioButton Content="Full path" GroupName="ExportPathMode" FontSize="12"
+                                 IsChecked="{Binding PathModeFull}"
+                                 AutomationProperties.Name="Path column carries the full local path" />
+                    <RadioButton Content="No path column" GroupName="ExportPathMode" FontSize="12"
+                                 IsChecked="{Binding PathModeOmit}"
+                                 AutomationProperties.Name="The export carries no path column" />
+
+                    <TextBlock Text="Which projects" FontSize="13" FontWeight="SemiBold" Margin="0,14,0,4"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                    <CheckBox Content="Only what the dashboard shows right now" FontSize="12"
+                              IsChecked="{Binding CurrentViewOnly}"
+                              AutomationProperties.Name="Export only what the dashboard's current filter shows" />
+                    <CheckBox Content="Leave out hidden projects" FontSize="12"
+                              IsChecked="{Binding ExcludeHidden}"
+                              AutomationProperties.Name="Leave hidden projects out of the export" />
+                    <CheckBox Content="Leave out repositories with no local clone" FontSize="12"
+                              IsChecked="{Binding ExcludeRemoteOnly}"
+                              AutomationProperties.Name="Leave repositories with no local clone out of the export" />
+
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="ExportFilterLabel" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Visibility" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <ComboBox Grid.Row="0" Grid.Column="1" Margin="8,1,0,1" FontSize="12"
+                                  ItemsSource="{Binding VisibilityChoices}" SelectedItem="{Binding VisibilityFilter}"
+                                  AutomationProperties.Name="Only projects with this visibility" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Type" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <ComboBox Grid.Row="1" Grid.Column="1" Margin="8,1,0,1" FontSize="12"
+                                  ItemsSource="{Binding TypeChoices}" SelectedItem="{Binding TypeFilter}"
+                                  AutomationProperties.Name="Only projects of this type" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Status" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <ComboBox Grid.Row="2" Grid.Column="1" Margin="8,1,0,1" FontSize="12"
+                                  ItemsSource="{Binding StatusChoices}" SelectedItem="{Binding StatusFilter}"
+                                  AutomationProperties.Name="Only projects with this status" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Category" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <ComboBox Grid.Row="3" Grid.Column="1" Margin="8,1,0,1" FontSize="12"
+                                  ItemsSource="{Binding CategoryChoices}" SelectedItem="{Binding CategoryFilter}"
+                                  AutomationProperties.Name="Only projects in this category" />
+                    </Grid>
+
+                    <ui:Button Content="Reset to defaults" FontSize="12" Padding="10,4" Margin="0,12,0,8"
+                               Command="{Binding ResetToDefaultsCommand}"
+                               AutomationProperties.Name="Reset columns, path mode, and filters to the defaults" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Preview -->
+            <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="8" Padding="10,8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Preview — the file's own CSV rendering, first rows only" FontSize="12"
+                               FontWeight="SemiBold" Margin="2,0,2,6"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBox Grid.Row="1" Text="{Binding PreviewText, Mode=OneWay}" IsReadOnly="True"
+                             FontFamily="Cascadia Code,Consolas" FontSize="11"
+                             TextWrapping="NoWrap" AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             Background="Transparent" BorderThickness="0"
+                             AutomationProperties.Name="Export preview" />
+                    <TextBlock Grid.Row="2" Text="{Binding PreviewMoreNotice}" FontSize="12" Margin="2,6,2,0"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               AutomationProperties.LiveSetting="Polite">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PreviewMoreNotice}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <StackPanel Grid.Row="2" Margin="16,10,16,0">
+            <TextBlock Text="{Binding SummaryText}" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       AutomationProperties.LiveSetting="Polite" />
+            <TextBlock Text="{Binding PrivateWarning}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
+                       Foreground="{DynamicResource StatusWarnFg}"
+                       AutomationProperties.LiveSetting="Polite">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PrivateWarning}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,10,16,16">
+            <ui:Button Content="Cancel" Padding="14,5" Margin="0,0,8,0" IsCancel="True" Click="OnCancel"
+                       AutomationProperties.Name="Close without exporting" />
+            <ui:Button Content="Choose file…" Padding="14,5" Appearance="Primary"
+                       IsEnabled="{Binding CanExport}" Click="OnAccept"
+                       AutomationProperties.Name="Choose where to write this export" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
