@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.6] - 2026-08-16
+
+Everything open against your repositories, on one page.
+
+### Added
+- **Alerts page** -- one filterable view of what is open against every repository on GitHub: open issues, open pull requests, Dependabot alerts, code scanning alerts, and secret scanning alerts, with a jump to each repository's security page. Filter by name, by source, or down to only the rows with something open
+- The page opens instantly from a local cache, every row stamped with when its answers were taken, and refreshes with conditional requests: an unchanged repository answers with a not-modified that GitHub does not count against the API rate limit, so keeping the picture current costs almost nothing. Local commit state is deliberately not the trigger -- issues, CVEs, and leaked secrets arrive server-side with no local commit moving
+- A source that refuses is a labelled refusal on its own cell -- secret scanning needs permissions many tokens lack, and either scanning feature can be off for a repository -- never a zero it did not measure, and every refusal is retried on the next refresh
+
 ## [2.3.5] - 2026-08-16
 
 An export you shape before it exists.
