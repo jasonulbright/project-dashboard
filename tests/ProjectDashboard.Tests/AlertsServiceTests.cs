@@ -8,8 +8,8 @@ namespace ProjectDashboard.Tests;
 
 /// <summary>
 /// The conditional-read machinery: what a `gh api --include` answer parses to, how a 304 keeps
-/// the held count, and how a refusal is held as words rather than as a zero. State lives under
-/// the app-data sandbox.
+/// the held count, how a refusal is held as words rather than as a zero, and which failures are
+/// answers at all. State lives under the app-data sandbox.
 /// </summary>
 [Collection("app-data-sandbox")]
 public class AlertsServiceTests
@@ -17,6 +17,8 @@ public class AlertsServiceTests
     public AlertsServiceTests() => TestSandbox.ResetDataDir();
 
     private const string Slug = "acme/widgets";
+
+    private static readonly int SourceCount = AlertsService.Sources.Count;
 
     private static string Ok(string etag, string body, string link = "") =>
         "HTTP/2.0 200 OK\r\n"
@@ -83,6 +85,14 @@ public class AlertsServiceTests
         Assert.Contains("not enabled", missing);
     }
 
+    /// <summary>A rate limit says nothing about the repository; calling it a token failure would misdirect the fix.</summary>
+    [Fact]
+    public void ARateLimit403_IsRecognisedAsNoVerdict()
+    {
+        Assert.True(AlertsService.IsRateLimited("API rate limit exceeded for user"));
+        Assert.False(AlertsService.IsRateLimited("Resource not accessible by personal access token"));
+    }
+
     // ── The conditional loop ────────────────────────────────────────────────
 
     /// <summary>Answers each source read from a queue, recording the args each call carried.</summary>
@@ -105,25 +115,34 @@ public class AlertsServiceTests
     private static ProcessResult Answer(string stdout, int exit = 0, string stderr = "") =>
         new(exit, stdout, stderr, TimedOut: false);
 
+    private static void EnqueueOk(CannedGitHubService gh, string etagPrefix = "tag")
+    {
+        for (var i = 0; i < AlertsService.Sources.Count; i++)
+            gh.Answers.Enqueue(Answer(Ok($"{etagPrefix}{i}", "[]")));
+    }
+
     [Fact]
-    public async Task AFirstRead_StoresTheCountAndSendsItsETagOnTheNextOne()
+    public async Task AFirstRead_CoversAllFiveSources_AndSendsEachETagOnTheNextOne()
     {
         var gh = new CannedGitHubService();
-        for (var i = 0; i < 3; i++) gh.Answers.Enqueue(Answer(Ok($"tag{i}", "[]")));
+        EnqueueOk(gh);
         var service = new AlertsService(gh);
 
         var first = await service.RefreshAsync(Slug);
-        Assert.Equal(3, first.Changed);
+        Assert.Equal(SourceCount, first.Changed);
         Assert.Equal(0, service.Cached(Slug, AlertSource.Dependabot)!.Count);
+        Assert.Equal(0, service.Cached(Slug, AlertSource.IssuesAndPrs)!.Count);
+        Assert.Equal(0, service.Cached(Slug, AlertSource.PullRequests)!.Count);
         Assert.All(gh.Calls, call => Assert.DoesNotContain("-H", call));
+        Assert.Contains(gh.Calls, call => call.Last().Contains("/issues?state=open"));
+        Assert.Contains(gh.Calls, call => call.Last().Contains("/pulls?state=open"));
 
         gh.Calls.Clear();
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < SourceCount; i++)
             gh.Answers.Enqueue(Answer("HTTP/2.0 304 Not Modified\r\n\r\n", exit: 1, stderr: "gh: HTTP 304"));
         var second = await service.RefreshAsync(Slug);
 
-        Assert.Equal(3, second.Unchanged);
-        Assert.Equal(0, service.Cached(Slug, AlertSource.Dependabot)!.Count);
+        Assert.Equal(SourceCount, second.Unchanged);
         Assert.All(gh.Calls, call =>
         {
             var header = call[call.IndexOf("-H") + 1];
@@ -139,6 +158,8 @@ public class AlertsServiceTests
         gh.Answers.Enqueue(Answer(Ok("c", "[]")));
         gh.Answers.Enqueue(Answer(
             "HTTP/2.0 404 Not Found\r\n\r\n{\"message\":\"Not Found\"}", exit: 1, stderr: "gh: HTTP 404"));
+        gh.Answers.Enqueue(Answer(Ok("i", "[]")));
+        gh.Answers.Enqueue(Answer(Ok("p", "[]")));
         var service = new AlertsService(gh);
 
         var outcome = await service.RefreshAsync(Slug);
@@ -150,8 +171,9 @@ public class AlertsServiceTests
         // The next pass asks again — a scope granted since must be discoverable.
         gh.Answers.Enqueue(Answer(Ok("d2", "[]")));
         gh.Answers.Enqueue(Answer(Ok("c2", "[]")));
-        gh.Answers.Enqueue(Answer(Ok("s2", "[{}]",
-            "<https://x?per_page=1&page=2>; rel=\"last\"")));
+        gh.Answers.Enqueue(Answer(Ok("s2", "[{}]", "<https://x?per_page=1&page=2>; rel=\"last\"")));
+        gh.Answers.Enqueue(Answer(Ok("i2", "[]")));
+        gh.Answers.Enqueue(Answer(Ok("p2", "[]")));
         await service.RefreshAsync(Slug);
 
         var recovered = service.Cached(Slug, AlertSource.SecretScanning)!;
@@ -159,39 +181,93 @@ public class AlertsServiceTests
         Assert.Equal("", recovered.Unreadable);
     }
 
-    /// <summary>A launch failure replaces nothing: the held answer outlives a gh that did not run.</summary>
+    /// <summary>
+    /// No reply is not an answer: the held value stays, its stamp untouched, and the outcome
+    /// says unanswered — never unchanged, which is a claim GitHub did not make.
+    /// </summary>
     [Fact]
-    public async Task AGhThatCannotAnswer_LeavesTheHeldAnswerStanding()
+    public async Task AGhThatCannotAnswer_LeavesTheHeldAnswerStanding_AndIsCountedUnansweredNotConfirmed()
     {
         var gh = new CannedGitHubService();
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < SourceCount; i++)
             gh.Answers.Enqueue(Answer(Ok("t", "[{}]", "<https://x?per_page=1&page=4>; rel=\"last\"")));
         var service = new AlertsService(gh);
         await service.RefreshAsync(Slug);
+        var stampBefore = service.Cached(Slug, AlertSource.Dependabot)!.FetchedUtc;
 
-        for (var i = 0; i < 3; i++) gh.Answers.Enqueue(Answer("", exit: 1, stderr: "gh: spawn failed"));
+        for (var i = 0; i < SourceCount; i++) gh.Answers.Enqueue(Answer("", exit: 1, stderr: "gh: spawn failed"));
+        var outcome = await service.RefreshAsync(Slug);
+
+        Assert.Equal(SourceCount, outcome.Unanswered);
+        Assert.Equal(0, outcome.Unchanged);
+        var held = service.Cached(Slug, AlertSource.Dependabot)!;
+        Assert.Equal(4, held.Count);
+        Assert.Equal(stampBefore, held.FetchedUtc);
+    }
+
+    /// <summary>A rate-limited 403 is no verdict either: the held answer must not become a scope refusal.</summary>
+    [Fact]
+    public async Task ARateLimited403_KeepsTheHeldAnswerInsteadOfCallingItAPermissionFailure()
+    {
+        var gh = new CannedGitHubService();
+        for (var i = 0; i < SourceCount; i++)
+            gh.Answers.Enqueue(Answer(Ok("t", "[{}]")));
+        var service = new AlertsService(gh);
         await service.RefreshAsync(Slug);
 
-        Assert.Equal(4, service.Cached(Slug, AlertSource.Dependabot)!.Count);
+        for (var i = 0; i < SourceCount; i++)
+            gh.Answers.Enqueue(Answer(
+                "HTTP/2.0 403 Forbidden\r\n\r\n{\"message\":\"API rate limit exceeded\"}",
+                exit: 1, stderr: "gh: HTTP 403"));
+        var outcome = await service.RefreshAsync(Slug);
+
+        Assert.Equal(SourceCount, outcome.Unanswered);
+        Assert.Equal(0, outcome.Refused);
+        Assert.Equal(1, service.Cached(Slug, AlertSource.Dependabot)!.Count);
+        Assert.Equal("", service.Cached(Slug, AlertSource.Dependabot)!.Unreadable);
     }
 
     [Fact]
     public async Task TheCache_SurvivesToANewServiceInstance()
     {
         var gh = new CannedGitHubService();
-        for (var i = 0; i < 3; i++) gh.Answers.Enqueue(Answer(Ok("t", "[]")));
-        await new AlertsService(gh).RefreshAsync(Slug);
+        EnqueueOk(gh, "t");
+        var service = new AlertsService(gh);
+        service.EnsureAccount("jason@github.com");
+        await service.RefreshAsync(Slug);
 
         var reloaded = new AlertsService(new CannedGitHubService());
 
         Assert.Equal(0, reloaded.Cached(Slug, AlertSource.CodeScanning)!.Count);
-        Assert.Equal("\"t\"", reloaded.Cached(Slug, AlertSource.CodeScanning)!.ETag);
+        Assert.Equal("\"t1\"", reloaded.Cached(Slug, AlertSource.CodeScanning)!.ETag);
+    }
+
+    /// <summary>
+    /// What a token can see is a property of the account. Answers read as one identity are
+    /// dropped whole when another takes over; an unknown identity drops nothing, because trading
+    /// known facts for none would be the worse claim.
+    /// </summary>
+    [Fact]
+    public async Task ADifferentGhIdentity_DropsTheCacheWhole_AndAnUnknownOneKeepsIt()
+    {
+        var gh = new CannedGitHubService();
+        EnqueueOk(gh);
+        var service = new AlertsService(gh);
+        service.EnsureAccount("alice@github.com");
+        await service.RefreshAsync(Slug);
+        Assert.NotNull(service.Cached(Slug, AlertSource.Dependabot));
+
+        service.EnsureAccount("");
+        Assert.NotNull(service.Cached(Slug, AlertSource.Dependabot));
+
+        service.EnsureAccount("bob@github.com");
+        Assert.Null(service.Cached(Slug, AlertSource.Dependabot));
     }
 }
 
 /// <summary>
-/// The rows the Alerts page shows: where a slug comes from, what a non-GitHub remote's cells
-/// say, and what the filters hide.
+/// The rows the Alerts page shows: one per GitHub repository however many clones, what a
+/// non-GitHub remote's cells say, what the filters hide, and what a pass report may claim.
 /// </summary>
 [Collection("app-data-sandbox")]
 public class AlertsViewModelTests
@@ -211,7 +287,7 @@ public class AlertsViewModelTests
         return p;
     }
 
-    private static async Task<(AlertsViewModel Alerts, DashboardViewModel Dashboard)> NewAlertsAsync(
+    private static async Task<(AlertsViewModel Alerts, AlertsService Service)> NewAlertsAsync(
         params ProjectInfo[] projects)
     {
         var root = TestEnv.NewDir("alerts-vm");
@@ -232,7 +308,19 @@ public class AlertsViewModelTests
             uiPost: callback => callback());
         await dashboard.LoadProjectsCommand.ExecutionTask!;
         foreach (var project in projects) dashboard.Projects.Add(project);
-        return (new AlertsViewModel(dashboard, new AlertsService(gitHub)), dashboard);
+        var service = new AlertsService(gitHub);
+        return (new AlertsViewModel(dashboard, service, gitHub), service);
+    }
+
+    [Fact]
+    public async Task Opening_MakesNoRequestAndSaysTheRowsAreFromTheCache()
+    {
+        var (alerts, _) = await NewAlertsAsync(Project("hub", "https://github.com/acme/hub.git"));
+
+        alerts.Open();
+
+        Assert.Contains("Opened from what was last read", alerts.StatusText);
+        Assert.Equal("not read yet", alerts.Rows.Single().AsOfText);
     }
 
     [Fact]
@@ -241,7 +329,7 @@ public class AlertsViewModelTests
         var (alerts, _) = await NewAlertsAsync(
             Project("hub", "https://github.com/acme/hub.git"),
             Project("lab", "git@gitlab.example.com:team/lab.git"));
-        await alerts.OpenAsync();
+        alerts.Open();
 
         var hub = alerts.Rows.Single(r => r.Name == "hub");
         Assert.Equal("acme/hub", hub.Slug);
@@ -252,11 +340,25 @@ public class AlertsViewModelTests
         Assert.Contains("not GitHub", lab.DependabotDetail);
     }
 
+    /// <summary>Two checkouts of one repository are one repository: one row, one crawl target.</summary>
+    [Fact]
+    public async Task TwoClonesOfOneSlug_ShareOneRow()
+    {
+        var (alerts, _) = await NewAlertsAsync(
+            Project("hub", "https://github.com/acme/hub.git"),
+            Project("hub-worktree", "https://github.com/acme/hub.git"));
+        alerts.Open();
+
+        var row = Assert.Single(alerts.Rows);
+        Assert.Equal("acme/hub", row.Slug);
+        Assert.Equal("hub, hub-worktree", row.Name);
+    }
+
     [Fact]
     public async Task AnUnfetchedIssueCount_IsADashNeverAZero()
     {
         var (alerts, _) = await NewAlertsAsync(Project("quiet"));
-        await alerts.OpenAsync();
+        alerts.Open();
 
         Assert.Equal("—", alerts.Rows.Single().IssuesText);
     }
@@ -267,7 +369,7 @@ public class AlertsViewModelTests
         var (alerts, _) = await NewAlertsAsync(
             Project("busy", issues: 3),
             Project("quiet", issues: 0));
-        await alerts.OpenAsync();
+        alerts.Open();
         Assert.Equal(2, alerts.Rows.Count);
 
         alerts.OnlyWithAlerts = true;
@@ -278,12 +380,67 @@ public class AlertsViewModelTests
         Assert.Contains("filter hides rows", alerts.EmptyNotice);
     }
 
+    /// <summary>A refusal is on the row in words, not only behind a tooltip, and the row's name carries it.</summary>
+    [Fact]
+    public async Task ARefusedSource_SaysUnreadableOnTheRowAndInItsAccessibleName()
+    {
+        // Seeded before the page's own service loads the cache: the service reads it at
+        // construction and never re-reads the file.
+        WriteRefusal("acme/hub");
+        var (alerts, _) = await NewAlertsAsync(Project("hub", "https://github.com/acme/hub.git"));
+        alerts.Open();
+
+        var row = alerts.Rows.Single();
+        Assert.Equal("unreadable", row.SecretScanningText);
+        Assert.Contains("secret scanning", row.RefusalSummary);
+        Assert.Contains("secret scanning", row.AccessibleName);
+    }
+
+    /// <summary>Writes one refused secret-scanning read into the cache through the service's own path.</summary>
+    private static void WriteRefusal(string slug) =>
+        new AlertsService(new RefusingGh()).RefreshAsync(slug).GetAwaiter().GetResult();
+
+    private sealed class RefusingGh : GitHubService
+    {
+        public RefusingGh() : base(new SettingsService()) { }
+
+        public override Task<ProcessResult> RunAsync(
+            IEnumerable<string> args, CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var path = args.Last();
+            return Task.FromResult(path.Contains("secret-scanning")
+                ? new ProcessResult(1, "HTTP/2.0 404 Not Found\r\n\r\n{\"message\":\"Not Found\"}", "gh: HTTP 404", false)
+                : new ProcessResult(0, "HTTP/2.0 200 OK\r\nEtag: \"e\"\r\n\r\n[]", "", false));
+        }
+    }
+
     [Fact]
     public async Task WithNoGitHubRepositories_ARefreshSaysSoInsteadOfSpinningQuietly()
     {
         var (alerts, _) = await NewAlertsAsync(Project("local-only"));
-        await alerts.OpenAsync();
+        alerts.Open();
+
+        alerts.RefreshAllCommand.Execute(null);
+        await alerts.RefreshPass;
 
         Assert.Contains("no discovered repository has a GitHub remote", alerts.StatusText);
+    }
+
+    /// <summary>The pass report keeps its outcome classes apart; nothing unanswered reads as confirmed.</summary>
+    [Fact]
+    public void ThePassReport_WordsAnswersAndSilenceApart()
+    {
+        var report = AlertsViewModel.DescribePass(4, 4,
+            new AlertRefreshOutcome(Changed: 2, Unchanged: 10, Refused: 1, Unanswered: 7), cancelled: false);
+
+        Assert.Contains("2 answers changed", report);
+        Assert.Contains("10 confirmed unchanged", report);
+        Assert.Contains("1 refused", report);
+        Assert.Contains("7 unanswered", report);
+        Assert.Contains("unconfirmed", report);
+
+        var cancelled = AlertsViewModel.DescribePass(9, 3, AlertRefreshOutcome.Zero, cancelled: true);
+        Assert.Contains("cancelled after 3 of 9", cancelled);
+        Assert.Contains("kept", cancelled);
     }
 }

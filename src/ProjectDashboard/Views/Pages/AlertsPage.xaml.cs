@@ -10,8 +10,8 @@ public partial class AlertsPage
         InitializeComponent();
 
         // Page and view model are singletons over a project list every scan replaces. Each
-        // navigation rebuilds the rows from the cache — on screen at once — and starts one
-        // conditional pass; a revisit mid-pass keeps the running one.
-        Loaded += (_, _) => _ = viewModel.OpenAsync();
+        // navigation rebuilds the rows from the cache — on screen at once, no request made.
+        // Asking GitHub is the Refresh button's job, and cancelling it is the reader's.
+        Loaded += (_, _) => viewModel.Open();
     }
 }

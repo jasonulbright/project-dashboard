@@ -46,7 +46,21 @@
             <ui:Button Content="Refresh" FontSize="12" Padding="12,4" Margin="12,0,0,0"
                        Icon="{ui:SymbolIcon ArrowSync24}"
                        Command="{Binding RefreshAllCommand}"
-                       AutomationProperties.Name="Ask GitHub again about every repository" />
+                       AutomationProperties.Name="Ask GitHub again about every repository">
+                <ui:Button.Style>
+                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RefreshBusy}" Value="True">
+                                <Setter Property="IsEnabled" Value="False" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ui:Button.Style>
+            </ui:Button>
+            <ui:Button Content="Cancel" FontSize="12" Padding="12,4" Margin="8,0,0,0"
+                       Command="{Binding CancelRefreshCommand}"
+                       Visibility="{Binding RefreshBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                       AutomationProperties.Name="Cancel the running refresh; answers already taken are kept" />
         </StackPanel>
 
         <!-- ═══ COLUMN HEADINGS ═══ -->
@@ -87,6 +101,7 @@
                             <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                     CornerRadius="6" Padding="12,8" Margin="0,0,0,6"
                                     AutomationProperties.Name="{Binding AccessibleName}">
+                                <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -133,6 +148,22 @@
                                                ToolTip="Open this repository's security page on GitHub"
                                                AutomationProperties.Name="{Binding Name, StringFormat='Open the security page for {0} on GitHub'}" />
                                 </Grid>
+                                <!-- Refusal reasons live on the row, not only in a tooltip: a
+                                     reason only a mouse can reach is one most readers never get. -->
+                                <TextBlock Text="{Binding RefusalSummary}" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,4,0,0"
+                                           Foreground="{DynamicResource StatusWarnFg}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RefusalSummary}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                </StackPanel>
                             </Border>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

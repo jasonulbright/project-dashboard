@@ -420,6 +420,32 @@ public class PortfolioExportTests
         Assert.Equal("main", cells[SelectedKeys(Legacy).IndexOf("Branch")]);
     }
 
+    /// <summary>
+    /// Git accepts https://user:token@host/… as a remote; a token in the config must never be a
+    /// token in an export. Userinfo is dropped whole from http(s); ssh's conventional "git@" is
+    /// addressing, not a secret, and stays.
+    /// </summary>
+    [Theory]
+    [InlineData("https://jason:ghp_secret123@github.com/acme/x.git", "https://github.com/acme/x.git")]
+    [InlineData("https://ghp_secret123@github.com/acme/x.git", "https://github.com/acme/x.git")]
+    [InlineData("http://user:pw@host.example/repo", "http://host.example/repo")]
+    [InlineData("ssh://git@github.com/acme/x.git", "ssh://git@github.com/acme/x.git")]
+    [InlineData("ssh://user:pw@host.example/repo", "ssh://host.example/repo")]
+    [InlineData("git@github.com:acme/x.git", "git@github.com:acme/x.git")]
+    [InlineData("https://github.com/acme/x.git", "https://github.com/acme/x.git")]
+    public void TheRemoteUrlColumn_NeverCarriesACredential(string remote, string expected)
+    {
+        Assert.Equal(expected, PortfolioExport.ScrubbedRemoteUrl(remote));
+
+        var project = NewProject("alpha");
+        project.GitStatus = new GitStatus { RemoteUrl = remote };
+        var choices = Legacy with { ColumnKeys = ["Name", "RemoteUrl"] };
+
+        Assert.Equal(expected, JsonRows(PortfolioExport.ToJson([project], choices)).Single()["RemoteUrl"].GetString());
+        Assert.DoesNotContain("secret123", PortfolioExport.ToCsv([project], choices));
+        Assert.DoesNotContain("secret123", PortfolioExport.ToHtml([project], choices));
+    }
+
     [Fact]
     public void TheJson_KeepsNonAsciiTextAsTextRatherThanEscapes()
     {

@@ -110,7 +110,7 @@ public static class PortfolioExport
 
         new("Description", ExportColumnGroup.Identity, DefaultOn: false, p => p.Manifest.Description),
         new("Visibility", ExportColumnGroup.GitHub, DefaultOn: false, p => p.GitStatus.Visibility),
-        new("RemoteUrl", ExportColumnGroup.GitHub, DefaultOn: false, p => p.GitStatus.RemoteUrl),
+        new("RemoteUrl", ExportColumnGroup.GitHub, DefaultOn: false, p => ScrubbedRemoteUrl(p.GitStatus.RemoteUrl)),
         new("OpenIssueCount", ExportColumnGroup.GitHub, DefaultOn: false, p => p.OpenIssueCount),
         new("OpenPrCount", ExportColumnGroup.GitHub, DefaultOn: false, p => p.OpenPrCount),
         new("ModifiedCount", ExportColumnGroup.GitState, DefaultOn: false, p => p.GitStatus.ModifiedCount),
@@ -286,6 +286,27 @@ public static class PortfolioExport
                 _ => PortfolioFormat.Csv,
             },
         };
+
+    /// <summary>
+    /// The remote URL with any credential stripped before it can reach a file. Git accepts
+    /// https://user:token@host/… as a remote, and a token in the config is a token in every
+    /// export of the config. Userinfo is dropped whole from http(s) URLs — a bare username is
+    /// still an account name in a file built to be shared — and from ssh/git URLs only when it
+    /// carries a password, since their conventional "git@" is addressing, not a secret.
+    /// </summary>
+    internal static string ScrubbedRemoteUrl(string url)
+    {
+        var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 0) return url; // scp-like syntax carries no password position
+        var scheme = url[..schemeEnd].ToLowerInvariant();
+        var rest = url[(schemeEnd + 3)..];
+        var slash = rest.IndexOf('/');
+        var authority = slash < 0 ? rest : rest[..slash];
+        var at = authority.LastIndexOf('@');
+        if (at < 0) return url;
+        if (scheme is "ssh" or "git" && !authority[..at].Contains(':')) return url;
+        return url[..(schemeEnd + 3)] + authority[(at + 1)..] + (slash < 0 ? "" : rest[slash..]);
+    }
 
     /// <summary>owner/repo on any host, not only GitHub; empty when there is no remote.</summary>
     private static object SlugOf(ProjectInfo p)

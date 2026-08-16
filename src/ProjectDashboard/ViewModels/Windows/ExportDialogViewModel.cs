@@ -85,7 +85,7 @@ public partial class ExportDialogViewModel : ObservableObject
     public IReadOnlyList<string> TypeChoices { get; }
     public IReadOnlyList<string> StatusChoices { get; }
     public IReadOnlyList<string> CategoryChoices { get; }
-    public IReadOnlyList<string> VisibilityChoices { get; } = ["", "public", "private", "local", "unknown"];
+    public IReadOnlyList<string> VisibilityChoices { get; } = ["", "public", "private", "internal", "local", "unknown"];
 
     [ObservableProperty] private ExportPathMode _pathMode;
     [ObservableProperty] private bool _excludeHidden;
@@ -214,10 +214,10 @@ public partial class ExportDialogViewModel : ObservableObject
             $"{set.Count} {(set.Count == 1 ? "project" : "projects")}, {columns} {(columns == 1 ? "column" : "columns")}. "
             + "Values come from the last scan — nothing is re-read from git for the export.";
 
-        var privateCount = set.Count(p => p.GitStatus.Visibility == "private");
+        var privateCount = set.Count(p => p.GitStatus.Visibility is "private" or "internal");
         PrivateWarning = privateCount == 0
             ? ""
-            : $"{privateCount} of these {(privateCount == 1 ? "project is a private repository" : "projects are private repositories")} — review your column and path choices before sharing this file.";
+            : $"{privateCount} of these {(privateCount == 1 ? "project is a private or internal repository" : "projects are private or internal repositories")} — review your column and path choices before sharing this file.";
 
         CanExport = set.Count > 0 && columns > 0;
     }

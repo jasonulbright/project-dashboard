@@ -29,7 +29,8 @@ public class DashboardPageMarkupTests
     public void TheAlertsPage_ResolvesItsMarkup()
         => StaHost.Run(() =>
         {
-            var alerts = new AlertsViewModel(NewViewModel(), new AlertsService(new GitHubService(new SettingsService())));
+            var gitHub = new GitHubService(new SettingsService());
+            var alerts = new AlertsViewModel(NewViewModel(), new AlertsService(gitHub), gitHub);
             Assert.NotNull(new AlertsPage(alerts).Content);
         });
 

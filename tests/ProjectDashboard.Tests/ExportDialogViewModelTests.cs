@@ -64,14 +64,16 @@ public class ExportDialogViewModelTests
         Assert.DoesNotContain("Name,", dialog.PreviewText);
     }
 
+    /// <summary>Internal repositories are as unshareable as private ones; the warning counts both.</summary>
     [Fact]
-    public void PrivateRepositories_AreCountedInAWarningTheDialogShowsBeforeAnyFileExists()
+    public void PrivateAndInternalRepositories_AreCountedInAWarningTheDialogShowsBeforeAnyFileExists()
     {
-        var dialog = NewDialog([Project("open", "public"), Project("locked", "private"), Project("vault", "private")]);
-        Assert.Contains("2 of these projects are private repositories", dialog.PrivateWarning);
+        var dialog = NewDialog([Project("open", "public"), Project("locked", "private"), Project("shared", "internal")]);
+        Assert.Contains("2 of these projects are private or internal repositories", dialog.PrivateWarning);
 
         var none = NewDialog([Project("open", "public")]);
         Assert.Equal("", none.PrivateWarning);
+        Assert.Contains("internal", dialog.VisibilityChoices);
     }
 
     [Fact]
