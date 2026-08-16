@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.5] - 2026-08-16
+
+An export you shape before it exists.
+
+### Added
+- **Export dialog** -- the inventory export now opens a real dialog: pick columns (eleven new ones join the original fourteen -- description, visibility, full remote URL, open issue and PR counts, modified/untracked counts, conflicts, activity, pinned, hidden), filter by visibility, type, status, category, hidden, cloud-only, or just what the dashboard currently shows, and watch a live preview of the file's own CSV rendering -- first rows only, with the held-back count always named. Choices are remembered for the next export
+- **Path privacy is a three-way choice** -- full path, folder name only (the new default: the full path names this machine's drive layout and Windows account name, and an export is built to leave the machine), or no path column at all; when the exported set includes private repositories, the dialog says how many before any file exists
+- An unfetched issue or PR count exports as empty, never as a zero it did not measure
+
 ## [2.3.4] - 2026-08-15
 
 The four metadata lists are yours now.
