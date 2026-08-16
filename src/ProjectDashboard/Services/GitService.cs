@@ -363,6 +363,22 @@ public class GitService
             onStdOutLine, onStdErrLine: null, ct, StreamingCaptureCharBudget);
     }
 
+    /// <summary>
+    /// A run whose STDERR is delivered line by line while git works — the stream progress
+    /// arrives on. The caller passes `--progress` itself: git only volunteers those lines to a
+    /// terminal, and a pipe gets them on request alone.
+    /// </summary>
+    public virtual Task<ProcessResult> RunWithProgressAsync(
+        string repoPath, IEnumerable<string> args, Action<string> onProgressLine,
+        CancellationToken ct = default, TimeSpan? timeout = null)
+    {
+        var full = new List<string> { "-c", "core.quotepath=false" };
+        full.AddRange(args);
+        return ProcessRunner.RunStreamingAsync(
+            ResolveGitExe(), full, repoPath, timeout ?? Timeout, NonInteractiveEnvironment,
+            onStdOutLine: null, onStdErrLine: onProgressLine, ct, StreamingCaptureCharBudget);
+    }
+
     /// <summary>The non-interactive environment with <paramref name="extra"/> layered on top; the base pair itself is never overridden away.</summary>
     private static IReadOnlyDictionary<string, string> MergedEnvironment(IReadOnlyDictionary<string, string>? extra)
     {
@@ -746,9 +762,22 @@ public class GitService
     public Task<ProcessResult> FetchAsync(string repoPath, CancellationToken ct = default)
         => RunAsync(repoPath, ["fetch", "--prune"], ct, NetworkTimeout);
 
+    /// <summary>
+    /// Fetch that narrates. `--progress` forces the counting/receiving lines git otherwise
+    /// emits only to a terminal; they arrive on stderr, CR-terminated mid-redraw, and the
+    /// runner delivers each redraw as its own callback line.
+    /// </summary>
+    public Task<ProcessResult> FetchProgressAsync(
+        string repoPath, Action<string> onProgress, CancellationToken ct = default)
+        => RunWithProgressAsync(repoPath, ["fetch", "--prune", "--progress"], onProgress, ct, NetworkTimeout);
+
     /// <summary>Fast-forward-only pull: a diverged branch fails loudly instead of creating a surprise merge.</summary>
     public Task<ProcessResult> PullAsync(string repoPath, CancellationToken ct = default)
         => RunAsync(repoPath, ["pull", "--ff-only"], ct, NetworkTimeout);
+
+    public Task<ProcessResult> PullProgressAsync(
+        string repoPath, Action<string> onProgress, CancellationToken ct = default)
+        => RunWithProgressAsync(repoPath, ["pull", "--ff-only", "--progress"], onProgress, ct, NetworkTimeout);
 
     /// <summary>Push; sets upstream automatically when the branch has none.</summary>
     public async Task<ProcessResult> PushAsync(string repoPath, CancellationToken ct = default)
@@ -763,6 +792,20 @@ public class GitService
         if (remote is null)
             return new ProcessResult(-1, "", "no remote configured to push to", TimedOut: false);
         return await RunAsync(repoPath, ["push", "-u", remote, "HEAD"], ct, NetworkTimeout);
+    }
+
+    public async Task<ProcessResult> PushProgressAsync(
+        string repoPath, Action<string> onProgress, CancellationToken ct = default)
+    {
+        var upstream = await RunAsync(repoPath, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], ct);
+        if (upstream.Success)
+            return await RunWithProgressAsync(repoPath, ["push", "--progress"], onProgress, ct, NetworkTimeout);
+
+        var remote = await ResolveDefaultRemoteAsync(repoPath, ct);
+        if (remote is null)
+            return new ProcessResult(-1, "", "no remote configured to push to", TimedOut: false);
+        return await RunWithProgressAsync(
+            repoPath, ["push", "--progress", "-u", remote, "HEAD"], onProgress, ct, NetworkTimeout);
     }
 
     /// <summary>
@@ -1977,14 +2020,16 @@ public class GitService
 
     /// <summary>Clones into targetParentDir/<name>. Returns null on success, else a short error.</summary>
     public async Task<string?> CloneAsync(string url, string targetParentDir, CancellationToken ct = default,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null, Action<string>? onProgress = null)
     {
         var repoName = GitRemote.RepoNameFromUrl(url);
         var target = repoName.Length > 0 ? Path.Combine(targetParentDir, repoName) : null;
         var existedBefore = target is not null && Directory.Exists(target);
 
-        var result = await RunAsync(
-            targetParentDir, ["clone", "--", url], null, ct, timeout ?? TimeSpan.FromMinutes(15));
+        var result = onProgress is null
+            ? await RunAsync(targetParentDir, ["clone", "--", url], null, ct, timeout ?? TimeSpan.FromMinutes(15))
+            : await RunWithProgressAsync(
+                targetParentDir, ["clone", "--progress", "--", url], onProgress, ct, timeout ?? TimeSpan.FromMinutes(15));
         if (result.Success) return null;
 
         // A failed or timeout-killed clone can leave a partial target directory:

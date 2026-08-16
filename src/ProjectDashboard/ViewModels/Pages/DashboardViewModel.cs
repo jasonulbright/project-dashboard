@@ -755,7 +755,13 @@ public partial class DashboardViewModel : ObservableObject
         try
         {
             OpStatusText = $"{verb} {name}…";
-            var fetch = await _gitService.FetchAsync(repo);
+            // The narration is git's own progress line, redraw by redraw. Empty redraws are
+            // skipped so the line never blanks mid-operation.
+            void Narrate(string line)
+            {
+                if (line.Trim().Length > 0) OpStatusText = $"{verb} {name}: {line.Trim()}";
+            }
+            var fetch = await _gitService.FetchProgressAsync(repo, Narrate);
             if (!fetch.Success)
             {
                 OpStatusText = $"{name}: fetch failed — {fetch.FirstError}";
@@ -803,7 +809,7 @@ public partial class DashboardViewModel : ObservableObject
                     Record(OperationOutcome.Succeeded, "Fetched. Already up to date.");
                     return;
                 }
-                var pull = await _gitService.PullAsync(repo);
+                var pull = await _gitService.PullProgressAsync(repo, Narrate);
                 OpStatusText = pull.Success
                     ? $"{name}: pulled {state.Behind}."
                     : $"{name}: pull failed — {pull.FirstError}";
@@ -818,7 +824,7 @@ public partial class DashboardViewModel : ObservableObject
                     Record(OperationOutcome.Succeeded, "Fetched. Nothing to push.");
                     return;
                 }
-                var push = await _gitService.PushAsync(repo);
+                var push = await _gitService.PushProgressAsync(repo, Narrate);
                 OpStatusText = push.Success
                     ? $"{name}: pushed {state.Ahead}."
                     : $"{name}: push failed — {push.FirstError}";
@@ -1377,7 +1383,10 @@ public partial class DashboardViewModel : ObservableObject
         try
         {
             OpStatusText = $"Cloning {repoName}…";
-            var error = await _gitService.CloneAsync(url, destination);
+            var error = await _gitService.CloneAsync(url, destination, onProgress: line =>
+            {
+                if (line.Trim().Length > 0) OpStatusText = $"Cloning {repoName}: {line.Trim()}";
+            });
             OpStatusText = error is null ? $"Cloned {repoName}." : $"Clone failed: {error}";
             if (error is null)
                 await ForceRefreshAsync();
@@ -1610,7 +1619,10 @@ public partial class DashboardViewModel : ObservableObject
         {
             OpStatusText = $"Cloning {project.DirectoryName}…";
             var url = $"https://github.com/{project.RemoteSlug}.git";
-            var error = await _gitService.CloneAsync(url, destination);
+            var error = await _gitService.CloneAsync(url, destination, onProgress: line =>
+            {
+                if (line.Trim().Length > 0) OpStatusText = $"Cloning {project.DirectoryName}: {line.Trim()}";
+            });
             OpStatusText = error is null ? $"Cloned {project.DirectoryName}." : $"Clone failed: {error}";
             if (error is null)
                 await ForceRefreshAsync();

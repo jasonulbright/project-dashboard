@@ -66,6 +66,7 @@ public partial class ProjectDetailViewModel
         HistoryHasMore = false;
         HistoryPaging = false;
         HistoryPagingStatusText = "";
+        ResetHistorySearch();
     }
 
     /// <summary>

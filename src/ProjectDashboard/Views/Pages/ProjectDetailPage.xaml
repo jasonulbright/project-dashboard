@@ -1330,6 +1330,88 @@
                                                AutomationProperties.AutomationId="HistoryPagingStatusText"
                                                AutomationProperties.LiveSetting="Polite" />
                                 </DockPanel>
+
+                                <!-- Search is a separate result list on purpose: the list above is
+                                     the contiguous walk the surgery depth is measured against, and
+                                     filtering it in place would measure a rebase over commits the
+                                     reader never saw. -->
+                                <Expander Header="Search history" FontSize="11" Margin="0,0,0,6"
+                                          AutomationProperties.Name="Search this repository's history">
+                                    <StackPanel Margin="0,6,0,0">
+                                        <WrapPanel>
+                                            <ui:TextBox Width="170" FontSize="11" Margin="0,0,6,4"
+                                                        PlaceholderText="Message contains…"
+                                                        Text="{Binding HistorySearchMessage, UpdateSourceTrigger=PropertyChanged}"
+                                                        AutomationProperties.Name="Search commit messages for this text" />
+                                            <ui:TextBox Width="130" FontSize="11" Margin="0,0,6,4"
+                                                        PlaceholderText="Author"
+                                                        Text="{Binding HistorySearchAuthor, UpdateSourceTrigger=PropertyChanged}"
+                                                        AutomationProperties.Name="Search commits by this author" />
+                                            <ui:TextBox Width="170" FontSize="11" Margin="0,0,6,4"
+                                                        PlaceholderText="Path (file or folder)"
+                                                        Text="{Binding HistorySearchPath, UpdateSourceTrigger=PropertyChanged}"
+                                                        AutomationProperties.Name="Search commits touching this path" />
+                                            <ui:TextBox Width="100" FontSize="11" Margin="0,0,6,4"
+                                                        PlaceholderText="Since date"
+                                                        Text="{Binding HistorySearchSince, UpdateSourceTrigger=PropertyChanged}"
+                                                        AutomationProperties.Name="Only commits on or after this date" />
+                                            <ui:TextBox Width="100" FontSize="11" Margin="0,0,6,4"
+                                                        PlaceholderText="Until date"
+                                                        Text="{Binding HistorySearchUntil, UpdateSourceTrigger=PropertyChanged}"
+                                                        AutomationProperties.Name="Only commits on or before this date" />
+                                            <ui:Button Content="Search" FontSize="11" Padding="8,3" Margin="0,0,6,4"
+                                                       Command="{Binding SearchHistoryCommand}"
+                                                       AutomationProperties.Name="Search history with these filters" />
+                                            <ui:Button Content="Clear" FontSize="11" Padding="8,3" Margin="0,0,0,4"
+                                                       Command="{Binding ClearHistorySearchCommand}"
+                                                       AutomationProperties.Name="Clear the history search and its results" />
+                                        </WrapPanel>
+                                        <TextBlock Text="{Binding HistorySearchStatus}" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                   AutomationProperties.Name="{Binding HistorySearchStatus, StringFormat='History search status: {0}'}"
+                                                   AutomationProperties.LiveSetting="Polite" />
+                                        <ListBox ItemsSource="{Binding HistorySearchResults}" MaxHeight="180"
+                                                 Background="Transparent" BorderThickness="0" Margin="0,4,0,0"
+                                                 HorizontalContentAlignment="Stretch"
+                                                 Visibility="{Binding HistorySearchHasResults, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                 AutomationProperties.Name="Matching commits">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="AutomationProperties.Name">
+                                                        <Setter.Value>
+                                                            <MultiBinding StringFormat="{}{0}: {1}">
+                                                                <Binding Path="ShortHash" />
+                                                                <Binding Path="Message" />
+                                                            </MultiBinding>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <DockPanel Margin="0,1">
+                                                        <ui:Button DockPanel.Dock="Right" Content="Select above" FontSize="10"
+                                                                   Padding="6,2" Margin="6,0,0,0"
+                                                                   Command="{Binding DataContext.SelectHistorySearchResultCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                                   CommandParameter="{Binding}"
+                                                                   AutomationProperties.Name="{Binding ShortHash, StringFormat='Select commit {0} in the history list'}" />
+                                                        <TextBlock DockPanel.Dock="Left" Width="70" Text="{Binding ShortHash}"
+                                                                   FontFamily="Cascadia Code,Consolas" FontSize="11"
+                                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                        <TextBlock Text="{Binding Message}" FontSize="11"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}"
+                                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <ui:Button Content="Load more matches" FontSize="11" Padding="8,3" Margin="0,4,0,0"
+                                                   HorizontalAlignment="Left"
+                                                   Command="{Binding LoadMoreHistorySearchResultsCommand}"
+                                                   Visibility="{Binding HistorySearchHasMore, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                   AutomationProperties.Name="Load more matching commits" />
+                                    </StackPanel>
+                                </Expander>
                                 <ui:Button Content="Plan a reorder from the selected commit…" FontSize="11" Padding="8,3"
                                            HorizontalAlignment="Left" Margin="0,0,0,6"
                                            Command="{Binding PlanHistoryEditCommand}"
@@ -2889,7 +2971,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding StringFormat="{}{0}: {1}">
                                                         <Binding Path="Ref" />
-                                                        <Binding Path="Subject" />
+                                                        <Binding Path="Message" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -2916,8 +2998,8 @@
                                                                Command="{Binding DataContext.StashDropCommand, RelativeSource={RelativeSource AncestorType=Page}}"
                                                                CommandParameter="{Binding}" />
                                                 </StackPanel>
-                                                <TextBlock Text="{Binding Subject}" FontSize="12" VerticalAlignment="Center"
-                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Subject}"
+                                                <TextBlock Text="{Binding Message}" FontSize="12" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}"
                                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                                             </DockPanel>
                                         </DataTemplate>
