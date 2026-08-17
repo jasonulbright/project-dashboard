@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.10] - 2026-08-17
+
+Nine defects found in 2.3.9's conflict workflow by an external review, all reproduced and fixed.
+
+### Fixed
+- **Conflict markers were only recognised at git's default width.** A repository that sets `conflict-marker-size` gets longer markers, and the guard walked straight past every one of them; the length in force for the file is now read from its attributes, so the refusal holds at any width
+- **Continuing a rebase with an edited message rewrote the commit's author.** The edited message now goes into the file the sequencer commits from, so the continue is still git's own commit and the original author is kept — the same fix stops a cherry-pick of several commits from being left stranded half-done when its first message is edited
+- **A message beginning with `#` survives.** git strips comment lines from the message it commits and writes its own advice into that message as comments; the continue now runs under a comment character the message does not use, so an issue reference stays the subject and git's advice still does not reach the history
+- **Confirming a continue or an abort re-checks the repository before it runs.** The dialog holds no lock, and the answer no longer authorises an operation against a state the repository left while the question was open
+- **A sequence that stops on the next commit is reported as progress**, with the new conflict count, instead of as a failed continue over history that in fact moved forward
+- **A resolution that empties the commit being replayed is named before the continue runs** — git drops such a commit without asking, and the confirmation now says so while aborting is still a choice
+- **Taking a side records the index's own blob for that side**, instead of re-reading a working-tree file that anything may have rewritten between the checkout and the stage
+- **A content identity git could not read is no longer treated as agreement** — the stage is refused, or the conflict put back, rather than trusting an unread answer
+- **A leftover scratch tree can no longer make a foreign rebase look like one this app started**; ownership is proven against the todo git is actually running
+
 ## [2.3.9] - 2026-08-16
 
 A conflicted merge no longer sends you to a terminal.
