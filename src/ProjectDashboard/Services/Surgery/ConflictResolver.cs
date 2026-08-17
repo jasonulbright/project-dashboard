@@ -15,18 +15,32 @@ public enum ConflictSide
     Theirs = 3
 }
 
+/// <summary>One stage of an unmerged path exactly as the index records it.</summary>
+public sealed record ConflictStage(string Mode, string Sha);
+
 /// <summary>
 /// Which stages the index holds for one unmerged path, and whether the entry is a gitlink.
 /// A side with no stage has no content to preview and none to take.
+///
+/// The mode and blob of each stage travel with it: a resolution that takes a side records THAT
+/// blob, rather than re-reading a working-tree file git has since written and something else may
+/// have written again.
 /// </summary>
-public sealed record ConflictStages(bool HasBase, bool HasOurs, bool HasTheirs, bool IsGitlink)
+public sealed record ConflictStages(
+    ConflictStage? Base, ConflictStage? Ours, ConflictStage? Theirs, bool IsGitlink)
 {
-    public bool Has(ConflictSide side) => side switch
+    public bool HasBase => Base is not null;
+    public bool HasOurs => Ours is not null;
+    public bool HasTheirs => Theirs is not null;
+
+    public ConflictStage? Stage(ConflictSide side) => side switch
     {
-        ConflictSide.Base => HasBase,
-        ConflictSide.Ours => HasOurs,
-        _ => HasTheirs
+        ConflictSide.Base => Base,
+        ConflictSide.Ours => Ours,
+        _ => Theirs
     };
+
+    public bool Has(ConflictSide side) => Stage(side) is not null;
 }
 
 /// <summary>
@@ -103,13 +117,14 @@ public sealed class ConflictResolver
             if (!int.TryParse(fields[2], out var stage)) continue;
 
             var path = record[(tab + 1)..];
+            var entry = new ConflictStage(fields[0], fields[1]);
             var gitlink = fields[0] == GitlinkMode;
             byPath.TryGetValue(path, out var held);
-            held ??= new ConflictStages(false, false, false, false);
+            held ??= new ConflictStages(null, null, null, false);
             byPath[path] = new ConflictStages(
-                held.HasBase || stage == 1,
-                held.HasOurs || stage == 2,
-                held.HasTheirs || stage == 3,
+                stage == 1 ? entry : held.Base,
+                stage == 2 ? entry : held.Ours,
+                stage == 3 ? entry : held.Theirs,
                 held.IsGitlink || gitlink);
         }
         return byPath;
@@ -182,16 +197,21 @@ public sealed class ConflictResolver
     /// the index, which is what the sequencer's continue requires.
     /// </summary>
     public async Task<ProcessResult> TakeSideAsync(
-        string repoPath, string path, ConflictSide side, bool sideHasContent, CancellationToken ct = default)
+        string repoPath, string path, ConflictSide side, ConflictStage? stage, CancellationToken ct = default)
     {
         var pathspec = GitService.LiteralPathspec(path);
-        if (!sideHasContent)
+        if (stage is null)
             return await _git.RunAsync(repoPath, ["rm", "-f", "--", pathspec], ct, ShortTimeout);
 
         var flag = side == ConflictSide.Ours ? "--ours" : "--theirs";
         var checkout = await _git.RunAsync(repoPath, ["checkout", flag, "--", pathspec], ct, ShortTimeout);
         if (!checkout.Success) return checkout;
-        return await _git.RunAsync(repoPath, ["add", "--", pathspec], ct, ShortTimeout);
+
+        // The blob the index already holds for that side, not a re-read of the file `checkout`
+        // just wrote: between the two calls anything may write to the working tree, and `add`
+        // would record whatever it finds there as though it were the side the reader chose.
+        return await _git.RunAsync(repoPath,
+            ["update-index", "--cacheinfo", $"{stage.Mode},{stage.Sha},{path}"], ct, ShortTimeout);
     }
 
     /// <summary>What a stage-resolved attempt did, and why it did not stage when it did not.</summary>
@@ -205,6 +225,9 @@ public sealed class ConflictResolver
 
         /// <summary>The file changed between the scan and the stage, so what would have been staged was never checked.</summary>
         public bool ChangedWhileStaging { get; init; }
+
+        /// <summary>git could not say what the working tree holds, so nothing was staged from it.</summary>
+        public bool ContentUnidentified { get; init; }
 
         /// <summary>The unmerged stages are back and the working tree holds what it held.</summary>
         public bool ConflictRestored { get; init; }
@@ -229,17 +252,24 @@ public sealed class ConflictResolver
     {
         var pathspec = GitService.LiteralPathspec(path);
         var scanned = await BlobIdentityAsync(repoPath, path, ct);
+        if (scanned.Unknown)
+            return new StageResolvedResult { Staged = false, ContentUnidentified = true };
 
-        if (FindConflictMarker(repoPath, path) is { } marker)
+        if (await FindConflictMarkerAsync(repoPath, path, ct) is { } marker)
             return new StageResolvedResult { Staged = false, Marker = marker };
 
         var add = await _git.RunAsync(repoPath, ["add", "-A", "--", pathspec], ct, ShortTimeout);
         if (!add.Success) return new StageResolvedResult { Staged = false, Failure = add };
 
+        // A removal has no content on either side to compare, and the `add` records exactly it.
+        if (scanned.Absent) return new StageResolvedResult { Staged = true };
+
         var staged = await StagedIdentityAsync(repoPath, path, ct);
-        if (scanned is null || staged is null || string.Equals(scanned, staged, StringComparison.Ordinal))
+        if (staged is not null && string.Equals(scanned.Sha, staged, StringComparison.Ordinal))
             return new StageResolvedResult { Staged = true };
 
+        // An identity that could not be read is not agreement: the index now holds content this
+        // scan never saw, which is the case the comparison exists to catch.
         var restored = await RestoreConflictAsync(repoPath, path, ct);
         return new StageResolvedResult
         {
@@ -250,15 +280,26 @@ public sealed class ConflictResolver
     }
 
     /// <summary>
-    /// The blob git would record for the working tree's copy of a path, with the same filters an
-    /// `add` applies to it. Null for a path with no file — a resolution that deleted it, which
-    /// stages a removal and has no content to check.
+    /// What the working tree holds for a path: nothing at all, a blob git identified, or an answer
+    /// that could not be read. The third is never folded into either of the others — a comparison
+    /// against an unknown is not a comparison.
     /// </summary>
-    private async Task<string?> BlobIdentityAsync(string repoPath, string path, CancellationToken ct)
+    private sealed record WorkingBlob(bool Absent, bool Unknown, string Sha = "");
+
+    /// <summary>
+    /// The blob git would record for the working tree's copy of a path, with the same filters an
+    /// `add` applies to it.
+    /// </summary>
+    private async Task<WorkingBlob> BlobIdentityAsync(string repoPath, string path, CancellationToken ct)
     {
-        if (!File.Exists(Path.Combine(repoPath, path.Replace('/', Path.DirectorySeparatorChar)))) return null;
+        if (!File.Exists(Path.Combine(repoPath, path.Replace('/', Path.DirectorySeparatorChar))))
+            return new WorkingBlob(Absent: true, Unknown: false);
+
         var hash = await _git.RunAsync(repoPath, ["hash-object", "--", path], ct, ShortTimeout);
-        return hash.Success && hash.StdOut.Trim().Length > 0 ? hash.StdOut.Trim() : null;
+        var sha = hash.StdOut.Trim();
+        return hash.Success && sha.Length > 0
+            ? new WorkingBlob(Absent: false, Unknown: false, sha)
+            : new WorkingBlob(Absent: false, Unknown: true);
     }
 
     /// <summary>The blob the index holds for a path at stage 0, or null when it holds none.</summary>
@@ -311,8 +352,38 @@ public sealed class ConflictResolver
     /// Which conflict marker the working-tree file still carries, or null when it carries none.
     /// Returns <see cref="MarkerScanUnreadable"/> when the file cannot be read at all: a file
     /// nothing can scan is never reported as clean.
+    ///
+    /// The marker length is the path's own: git writes runs of `conflict-marker-size` characters,
+    /// an attribute a repository sets per path, and a scan fixed at the default length walks
+    /// straight past every marker in a repository that raised it.
     /// </summary>
-    public static string? FindConflictMarker(string repoPath, string path)
+    public async Task<string?> FindConflictMarkerAsync(string repoPath, string path, CancellationToken ct = default)
+        => FindConflictMarker(repoPath, path, await MarkerSizeAsync(repoPath, path, ct));
+
+    /// <summary>git's own default run length for conflict markers, used where the attribute says nothing.</summary>
+    internal const int DefaultMarkerSize = 7;
+
+    /// <summary>
+    /// The `conflict-marker-size` attribute in force for one path, or
+    /// <see cref="DefaultMarkerSize"/> where it is unset, unreadable, or not a usable length.
+    /// </summary>
+    internal async Task<int> MarkerSizeAsync(string repoPath, string path, CancellationToken ct = default)
+    {
+        var read = await _git.RunAsync(repoPath, ["check-attr", "conflict-marker-size", "--", path], ct, ShortTimeout);
+        if (!read.Success) return DefaultMarkerSize;
+        return ParseMarkerSize(read.StdOut);
+    }
+
+    /// <summary>Reads `git check-attr`'s "&lt;path&gt;: &lt;attribute&gt;: &lt;value&gt;" line.</summary>
+    internal static int ParseMarkerSize(string checkAttrOutput)
+    {
+        var line = checkAttrOutput.Split('\n').FirstOrDefault(l => l.Contains("conflict-marker-size:", StringComparison.Ordinal));
+        var value = line?[(line.LastIndexOf(':') + 1)..].Trim();
+        // A marker shorter than git's own floor would match text that is not a marker at all.
+        return int.TryParse(value, out var size) && size >= DefaultMarkerSize ? size : DefaultMarkerSize;
+    }
+
+    internal static string? FindConflictMarker(string repoPath, string path, int markerSize = DefaultMarkerSize)
     {
         var full = Path.Combine(repoPath, path.Replace('/', Path.DirectorySeparatorChar));
         try
@@ -322,7 +393,7 @@ public sealed class ConflictResolver
 
             using var reader = new StreamReader(full, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             while (reader.ReadLine() is { } line)
-                if (IsConflictMarker(line))
+                if (IsConflictMarker(line, markerSize))
                     return line.Length > 40 ? line[..40] : line;
             return null;
         }
@@ -337,19 +408,24 @@ public sealed class ConflictResolver
     public const string MarkerScanUnreadable = "(this file could not be read)";
 
     /// <summary>
-    /// Whether a line is one of git's conflict markers. The angle-bracket runs carry a label and
-    /// are matched on the run plus its separator; the equals run is matched whole, so a rule of
-    /// equals signs under a heading is not read as the separator of a conflict that is not there.
+    /// Whether a line is one of git's conflict markers at the length this path uses. The
+    /// angle-bracket and pipe runs carry a label and are matched on a run of at least that length
+    /// plus its separator; the equals run is matched whole and exactly, so a rule of equals signs
+    /// under a heading is not read as the separator of a conflict that is not there.
     /// </summary>
-    internal static bool IsConflictMarker(string line) =>
-        IsMarkerRun(line, '<') || IsMarkerRun(line, '>') || IsMarkerRun(line, '|') || line == "=======";
+    internal static bool IsConflictMarker(string line, int markerSize = DefaultMarkerSize) =>
+        IsMarkerRun(line, '<', markerSize) ||
+        IsMarkerRun(line, '>', markerSize) ||
+        IsMarkerRun(line, '|', markerSize) ||
+        (line.Length == markerSize && line.All(c => c == '='));
 
-    private static bool IsMarkerRun(string line, char marker)
+    private static bool IsMarkerRun(string line, char marker, int markerSize)
     {
-        if (line.Length < 7) return false;
-        for (var i = 0; i < 7; i++)
-            if (line[i] != marker) return false;
-        return line.Length == 7 || line[7] == ' ';
+        if (line.Length < markerSize) return false;
+        var run = 0;
+        while (run < line.Length && line[run] == marker) run++;
+        if (run < markerSize) return false;
+        return run == line.Length || line[run] == ' ';
     }
 
     // ── Sequencer ───────────────────────────────────────────────────────────
@@ -358,13 +434,7 @@ public sealed class ConflictResolver
     public async Task<string> ReadPreparedMessageAsync(
         string repoPath, RepoActivity activity, CancellationToken ct = default)
     {
-        var relative = activity == RepoActivity.Rebasing ? "rebase-merge/message" : "MERGE_MSG";
-        var probe = await _git.RunAsync(repoPath, ["rev-parse", "--git-path", relative], ct, ShortTimeout);
-        if (!probe.Success) return "";
-
-        var file = probe.StdOut.Trim();
-        if (file.Length == 0) return "";
-        if (!Path.IsPathRooted(file)) file = Path.Combine(repoPath, file);
+        if (await MessageFileAsync(repoPath, activity, ct) is not { } file) return "";
         try
         {
             return File.Exists(file) ? StripCommentLines(File.ReadAllText(file)) : "";
@@ -374,6 +444,21 @@ public sealed class ConflictResolver
             Log.Warn($"prepared message read failed for {repoPath}", ex);
             return "";
         }
+    }
+
+    /// <summary>
+    /// The file the sequencer commits from: a rebase keeps its own inside the rebase state, and
+    /// merge, cherry-pick and revert all use MERGE_MSG. Null when git could not resolve it.
+    /// </summary>
+    private async Task<string?> MessageFileAsync(string repoPath, RepoActivity activity, CancellationToken ct)
+    {
+        var relative = activity == RepoActivity.Rebasing ? "rebase-merge/message" : "MERGE_MSG";
+        var probe = await _git.RunAsync(repoPath, ["rev-parse", "--git-path", relative], ct, ShortTimeout);
+        if (!probe.Success) return null;
+
+        var file = probe.StdOut.Trim();
+        if (file.Length == 0) return null;
+        return Path.IsPathRooted(file) ? file : Path.Combine(repoPath, file);
     }
 
     /// <summary>
@@ -390,10 +475,16 @@ public sealed class ConflictResolver
     }
 
     /// <summary>
-    /// Continues the sequence in progress. With <paramref name="editedMessage"/> null the commit
-    /// carries the message git prepared; with one, the commit is written from it first and the
-    /// sequencer is continued afterwards only while it is still running — a merge is finished by
-    /// the commit itself, and a one-commit cherry-pick or revert is too.
+    /// Continues the sequence in progress. An edited message is written into the file the
+    /// sequencer itself commits from, and the continue is then the same single command it is
+    /// without one.
+    ///
+    /// Committing the edited message separately and continuing over it is what this must not do:
+    /// at a stopped rebase git holds the replayed commit's author in its own state and no
+    /// CHERRY_PICK_HEAD exists, so a hand-made commit takes the committer as author and rewrites
+    /// authorship nobody asked to change; and the commit clears the HEAD file the activity is read
+    /// from while leaving the sequencer's remaining picks queued, so a multi-commit sequence reads
+    /// as finished and is left stranded.
     /// </summary>
     public async Task<ProcessResult> ContinueAsync(
         string repoPath, RepoActivity activity, string? editedMessage, SigningChoice signing,
@@ -402,52 +493,69 @@ public sealed class ConflictResolver
         if (ContinueVerb(activity) is not { } verb)
             return Refusal($"there is no {Describe(activity)} to continue");
 
-        var env = new Dictionary<string, string> { ["GIT_EDITOR"] = "true" };
+        var args = SigningPin(signing);
         if (editedMessage is not null)
         {
-            var written = await CommitEditedMessageAsync(repoPath, editedMessage, signing, env, ct);
-            if (!written.Success) return written;
-            if (await _git.DetectActivityAsync(repoPath, ct) != activity) return written;
+            if (await MessageFileAsync(repoPath, activity, ct) is not { } file)
+                return Refusal("git could not say where this operation keeps its commit message");
+            try
+            {
+                await File.WriteAllTextAsync(file, editedMessage.TrimEnd('\n') + "\n", Utf8NoBom, ct);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("could not write the sequencer's commit message", ex);
+                return Refusal($"the edited message could not be written to disk: {ex.Message}");
+            }
+            args.AddRange(["-c", $"core.commentChar={CommentCharFor(editedMessage)}"]);
         }
 
-        var args = SigningPin(signing);
+        var env = new Dictionary<string, string> { ["GIT_EDITOR"] = "true" };
         args.AddRange([verb, "--continue"]);
         return await _git.RunAsync(repoPath, args, env, ct, ContinueTimeout);
     }
 
     /// <summary>
-    /// Writes the commit a continue would have written, from the message the reader edited.
-    /// `--continue` takes no message arguments on any of the four sequencers, so this is the only
-    /// route an edited message has that does not open an editor.
+    /// The comment character the continue runs under: one no line of the message starts with.
+    ///
+    /// The sequencer strips comment lines from the message it commits, and it writes its own
+    /// advice into that message as comments at commit time — "It looks like you may be committing
+    /// a merge", and the rest. Left at the default, that stripping also eats a line the reader
+    /// wrote beginning with '#', which for an issue reference is the whole subject; turned off
+    /// with `commit.cleanup=whitespace`, git's advice is committed verbatim instead. Moving the
+    /// character off what the message uses keeps both halves right: git's own lines are still
+    /// comments, and every line of the message is not.
     /// </summary>
-    private async Task<ProcessResult> CommitEditedMessageAsync(
-        string repoPath, string message, SigningChoice signing,
-        IReadOnlyDictionary<string, string> env, CancellationToken ct)
+    internal static char CommentCharFor(string message)
     {
-        var scratch = Path.Combine(AppPaths.LocalDir, "conflict-work");
-        var file = Path.Combine(scratch, $"msg-{Guid.NewGuid():N}.txt");
-        try
-        {
-            Directory.CreateDirectory(scratch);
-            await File.WriteAllTextAsync(file, message, Utf8NoBom, ct);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("could not write the continue message file", ex);
-            return Refusal($"the edited message could not be written to disk: {ex.Message}");
-        }
+        var starts = message.Split('\n')
+            .Select(line => line.TrimStart())
+            .Where(line => line.Length > 0)
+            .Select(line => line[0])
+            .ToHashSet();
 
-        try
-        {
-            var args = SigningPin(signing);
-            args.AddRange(["commit", GitService.MessageCleanupPin, "-F", file]);
-            return await _git.RunAsync(repoPath, args, env, ct, ContinueTimeout);
-        }
-        finally
-        {
-            try { File.Delete(file); }
-            catch (Exception ex) { Log.Warn($"could not delete the continue message file {file}", ex); }
-        }
+        foreach (var candidate in CommentCharCandidates)
+            if (!starts.Contains(candidate)) return candidate;
+        return '#';
+    }
+
+    /// <summary>
+    /// Characters git accepts as its comment character, in the order this tries them. A message
+    /// that begins a line with every one of them falls back to git's default, which is the only
+    /// case where a line can still be read as a comment.
+    /// </summary>
+    private static readonly char[] CommentCharCandidates = ['#', ';', '@', '!', '$', '%', '^', '&', '|', ':', '~', '?'];
+
+    /// <summary>
+    /// Whether the resolution leaves the commit being replayed with nothing in it. git's own
+    /// answer to that is decided by the `--empty` mode the sequence was started with, which for a
+    /// rebase begun outside this app is usually to drop the commit — so the reader is told before
+    /// the continue runs, not after the commit has gone.
+    /// </summary>
+    public async Task<bool> ContinueWouldRecordNothingAsync(string repoPath, CancellationToken ct = default)
+    {
+        var staged = await _git.RunAsync(repoPath, ["diff", "--cached", "--quiet", "HEAD"], ct, ShortTimeout);
+        return staged is { ExitCode: 0, TimedOut: false };
     }
 
     /// <summary>Abandons the sequence in progress, returning the repository to where it started.</summary>

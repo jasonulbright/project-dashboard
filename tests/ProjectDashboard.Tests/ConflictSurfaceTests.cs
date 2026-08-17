@@ -30,10 +30,19 @@ public class ConflictSurfaceTests
         public RebaseDriver.StoppedRebaseOrigin Origin { get; set; } =
             RebaseDriver.StoppedRebaseOrigin.StartedElsewhere;
 
+        /// <summary>Runs while the confirmation is on screen — the interleave a dialog holds no gate against.</summary>
+        public Action? WhileConfirming { get; set; }
+
+        /// <summary>Declines only the questions whose title starts with this, so one step of a flow can be refused.</summary>
+        public string? DeclineTitlesStartingWith { get; set; }
+
         internal override Task<bool> ConfirmAsync(string title, string message, string confirmText)
         {
             Confirmations++;
             LastConfirmMessage = message;
+            WhileConfirming?.Invoke();
+            if (DeclineTitlesStartingWith is { } prefix)
+                return Task.FromResult(!title.StartsWith(prefix, StringComparison.Ordinal));
             return Task.FromResult(_confirm);
         }
 
@@ -64,6 +73,10 @@ public class ConflictSurfaceTests
         await vm.OpenConflictsCommand.ExecuteAsync(null);
         return vm;
     }
+
+    /// <summary>An index entry for a shape a fixture cannot stage; only the mode is read from it.</summary>
+    private static ConflictStage Blob(int stage) => new("100644", new string((char)('a' + stage), 40));
+    private static ConflictStage Gitlink(int stage) => new("160000", new string((char)('a' + stage), 40));
 
     private static async Task<string> UnmergedAsync(TempRepo repo) =>
         string.Join('\n', (await repo.GitAsync("status", "--porcelain=v2")).Split('\n')
@@ -151,7 +164,7 @@ public class ConflictSurfaceTests
     {
         var rows = ProjectDetailViewModel.BuildConflictRows(null, new Dictionary<string, ConflictStages>
         {
-            ["lib/dep"] = new(HasBase: true, HasOurs: true, HasTheirs: true, IsGitlink: true)
+            ["lib/dep"] = new(Gitlink(1), Gitlink(2), Gitlink(3), IsGitlink: true)
         });
 
         var row = Assert.Single(rows);
@@ -165,7 +178,7 @@ public class ConflictSurfaceTests
     {
         var rows = ProjectDetailViewModel.BuildConflictRows(null, new Dictionary<string, ConflictStages>
         {
-            ["gone.txt"] = new(HasBase: true, HasOurs: false, HasTheirs: false, IsGitlink: false)
+            ["gone.txt"] = new(Blob(1), null, null, IsGitlink: false)
         });
 
         var row = Assert.Single(rows);
@@ -351,6 +364,121 @@ public class ConflictSurfaceTests
         Assert.Equal(2, vm.Confirmations);
         Assert.Contains("file.txt", await UnmergedAsync(repo));
         Assert.Equal(RepoActivity.Merging, vm.ConflictActivity);
+    }
+
+    // ── The repository can move while a confirmation is open ────────────────
+
+    /// <summary>
+    /// A confirmation holds no lease and no gate. Answering one that was asked about a state the
+    /// repository has since left must not run the operation the answer described.
+    /// </summary>
+    [Fact]
+    public async Task AContinueIsNotRunWhenTheSequenceEndedWhileTheQuestionWasOpen()
+    {
+        using var repo = await ConflictFixtures.MergeAsync();
+        var vm = await WithPanelOpenAsync(repo);
+        await vm.TakeOursCommand.ExecuteAsync(vm.ConflictRows.Single());
+        // The merge is abandoned in a terminal while the dialog is on screen.
+        vm.WhileConfirming = () => repo.GitAsync("merge", "--abort").GetAwaiter().GetResult();
+        var before = await repo.HeadShaAsync();
+
+        await vm.ContinueSequenceCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Continue was not run —", vm.ConflictErrorText);
+        Assert.Equal(before, await repo.HeadShaAsync());
+    }
+
+    [Fact]
+    public async Task AnAbortIsNotRunWhenTheSequenceEndedWhileTheQuestionWasOpen()
+    {
+        using var repo = await ConflictFixtures.MergeAsync();
+        var vm = await WithPanelOpenAsync(repo);
+        vm.WhileConfirming = () => repo.GitAsync("merge", "--abort").GetAwaiter().GetResult();
+        var before = await repo.HeadShaAsync();
+
+        await vm.AbortSequenceCommand.ExecuteAsync(null);
+
+        Assert.Contains("no longer mid-merge", vm.ConflictErrorText);
+        Assert.Equal(before, await repo.HeadShaAsync());
+    }
+
+    /// <summary>
+    /// A conflict that reappears while the question is open is the same class of change: the
+    /// answer sanctioned a continue over a resolved index, and that index is no longer resolved.
+    /// </summary>
+    [Fact]
+    public async Task AContinueIsNotRunWhenAConflictCameBackWhileTheQuestionWasOpen()
+    {
+        using var repo = await ConflictFixtures.MultiPickStopAsync();
+        var vm = await WithPanelOpenAsync(repo);
+        await vm.TakeTheirsCommand.ExecuteAsync(vm.ConflictRows.Single());
+        vm.WhileConfirming = () =>
+            repo.GitAsync("checkout", "--merge", "--", "file.txt").GetAwaiter().GetResult();
+
+        await vm.ContinueSequenceCommand.ExecuteAsync(null);
+
+        Assert.Contains("still unresolved", vm.ConflictErrorText);
+        Assert.Equal(RepoActivity.CherryPicking, vm.ConflictActivity);
+    }
+
+    // ── Reporting what a continue actually did ──────────────────────────────
+
+    /// <summary>
+    /// A sequence that replays past this conflict and stops on the NEXT one exits non-zero having
+    /// moved the history forward. Reported as a failure, that describes the opposite of what
+    /// happened — and the reader is looking at the next conflict while being told nothing worked.
+    /// </summary>
+    [Fact]
+    public async Task ASequenceThatStopsOnTheNextCommitIsReportedAsProgressNotAsFailure()
+    {
+        using var repo = await ConflictFixtures.TwoStopPickAsync();
+        var vm = await WithPanelOpenAsync(repo);
+        var before = await repo.HeadShaAsync();
+
+        await vm.TakeTheirsCommand.ExecuteAsync(vm.ConflictRows.Single());
+        await vm.ContinueSequenceCommand.ExecuteAsync(null);
+
+        Assert.NotEqual(before, await repo.HeadShaAsync());
+        Assert.Equal(RepoActivity.CherryPicking, vm.ConflictActivity);
+        Assert.Single(vm.ConflictRows);
+        Assert.Contains("replayed past that conflict and stopped again", vm.ConflictStatusText);
+        Assert.Equal("", vm.ConflictErrorText);
+    }
+
+    /// <summary>
+    /// A resolution can leave the commit being replayed with nothing of its own, and git drops it
+    /// from the history without asking. The confirmation is the last moment that can be said.
+    /// </summary>
+    [Fact]
+    public async Task AContinueThatWouldEmptyTheReplayedCommitSaysSoBeforeItRuns()
+    {
+        using var repo = await ConflictFixtures.RebaseStopAsync();
+        var vm = await WithPanelOpenAsync(repo);
+        vm.DeclineTitlesStartingWith = "Continue";
+        vm.Origin = RebaseDriver.StoppedRebaseOrigin.StartedHere;
+
+        await vm.TakeOursCommand.ExecuteAsync(vm.ConflictRows.Single());
+        await vm.ContinueSequenceCommand.ExecuteAsync(null);
+
+        Assert.Contains("no changes of its own", vm.LastConfirmMessage);
+        Assert.Contains("DROPS it", vm.LastConfirmMessage);
+        Assert.Equal(RepoActivity.Rebasing, vm.ConflictActivity);
+    }
+
+    [Fact]
+    public async Task AContinueThatRecordsSomethingDoesNotWarnAboutAnEmptyCommit()
+    {
+        using var repo = await ConflictFixtures.RebaseStopAsync();
+        var vm = await WithPanelOpenAsync(repo);
+        vm.DeclineTitlesStartingWith = "Continue";
+        vm.Origin = RebaseDriver.StoppedRebaseOrigin.StartedHere;
+
+        await vm.TakeTheirsCommand.ExecuteAsync(vm.ConflictRows.Single());
+        await vm.ContinueSequenceCommand.ExecuteAsync(null);
+
+        // The question asked WAS the continue's, and it carried no empty-commit warning.
+        Assert.Contains("the rebase continues and a commit is written", vm.LastConfirmMessage);
+        Assert.DoesNotContain("no changes of its own", vm.LastConfirmMessage);
     }
 
     // ── Signing ─────────────────────────────────────────────────────────────

@@ -95,6 +95,90 @@ internal static class ConflictFixtures
         return repo;
     }
 
+    /// <summary>
+    /// A stopped merge in a repository that raised `conflict-marker-size`, so the markers git
+    /// writes are longer than its own default.
+    /// </summary>
+    public static async Task<TempRepo> WideMarkerMergeAsync(int size = 32, string prefix = "conflict-wide")
+    {
+        var repo = TempRepo.CreateEmptyDir(prefix);
+        await repo.GitAsync("init", "-b", "main");
+        repo.WriteFile(".gitattributes", $"*.txt conflict-marker-size={size}\n");
+        repo.WriteFile("file.txt", "base\n");
+        await repo.CommitAllAsync("base");
+        await repo.GitAsync("switch", "-c", "side");
+        repo.WriteFile("file.txt", "theirs\n");
+        await repo.CommitAllAsync("side change");
+        await repo.GitAsync("switch", "main");
+        repo.WriteFile("file.txt", "ours\n");
+        await repo.CommitAllAsync("main change");
+        await TryGitAsync(repo, "merge", "side");
+        return repo;
+    }
+
+    /// <summary>
+    /// A cherry-pick of TWO commits stopped on the first one, so a continue has a queued pick
+    /// behind it — the state a hand-made commit strands.
+    /// </summary>
+    public static async Task<TempRepo> MultiPickStopAsync(string prefix = "conflict-multipick")
+    {
+        var repo = await SeedAsync(prefix);
+        await repo.GitAsync("switch", "-c", "side");
+        repo.WriteFile("file.txt", "theirs\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("-c", "user.name=Original Author", "-c", "user.email=original@elsewhere.invalid",
+            "commit", "-m", "first pick");
+        repo.WriteFile("second.txt", "second pick\n");
+        await repo.CommitAllAsync("second pick");
+        await repo.GitAsync("switch", "main");
+        repo.WriteFile("file.txt", "ours\n");
+        await repo.CommitAllAsync("main change");
+        await TryGitAsync(repo, "cherry-pick", "side~1", "side");
+        return repo;
+    }
+
+    /// <summary>
+    /// A cherry-pick of two commits that conflicts on BOTH of them, so continuing past the first
+    /// conflict stops the sequence again on the second.
+    /// </summary>
+    public static async Task<TempRepo> TwoStopPickAsync(string prefix = "conflict-twostop")
+    {
+        var repo = await SeedAsync(prefix);
+        repo.WriteFile("second.txt", "base\n");
+        await repo.CommitAllAsync("second base");
+
+        await repo.GitAsync("switch", "-c", "side");
+        repo.WriteFile("file.txt", "theirs\n");
+        await repo.CommitAllAsync("first pick");
+        repo.WriteFile("second.txt", "theirs\n");
+        await repo.CommitAllAsync("second pick");
+
+        await repo.GitAsync("switch", "main");
+        repo.WriteFile("file.txt", "ours\n");
+        repo.WriteFile("second.txt", "ours\n");
+        await repo.CommitAllAsync("main change");
+
+        await TryGitAsync(repo, "cherry-pick", "side~1", "side");
+        return repo;
+    }
+
+    /// <summary>A rebase stopped on a commit written by somebody other than the committer.</summary>
+    public static async Task<TempRepo> RebaseStopWithAuthorAsync(string prefix = "conflict-author")
+    {
+        var repo = await SeedAsync(prefix);
+        await repo.GitAsync("switch", "-c", "topic");
+        repo.WriteFile("file.txt", "topic\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("-c", "user.name=Original Author", "-c", "user.email=original@elsewhere.invalid",
+            "commit", "-m", "topic change");
+        await repo.GitAsync("switch", "main");
+        repo.WriteFile("file.txt", "main\n");
+        await repo.CommitAllAsync("main change");
+        await repo.GitAsync("switch", "topic");
+        await TryGitAsync(repo, "rebase", "main");
+        return repo;
+    }
+
     /// <summary>A repository in the middle of a bisect, which this surface never drives.</summary>
     public static async Task<TempRepo> BisectAsync(string prefix = "conflict-bisect")
     {

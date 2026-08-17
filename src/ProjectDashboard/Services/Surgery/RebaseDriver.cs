@@ -797,26 +797,62 @@ public class RebaseDriver
 
         var missing = TodoNamesMissingScratchFile(repoPath);
         if (missing) return StoppedRebaseOrigin.MessagesReclaimed;
-        return OwnsScratchFor(repoPath) ? StoppedRebaseOrigin.StartedHere : StoppedRebaseOrigin.StartedElsewhere;
+        return DroveThisRebase(repoPath) ? StoppedRebaseOrigin.StartedHere : StoppedRebaseOrigin.StartedElsewhere;
     }
 
-    /// <summary>Whether a scratch tree under this driver's root records <paramref name="repoPath"/> as its owner.</summary>
-    private bool OwnsScratchFor(string repoPath)
+    /// <summary>
+    /// Whether a scratch tree under this driver's root drove the rebase this repository is stopped
+    /// in — proven by the todo, not by the owner name alone.
+    ///
+    /// Ownership by repository path alone would let a scratch tree left behind by an EARLIER
+    /// rebase of the same repository claim a later one somebody started in a terminal, and the
+    /// abort-only rule for a rebase begun outside this app would silently stop applying.
+    ///
+    /// The todo git is running is `done` (every command through the one it stopped on) followed by
+    /// `git-rebase-todo` (the rest), both in the form the sequence editor supplied. Its own
+    /// `git-rebase-todo.backup` is NOT that list — it is the todo git generated BEFORE the editor
+    /// replaced it, so it never matches a prepared one and cannot answer this.
+    /// </summary>
+    private bool DroveThisRebase(string repoPath)
     {
         try
         {
             if (!Directory.Exists(_workRoot)) return false;
+            if (GitDirOf(repoPath) is not { } gitDir) return false;
+
+            var running = RunningTodo(Path.Combine(gitDir, "rebase-merge"));
+            if (running.Count == 0) return false;
+
             foreach (var dir in Directory.GetDirectories(_workRoot))
-                if (ReadScratchOwner(dir) is { } owner && SamePath(owner, repoPath))
-                    return true;
+            {
+                if (ReadScratchOwner(dir) is not { } owner || !SamePath(owner, repoPath)) continue;
+                var prepared = Path.Combine(dir, "prepared-todo");
+                if (!File.Exists(prepared)) continue;
+                if (running.SequenceEqual(TodoCommands(File.ReadAllLines(prepared)))) return true;
+            }
             return false;
         }
         catch (Exception ex)
         {
-            Log.Warn($"could not read the surgery scratch root {_workRoot}", ex);
+            Log.Warn($"could not match the stopped rebase of {repoPath} to a scratch tree", ex);
             return false;
         }
     }
+
+    /// <summary>The whole todo the stopped rebase is running: what it has done, then what is left.</summary>
+    private static List<string> RunningTodo(string stateDir)
+    {
+        var done = Path.Combine(stateDir, "done");
+        var remaining = Path.Combine(stateDir, "git-rebase-todo");
+        List<string> todo = [];
+        if (File.Exists(done)) todo.AddRange(TodoCommands(File.ReadAllLines(done)));
+        if (File.Exists(remaining)) todo.AddRange(TodoCommands(File.ReadAllLines(remaining)));
+        return todo;
+    }
+
+    /// <summary>A todo's command lines, without the comments and blanks git writes around them.</summary>
+    private static List<string> TodoCommands(IEnumerable<string> lines) =>
+        [.. lines.Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#'))];
 
     /// <summary>
     /// Whether the remaining todo names a file under this driver's scratch root that is gone. The

@@ -25,6 +25,13 @@ public sealed class ConflictFile
     public bool HasOurs { get; init; }
     public bool HasTheirs { get; init; }
 
+    /// <summary>
+    /// The index entries a resolution records for each side, so taking a side records THAT blob
+    /// rather than re-reading a working-tree file anything may have written since.
+    /// </summary>
+    public Services.Surgery.ConflictStage? OursStage { get; init; }
+    public Services.Surgery.ConflictStage? TheirsStage { get; init; }
+
     /// <summary>The index holds this path as a gitlink; taking a side of one picks a commit, not content.</summary>
     public bool IsGitlink { get; init; }
 

@@ -641,6 +641,42 @@ public class RebaseDriverTests
         await repo.GitAsync("rebase", "--abort");
     }
 
+    /// <summary>
+    /// A scratch tree left behind by an EARLIER rebase of the same repository must not claim a
+    /// later one somebody started in a terminal: ownership by repository name alone would quietly
+    /// stop the abort-only rule from applying to foreign rebases at all. The todo git kept is what
+    /// decides — a scratch owns the rebase whose todo it wrote, and no other.
+    /// </summary>
+    [Fact]
+    public async Task InspectStoppedRebase_WithAScratchLeftFromAnEarlierRebase_StillCallsAForeignOneForeign()
+    {
+        using var repo = await ConflictingRepoAsync();
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 2);
+
+        // An app-driven rebase of this repository that stopped, then was abandoned by hand: the
+        // scratch tree survives, owner file and all.
+        var stopped = await driver.ReorderAsync(
+            scope, [scope.Commits[1].Sha, scope.Commits[0].Sha], RebaseConflictPolicy.LeaveStopped);
+        Assert.True(stopped.LeftStopped);
+        Assert.Equal(RebaseDriver.StoppedRebaseOrigin.StartedHere, driver.InspectStoppedRebase(repo.Path));
+        await repo.GitAsync("rebase", "--abort");
+
+        // A rebase this app had nothing to do with, in the same repository.
+        await repo.GitAsync("switch", "-c", "topic");
+        repo.Write("shared.txt", "a\nTOPIC\n");
+        await repo.CommitAllAsync("topic");
+        await repo.GitAsync("switch", "-");
+        repo.Write("shared.txt", "a\nMAIN\n");
+        await repo.CommitAllAsync("main");
+        await repo.GitAsync("switch", "topic");
+        await Git.TryRunAsync(repo.Path, "rebase", "main");
+
+        Assert.Equal(RebaseDriver.StoppedRebaseOrigin.StartedElsewhere, driver.InspectStoppedRebase(repo.Path));
+
+        await repo.GitAsync("rebase", "--abort");
+    }
+
     [Fact]
     public async Task InspectStoppedRebase_OnOneStartedOutsideThisApp_SaysSo()
     {

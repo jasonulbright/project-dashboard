@@ -255,6 +255,8 @@ public partial class ProjectDetailViewModel
                 HasBase = stage.HasBase,
                 HasOurs = stage.HasOurs,
                 HasTheirs = stage.HasTheirs,
+                OursStage = stage.Ours,
+                TheirsStage = stage.Theirs,
                 IsGitlink = stage.IsGitlink,
                 Refusal = refusal
             });
@@ -467,7 +469,8 @@ public partial class ProjectDetailViewModel
             return;
         }
 
-        var hasContent = side == ConflictSide.Ours ? file.HasOurs : file.HasTheirs;
+        var entry = side == ConflictSide.Ours ? file.OursStage : file.TheirsStage;
+        var hasContent = entry is not null;
         var label = $"Take {Name(side)} for {file.Path}";
         var confirmed = await ConfirmAsync(
             hasContent ? $"Take the {Name(side)} side?" : $"Take the {Name(side)} side, which deleted this file?",
@@ -485,7 +488,7 @@ public partial class ProjectDetailViewModel
         }
 
         ConflictErrorText = "";
-        var ok = await RunOp(r => resolver.TakeSideAsync(r, file.Path, side, hasContent), label, repo, gen);
+        var ok = await RunOp(r => resolver.TakeSideAsync(r, file.Path, side, entry), label, repo, gen);
         await AfterConflictOpAsync(ok, gen, label, $"{file.Path} resolved with the {Name(side)} side.");
     }
 
@@ -541,7 +544,10 @@ public partial class ProjectDetailViewModel
 
     /// <summary>Why a stage did not happen, in the terms the reader can act on.</summary>
     internal static string RefusalTextFor(string path, ConflictResolver.StageResolvedResult outcome) =>
-        outcome.Marker == ConflictResolver.MarkerScanUnreadable
+        outcome.ContentUnidentified
+            ? $"git could not say what {path} currently holds, so it was not staged — nothing is staged from " +
+              "content this app could not check."
+        : outcome.Marker == ConflictResolver.MarkerScanUnreadable
             ? $"{path} could not be read, so it could not be checked for conflict markers. Nothing was staged."
         : outcome.Marker is { } marker ? MarkerRefusal(path, marker)
         : outcome.ChangedWhileStaging && outcome.ConflictRestored
@@ -662,11 +668,25 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        // Nothing staged against HEAD means the commit being replayed has been resolved down to
+        // nothing. What git does with that is decided by the mode the sequence was STARTED with —
+        // for a rebase begun outside this app, usually to drop it — so it is said before the run,
+        // while the reader can still choose differently, rather than reported after the commit has
+        // already gone from the history.
+        var recordsNothing = activity == RepoActivity.Rebasing
+                             && await resolver.ContinueWouldRecordNothingAsync(repo);
+        if (!IsCurrent(gen) || repo != RepoPath) return;
+
         var confirmed = await ConfirmAsync(
             $"Continue the {verb}?",
             $"Every conflict is resolved, so the {verb} continues and a commit is written" +
             (message is null ? " with the message git prepared." : " with the message in the box.") +
-            $"\n\nIf the {verb} stops again on a later commit, this panel comes back with the next conflict.",
+            (recordsNothing
+                ? "\n\nThe resolution leaves the commit being replayed with no changes of its own. " +
+                  "git decides what happens to an emptied commit from how this rebase was started, " +
+                  "and a rebase started outside this app usually DROPS it — the commit would then be " +
+                  "gone from the history. Abort instead if that is not what you want."
+                : $"\n\nIf the {verb} stops again on a later commit, this panel comes back with the next conflict."),
             "Continue");
         if (!confirmed) return;
         if (!IsCurrent(gen) || repo != RepoPath)
@@ -675,9 +695,28 @@ public partial class ProjectDetailViewModel
             return;
         }
 
+        // The dialog holds no lease and no gate, so the repository is free to move while it is
+        // open — a watcher signal, a terminal, another surface. The gates are re-read here rather
+        // than trusted from before the question: the answer sanctions the continue that was
+        // described, not whatever the repository has become since.
+        await RefreshConflicts();
+        if (!IsCurrent(gen) || repo != RepoPath) return;
+        if (!ConflictContinueOffered)
+        {
+            ConflictErrorText = $"Continue was not run — {ConflictContinueRefusal}";
+            return;
+        }
+        if (ConflictActivity != activity)
+        {
+            ConflictErrorText =
+                $"Continue was not run — this repository is no longer mid-{verb}; it changed while the question was open.";
+            return;
+        }
+
         ConflictErrorText = "";
         ProcessResult? outcome = null;
         var label = $"Continue {verb}";
+        var before = await HeadShaAsync(repo);
         var ok = await RunOp(async r => outcome = await resolver.ContinueAsync(r, activity, message, signing),
             label, repo, gen, advice: r => CommitSigningAdvice(r, signing),
             category: OperationCategory.Surgery);
@@ -691,15 +730,39 @@ public partial class ProjectDetailViewModel
         await AfterConflictOpAsync(ok, gen, label, "");
         if (!IsCurrent(gen)) return;
 
-        // What the repository is NOW is the whole outcome of a continue: a sequence can finish or
-        // stop again on the next commit, and "done" alone tells those two apart for nobody.
+        // What the repository is NOW is the whole outcome of a continue, not the exit code: a
+        // sequence that replays past this conflict and stops on the NEXT one exits non-zero having
+        // moved the history forward, and reporting that as a failure describes the opposite of
+        // what happened. A run that moved nothing and left the same conflicts is the real failure.
+        var after = await HeadShaAsync(repo);
+        if (!IsCurrent(gen)) return;
+        var moved = !string.Equals(before, after, StringComparison.OrdinalIgnoreCase);
+
+        if (ConflictActivity == RepoActivity.None)
+        {
+            ConflictStatusText = $"The {verb} is finished — nothing is in progress here now.";
+            ConflictErrorText = "";
+            await ReloadCommitsAsync();
+            return;
+        }
+        if (moved && ConflictRows.Count > 0)
+        {
+            ConflictStatusText =
+                $"The {verb} replayed past that conflict and stopped again with {ConflictRows.Count} " +
+                "conflicted file(s) — resolve these and continue, or abort.";
+            ConflictErrorText = "";
+            await ReloadCommitsAsync();
+            return;
+        }
         if (ok)
-            ConflictStatusText = ConflictActivity == RepoActivity.None
-                ? $"The {verb} is finished — nothing is in progress here now."
-                : ConflictRows.Count > 0
-                    ? $"The {verb} stopped again with {ConflictRows.Count} conflicted file(s)."
-                    : $"The {verb} is still in progress.";
-        if (ok && ConflictActivity == RepoActivity.None) await ReloadCommitsAsync();
+            ConflictStatusText = $"The {verb} is still in progress.";
+    }
+
+    /// <summary>The checked-out commit, for telling a run that moved the history from one that did not.</summary>
+    private async Task<string> HeadShaAsync(string repo)
+    {
+        var head = await _gitService.RunAsync(repo, ["rev-parse", "--verify", "-q", "HEAD"]);
+        return head.Success ? head.StdOut.Trim() : "";
     }
 
     [RelayCommand]
@@ -728,6 +791,19 @@ public partial class ProjectDetailViewModel
         if (!IsCurrent(gen) || repo != RepoPath)
         {
             ConflictStatusText = ProjectSwitchedNotice("Abort");
+            return;
+        }
+
+        // Re-read for the reason the continue does: the dialog holds nothing, and an abort aimed at
+        // a sequence that has since ended would abandon whatever is running in its place.
+        await RefreshConflicts();
+        if (!IsCurrent(gen) || repo != RepoPath) return;
+        if (ConflictActivity != activity)
+        {
+            ConflictErrorText = ConflictActivity == RepoActivity.None
+                ? $"Abort was not run — this repository is no longer mid-{verb}; it changed while the question was open."
+                : $"Abort was not run — this repository is now mid-{ConflictResolver.Describe(ConflictActivity)}, " +
+                  $"not mid-{verb}; it changed while the question was open.";
             return;
         }
 

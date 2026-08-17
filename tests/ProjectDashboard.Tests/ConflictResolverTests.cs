@@ -25,6 +25,10 @@ public class ConflictResolverTests
     private static async Task<string> UnmergedLinesAsync(TempRepo repo) =>
         string.Join('\n', (await StatusAsync(repo)).Split('\n').Where(l => l.StartsWith("u ", StringComparison.Ordinal)));
 
+    /// <summary>The index entry one side of a conflict holds, which is what a resolution records.</summary>
+    private async Task<ConflictStage?> StageOf(TempRepo repo, string path, ConflictSide side) =>
+        (await Resolver.ReadUnmergedAsync(repo.Path)).ByPath[path].Stage(side);
+
     // ── Reading the unmerged index ──────────────────────────────────────────
 
     [Fact]
@@ -97,7 +101,7 @@ public class ConflictResolverTests
     {
         using var repo = await ConflictFixtures.MergeAsync();
 
-        var result = await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, sideHasContent: true);
+        var result = await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, await StageOf(repo, "file.txt", ConflictSide.Theirs));
 
         Assert.True(result.Success, result.FirstError);
         Assert.Equal("theirs\n", repo.ReadFile("file.txt").Replace("\r\n", "\n"));
@@ -110,7 +114,7 @@ public class ConflictResolverTests
         using var repo = await ConflictFixtures.RichMergeAsync();
 
         // They deleted doomed.txt; taking their side is the deletion itself.
-        var result = await Resolver.TakeSideAsync(repo.Path, "doomed.txt", ConflictSide.Theirs, sideHasContent: false);
+        var result = await Resolver.TakeSideAsync(repo.Path, "doomed.txt", ConflictSide.Theirs, null);
 
         Assert.True(result.Success, result.FirstError);
         Assert.False(repo.FileExists("doomed.txt"));
@@ -214,6 +218,88 @@ public class ConflictResolverTests
         }
     }
 
+    /// <summary>
+    /// An identity git could not read is not agreement. Treated as one, the whole comparison
+    /// stops guarding anything the moment a read fails.
+    /// </summary>
+    [Fact]
+    public async Task AnUnreadableContentIdentityRefusesTheStageRatherThanPassingIt()
+    {
+        using var repo = await ConflictFixtures.MergeAsync();
+        repo.WriteFile("file.txt", "merged by hand\n");
+        var git = new FailingReadGitService("hash-object");
+
+        var result = await new ConflictResolver(git).StageResolvedAsync(repo.Path, "file.txt");
+
+        Assert.False(result.Staged);
+        Assert.True(result.ContentUnidentified);
+        Assert.Contains("u ", await StatusAsync(repo));
+    }
+
+    [Fact]
+    public async Task AnUnreadableStagedIdentityPutsTheConflictBackRatherThanClaimingItStaged()
+    {
+        using var repo = await ConflictFixtures.MergeAsync();
+        repo.WriteFile("file.txt", "merged by hand\n");
+        var git = new FailingReadGitService("ls-files");
+
+        var result = await new ConflictResolver(git).StageResolvedAsync(repo.Path, "file.txt");
+
+        Assert.False(result.Staged);
+        Assert.True(result.ChangedWhileStaging);
+        Assert.True(result.ConflictRestored);
+        Assert.Contains("u ", await StatusAsync(repo));
+    }
+
+    /// <summary>Fails one read verb outright, which is what an unreadable identity looks like.</summary>
+    private sealed class FailingReadGitService(string verb) : GitService
+    {
+        public override Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var vector = args.ToList();
+            return vector.Contains(verb)
+                ? Task.FromResult(new ProcessResult(1, "", $"{verb} refused by the test", TimedOut: false))
+                : base.RunAsync(repoPath, vector, environment, ct, timeout);
+        }
+    }
+
+    [Fact]
+    public async Task TakeSideRecordsTheIndexsOwnBlobEvenWhenTheWorkingTreeMovesUnderIt()
+    {
+        using var repo = await ConflictFixtures.MergeAsync();
+        var theirs = await StageOf(repo, "file.txt", ConflictSide.Theirs);
+        var git = new SwapFileOnCheckoutGitService(Path.Combine(repo.Path, "file.txt"), "written by somebody else\n");
+
+        var result = await new ConflictResolver(git).TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, theirs);
+
+        Assert.True(result.Success, result.FirstError);
+        Assert.DoesNotContain("u ", await StatusAsync(repo));
+        // The index holds the side that was chosen, not what the working tree became.
+        Assert.Equal("theirs\n", (await repo.GitAsync("show", ":0:file.txt")).Replace("\r\n", "\n"));
+    }
+
+    /// <summary>Writes over the file after `checkout` has written it, before the index is recorded.</summary>
+    private sealed class SwapFileOnCheckoutGitService(string path, string content) : GitService
+    {
+        private bool _swapped;
+
+        public override async Task<ProcessResult> RunAsync(
+            string repoPath, IEnumerable<string> args, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken ct = default, TimeSpan? timeout = null)
+        {
+            var vector = args.ToList();
+            var result = await base.RunAsync(repoPath, vector, environment, ct, timeout);
+            if (!_swapped && vector.Contains("checkout"))
+            {
+                _swapped = true;
+                File.WriteAllText(path, content);
+            }
+            return result;
+        }
+    }
+
     [Fact]
     public async Task TheGuardFindsTheMarkerGitLeftInTheWorkingTree()
     {
@@ -258,6 +344,79 @@ public class ConflictResolverTests
         Assert.Null(ConflictResolver.FindConflictMarker(missingRepo, "file.txt"));
     }
 
+    // ── Marker length is the repository's, not this app's ───────────────────
+
+    /// <summary>
+    /// A repository that raised `conflict-marker-size` gets markers longer than git's default. A
+    /// run longer than the length being looked for is still a marker, so the angle-bracket forms
+    /// are caught whatever length the scan was told to expect.
+    /// </summary>
+    [Fact]
+    public async Task WideAngleMarkersAreCaughtEvenAtTheDefaultLength()
+    {
+        using var repo = await ConflictFixtures.WideMarkerMergeAsync();
+        Assert.Contains("<<<<<<<<<<", repo.ReadFile("file.txt"));
+
+        Assert.NotNull(ConflictResolver.FindConflictMarker(repo.Path, "file.txt", ConflictResolver.DefaultMarkerSize));
+    }
+
+    /// <summary>
+    /// Fail-first for the length itself: the separator is matched whole, so a resolution that
+    /// deleted the angle markers and left the separator behind is invisible to a scan fixed at
+    /// git's default length — and staging it would commit that rule into the file's history.
+    /// </summary>
+    [Fact]
+    public async Task AWideSeparatorLeftBehindIsMissedAtTheDefaultLengthAndCaughtAtTheRepositorysOwn()
+    {
+        using var repo = await ConflictFixtures.WideMarkerMergeAsync();
+        repo.WriteFile("file.txt", $"ours\n{new string('=', 32)}\ntheirs\n");
+
+        Assert.Null(ConflictResolver.FindConflictMarker(repo.Path, "file.txt", ConflictResolver.DefaultMarkerSize));
+
+        var found = await Resolver.FindConflictMarkerAsync(repo.Path, "file.txt");
+        Assert.Equal(new string('=', 32), found);
+
+        var result = await Resolver.StageResolvedAsync(repo.Path, "file.txt");
+        Assert.False(result.Staged);
+        Assert.Contains("u ", await StatusAsync(repo));
+    }
+
+    [Fact]
+    public async Task TheGuardReadsTheMarkerLengthTheRepositorySetAndRefuses()
+    {
+        using var repo = await ConflictFixtures.WideMarkerMergeAsync();
+
+        Assert.Equal(32, await Resolver.MarkerSizeAsync(repo.Path, "file.txt"));
+        var found = await Resolver.FindConflictMarkerAsync(repo.Path, "file.txt");
+        Assert.StartsWith("<<<<<<<<", found);
+
+        var result = await Resolver.StageResolvedAsync(repo.Path, "file.txt");
+        Assert.False(result.Staged);
+        Assert.Contains("u ", await StatusAsync(repo));
+    }
+
+    [Fact]
+    public void MarkersAreMatchedAtTheLengthTheAttributeGives()
+    {
+        Assert.True(ConflictResolver.IsConflictMarker(new string('<', 32) + " HEAD", 32));
+        Assert.True(ConflictResolver.IsConflictMarker(new string('=', 32), 32));
+        Assert.True(ConflictResolver.IsConflictMarker(new string('>', 32) + " side", 32));
+        // A run longer than the size is still a marker; one shorter is not.
+        Assert.True(ConflictResolver.IsConflictMarker(new string('<', 40) + " HEAD", 32));
+        Assert.False(ConflictResolver.IsConflictMarker(new string('<', 8) + " HEAD", 32));
+        // A rule of equals signs under a heading is not the separator of a conflict.
+        Assert.False(ConflictResolver.IsConflictMarker(new string('=', 40), 32));
+    }
+
+    [Fact]
+    public void AnAttributeThatSaysNothingUsableLeavesTheDefaultLength()
+    {
+        Assert.Equal(32, ConflictResolver.ParseMarkerSize("file.txt: conflict-marker-size: 32\n"));
+        Assert.Equal(7, ConflictResolver.ParseMarkerSize("file.txt: conflict-marker-size: unspecified\n"));
+        Assert.Equal(7, ConflictResolver.ParseMarkerSize("file.txt: conflict-marker-size: 3\n"));
+        Assert.Equal(7, ConflictResolver.ParseMarkerSize(""));
+    }
+
     // ── Prepared messages ───────────────────────────────────────────────────
 
     [Fact]
@@ -293,7 +452,7 @@ public class ConflictResolverTests
     public async Task ContinuingAMergeWritesTheCommitGitPreparedAndEndsTheMerge()
     {
         using var repo = await ConflictFixtures.MergeAsync();
-        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Ours, sideHasContent: true);
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Ours, await StageOf(repo, "file.txt", ConflictSide.Ours));
 
         var result = await Resolver.ContinueAsync(repo.Path, RepoActivity.Merging, null, SigningChoice.NotChosen);
 
@@ -306,7 +465,7 @@ public class ConflictResolverTests
     public async Task ContinuingAMergeWithAnEditedMessageCommitsThatMessage()
     {
         using var repo = await ConflictFixtures.MergeAsync();
-        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Ours, sideHasContent: true);
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Ours, await StageOf(repo, "file.txt", ConflictSide.Ours));
 
         var result = await Resolver.ContinueAsync(
             repo.Path, RepoActivity.Merging, "a message the reader wrote", SigningChoice.NotChosen);
@@ -320,7 +479,7 @@ public class ConflictResolverTests
     public async Task ContinuingARebaseLandsWhereTheTerminalSequenceLands()
     {
         using var repo = await ConflictFixtures.RebaseStopAsync();
-        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, sideHasContent: true);
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, await StageOf(repo, "file.txt", ConflictSide.Theirs));
 
         var result = await Resolver.ContinueAsync(repo.Path, RepoActivity.Rebasing, null, SigningChoice.NotChosen);
 
@@ -334,7 +493,7 @@ public class ConflictResolverTests
     public async Task ContinuingACherryPickWritesThePickedCommit()
     {
         using var repo = await ConflictFixtures.CherryPickStopAsync();
-        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, sideHasContent: true);
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, await StageOf(repo, "file.txt", ConflictSide.Theirs));
 
         var result = await Resolver.ContinueAsync(repo.Path, RepoActivity.CherryPicking, null, SigningChoice.NotChosen);
 
@@ -347,7 +506,7 @@ public class ConflictResolverTests
     public async Task ContinuingARevertWritesTheRevertCommit()
     {
         using var repo = await ConflictFixtures.RevertStopAsync();
-        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, sideHasContent: true);
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs, await StageOf(repo, "file.txt", ConflictSide.Theirs));
 
         var result = await Resolver.ContinueAsync(repo.Path, RepoActivity.Reverting, null, SigningChoice.NotChosen);
 
@@ -371,6 +530,124 @@ public class ConflictResolverTests
         Assert.False(result.Success);
         Assert.Equal(before, await repo.HeadShaAsync());
         Assert.Equal(RepoActivity.Merging, await ActivityAsync(repo));
+    }
+
+    /// <summary>
+    /// A stopped rebase holds the replayed commit's author in git's own state; nothing here may
+    /// write it as somebody else's work. The edited message goes into the file the sequencer
+    /// commits from, so the continue is still git's own commit.
+    /// </summary>
+    [Fact]
+    public async Task AnEditedMessageOnARebaseKeepsTheCommitsOriginalAuthor()
+    {
+        using var repo = await ConflictFixtures.RebaseStopWithAuthorAsync();
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs,
+            await StageOf(repo, "file.txt", ConflictSide.Theirs));
+
+        var result = await Resolver.ContinueAsync(
+            repo.Path, RepoActivity.Rebasing, "a message the reader wrote", SigningChoice.NotChosen);
+
+        Assert.True(result.Success, result.FirstError);
+        Assert.Equal("a message the reader wrote", await repo.HeadSubjectAsync());
+        Assert.Equal("Original Author <original@elsewhere.invalid>",
+            (await repo.GitAsync("log", "-1", "--format=%an <%ae>")).Trim());
+        Assert.Equal(RepoActivity.None, await ActivityAsync(repo));
+    }
+
+    /// <summary>
+    /// Fail-first for the same defect: a hand-made commit during the stop takes the committer as
+    /// author, because a stopped rebase leaves no CHERRY_PICK_HEAD for git to read one from.
+    /// </summary>
+    [Fact]
+    public async Task AHandMadeCommitDuringAStoppedRebaseWouldTakeTheCommitterAsAuthor()
+    {
+        using var repo = await ConflictFixtures.RebaseStopWithAuthorAsync();
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs,
+            await StageOf(repo, "file.txt", ConflictSide.Theirs));
+
+        await _git.RunAsync(repo.Path, ["commit", "-m", "written by hand"],
+            new Dictionary<string, string> { ["GIT_EDITOR"] = "true" });
+
+        Assert.DoesNotContain("Original Author", await repo.GitAsync("log", "-1", "--format=%an <%ae>"));
+        await repo.GitAsync("rebase", "--abort");
+    }
+
+    /// <summary>
+    /// A cherry-pick of several commits stopped on the first: an edited message must not end the
+    /// sequence. Committing it by hand clears CHERRY_PICK_HEAD, which reads as nothing in progress
+    /// while the queued picks are still there — the sequence stranded with no surface driving it.
+    /// </summary>
+    [Fact]
+    public async Task AnEditedMessageOnAMultiPickStillReplaysTheRestOfTheSequence()
+    {
+        using var repo = await ConflictFixtures.MultiPickStopAsync();
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs,
+            await StageOf(repo, "file.txt", ConflictSide.Theirs));
+
+        var result = await Resolver.ContinueAsync(
+            repo.Path, RepoActivity.CherryPicking, "the first pick, reworded", SigningChoice.NotChosen);
+
+        Assert.True(result.Success, result.FirstError);
+        Assert.Equal(RepoActivity.None, await ActivityAsync(repo));
+        var subjects = Subjects(await repo.GitAsync("log", "--format=%s", "-3"));
+        Assert.Equal(["second pick", "the first pick, reworded", "main change"], subjects);
+        Assert.False(Directory.Exists(Path.Combine(repo.Path, ".git", "sequencer")));
+        // The picked commit is still its author's work.
+        Assert.Contains("Original Author",
+            await repo.GitAsync("log", "-1", "--skip=1", "--format=%an"));
+    }
+
+    /// <summary>
+    /// git strips comment lines from the message the sequencer commits, and writes its own advice
+    /// into that message as comments. A subject that opens with an issue reference must survive
+    /// that stripping, and git's advice must not survive it.
+    /// </summary>
+    [Fact]
+    public async Task AnEditedMessageKeepsALineOpeningWithAHashAndDropsGitsOwnAdvice()
+    {
+        using var repo = await ConflictFixtures.MergeAsync();
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Ours,
+            await StageOf(repo, "file.txt", ConflictSide.Ours));
+
+        var result = await Resolver.ContinueAsync(
+            repo.Path, RepoActivity.Merging, "#42 close the issue\n\nthe body", SigningChoice.NotChosen);
+
+        Assert.True(result.Success, result.FirstError);
+        Assert.Equal("#42 close the issue", await repo.HeadSubjectAsync());
+        var message = await repo.GitAsync("log", "-1", "--format=%B");
+        Assert.Contains("the body", message);
+        Assert.DoesNotContain("It looks like you may be committing a merge", message);
+    }
+
+    [Fact]
+    public void TheCommentCharacterIsOneNoLineOfTheMessageOpensWith()
+    {
+        Assert.Equal('#', ConflictResolver.CommentCharFor("an ordinary subject\n\nand a body"));
+        Assert.Equal(';', ConflictResolver.CommentCharFor("#42 the subject"));
+        Assert.Equal('@', ConflictResolver.CommentCharFor("#42 the subject\n; and a line like this"));
+        // Leading whitespace does not hide the character a line starts with.
+        Assert.Equal(';', ConflictResolver.CommentCharFor("subject\n\n   # an indented hash line"));
+    }
+
+    [Fact]
+    public async Task AResolutionThatEmptiesTheReplayedCommitIsKnownBeforeTheContinueRuns()
+    {
+        using var repo = await ConflictFixtures.RebaseStopAsync();
+        // Taking the side already on the branch leaves the replayed commit with nothing of its own.
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Ours,
+            await StageOf(repo, "file.txt", ConflictSide.Ours));
+
+        Assert.True(await Resolver.ContinueWouldRecordNothingAsync(repo.Path));
+    }
+
+    [Fact]
+    public async Task AResolutionThatRecordsSomethingIsNotReportedAsEmpty()
+    {
+        using var repo = await ConflictFixtures.RebaseStopAsync();
+        await Resolver.TakeSideAsync(repo.Path, "file.txt", ConflictSide.Theirs,
+            await StageOf(repo, "file.txt", ConflictSide.Theirs));
+
+        Assert.False(await Resolver.ContinueWouldRecordNothingAsync(repo.Path));
     }
 
     [Fact]
