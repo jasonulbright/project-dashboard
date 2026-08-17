@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.3.9] - 2026-08-16
+
+A conflicted merge no longer sends you to a terminal.
+
+### Added
+- **Conflict resolution in the app** -- a merge, rebase, cherry-pick, or revert stopped on a conflict now opens a panel from the state banner: every unmerged file listed with the shape git recorded for it (both modified, both added, added by us, deleted by them, and the rest), each one's stages rendered read-only through the same diff view the rest of the app uses -- base against ours, base against theirs, or ours against theirs -- and per file, take ours, take theirs, open it in your editor, or stage what you resolved by hand. Then continue or abort the whole operation, both confirmed. Open in Terminal never leaves the surface, and from any state the panel can produce, aborting is one click
+- The commit a continue writes is shown before it happens, seeded with the message git prepared: leave it and the sequencer writes its own, edit it and yours is committed instead. A repository that signs its commits asks the signing question first, so a continue cannot stall invisibly on a passphrase prompt
+- **A file that still holds conflict markers is refused, with no override** -- staging one puts `<<<<<<<` in your history. The check names the marker it found, and a file that changes while it is being staged is put back unmerged rather than trusted
+- Where the panel cannot help it says so and offers the terminal instead: submodule conflicts (taking a side there picks a commit, not content), a path neither side kept, binary files (both sides still take, there is just no preview), bisect, and a rebase started outside this app -- which can still be resolved and aborted here, only not continued. The banner says which of those applies before you open anything
+
 ## [2.3.8] - 2026-08-16
 
 Two capabilities that existed under the surface reach it.
