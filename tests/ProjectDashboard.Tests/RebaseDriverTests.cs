@@ -601,4 +601,61 @@ public class RebaseDriverTests
 
         await repo.GitAsync("rebase", "--abort");
     }
+
+    // ── whether a stopped rebase may be continued ─────────────────────────
+
+    /// <summary>
+    /// A surface that offers to continue a stopped rebase has to know whether the message files
+    /// the todo names are still there. Continuing without them fails on a missing file, which is
+    /// exactly the failure the in-app route exists to remove.
+    /// </summary>
+    [Fact]
+    public async Task InspectStoppedRebase_TellsAnOwnedStopFromOneWhoseMessagesAreGone()
+    {
+        using var repo = await ConflictingRepoAsync();
+        var driver = NewDriver();
+        var scope = await driver.LoadScopeAsync(repo.Path, 2);
+
+        Assert.Equal(RebaseDriver.StoppedRebaseOrigin.NotStopped, driver.InspectStoppedRebase(repo.Path));
+
+        const string token = "@@MESSAGE@@";
+        var todo = new List<string>
+        {
+            $"pick {scope.Commits[1].Sha} {scope.Commits[1].Subject}",
+            $"pick {scope.Commits[0].Sha} {scope.Commits[0].Subject}",
+            $"exec git commit --amend --no-verify -F {token}"
+        };
+        var result = await driver.RunTodoAsync(
+            scope, todo, new Dictionary<string, string> { [token] = "a message the amend has yet to apply" },
+            RebaseConflictPolicy.LeaveStopped);
+        Assert.True(result.LeftStopped);
+
+        Assert.Equal(RebaseDriver.StoppedRebaseOrigin.StartedHere, driver.InspectStoppedRebase(repo.Path));
+
+        var remaining = await File.ReadAllTextAsync(Path.Combine(repo.Path, ".git", "rebase-merge", "git-rebase-todo"));
+        var execLine = remaining.Split('\n').Single(l => l.Contains("--amend"));
+        File.Delete(execLine[(execLine.IndexOf('"') + 1)..execLine.LastIndexOf('"')]);
+
+        Assert.Equal(RebaseDriver.StoppedRebaseOrigin.MessagesReclaimed, driver.InspectStoppedRebase(repo.Path));
+
+        await repo.GitAsync("rebase", "--abort");
+    }
+
+    [Fact]
+    public async Task InspectStoppedRebase_OnOneStartedOutsideThisApp_SaysSo()
+    {
+        using var repo = await ConflictingRepoAsync();
+        await repo.GitAsync("switch", "-c", "topic");
+        repo.Write("shared.txt", "a\nTOPIC\n");
+        await repo.CommitAllAsync("topic");
+        await repo.GitAsync("switch", "-");
+        repo.Write("shared.txt", "a\nMAIN\n");
+        await repo.CommitAllAsync("main");
+        await repo.GitAsync("switch", "topic");
+        await Git.TryRunAsync(repo.Path, "rebase", "main");
+
+        Assert.Equal(RebaseDriver.StoppedRebaseOrigin.StartedElsewhere, NewDriver().InspectStoppedRebase(repo.Path));
+
+        await repo.GitAsync("rebase", "--abort");
+    }
 }

@@ -192,20 +192,57 @@ public partial class ProjectDetailViewModel
                 var (a, b) => $"↑{a} ↓{b}"
             };
 
+        // A stopped rebase this app cannot continue is abort-only, and the banner has to say so
+        // before it offers the panel: a banner that names an in-app route the panel then refuses
+        // is worse than one that never offered it.
+        _rebaseOrigin = state.Activity == RepoActivity.Rebasing
+            ? InspectStoppedRebase(repo)
+            : Services.Surgery.RebaseDriver.StoppedRebaseOrigin.NotStopped;
+
         (StateBannerVisible, StateBannerText) = state.Activity switch
         {
             RepoActivity.Merging => (true, state.HasConflicts
-                ? "Merge in progress with conflicts — resolve them in a terminal, then commit."
-                : "Merge in progress — commit or abort it in a terminal."),
-            RepoActivity.Rebasing => (true, "Rebase in progress — continue or abort it in a terminal."),
-            RepoActivity.CherryPicking => (true, "Cherry-pick in progress — continue or abort it in a terminal."),
-            RepoActivity.Reverting => (true, "Revert in progress — continue or abort it in a terminal."),
+                ? Offered("Merge in progress with conflicts — resolve them here, or in a terminal.",
+                    "Merge in progress with conflicts — resolve them in a terminal, then commit.")
+                : Offered("Merge in progress — finish it here, or in a terminal.",
+                    "Merge in progress — commit or abort it in a terminal.")),
+            RepoActivity.Rebasing => (true, RebaseBannerText()),
+            RepoActivity.CherryPicking => (true,
+                Offered("Cherry-pick in progress — continue or abort it here, or in a terminal.",
+                    "Cherry-pick in progress — continue or abort it in a terminal.")),
+            RepoActivity.Reverting => (true,
+                Offered("Revert in progress — continue or abort it here, or in a terminal.",
+                    "Revert in progress — continue or abort it in a terminal.")),
             RepoActivity.Bisecting => (true, "Bisect in progress — finish it in a terminal."),
             _ when state.Detached => (true, "Detached HEAD — you're not on a branch; switch or create one before committing."),
-            _ when state.HasConflicts => (true, "Unresolved conflicts — fix them in a terminal, then stage and commit."),
+            _ when state.HasConflicts => (true,
+                Offered("Unresolved conflicts — resolve them here, or in a terminal, then commit.",
+                    "Unresolved conflicts — fix them in a terminal, then stage and commit.")),
             _ => (false, "")
         };
     }
+
+    /// <summary>The wording for a state the panel can drive, else the terminal-only wording for it.</summary>
+    private string Offered(string inApp, string terminalOnly) => ConflictPanelOffered ? inApp : terminalOnly;
+
+    /// <summary>
+    /// A rebase names where it came from: one this app cannot continue still resolves files and
+    /// aborts here, and saying which half is available is the difference between a route and a
+    /// dead end.
+    /// </summary>
+    private string RebaseBannerText() =>
+        !ConflictPanelOffered
+            ? "Rebase in progress — continue or abort it in a terminal."
+            : _rebaseOrigin switch
+            {
+                Services.Surgery.RebaseDriver.StoppedRebaseOrigin.StartedHere =>
+                    "Rebase in progress — continue or abort it here, or in a terminal.",
+                Services.Surgery.RebaseDriver.StoppedRebaseOrigin.MessagesReclaimed =>
+                    "Rebase in progress — its stored messages are gone, so resolve and abort here, " +
+                    "or finish it in a terminal.",
+                _ => "Rebase in progress, started outside this app — resolve files and abort here; " +
+                     "continuing needs a terminal."
+            };
 
     /// <summary>
     /// The rebuilt rows for one side, carrying forward the instance already on screen wherever

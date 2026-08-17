@@ -382,7 +382,17 @@
                                FontSize="16" Margin="0,0,10,0" VerticalAlignment="Center" />
                 <ui:Button DockPanel.Dock="Right" Content="Open in Terminal" FontSize="12" Padding="10,4"
                            Command="{Binding OpenRepoInTerminalCommand}" />
+                <!-- The terminal button stays beside it in every state: the panel is a second
+                     route to the same repository, never a replacement for the first. -->
+                <ui:Button DockPanel.Dock="Right" Content="Resolve conflicts" FontSize="12" Padding="10,4"
+                           Margin="0,0,8,0"
+                           Appearance="Primary"
+                           Command="{Binding OpenConflictsCommand}"
+                           AutomationProperties.AutomationId="ResolveConflictsButton"
+                           AutomationProperties.Name="Open the conflict panel for this repository"
+                           Visibility="{Binding ConflictPanelOffered, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 <TextBlock Text="{Binding StateBannerText}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           AutomationProperties.LiveSetting="Polite"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" FontSize="13" />
             </DockPanel>
         </Border>
@@ -4740,5 +4750,12 @@
         <pages:FindInRepoView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
                               Visibility="{Binding FindVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                               AutomationProperties.Name="Find in this repository" />
+
+        <!-- ═══ CONFLICTS ═══
+             Last in the Grid: it drives the sequencer the repository is stopped in, so nothing
+             may draw over it while a continue or an abort is in flight. -->
+        <pages:ConflictsView Grid.Row="0" Grid.RowSpan="5" Margin="-32,-16,-32,-16"
+                             Visibility="{Binding ConflictsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                             AutomationProperties.Name="Resolve conflicts" />
     </Grid>
 </Page>

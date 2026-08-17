@@ -57,6 +57,7 @@ public partial class ProjectDetailViewModel
         _repoSigningFormat = "";
         _commitSigning = SigningChoice.NotChosen;
         _tagSigning = SigningChoice.NotChosen;
+        _commitSigningRun = null;
         _tagSigningRetry = null;
         _tagSigningRetryAnnotated = false;
         CommitSigningChipVisible = false;
@@ -118,6 +119,13 @@ public partial class ProjectDetailViewModel
 
     private bool CommitSigningChoicePending => _repoSignsCommits && _commitSigning == SigningChoice.NotChosen;
 
+    /// <summary>
+    /// The write the two answers run. Null means the commit box, which is where the question is
+    /// asked from unless another surface held its own write behind it — a sequencer continue
+    /// writes a commit too, and it inherits the same stall.
+    /// </summary>
+    private Func<Task>? _commitSigningRun;
+
     private void ShowCommitSigningOffer(string label)
     {
         CommitSigningOfferText =
@@ -127,13 +135,21 @@ public partial class ProjectDetailViewModel
         CommitSigningOfferVisible = true;
     }
 
+    /// <summary>Asks the question for a write that is not the commit box's, holding that write for the answer.</summary>
+    private void HoldCommitSigningOffer(string label, Func<Task> run)
+    {
+        _commitSigningRun = run;
+        ShowCommitSigningOffer(label);
+    }
+
     /// <summary>
     /// Puts the choice back after a signed attempt failed on the signing. The failure line
     /// beside it carries what happened; this says only what the two buttons now do, since the
     /// answer already given is the one that just failed.
     /// </summary>
-    private void ReofferCommitSigningAfterFailure(string label)
+    private void ReofferCommitSigningAfterFailure(string label, Func<Task>? run = null)
     {
+        _commitSigningRun = run;
         CommitSigningOfferText =
             $"The signed {label.ToLowerInvariant()} wrote nothing. Sign as configured to try it again, " +
             "or commit without signing.";
@@ -198,10 +214,12 @@ public partial class ProjectDetailViewModel
     {
         if (IsBusy) { SyncStatusText = BusyNotice(AmendMode ? "Amend" : "Commit"); return; }
         if (!_repoSignsCommits) return;
+        var run = _commitSigningRun;
+        _commitSigningRun = null;
         _commitSigning = choice;
         CommitSigningOfferVisible = false;
         RefreshCommitSigningChip();
-        await RunCommitAsync();
+        await (run is null ? RunCommitAsync() : run());
     }
 
     // ── Tags ────────────────────────────────────────────────────────────────

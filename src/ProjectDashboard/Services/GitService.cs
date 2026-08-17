@@ -264,7 +264,12 @@ public class GitService
         return Directory.Exists(dotGit) ? dotGit : null;
     }
 
-    private async Task<RepoActivity> DetectActivityAsync(string repoPath, CancellationToken ct)
+    /// <summary>
+    /// What the repository is in the middle of, from its git directory alone. Read on its own by
+    /// the sequencer driver, which has to know whether a commit it just wrote finished the
+    /// sequence before it decides to continue one.
+    /// </summary>
+    internal async Task<RepoActivity> DetectActivityAsync(string repoPath, CancellationToken ct = default)
     {
         var gitDir = LayoutGitDir(repoPath) ?? await ResolveGitDirAsync(repoPath, ct);
         if (gitDir is null) return RepoActivity.None;

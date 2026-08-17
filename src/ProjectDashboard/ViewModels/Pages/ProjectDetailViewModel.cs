@@ -306,6 +306,7 @@ public partial class ProjectDetailViewModel : ObservableObject
         CloseTagsOnProjectSwitch();
         CloseOperationHistoryOnProjectSwitch();
         CloseWorkflowLogOnProjectSwitch();
+        CloseConflictsOnProjectSwitch();
 
         // Reads the OUTGOING repository, so it runs before the swap below.
         ParkRewriteSessionForThisRepo();

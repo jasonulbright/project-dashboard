@@ -2533,7 +2533,8 @@ public static class DashboardCardActions
         if (project.IsRemoteOnly || string.IsNullOrEmpty(project.FullPath)) return NotClonedReason;
         if (repoBusy) return BusyReason;
         if (project.GitStatus.HasError) return StatusUnavailableReason;
-        if (project.GitStatus.NeedsAttention) return $"{project.GitStatus.AttentionLabel} — resolve in a terminal.";
+        if (project.GitStatus.NeedsAttention)
+            return $"{project.GitStatus.AttentionLabel} — open the project to resolve it, or use a terminal.";
         if (project.GitStatus.IsDetached) return DetachedReason;
         if (string.IsNullOrEmpty(project.GitStatus.RemoteUrl)) return NoRemoteReason;
 

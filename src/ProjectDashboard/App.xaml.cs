@@ -217,7 +217,12 @@ public partial class App : Application
                     sp.GetRequiredService<ProjectWatcherService>(),
                     history: sp.GetRequiredService<Services.Safety.OperationHistory>())
                 {
-                    Surgery = sp.GetRequiredService<SurgeryCoordinator>()
+                    Surgery = sp.GetRequiredService<SurgeryCoordinator>(),
+                    Conflicts = sp.GetRequiredService<ConflictResolver>(),
+                    // The container's own driver: whether a stopped rebase may be continued is
+                    // decided from the scratch trees that driver keeps, and a private instance
+                    // would answer from a root nothing writes to.
+                    Rebase = sp.GetRequiredService<RebaseDriver>()
                 });
                 services.AddSingleton<SettingsPage>();
                 // Explicit factory: the metadata section shares the container's own store, or a

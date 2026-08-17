@@ -21,6 +21,7 @@ public static class SurgeryRegistration
         services.AddSingleton(sp => new RebaseDriver(sp.GetRequiredService<GitService>()));
         services.AddSingleton<CommitSurgery>();
         services.AddSingleton<HistoryEdits>();
+        services.AddSingleton<ConflictResolver>();
         // Explicit factory: the undo this coordinator hands back re-reads what the repository is,
         // and that has to reach the container's own store rather than a private one.
         services.AddSingleton(sp => new SurgeryCoordinator(

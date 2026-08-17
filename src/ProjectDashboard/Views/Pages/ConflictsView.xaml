@@ -1,0 +1,472 @@
+<UserControl
+    x:Class="ProjectDashboard.Views.Pages.ConflictsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:helpers="clr-namespace:ProjectDashboard.Helpers"
+    xmlns:models="clr-namespace:ProjectDashboard.Models"
+    FontFamily="Segoe UI"
+    IsVisibleChanged="OnIsVisibleChanged">
+
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseConflictsCommand}" />
+    </UserControl.InputBindings>
+
+    <UserControl.Resources>
+        <helpers:EnumToBooleanConverter x:Key="ComparisonToBoolean" />
+
+        <Style x:Key="ConflictHint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+
+        <!-- One unmerged path: name, what git calls the shape, and the reason when the panel
+             cannot act on it. -->
+        <DataTemplate x:Key="ConflictRowTemplate" DataType="{x:Type models:ConflictFile}">
+            <StackPanel Margin="0,3">
+                <TextBlock Text="{Binding Path}" FontFamily="Cascadia Code,Consolas" FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                <TextBlock Text="{Binding KindLabel}" FontSize="11"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="{Binding Refusal}" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{DynamicResource StatusWarnFg}"
+                           Visibility="{Binding IsRefused, Converter={StaticResource BooleanToVisibilityConverter}}" />
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- Read-only preview rows. The stage pair is rendered by the diff parser and the
+             two-column builder the rest of the page uses, so a hunk reads the same here. -->
+        <DataTemplate x:Key="ConflictDiffLineTemplate" DataType="{x:Type models:DiffLine}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="42" />
+                    <ColumnDefinition Width="42" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding OldNumber}" FontFamily="Cascadia Code,Consolas"
+                           FontSize="11" HorizontalAlignment="Right" Margin="0,0,8,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <TextBlock Grid.Column="1" Text="{Binding NewNumber}" FontFamily="Cascadia Code,Consolas"
+                           FontSize="11" HorizontalAlignment="Right" Margin="0,0,10,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <TextBlock Grid.Column="2" Text="{Binding Text}" FontFamily="Cascadia Code,Consolas"
+                           FontSize="12" TextWrapping="NoWrap"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            </Grid>
+        </DataTemplate>
+
+        <Style x:Key="ConflictDiffListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <Setter Property="ItemTemplate" Value="{StaticResource ConflictDiffLineTemplate}" />
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="4,0" />
+                        <Setter Property="MinHeight" Value="18" />
+                        <Setter Property="FocusVisualStyle" Value="{DynamicResource FocusRing}" />
+                        <Setter Property="AutomationProperties.Name" Value="{Binding Text}" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Row" Background="Transparent"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Added">
+                                            <Setter TargetName="Row" Property="Background"
+                                                    Value="{DynamicResource DiffAddedCellBg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Removed">
+                                            <Setter TargetName="Row" Property="Background"
+                                                    Value="{DynamicResource DiffRemovedCellBg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="HunkHeader">
+                                            <Setter TargetName="Row" Property="Background"
+                                                    Value="{DynamicResource StatusInfoBg}" />
+                                        </DataTrigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="ConflictSideBySideRowTemplate" DataType="{x:Type models:SideBySideRow}">
+            <helpers:DiffRowPanel GutterWidth="42">
+                <TextBlock helpers:DiffRowPanel.Cell="Span" Text="{Binding HeaderText}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
+                           Background="{DynamicResource StatusInfoBg}"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Visibility="{Binding IsHeader, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <TextBlock helpers:DiffRowPanel.Cell="OldNumber" Text="{Binding LeftNumber}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="11"
+                           HorizontalAlignment="Right" Margin="0,0,8,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <Border helpers:DiffRowPanel.Cell="OldText" MinWidth="120" ClipToBounds="True">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding LeftRemoved}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource DiffRemovedCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding LeftAbsent}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource DiffAbsentCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               helpers:InlineSegments.HighlightBrush="{DynamicResource DiffRemovedWordBg}"
+                               helpers:InlineSegments.Segments="{Binding LeftSegments}" />
+                </Border>
+                <TextBlock helpers:DiffRowPanel.Cell="NewNumber" Text="{Binding RightNumber}"
+                           FontFamily="Cascadia Code,Consolas" FontSize="11"
+                           HorizontalAlignment="Right" Margin="10,0,8,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <Border helpers:DiffRowPanel.Cell="NewText" MinWidth="120" ClipToBounds="True"
+                        BorderThickness="1,0,0,0"
+                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding RightAdded}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource DiffAddedCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding RightAbsent}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource DiffAbsentCellBg}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock FontFamily="Cascadia Code,Consolas" FontSize="12" TextWrapping="NoWrap"
+                               Margin="4,0,0,0"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               helpers:InlineSegments.HighlightBrush="{DynamicResource DiffAddedWordBg}"
+                               helpers:InlineSegments.Segments="{Binding RightSegments}" />
+                </Border>
+            </helpers:DiffRowPanel>
+        </DataTemplate>
+
+        <Style x:Key="ConflictSideBySideListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <Setter Property="ItemTemplate" Value="{StaticResource ConflictSideBySideRowTemplate}" />
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="4,0" />
+                        <Setter Property="MinHeight" Value="18" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="FocusVisualStyle" Value="{DynamicResource FocusRing}" />
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Scrim: opaque enough to read the card against, and it swallows clicks aimed behind it. -->
+    <Grid Background="#B0000000">
+        <Border MaxWidth="1280" Margin="24" CornerRadius="10"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Cycle"
+                Background="{DynamicResource ApplicationBackgroundBrush}"
+                BorderBrush="{DynamicResource StatusWarnFg}" BorderThickness="1">
+            <Grid Margin="24,18,24,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- ═══ HEADER ═══ -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                    <ui:Button DockPanel.Dock="Right" Content="Close" FontSize="12" Padding="12,4"
+                               Command="{Binding CloseConflictsCommand}"
+                               ToolTip="Close the conflict panel (Esc)"
+                               AutomationProperties.Name="Close the conflict panel" />
+                    <ui:Button DockPanel.Dock="Right" Content="Open in Terminal" FontSize="12" Padding="10,4"
+                               Margin="0,0,8,0"
+                               Command="{Binding OpenRepoInTerminalCommand}"
+                               AutomationProperties.AutomationId="ConflictTerminalButton"
+                               AutomationProperties.Name="Open this repository in a terminal" />
+                    <ui:Button DockPanel.Dock="Right" Content="Refresh" FontSize="12" Padding="10,4" Margin="0,0,8,0"
+                               Icon="{ui:SymbolIcon ArrowSync24}"
+                               Command="{Binding RefreshConflictsCommand}"
+                               AutomationProperties.Name="Re-read the conflicted files" />
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="Warning24" FontSize="16" VerticalAlignment="Center"
+                                       Margin="0,0,8,0" Foreground="{DynamicResource StatusWarnFg}" />
+                        <TextBlock Text="{Binding ConflictActivityLabel}" FontSize="18" FontWeight="SemiBold"
+                                   AutomationProperties.AutomationId="ConflictActivityLabel"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                        <TextBlock Text="{Binding Project.DirectoryName}" FontSize="13" Margin="10,0,0,0"
+                                   VerticalAlignment="Bottom" Padding="0,0,0,3"
+                                   FontFamily="Cascadia Code,Consolas"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding ConflictSidesNote}" Style="{StaticResource ConflictHint}" />
+                    <TextBlock Text="{Binding ConflictStatusText}" FontSize="12" Margin="0,6,0,0"
+                               TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="ConflictStatusText"
+                               AutomationProperties.LiveSetting="Polite"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ConflictStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding ConflictErrorText}" FontSize="12" Margin="0,6,0,0"
+                               TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="ConflictErrorText"
+                               AutomationProperties.LiveSetting="Assertive"
+                               Foreground="{DynamicResource StatusBadFg}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ConflictErrorText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+
+                <!-- ═══ FILES + PREVIEW ═══ -->
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="360" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0" Margin="0,0,16,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                            <Run Text="Conflicted files (" /><Run Text="{Binding ConflictRows.Count, Mode=OneWay}" /><Run Text=")" />
+                        </TextBlock>
+
+                        <ListBox x:Name="ConflictRowList" Grid.Row="1" ItemsSource="{Binding ConflictRows}"
+                                 SelectedItem="{Binding SelectedConflictRow}"
+                                 ItemTemplate="{StaticResource ConflictRowTemplate}"
+                                 Background="Transparent" BorderThickness="0"
+                                 AutomationProperties.AutomationId="ConflictRowList"
+                                 AutomationProperties.Name="Conflicted files">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
+
+                        <TextBlock Grid.Row="1" VerticalAlignment="Top" Margin="0,8,0,0"
+                                   Style="{StaticResource ConflictHint}"
+                                   AutomationProperties.AutomationId="ConflictsEmptyText"
+                                   Text="Nothing is unmerged here — every conflict is resolved."
+                                   Visibility="{Binding ConflictRowsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                            <WrapPanel>
+                                <ui:Button FontSize="12" Padding="10,4" Margin="0,0,6,6"
+                                           Content="{Binding SelectedConflictRow.TakeOursLabel, FallbackValue='Take ours'}"
+                                           IsEnabled="{Binding SelectedConflictRow.CanTakeOurs, FallbackValue=False}"
+                                           Command="{Binding TakeOursCommand}"
+                                           CommandParameter="{Binding SelectedConflictRow}"
+                                           AutomationProperties.AutomationId="TakeOursButton"
+                                           AutomationProperties.Name="Resolve this file with our side" />
+                                <ui:Button FontSize="12" Padding="10,4" Margin="0,0,6,6"
+                                           Content="{Binding SelectedConflictRow.TakeTheirsLabel, FallbackValue='Take theirs'}"
+                                           IsEnabled="{Binding SelectedConflictRow.CanTakeTheirs, FallbackValue=False}"
+                                           Command="{Binding TakeTheirsCommand}"
+                                           CommandParameter="{Binding SelectedConflictRow}"
+                                           AutomationProperties.AutomationId="TakeTheirsButton"
+                                           AutomationProperties.Name="Resolve this file with their side" />
+                                <ui:Button Content="Open in editor" FontSize="12" Padding="10,4" Margin="0,0,6,6"
+                                           Command="{Binding OpenConflictInEditorCommand}"
+                                           CommandParameter="{Binding SelectedConflictRow}"
+                                           AutomationProperties.AutomationId="OpenConflictInEditorButton"
+                                           AutomationProperties.Name="Open this file in an editor with its conflict markers" />
+                                <ui:Button Content="Stage resolved" FontSize="12" Padding="10,4" Margin="0,0,6,6"
+                                           Command="{Binding StageResolvedCommand}"
+                                           CommandParameter="{Binding SelectedConflictRow}"
+                                           AutomationProperties.AutomationId="StageResolvedButton"
+                                           AutomationProperties.Name="Stage this file as resolved" />
+                            </WrapPanel>
+                            <TextBlock Style="{StaticResource ConflictHint}"
+                                       Text="Stage resolved takes what the working tree holds; a file that still has conflict markers is refused." />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="Preview" FontWeight="SemiBold" FontSize="13" Margin="0,0,14,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <RadioButton Content="Base → ours" GroupName="ConflictComparison" FontSize="12"
+                                         Margin="0,0,10,0" VerticalAlignment="Center"
+                                         IsChecked="{Binding ConflictComparison, Converter={StaticResource ComparisonToBoolean}, ConverterParameter=BaseToOurs}"
+                                         AutomationProperties.Name="Compare the base with our side" />
+                            <RadioButton Content="Base → theirs" GroupName="ConflictComparison" FontSize="12"
+                                         Margin="0,0,10,0" VerticalAlignment="Center"
+                                         IsChecked="{Binding ConflictComparison, Converter={StaticResource ComparisonToBoolean}, ConverterParameter=BaseToTheirs}"
+                                         AutomationProperties.Name="Compare the base with their side" />
+                            <RadioButton Content="Ours → theirs" GroupName="ConflictComparison" FontSize="12"
+                                         VerticalAlignment="Center"
+                                         IsChecked="{Binding ConflictComparison, Converter={StaticResource ComparisonToBoolean}, ConverterParameter=OursToTheirs}"
+                                         AutomationProperties.Name="Compare our side with their side" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1" Text="{Binding ConflictPreviewNote}" Margin="0,0,0,6"
+                                   AutomationProperties.AutomationId="ConflictPreviewNote"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource ConflictHint}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ConflictPreviewNote}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="8">
+                            <Grid>
+                                <ListBox ItemsSource="{Binding ConflictDiffLines}"
+                                         Style="{StaticResource ConflictDiffListStyle}"
+                                         AutomationProperties.AutomationId="ConflictDiffLines"
+                                         AutomationProperties.Name="Stage comparison"
+                                         Visibility="{Binding DiffUnified, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <ListBox ItemsSource="{Binding ConflictDiffRows}"
+                                         Style="{StaticResource ConflictSideBySideListStyle}"
+                                         AutomationProperties.AutomationId="ConflictDiffRows"
+                                         AutomationProperties.Name="Stage comparison, side by side"
+                                         Visibility="{Binding DiffSideBySide, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <!-- ═══ SEQUENCER ═══ -->
+                <Border Grid.Row="3" Margin="0,12,0,0" CornerRadius="8" Padding="12,10"
+                        Background="{DynamicResource ControlFillColorDefaultBrush}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Style="{StaticResource ConflictHint}" Margin="0,0,0,4"
+                                   Text="The commit this continue writes. Left as git prepared it, the sequencer writes its own; edited, this text is committed instead." />
+                        <TextBox Grid.Row="1" Text="{Binding ConflictMessage, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="52" MaxHeight="120"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Cascadia Code,Consolas" FontSize="12"
+                                 AutomationProperties.AutomationId="ConflictMessageBox"
+                                 AutomationProperties.Name="Commit message for the continue" />
+
+                        <TextBlock Grid.Row="2" Margin="0,8,0,0"
+                                   AutomationProperties.AutomationId="ConflictContinueRefusal"
+                                   Text="{Binding ConflictContinueRefusal}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource ConflictHint}">
+                                    <Setter Property="Foreground" Value="{DynamicResource StatusWarnFg}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ConflictContinueRefusal}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <!-- The signing question, asked before the write rather than during it. -->
+                        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+                            <Border Background="{DynamicResource StatusWarnBg}" CornerRadius="6" Padding="10,8"
+                                    Margin="0,0,0,8"
+                                    Visibility="{Binding CommitSigningOfferVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding CommitSigningOfferText}" FontSize="12" TextWrapping="Wrap"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <ui:Button Content="Sign as configured" FontSize="12" Padding="10,4"
+                                                   Margin="0,0,8,0"
+                                                   Command="{Binding CommitSignedCommand}"
+                                                   AutomationProperties.Name="Continue and sign the commit as configured" />
+                                        <ui:Button Content="Continue unsigned" FontSize="12" Padding="10,4"
+                                                   Command="{Binding CommitUnsignedCommand}"
+                                                   AutomationProperties.Name="Continue and write the commit without signing" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="Continue" Appearance="Primary" FontSize="12" Padding="14,5"
+                                           Margin="0,0,8,0"
+                                           IsEnabled="{Binding ConflictContinueOffered}"
+                                           Command="{Binding ContinueSequenceCommand}"
+                                           AutomationProperties.AutomationId="ContinueSequenceButton"
+                                           AutomationProperties.Name="Continue the operation in progress" />
+                                <!-- Never gated on anything but there being something to abandon:
+                                     this is the way out of every state this panel can produce. -->
+                                <ui:Button Content="Abort" Appearance="Danger" FontSize="12" Padding="14,5"
+                                           Margin="0,0,8,0"
+                                           IsEnabled="{Binding ConflictAbortOffered}"
+                                           Command="{Binding AbortSequenceCommand}"
+                                           AutomationProperties.AutomationId="AbortSequenceButton"
+                                           AutomationProperties.Name="Abandon the operation in progress" />
+                                <ui:ProgressRing IsIndeterminate="True" Width="16" Height="16" Margin="6,0,0,0"
+                                                 VerticalAlignment="Center"
+                                                 Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

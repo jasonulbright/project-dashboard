@@ -360,7 +360,7 @@ public partial class ProjectDetailViewModel
         : IsBusy ? "Another git operation is running."
         : WorkingState is null ? "Reading the repository…"
         : WorkingState.Activity != RepoActivity.None
-            ? "The repository is in the middle of another operation — finish or abort it in a terminal first."
+            ? "The repository is in the middle of another operation — finish or abort that one first."
         : DepthOfSelected < 1 ? "Select a commit in the list first."
         : null;
 
@@ -597,7 +597,7 @@ public partial class ProjectDetailViewModel
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
                 "Revert this commit?",
                 $"Add a new commit on {BranchDescription} that undoes {commit.ShortHash} — “{commit.Message}”?\n\n" +
-                "Existing history is not rewritten. A conflicting revert stops and is left for a terminal.",
+                "Existing history is not rewritten. A conflicting revert stops and is left for the conflict panel.",
                 "Revert")))
             return;
 
@@ -618,7 +618,7 @@ public partial class ProjectDetailViewModel
         if (!await ConfirmSurgeryAsync(new SurgeryConfirmation(
                 "Cherry-pick this commit?",
                 $"Replay {commit.ShortHash} — “{commit.Message}” — onto {BranchDescription} as a new commit?\n\n" +
-                "Existing history is not rewritten. A conflicting pick stops and is left for a terminal.",
+                "Existing history is not rewritten. A conflicting pick stops and is left for the conflict panel.",
                 "Cherry-pick")))
             return;
 

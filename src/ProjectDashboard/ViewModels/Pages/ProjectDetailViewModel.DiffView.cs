@@ -68,6 +68,7 @@ public partial class ProjectDetailViewModel
         RebuildDiffRows();
         RebuildCommitDiffRows();
         RebuildStashDiffRows();
+        RebuildConflictDiffRows();
     }
 
     partial void OnDiffLinesChanged(ObservableCollection<DiffLine> value) => RebuildDiffRows();

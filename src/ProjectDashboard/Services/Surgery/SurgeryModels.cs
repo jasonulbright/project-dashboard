@@ -11,7 +11,7 @@ public enum RebaseConflictPolicy
     /// <summary>Run `git rebase --abort` and report which commit stopped it. The repository is left exactly as it was.</summary>
     AbortAndReport,
 
-    /// <summary>Leave the rebase stopped so the user can finish it in a terminal. The repo stays mid-rebase and the state banner reports it.</summary>
+    /// <summary>Leave the rebase stopped for the user to finish. The repo stays mid-rebase and the state banner reports it.</summary>
     LeaveStopped
 }
 
@@ -154,8 +154,8 @@ public sealed class RebaseRunResult
 
 /// <summary>
 /// Outcome of a reset, revert, or cherry-pick. <see cref="Conflicted"/> means the repository
-/// is deliberately left mid-operation with the conflicted paths listed: there is no in-app
-/// conflict editor, so the user finishes or aborts it from the terminal.
+/// is deliberately left mid-operation with the conflicted paths listed, for the conflict panel
+/// or a terminal to finish or abort.
 /// </summary>
 public sealed class HistoryEditResult
 {

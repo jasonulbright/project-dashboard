@@ -3,13 +3,13 @@ namespace ProjectDashboard.Services.Surgery;
 /// <summary>
 /// Reset, revert, and cherry-pick against a real repository.
 ///
-/// Conflict discipline: there is no in-app merge editor, so nothing here resolves a conflict
-/// and nothing here aborts one either. A conflicted revert or cherry-pick leaves the repository
-/// exactly where git left it — REVERT_HEAD or CHERRY_PICK_HEAD present, conflicted paths in the
-/// index — which the existing working-state detection reports as
-/// <see cref="Models.RepoActivity.Reverting"/> or <see cref="Models.RepoActivity.CherryPicking"/>,
-/// so the state banner and Open in Terminal already cover finishing or abandoning it. The
-/// conflicted paths come back in the result so a caller can name them without re-reading status.
+/// Conflict discipline: nothing here resolves a conflict and nothing here aborts one. A
+/// conflicted revert or cherry-pick leaves the repository exactly where git left it — REVERT_HEAD
+/// or CHERRY_PICK_HEAD present, conflicted paths in the index — which the working-state detection
+/// reports as <see cref="Models.RepoActivity.Reverting"/> or
+/// <see cref="Models.RepoActivity.CherryPicking"/>. Finishing or abandoning it belongs to
+/// <see cref="ConflictResolver"/> and the panel over it, or to a terminal. The conflicted paths
+/// come back in the result so a caller can name them without re-reading status.
 ///
 /// Gating (busy lease, clean tree, backup, journal) belongs to <see cref="SurgeryCoordinator"/>;
 /// these methods are the git-level operations only.
@@ -62,7 +62,8 @@ public sealed class HistoryEdits
     /// left uncommitted, which keeps git's REVERT_HEAD in place: the result then carries
     /// <see cref="HistoryEditResult.LeftMidOperation"/>, because every later gated operation
     /// refuses a repository that reads as mid-revert until it is committed or aborted.
-    /// A conflict is reported, not resolved, and the repository stays mid-revert for the terminal.
+    /// A conflict is reported, not resolved, and the repository is left mid-revert for the
+    /// surfaces that drive one.
     /// </summary>
     public async Task<HistoryEditResult> RevertAsync(
         string repoPath, string commit, bool autoCommit = true,
@@ -154,7 +155,7 @@ public sealed class HistoryEdits
             ConflictPaths = conflicts,
             FailureReason =
                 $"the {what} conflicts in {conflicts.Count} file(s) — the repository is left mid-{what}; " +
-                "resolve and continue, or abort, from a terminal",
+                "resolve and continue, or abort, from the conflict panel or a terminal",
             HeadAfter = head
         };
     }

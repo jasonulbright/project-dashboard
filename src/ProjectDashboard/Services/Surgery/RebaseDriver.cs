@@ -461,7 +461,7 @@ public class RebaseDriver
             return new RebaseRunResult
             {
                 Success = false,
-                FailureReason = cause + " — the rebase is stopped; finish or abort it in a terminal",
+                FailureReason = cause + " — the rebase is stopped; finish or abort it from the conflict panel or a terminal",
                 ConflictCommit = sha,
                 ConflictSubject = subject,
                 StoppedEmpty = empty,
@@ -762,6 +762,123 @@ public class RebaseDriver
         }
     }
 
+    /// <summary>
+    /// Where a stopped rebase came from, for a surface deciding whether it may be continued.
+    /// </summary>
+    public enum StoppedRebaseOrigin
+    {
+        /// <summary>No rebase state directory survives in the repository.</summary>
+        NotStopped,
+
+        /// <summary>This driver stopped it and every message file its todo names is still on disk.</summary>
+        StartedHere,
+
+        /// <summary>Its todo names message files that no longer exist; `--continue` fails on the missing file.</summary>
+        MessagesReclaimed,
+
+        /// <summary>No scratch tree here owns it — it was started outside this application.</summary>
+        StartedElsewhere
+    }
+
+    /// <summary>
+    /// Classifies the rebase a repository is stopped in. Filesystem reads only, so a surface can
+    /// consult it on every working-state refresh.
+    ///
+    /// A stopped todo's exec lines name message files inside this driver's scratch, and
+    /// `git rebase --continue` fails on a missing one. The scratch is kept for exactly that reason
+    /// while a rebase is stopped, but a repository moved or renamed since then reads as
+    /// no-longer-rebasing to the sweep, which then reclaims the tree the stopped todo still points
+    /// at. A continue offered over that state fails where a terminal would fail too, with no
+    /// explanation either place; refusing it and offering the abort is the honest answer.
+    /// </summary>
+    public StoppedRebaseOrigin InspectStoppedRebase(string repoPath)
+    {
+        if (!HasRebaseState(repoPath)) return StoppedRebaseOrigin.NotStopped;
+
+        var missing = TodoNamesMissingScratchFile(repoPath);
+        if (missing) return StoppedRebaseOrigin.MessagesReclaimed;
+        return OwnsScratchFor(repoPath) ? StoppedRebaseOrigin.StartedHere : StoppedRebaseOrigin.StartedElsewhere;
+    }
+
+    /// <summary>Whether a scratch tree under this driver's root records <paramref name="repoPath"/> as its owner.</summary>
+    private bool OwnsScratchFor(string repoPath)
+    {
+        try
+        {
+            if (!Directory.Exists(_workRoot)) return false;
+            foreach (var dir in Directory.GetDirectories(_workRoot))
+                if (ReadScratchOwner(dir) is { } owner && SamePath(owner, repoPath))
+                    return true;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not read the surgery scratch root {_workRoot}", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether the remaining todo names a file under this driver's scratch root that is gone. The
+    /// exec lines carry shell-quoted absolute paths, so a quoted token under the root is the whole
+    /// of what has to be checked.
+    /// </summary>
+    private bool TodoNamesMissingScratchFile(string repoPath)
+    {
+        try
+        {
+            var gitDir = GitDirOf(repoPath);
+            if (gitDir is null) return false;
+            var todo = Path.Combine(gitDir, "rebase-merge", "git-rebase-todo");
+            if (!File.Exists(todo)) return false;
+
+            var root = _workRoot.Replace('\\', '/');
+            foreach (var line in File.ReadAllLines(todo))
+            {
+                if (!line.StartsWith("exec ", StringComparison.Ordinal)) continue;
+                foreach (var quoted in QuotedTokens(line))
+                {
+                    if (!quoted.Replace('\\', '/').StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!File.Exists(quoted)) return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not read the stopped rebase todo of {repoPath}", ex);
+            return false;
+        }
+    }
+
+    private static IEnumerable<string> QuotedTokens(string line)
+    {
+        var from = line.IndexOf('"');
+        while (from >= 0)
+        {
+            var to = line.IndexOf('"', from + 1);
+            if (to < 0) yield break;
+            yield return line[(from + 1)..to];
+            from = line.IndexOf('"', to + 1);
+        }
+    }
+
+    private static bool SamePath(string left, string right)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("could not compare two repository paths", ex);
+            return false;
+        }
+    }
+
     private static string? ReadScratchOwner(string scratch)
     {
         try
@@ -785,29 +902,34 @@ public class RebaseDriver
     /// </summary>
     private static bool HasRebaseState(string repoPath)
     {
+        var gitDir = GitDirOf(repoPath);
+        if (gitDir is null) return false;
+        return Directory.Exists(Path.Combine(gitDir, "rebase-merge")) ||
+               Directory.Exists(Path.Combine(gitDir, "rebase-apply"));
+    }
+
+    /// <summary>
+    /// A checkout's git directory, without launching git. Null for anything this cannot answer
+    /// from the layout alone — which for the callers here means the repository has no rebase to
+    /// continue, and its scratch is reclaimable.
+    /// </summary>
+    private static string? GitDirOf(string repoPath)
+    {
         try
         {
             var dotGit = Path.Combine(repoPath, ".git");
-            string gitDir;
-            if (Directory.Exists(dotGit)) gitDir = dotGit;
-            else if (File.Exists(dotGit))
-            {
-                var line = File.ReadAllLines(dotGit).FirstOrDefault(l => l.StartsWith("gitdir:", StringComparison.Ordinal));
-                if (line is null) return false;
-                var target = line["gitdir:".Length..].Trim();
-                gitDir = Path.IsPathRooted(target) ? target : Path.Combine(repoPath, target);
-            }
-            else return false;
+            if (Directory.Exists(dotGit)) return dotGit;
+            if (!File.Exists(dotGit)) return null;
 
-            return Directory.Exists(Path.Combine(gitDir, "rebase-merge")) ||
-                   Directory.Exists(Path.Combine(gitDir, "rebase-apply"));
+            var line = File.ReadAllLines(dotGit).FirstOrDefault(l => l.StartsWith("gitdir:", StringComparison.Ordinal));
+            if (line is null) return null;
+            var target = line["gitdir:".Length..].Trim();
+            return Path.IsPathRooted(target) ? target : Path.Combine(repoPath, target);
         }
         catch (Exception ex)
         {
-            // An unreadable or vanished repository has no rebase to continue, so its scratch is
-            // reclaimable; the caller's age check is what keeps a transient error from mattering.
-            Log.Warn($"could not check the rebase state of {repoPath}", ex);
-            return false;
+            Log.Warn($"could not resolve the git directory of {repoPath}", ex);
+            return null;
         }
     }
 }
