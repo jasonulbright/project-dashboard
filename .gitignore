@@ -18,6 +18,7 @@ TestResults/
 
 # Installer build artifacts (sources are tracked: branding/*.svg, installer/*.nsi, installer/*.ps1)
 installer/payload/
+installer/signed-uninstaller/
 installer/ProjectDashboard-Portable-*/
 installer/*.exe
 installer/*.zip

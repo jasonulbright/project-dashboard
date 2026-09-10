@@ -13,18 +13,32 @@ public static class AtomicFile
 {
     /// <summary>UTF-8 without a byte-order mark, matching every other file this app produces.</summary>
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+    private static readonly object PublishGate = new();
 
     public static async Task WriteAllTextAsync(string path, string text, CancellationToken ct = default)
     {
-        var staged = path + ".tmp";
+        var staged = path + $".{Guid.NewGuid():N}.tmp";
+        var created = false;
         try
         {
-            await File.WriteAllTextAsync(staged, text, Utf8NoBom, ct);
-            File.Move(staged, path, overwrite: true);
+            await using (var stream = new FileStream(staged, FileMode.CreateNew, FileAccess.Write,
+                             FileShare.None, 4096, FileOptions.Asynchronous))
+            {
+                created = true;
+                await using var writer = new StreamWriter(stream, Utf8NoBom);
+                await writer.WriteAsync(text.AsMemory(), ct);
+                await writer.FlushAsync(ct);
+            }
+            // Concurrent Windows replacement renames can deny each other's destination access.
+            lock (PublishGate)
+            {
+                ct.ThrowIfCancellationRequested();
+                File.Move(staged, path, overwrite: true);
+            }
         }
         catch
         {
-            try { File.Delete(staged); }
+            try { if (created) File.Delete(staged); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
             throw;

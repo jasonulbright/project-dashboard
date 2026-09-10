@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.11] - 2026-09-09
+
+Signed Windows releases and fixes for update checks and file saves.
+
+### Fixed
+- Update checks enforce their 15-second timeout across both response headers and body, so a server that stops sending content cannot leave the check waiting indefinitely
+- Oversized update responses are rejected instead of interpreting a truncated prefix as a complete answer
+- Inventory exports and saved workflow logs use their own temporary files, preserve unrelated `.tmp` files, and serialize the final replacement so concurrent saves cannot corrupt or delete one another's output
+- Manually dispatching a publishing run from a branch is refused before building; publication requires a matching version tag
+- Cloud-list tests join the shared-settings test collection, preventing intermittent failures caused by overwriting another test's settings
+
+### Changed
+- The installer, uninstaller, application executable, and application assembly are Authenticode-signed through Azure Artifact Signing with trusted timestamps
+- Release builds verify the expected publisher, signatures, timestamps, versions, and packaged bytes before generating checksums or publishing; the portable archive contains the signed application
+- The release harness exercises installation, application startup from both packages, and uninstallation on the Windows runner; a dry run performs the same signing and checks without publishing a release
+
 ## [2.3.10] - 2026-08-17
 
 Nine defects found in 2.3.9's conflict workflow by an external review, all reproduced and fixed.

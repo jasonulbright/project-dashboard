@@ -1,4 +1,3 @@
-; Project Dashboard - NSIS installer (per-user, no elevation, no signing)
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -7,7 +6,7 @@ Unicode true
 
 !define APPNAME   "Project Dashboard"
 !define COMPANY   "Jason Ulbright"
-!define VERSION   "2.3.10"
+!define VERSION   "2.3.11"
 !define EXE       "ProjectDashboard.exe"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectDashboard"
 
@@ -36,8 +35,10 @@ SetCompressor /SOLID lzma
 !define MUI_FINISHPAGE_RUN_TEXT  "Launch ${APPNAME}"
 !insertmacro MUI_PAGE_FINISH
 
-!insertmacro MUI_UNPAGE_CONFIRM
-!insertmacro MUI_UNPAGE_INSTFILES
+!ifndef IMPORT_UNINST
+  !insertmacro MUI_UNPAGE_CONFIRM
+  !insertmacro MUI_UNPAGE_INSTFILES
+!endif
 
 !insertmacro MUI_LANGUAGE "English"
 
@@ -79,7 +80,11 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File /r "payload\*.*"
 
+!ifdef IMPORT_UNINST
+  File "signed-uninstaller\Uninstall.exe"
+!else
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+!endif
 
   CreateShortCut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
   CreateShortCut "$DESKTOP\${APPNAME}.lnk"    "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
@@ -96,6 +101,11 @@ Section "Install"
   WriteRegDWORD HKCU "${UNINSTKEY}" "NoRepair"        1
 SectionEnd
 
+!ifdef EXPORT_UNINST
+  !uninstfinalize 'pwsh -NoProfile -File "export-uninstaller.ps1" "%1"' = 0
+!endif
+
+!ifndef IMPORT_UNINST
 Section "Uninstall"
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$DESKTOP\${APPNAME}.lnk"
@@ -104,3 +114,4 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\Project Dashboard"
   ; Note: user data in %APPDATA%\ProjectDashboard is intentionally left in place.
 SectionEnd
+!endif

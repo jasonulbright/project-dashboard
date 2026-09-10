@@ -95,7 +95,7 @@ Built with WPF-UI (Fluent 2 design system) on .NET 10. No database, no cloud dep
 
 ## Install
 
-Download `ProjectDashboard-Setup-*.exe` from [Releases](https://github.com/jasonulbright/project-dashboard/releases) and run it. Per-user install (no admin, no signing). Requires the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) — the installer checks for it and links the download if missing.
+Download `ProjectDashboard-Setup-*.exe` from [Releases](https://github.com/jasonulbright/project-dashboard/releases) and run it. Per-user install (no admin). Starting with 2.3.11, the installer, uninstaller, and application are Authenticode-signed with publisher **Jason Ulbright** and trusted timestamps. Requires the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) — the installer checks for it and links the download if missing.
 
 ### Portable
 
@@ -129,6 +129,8 @@ To build the portable archive (publishes into `installer\payload`, then zips it 
 pwsh -File installer\build-portable.ps1
 ```
 
+See [Releasing](docs/releasing.md) for the signed release workflow and package checks.
+
 ## Configuration
 
 On first launch, the app scans `C:\projects` for git repositories. Settings holds the full list of projects folders: add as many as you like, reorder them (order breaks the tie when two folders hold a repository of the same name), switch one off without losing it, and choose which one new projects and clones land in. Each folder carries its own skip list and its own scan depth — top level only by default, up to four levels down. A scan stops at each repository and does not look inside it, and it never follows a junction or symlink out of the folder. A folder that is missing or unreadable says so on the dashboard by name; the repositories in the folders that were read still appear.
@@ -137,7 +139,7 @@ Settings also has: theme (light/dark), refresh interval, a `gh.exe` path picker,
 
 The backups block sets how many backups each repository keeps, whether backups are deep, and shows what every repository's backups occupy right now. Lowering the count takes effect the next time each repository is backed up — "Prune now" applies the saved count to every repository straight away, after a confirmation naming how many backups would go and roughly how much that frees. A standard backup holds every ref and the newest stash entry; a deep backup also keeps commits that only a reflog reaches and every stash entry below the newest, so a later cleanup cannot make them unrecoverable — larger and slower bundles for it. Deep backups preserve those objects; restoring one puts the objects back and does not rebuild the reflog or the stash stack. A project's Backups browser shows which tier each backup was and can override the setting for a single capture.
 
-The update check is the only request the app makes on its own initiative. It is an anonymous public read of `https://api.github.com/repos/jasonulbright/project-dashboard/releases/latest` — no token, no account, no repository or usage data, and no telemetry of any kind. GitHub sees an address, a time, and the app's name and version, the same as visiting the releases page in a browser. Turning the toggle off stops it entirely, on launch and from the button.
+The update check sends an anonymous public read of `https://api.github.com/repos/jasonulbright/project-dashboard/releases/latest` — no token, no account, no repository or usage data, and no telemetry of any kind. GitHub sees an address, a time, and the app's name and version, the same as visiting the releases page in a browser. Turning the update-check toggle off stops this request entirely, on launch and from the button. GitHub discovery and optional scheduled fetch have their own settings and delegate access to `gh` and `git`.
 
 ### Data storage
 

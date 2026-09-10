@@ -12,6 +12,11 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -20,6 +25,12 @@ defaults:
 jobs:
   release:
     runs-on: windows-latest
+    environment: release
+    timeout-minutes: 60
+    env:
+      SIGNING_ENDPOINT: https://eus.codesigning.azure.net
+      SIGNING_ACCOUNT: signalridgelabs
+      SIGNING_PROFILE: SRL-Public
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -32,6 +43,13 @@ jobs:
       # the first build step. Each check reads a file already in the checkout.
       - name: Resolve version
         run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and
+              '${{ inputs.dry_run }}' -eq 'false' -and '${{ github.ref_type }}' -ne 'tag') {
+            throw 'Publishing requires a version tag. Use dry_run for a branch.'
+          }
+          foreach ($name in @('SIGNING_ENDPOINT', 'SIGNING_ACCOUNT', 'SIGNING_PROFILE')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing release signing setting: $name." }
+          }
           $projectFile = 'src/ProjectDashboard/ProjectDashboard.csproj'
           $nsiFile     = 'installer/project-dashboard.nsi'
 
@@ -102,10 +120,8 @@ jobs:
           }
           Write-Host "Total $total across $($trx.Count) result file(s)."
 
-      # build-portable.ps1 publishes into installer\payload, which is exactly what the
-      # installer script packs, so the portable archive is built before makensis runs.
-      - name: Build portable archive
-        run: pwsh -File installer/build-portable.ps1
+      - name: Publish payload
+        run: pwsh -File installer/build-portable.ps1 -PublishOnly
 
       - name: Resolve makensis
         run: |
@@ -124,11 +140,55 @@ jobs:
           if (-not (Test-Path -LiteralPath $makensis)) { throw 'makensis.exe not found after install.' }
           "MAKENSIS=$makensis" >> $env:GITHUB_ENV
 
-      - name: Build installer
+      - name: Export uninstaller
         working-directory: installer
         run: |
-          & $env:MAKENSIS project-dashboard.nsi
+          & $env:MAKENSIS /DEXPORT_UNINST project-dashboard.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
+
+      - name: Azure login
+        uses: azure/login@4c03e4685fe81df2c50d5714c7d93cf39d8deb7f # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign application and uninstaller
+        uses: azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\installer\payload\ProjectDashboard.exe
+            ${{ github.workspace }}\installer\payload\ProjectDashboard.dll
+            ${{ github.workspace }}\installer\signed-uninstaller\Uninstall.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build portable archive from signed payload
+        run: pwsh -File installer/build-portable.ps1 -SkipPublish
+
+      - name: Build installer with signed uninstaller
+        working-directory: installer
+        run: |
+          & $env:MAKENSIS /DIMPORT_UNINST project-dashboard.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
+
+      - name: Sign installer
+        uses: azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\installer\ProjectDashboard-Setup-${{ env.VERSION }}.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify signed packages and smoke test
+        run: pwsh -File installer/verify-release.ps1 -Version $env:VERSION -SmokeTest
 
       # Written outside the checkout for the same reason the notes are, and generated on the
       # dry run too so the step that publishes is never the first one to run.
@@ -148,6 +208,24 @@ jobs:
           Get-Content -LiteralPath $checksums | Write-Host
 
           "CHECKSUMS=$checksums" >> $env:GITHUB_ENV
+
+      - name: Upload verified assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-release-${{ env.VERSION }}
+          path: |
+            installer/ProjectDashboard-Setup-${{ env.VERSION }}.exe
+            installer/ProjectDashboard-Portable-${{ env.VERSION }}.zip
+            ${{ env.CHECKSUMS }}
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: always() && hashFiles('TestResults/*.trx') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-test-results
+          path: TestResults/*.trx
+          if-no-files-found: error
 
       # Assets are named explicitly: a wildcard would attach any stale artifact left in
       # the tree by an earlier step.

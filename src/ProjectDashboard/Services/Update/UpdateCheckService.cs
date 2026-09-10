@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -342,13 +343,19 @@ public class UpdateCheckService : IHostedService
     /// without a socket — the suite reaches no network at all.
     /// </summary>
     protected internal virtual async Task<ReleaseFetch> FetchLatestAsync(CancellationToken ct)
+        => await FetchLatestAsync(Client.Value, FetchBudget, ct);
+
+    internal static async Task<ReleaseFetch> FetchLatestAsync(HttpClient client, TimeSpan budget, CancellationToken ct)
     {
+        // ResponseHeadersRead releases HttpClient's timeout before the body is consumed.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(budget);
         try
         {
-            using var response = await Client.Value.GetAsync(
-                ReleaseLink.LatestReleaseEndpoint, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await client.GetAsync(
+                ReleaseLink.LatestReleaseEndpoint, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
 
-            var body = await ReadCappedAsync(response, ct);
+            var body = await ReadCappedAsync(response, deadline.Token);
             return new ReleaseFetch((int)response.StatusCode, body, RateLimitReset(response), null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -363,12 +370,16 @@ public class UpdateCheckService : IHostedService
         {
             return ReleaseFetch.Unreachable($"Couldn't reach GitHub — {Trim(ex.Message)}");
         }
+        catch (InvalidDataException)
+        {
+            return ReleaseFetch.Unreachable("GitHub's release response was too large.");
+        }
     }
 
     private static async Task<string> ReadCappedAsync(HttpResponseMessage response, CancellationToken ct)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        var buffer = new byte[MaxBodyBytes];
+        var buffer = new byte[MaxBodyBytes + 1];
         var filled = 0;
         while (filled < buffer.Length)
         {
@@ -376,6 +387,7 @@ public class UpdateCheckService : IHostedService
             if (read == 0) break;
             filled += read;
         }
+        if (filled > MaxBodyBytes) throw new InvalidDataException("Release response exceeds the byte limit.");
         return System.Text.Encoding.UTF8.GetString(buffer, 0, filled);
     }
 

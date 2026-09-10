@@ -18,6 +18,12 @@
     Where the .zip is written. Defaults to the installer directory, beside the
     installer executable.
 
+.PARAMETER PublishOnly
+    Publishes the payload without archiving so release signing can run first.
+
+.PARAMETER SkipPublish
+    Archives the existing payload without rebuilding signed binaries.
+
 .EXAMPLE
     pwsh -File installer\build-portable.ps1
 
@@ -27,11 +33,15 @@
 [CmdletBinding()]
 param(
     [string] $Configuration = 'Release',
-    [string] $OutputDirectory
+    [string] $OutputDirectory,
+    [switch] $PublishOnly,
+    [switch] $SkipPublish
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($PublishOnly -and $SkipPublish) { throw 'PublishOnly and SkipPublish cannot be combined.' }
 
 $installerDir = $PSScriptRoot
 $repoRoot     = Split-Path -Parent $installerDir
@@ -49,6 +59,7 @@ if ($nsiText -notmatch '(?m)^\s*!define\s+VERSION\s+"([^"]+)"') {
     throw "No !define VERSION found in $nsiFile."
 }
 $version = $Matches[1]
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid package version: $version." }
 
 [xml] $projectXml = Get-Content -LiteralPath $projectFile -Raw
 $projectVersionNode = $projectXml.SelectSingleNode('/Project/PropertyGroup/Version')
@@ -61,17 +72,29 @@ if ($projectVersionNode.InnerText.Trim() -ne $version) {
 
 Write-Host "Building Project Dashboard $version ($Configuration)"
 
-if (Test-Path -LiteralPath $payloadDir) {
-    Remove-Item -LiteralPath $payloadDir -Recurse -Force
+if (-not $SkipPublish) {
+    if (Test-Path -LiteralPath $payloadDir) {
+        if ([IO.Path]::GetFullPath($payloadDir) -ne [IO.Path]::GetFullPath((Join-Path $repoRoot 'installer\payload'))) {
+            throw 'Payload directory is outside the installer workspace.'
+        }
+        Remove-Item -LiteralPath $payloadDir -Recurse -Force
+    }
+
+    dotnet publish $projectFile `
+        --configuration $Configuration `
+        --runtime win-x64 `
+        --self-contained false `
+        --output $payloadDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish failed with exit code $LASTEXITCODE."
+    }
 }
 
-dotnet publish $projectFile `
-    --configuration $Configuration `
-    --runtime win-x64 `
-    --self-contained false `
-    --output $payloadDir
-if ($LASTEXITCODE -ne 0) {
-    throw "dotnet publish failed with exit code $LASTEXITCODE."
+foreach ($binary in @('ProjectDashboard.exe', 'ProjectDashboard.dll')) {
+    $path = Join-Path $payloadDir $binary
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing payload binary: $path." }
+    $actualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($path).FileVersion
+    if ($actualVersion -ne "$version.0") { throw "Payload $binary is $actualVersion; expected $version.0." }
 }
 
 # The installer packs payload\*.* wholesale and the portable archive is a copy of the
@@ -99,11 +122,16 @@ if ($unlisted.Count -gt 0) {
     throw "Payload assemblies missing from THIRD-PARTY-NOTICES.md: $($unlisted -join ', ')."
 }
 
+if ($PublishOnly) { return }
+
 $archiveName = "ProjectDashboard-Portable-$version"
 $stageDir    = Join-Path $installerDir $archiveName
 $zipPath     = Join-Path $OutputDirectory "$archiveName.zip"
 
 if (Test-Path -LiteralPath $stageDir) {
+    if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($stageDir)) -ne [IO.Path]::GetFullPath($installerDir)) {
+        throw 'Archive staging directory is outside the installer workspace.'
+    }
     Remove-Item -LiteralPath $stageDir -Recurse -Force
 }
 

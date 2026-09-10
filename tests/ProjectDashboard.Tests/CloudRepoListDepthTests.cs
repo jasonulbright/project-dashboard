@@ -11,6 +11,7 @@ namespace ProjectDashboard.Tests;
 /// cards and the clone picker, so a read that came back full has left repositories out of the grid
 /// and out of the picker — and the only thing that keeps either honest is saying so.
 /// </summary>
+[Collection("app-data-sandbox")]
 public class CloudRepoListDepthTests
 {
     private static GitHubService.RemoteRepoPage Page(int count, int limit) =>
